@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>剑网三副本管家</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        overscroll-behavior: none;
+      }
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f8fafc;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        -webkit-user-select: none;
+        cursor: default;
+      }
+      input, textarea, [contenteditable="true"], .select-text {
+        user-select: text;
+        -webkit-user-select: text;
+        cursor: text;
+      }
+      .app-region-drag {
+        -webkit-app-region: drag;
+        app-region: drag;
+      }
+      .app-region-no-drag {
+        -webkit-app-region: no-drag;
+        app-region: no-drag;
+      }
+    </style>
+  
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

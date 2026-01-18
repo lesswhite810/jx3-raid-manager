@@ -1,0 +1,5 @@
+{
+  "name": "JX3 Raid Manager",
+  "description": "A comprehensive dashboard for JX3 players to manage accounts, track raid CDs, calculate gold income, and monitor Xuanjing drop rates.",
+  "requestFramePermissions": []
+}
