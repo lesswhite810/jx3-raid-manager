@@ -52,30 +52,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
-  // 角色排序逻辑：装分从大到小 > 服务器 > 名称
-  const sortedRoles = useMemo(() => {
-    return safeAccounts.map(account => {
-      if (!Array.isArray(account.roles)) return { ...account, roles: [] };
-      
-      const roles = [...account.roles];
-      
-      roles.sort((a, b) => {
-        const aScore = a.equipmentScore ?? -1;
-        const bScore = b.equipmentScore ?? -1;
-        if (aScore !== bScore) return bScore - aScore;
-        
-        const aServer = a.server || '';
-        const bServer = b.server || '';
-        if (aServer !== bServer) return aServer.localeCompare(bServer);
-        
-        const aName = a.name || '';
-        const bName = b.name || '';
-        return aName.localeCompare(bName);
-      });
-      
-      return { ...account, roles };
-    });
-  }, [safeAccounts]);
 
   // 搜索筛选逻辑
   const filteredAccounts = useMemo(() => {
@@ -680,7 +656,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       )}
       
       <div className="space-y-6">
-        {sortedRoles.map(account => (
+        {filteredAccounts.map(account => (
           <div key={account.id} className={`bg-white p-5 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow ${selectedAccounts.has(account.id) ? 'ring-2 ring-emerald-500' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
             <div className="flex justify-between items-start mb-4">
               <div className="flex items-center gap-2">

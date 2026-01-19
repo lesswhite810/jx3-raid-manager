@@ -22,7 +22,6 @@ interface RoleWithStatus {
   server: string;
   region: string;
   sect: string;
-  equipmentScore?: number;
   accountId: string;
   accountName: string;
   password?: string;
@@ -107,7 +106,7 @@ const RaidRefreshCountdown: React.FC<RaidRefreshCountdownProps> = ({ raid }) => 
 };
 
 export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records, onBack, setRecords }) => {
-  const [sortBy, setSortBy] = useState<'name' | 'server' | 'lastRun' | 'equipmentScore'>('name');
+  const [sortBy, setSortBy] = useState<'name' | 'server' | 'lastRun'>('name');
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [showRoleRecordsModal, setShowRoleRecordsModal] = useState(false);
   const [selectedRoleForModal, setSelectedRoleForModal] = useState<RoleWithStatus | null>(null);
@@ -233,7 +232,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       let accountName = record.accountId || '未知账号';
       let password: string | undefined;
       let isClientAccount = false;
-      let equipmentScore: number | undefined;
       
       safeAccounts.forEach(account => {
         if (account.id === record.accountId) {
@@ -246,7 +244,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             sect = role.sect || '';
             region = role.region || '';
             server = role.server;
-            equipmentScore = role.equipmentScore;
           }
         }
       });
@@ -285,7 +282,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         server: server,
         region: region || '未知',
         sect: sect || '未知',
-        equipmentScore,
         accountId: record.accountId,
         accountName,
         password,
@@ -327,7 +323,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           server: role.server,
           region: role.region,
           sect: role.sect,
-          equipmentScore: role.equipmentScore,
           accountId: account.id,
           accountName: account.accountName,
           password: account.password,
@@ -373,15 +368,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         if (!a.lastRunDate) return -1;
         if (!b.lastRunDate) return 1;
         return new Date(b.lastRunDate).getTime() - new Date(a.lastRunDate).getTime();
-      });
-    } else if (sortBy === 'equipmentScore') {
-      sorted.sort((a, b) => {
-        const aCanRun = a.canRun ? 0 : 1;
-        const bCanRun = b.canRun ? 0 : 1;
-        if (aCanRun !== bCanRun) return aCanRun - bCanRun;
-        const aScore = a.equipmentScore ?? -1;
-        const bScore = b.equipmentScore ?? -1;
-        return bScore - aScore;
       });
     }
     
@@ -443,7 +429,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               <option value="name">角色名称</option>
               <option value="server">服务器</option>
               <option value="lastRun">上次记录</option>
-              <option value="equipmentScore">装分</option>
             </select>
           </div>
         </div>
@@ -489,11 +474,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                                 ? 'bg-emerald-100 text-emerald-700'
                                 : 'bg-amber-100 text-amber-700'
                           }`}>{role.sect}</span>
-                        )}
-                        {role.equipmentScore !== undefined && role.equipmentScore !== null && (
-                          <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">
-                            {role.equipmentScore.toLocaleString()}
-                          </span>
                         )}
                       </div>
                     </div>

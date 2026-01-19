@@ -27,9 +27,6 @@ const TOAST_CONFIG = {
   }
 };
 
-// 最大同时显示的 Toast 数量
-const MAX_TOASTS = 3;
-
 export const ToastContainer: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -43,15 +40,7 @@ export const ToastContainer: React.FC = () => {
     const customEvent = event as CustomEvent<ToastMessage>;
     const newToast = customEvent.detail;
 
-    setToasts(prev => {
-      // 如果达到数量上限，移除最早的 toast
-      if (prev.length >= MAX_TOASTS) {
-        const updatedToasts = prev.slice(1);
-        return [...updatedToasts, newToast];
-      }
-
-      return [...prev, newToast];
-    });
+    setToasts(prev => [...prev, newToast]);
 
     // 自动移除
     if (newToast.duration && newToast.duration > 0) {
