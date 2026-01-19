@@ -22,6 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
+.shared/*
+.agent/*
 # Rust/Tauri build files
 src-tauri/target
