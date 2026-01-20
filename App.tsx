@@ -12,14 +12,15 @@ import { ToastContainer } from './components/ToastContainer';
 import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { Account, RaidRecord, Raid, Config } from './types';
-import { 
-  DEFAULT_CONFIG, 
-  loadConfigFromStorage, 
+import {
+  DEFAULT_CONFIG,
+  loadConfigFromStorage,
   saveConfigToStorage,
   validateConfig,
   getConfigSummary
 } from './utils/configUtils';
 import { mergeRaids, getRaidKey, saveRaidCache } from './utils/raidUtils';
+import { sortAccounts } from './utils/accountUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, forceMigrate } from './services/migration';
 
@@ -33,7 +34,7 @@ function App() {
   const [contentKey, setContentKey] = useState(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const previousTabRef = useRef<string>('dashboard');
-  
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<RaidRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
@@ -55,9 +56,9 @@ function App() {
           console.log(`  账号: ${localData.accountsCount}`);
           console.log(`  记录: ${localData.recordsCount}`);
           console.log(`  副本: ${localData.raidsCount}`);
-          
+
           const result = await forceMigrate();
-          
+
           if (result.success) {
             console.log('✓ 迁移成功！');
             if (result.migrated.accounts > 0 || result.migrated.records > 0 || result.migrated.raids > 0) {
@@ -89,8 +90,9 @@ function App() {
         const parsedRaids = loadedRaids;
 
         if (parsedAccounts.length > 0) {
-          setAccounts(parsedAccounts);
-          console.log(`设置账号: ${parsedAccounts.length} 个`);
+          const sortedAccounts = sortAccounts(parsedAccounts);
+          setAccounts(sortedAccounts);
+          console.log(`设置账号: ${sortedAccounts.length} 个`);
         } else {
           console.log('没有账号数据');
         }
@@ -127,7 +129,7 @@ function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
-    
+
     const saveData = async () => {
       try {
         await db.saveAccounts(accounts);
@@ -140,7 +142,7 @@ function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
-    
+
     const saveData = async () => {
       try {
         await db.saveRecords(records);
@@ -153,7 +155,7 @@ function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
-    
+
     const saveData = async () => {
       try {
         await db.saveRaids(raids);
@@ -167,7 +169,7 @@ function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
-    
+
     const saveData = async () => {
       try {
         await db.saveConfig(config);
@@ -185,7 +187,7 @@ function App() {
         try {
           const newConfig = e.newValue ? JSON.parse(e.newValue) : DEFAULT_CONFIG;
           const validation = await validateConfig(newConfig);
-          
+
           if (validation.isValid) {
             setConfig(newConfig);
           }
@@ -208,7 +210,7 @@ function App() {
         try {
           const currentConfig = loadConfigFromStorage();
           const validation = await validateConfig(currentConfig);
-          
+
           if (validation.isValid && JSON.stringify(currentConfig) !== JSON.stringify(config)) {
             console.log('检测到配置变更，同步中...', getConfigSummary(currentConfig));
             setConfig(currentConfig);
@@ -249,7 +251,7 @@ function App() {
   useEffect(() => {
     // 检查是否是Tauri环境
     const isTauri = typeof window !== 'undefined' && window.__tauri__ !== undefined;
-    
+
     if (!isTauri) {
       const handler = (e: any) => {
         e.preventDefault();
@@ -291,13 +293,13 @@ function App() {
         </div>
         <div className="flex items-center gap-3 app-region-no-drag">
           <div className="hidden md:flex gap-1 bg-slate-100/50 p-1 rounded-lg border border-slate-200/50">
-            <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18}/>} label="概览" />
-            <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18}/>} label="副本管理" />
-            <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18}/>} label="账号管理" />
-            <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18}/>} label="配置" />
+            <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18} />} label="概览" />
+            <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18} />} label="副本管理" />
+            <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
+            <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18} />} label="配置" />
           </div>
           {deferredPrompt && (
-            <button 
+            <button
               onClick={handleInstall}
               className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
               title="安装到 Windows"
@@ -345,11 +347,11 @@ function App() {
             )}
             {activeTab === 'raidManager' && (
               selectedRaid ? (
-                <RaidDetail 
+                <RaidDetail
                   key={`raidDetail-${getRaidKey(selectedRaid)}-${contentKey}`}
-                  raid={selectedRaid} 
-                  accounts={accounts} 
-                  records={records} 
+                  raid={selectedRaid}
+                  accounts={accounts}
+                  records={records}
                   onBack={() => setSelectedRaid(null)}
                   setRecords={setRecords}
                 />
@@ -366,14 +368,14 @@ function App() {
 
       {/* Mobile Bottom Nav */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 h-16 flex items-center justify-around z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] pb-safe app-region-no-drag">
-        <MobileNavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={20}/>} label="概览" />
-        <MobileNavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={20}/>} label="副本" />
-        <MobileNavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={20}/>} label="账号" />
+        <MobileNavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={20} />} label="概览" />
+        <MobileNavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={20} />} label="副本" />
+        <MobileNavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={20} />} label="账号" />
       </div>
-      
+
       {/* Debug Console */}
       <DebugConsole />
-      
+
       {/* Toast Container */}
       <ToastContainer />
     </div>
@@ -381,22 +383,20 @@ function App() {
 }
 
 const NavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
-  <button 
+  <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-      active ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/50'
-    }`}
+    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${active ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/50'
+      }`}
   >
     {icon} {label}
   </button>
 );
 
 const MobileNavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
-  <button 
+  <button
     onClick={onClick}
-    className={`flex flex-col items-center justify-center w-full h-full gap-1 ${
-      active ? 'text-indigo-600' : 'text-slate-400'
-    }`}
+    className={`flex flex-col items-center justify-center w-full h-full gap-1 ${active ? 'text-indigo-600' : 'text-slate-400'
+      }`}
   >
     {icon}
     <span className="text-[10px] font-medium">{label}</span>

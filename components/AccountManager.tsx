@@ -6,6 +6,8 @@ import { convertToSystemAccounts } from '../services/directoryParser';
 import { generateUUID } from '../utils/uuid';
 import { scanGameDirectory, ScanProgress } from '../services/gameDirectoryScanner';
 import { toast } from '../utils/toastManager';
+import { AddAccountModal } from './AddAccountModal';
+import { AddRoleModal } from './AddRoleModal';
 
 
 interface AccountManagerProps {
@@ -16,40 +18,26 @@ interface AccountManagerProps {
 
 export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, config }) => {
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
-  
-  const [isAdding, setIsAdding] = useState(false);
+  // Modal State
+  const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
+  const [addingRoleToAccountId, setAddingRoleToAccountId] = useState<string | null>(null);
+
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
-  
+
   const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
   const [isAllSelected, setIsAllSelected] = useState(false);
-  
+
   // 解析相关状态
   const [isScanning, setIsScanning] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
-  
-  // Form State
-  const [newAccount, setNewAccount] = useState<Partial<Account>>({
-    type: AccountType.OWN,
-    roles: []
-  });
-
-  // Role Form State
-  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
-  const [newRole, setNewRole] = useState<Partial<Role>>({
-    name: '',
-    server: '梦江南',
-    region: '电信区',
-    sect: '',
-    equipmentScore: undefined
-  });
 
   // Dialog State
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
   const [confirmDeleteRole, setConfirmDeleteRole] = useState<{ accountId: string; roleId: string } | null>(null);
-  
+
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -58,25 +46,25 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     if (!searchTerm.trim()) {
       return safeAccounts;
     }
-    
+
     const term = searchTerm.toLowerCase().trim();
-    
+
     return safeAccounts.filter(account => {
       // 搜索账号名称
       if (account.accountName.toLowerCase().includes(term)) {
         return true;
       }
-      
+
       // 搜索角色名称
       if (Array.isArray(account.roles)) {
-        return account.roles.some(role => 
+        return account.roles.some(role =>
           role.name.toLowerCase().includes(term) ||
           role.server.toLowerCase().includes(term) ||
           role.region.toLowerCase().includes(term) ||
           (role.sect && role.sect.toLowerCase().includes(term))
         );
       }
-      
+
       return false;
     });
   }, [safeAccounts, searchTerm]);
@@ -91,9 +79,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     successCount: number;
     failureCount: number;
     successDetails: string[];
-    failureDetails: Array<{accountId: string; accountName: string; reason: string}>;
+    failureDetails: Array<{ accountId: string; accountName: string; reason: string }>;
   } | null>(null);
-  
+
   // 打开修改角色信息弹窗
   const [editRoleModal, setEditRoleModal] = useState<{
     open: boolean;
@@ -115,7 +103,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       // 使用Map进行去重，保留第一个出现的账户
       const uniqueAccountsMap = new Map<string, Account>();
       const duplicateAccounts: string[] = [];
-      
+
       for (const account of safeAccounts) {
         if (!uniqueAccountsMap.has(account.id)) {
           uniqueAccountsMap.set(account.id, account);
@@ -124,9 +112,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           console.log(`账户去重：发现重复账号 ${account.accountName} (ID: ${account.id})，保留第一个，删除后续重复项`);
         }
       }
-      
+
       const uniqueAccounts = Array.from(uniqueAccountsMap.values());
-      
+
       // 如果有重复账户被清理，更新账户列表
       if (uniqueAccounts.length !== safeAccounts.length) {
         const removedCount = safeAccounts.length - uniqueAccounts.length;
@@ -171,7 +159,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     if (selectedAccounts.size === 0) return;
     setShowBatchDeleteConfirm(true);
   };
-  
+
   // 批量删除确认 - 执行删除
   const handleBatchDeleteConfirm = () => {
     // 删除选中的账户
@@ -179,17 +167,17 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     // 清空选中状态
     setSelectedAccounts(new Set());
     setIsAllSelected(false);
-    
+
     // 显示成功消息
     toast.success(`成功删除了 ${selectedAccounts.size} 个账号`);
     setShowBatchDeleteConfirm(false);
   };
-  
+
   // 批量删除取消 - 关闭对话框
   const handleBatchDeleteCancel = () => {
     setShowBatchDeleteConfirm(false);
   };
-  
+
   // 打开修改角色信息弹窗
   const handleOpenEditRoleModal = (accountId: string, role: Role) => {
     setEditRoleModal({
@@ -201,23 +189,23 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     });
     setRoleFormErrors({});
   };
-  
+
   // 关闭修改角色信息弹窗
   const handleCloseEditRoleModal = () => {
     setEditRoleModal(null);
     setRoleFormErrors({});
   };
-  
+
   // 验证角色信息表单
   const validateRoleForm = (sect: string, equipmentScore: number | undefined): boolean => {
     const errors: { sect?: string; equipmentScore?: string } = {};
     let isValid = true;
-    
+
     if (!sect.trim()) {
       errors.sect = '请选择门派';
       isValid = false;
     }
-    
+
     if (equipmentScore !== undefined && equipmentScore !== null) {
       if (equipmentScore < 0) {
         errors.equipmentScore = '装分不能为负数';
@@ -228,55 +216,55 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         isValid = false;
       }
     }
-    
+
     setRoleFormErrors(errors);
     return isValid;
   };
-  
+
   // 保存修改后的角色信息
   const handleSaveRoleInfo = () => {
     if (!editRoleModal) return;
-    
+
     const { accountId, roleId, sect, equipmentScore } = editRoleModal;
-    
+
     if (!validateRoleForm(sect, equipmentScore)) {
       return;
     }
-    
+
     setAccounts(prev => prev.map(account => {
       if (account.id !== accountId) return account;
-      
+
       return {
         ...account,
         roles: account.roles.map(role => {
           if (role.id !== roleId) return role;
-          return { 
-            ...role, 
+          return {
+            ...role,
             sect: sect.trim(),
             equipmentScore: equipmentScore !== undefined && equipmentScore !== null ? equipmentScore : undefined
           };
         })
       };
     }));
-    
+
     toast.success('角色信息更新成功');
     handleCloseEditRoleModal();
   };
-  
+
   // 处理装分输入变化
   const handleEquipmentScoreChange = (value: string) => {
     if (!editRoleModal) return;
-    
+
     const numValue = value === '' ? undefined : parseInt(value, 10);
     if (value !== '' && (isNaN(numValue!) || numValue! < 0)) {
       setRoleFormErrors(prev => ({ ...prev, equipmentScore: '请输入有效的非负整数' }));
     } else {
       setRoleFormErrors(prev => ({ ...prev, equipmentScore: undefined }));
     }
-    
+
     setEditRoleModal(prev => prev ? { ...prev, equipmentScore: numValue } : null);
   };
-  
+
   // 使用配置目录解析功能
   const handleUseConfigDirectory = async () => {
     if (!config?.game?.gameDirectory) {
@@ -298,23 +286,23 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       if (result.success && result.accounts.length > 0) {
         const systemAccounts = convertToSystemAccounts(result.accounts);
-        
+
         const filteredAccounts: Account[] = [];
         const duplicateAccounts: Account[] = [];
-        
+
         for (const newAccount of systemAccounts) {
           const existingAccount = safeAccounts.find(acc => acc.accountName === newAccount.accountName);
-          
+
           if (!existingAccount) {
             filteredAccounts.push(newAccount);
           } else {
             duplicateAccounts.push(newAccount);
           }
         }
-        
+
         if (filteredAccounts.length > 0) {
           setAccounts(prev => [...prev, ...filteredAccounts]);
-          
+
           toast.success(`成功从配置目录解析到 ${filteredAccounts.length} 个账号，共 ${filteredAccounts.reduce((total, acc) => total + acc.roles.length, 0)} 个角色`);
         } else {
           toast.info('解析完成，但所有账号都已存在。');
@@ -331,39 +319,62 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAccount.accountName) return;
-
-    // 检查是否已存在相同名称的账号
-    const existingAccount = safeAccounts.find(acc => acc.accountName === newAccount.accountName);
-    if (existingAccount) {
-      // 显示错误消息
-      toast.error('已存在相同名称的账号，请使用其他名称。');
-      return;
-    }
-
+  const handleAddAccountSubmit = (data: { accountName: string; type: AccountType; password?: string; notes?: string }) => {
     const account: Account = {
       id: generateUUID(),
-      accountName: newAccount.accountName,
-      type: newAccount.type as AccountType,
-      username: newAccount.accountName, // 自动将登录账号设置为账户名称
-      password: newAccount.password || '',
-      notes: newAccount.notes || '',
+      accountName: data.accountName,
+      type: data.type,
+      username: data.accountName,
+      password: data.password || '',
+      notes: data.notes || '',
       roles: []
     };
 
     setAccounts(prev => [...prev, account]);
-    setIsAdding(false);
-    setNewAccount({ type: AccountType.OWN, accountName: '', username: '', password: '', notes: '' });
     toast.success('成功添加账号');
+  };
+
+  const handleAddRoleSubmit = (data: {
+    name: string;
+    server: string;
+    region: string;
+    sect: string;
+    equipmentScore?: number;
+    isClient: boolean;
+  }) => {
+    if (!addingRoleToAccountId) return;
+
+    const targetAccount = safeAccounts.find(a => a.id === addingRoleToAccountId);
+    if (!targetAccount) return;
+
+    const role: Role = {
+      id: generateUUID(),
+      name: data.name,
+      server: data.server,
+      region: data.region,
+      sect: data.sect,
+      isClient: data.isClient,
+      equipmentScore: data.equipmentScore
+    };
+
+    setAccounts(prev => prev.map(account => {
+      if (account.id === addingRoleToAccountId) {
+        return {
+          ...account,
+          roles: [...account.roles, role]
+        };
+      }
+      return account;
+    }));
+
+    toast.success('成功添加角色');
   };
 
   // 显示删除账号确认对话框
   const handleDeleteAccountClick = (id: string) => {
     setConfirmDeleteAccountId(id);
   };
-  
+
   // 执行删除账号
   const handleDeleteAccountConfirm = () => {
     if (confirmDeleteAccountId) {
@@ -372,7 +383,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       toast.success('成功删除账号');
     }
   };
-  
+
   // 取消删除账号
   const handleDeleteAccountCancel = () => {
     setConfirmDeleteAccountId(null);
@@ -397,41 +408,11 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       });
   };
 
-  const addRole = (accountId: string) => {
-    if (!newRole.name || !newRole.server || !newRole.region) return;
-
-    const targetAccount = safeAccounts.find(a => a.id === accountId);
-    if (!targetAccount) return;
-
-    const role: Role = {
-      id: generateUUID(),
-      name: newRole.name,
-      server: newRole.server,
-      region: newRole.region,
-      sect: newRole.sect || '',
-      isClient: targetAccount.type === AccountType.CLIENT,
-      equipmentScore: newRole.equipmentScore
-    };
-
-    setAccounts(prev => prev.map(account => {
-      if (account.id === accountId) {
-        return {
-          ...account,
-          roles: [...account.roles, role]
-        };
-      }
-      return account;
-    }));
-
-    setEditingAccountId(null);
-    setNewRole({ name: '', server: '梦江南', region: '电信区', sect: '', equipmentScore: undefined });
-  };
-
   // 显示删除角色确认对话框
   const handleDeleteRoleClick = (accountId: string, roleId: string) => {
     setConfirmDeleteRole({ accountId, roleId });
   };
-  
+
   // 执行删除角色
   const handleDeleteRoleConfirm = () => {
     if (confirmDeleteRole) {
@@ -448,7 +429,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       toast.success('成功删除角色');
     }
   };
-  
+
   // 取消删除角色
   const handleDeleteRoleCancel = () => {
     setConfirmDeleteRole(null);
@@ -479,7 +460,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 </button>
               )}
             </div>
-            
+
             {/* 搜索结果提示 */}
             {searchTerm && (
               <span className="text-sm text-slate-500">
@@ -489,7 +470,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
             {/* 使用配置目录解析按钮 */}
             {config?.game?.gameDirectory && (
-              <button 
+              <button
                 onClick={handleUseConfigDirectory}
                 className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
                 disabled={isScanning}
@@ -507,8 +488,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 )}
               </button>
             )}
-            <button 
-              onClick={() => setIsAdding(!isAdding)}
+            <button
+              onClick={() => setIsAddAccountModalOpen(true)}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
             >
               <Plus className="w-4 h-4" /> 新增账号
@@ -551,13 +532,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               </div>
             </div>
             <div className="flex justify-end gap-2">
-              <button 
+              <button
                 onClick={handleUseConfigDirectory}
                 className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
               >
                 <Loader2 className="w-3 h-3" /> 重试解析
               </button>
-              <button 
+              <button
                 onClick={() => setParseError(null)}
                 className="text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg transition-colors"
               >
@@ -576,7 +557,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             <div className="flex-1">
               <p className="font-medium text-blue-800">{scanProgress.message}</p>
               <div className="mt-2 bg-blue-100 rounded-full h-2 overflow-hidden">
-                <div 
+                <div
                   className="bg-blue-600 h-full transition-all duration-300"
                   style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
                 />
@@ -589,55 +570,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         </div>
       )}
 
-      {isAdding && (
-        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">账号名称 *</label>
-            <input 
-              required
-              className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-              value={newAccount.accountName}
-              onChange={e => setNewAccount({...newAccount, accountName: e.target.value})}
-              placeholder="例如：ybb18829283218"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">账号类型</label>
-            <select 
-              className="w-full p-2 border border-slate-300 rounded-lg"
-              value={newAccount.type}
-              onChange={e => setNewAccount({...newAccount, type: e.target.value as AccountType})}
-            >
-              <option value={AccountType.OWN}>本人账号</option>
-              <option value={AccountType.CLIENT}>代清/老板账号</option>
-            </select>
-          </div>
-          
-          <div className="md:col-span-2 border-t pt-4 mt-2">
-            <p className="text-xs text-slate-500 mb-2 font-medium">登录信息 (本地存储，仅用于记录)</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 登录账号自动设为账户名称，无需手动输入 */}
-              <div className="flex items-center justify-between col-span-2">
-                <label className="text-sm font-medium text-slate-600">登录账号</label>
-                <span className="text-sm text-slate-800 font-medium">{newAccount.accountName || '请先输入账户名称'}</span>
-              </div>
-              <input 
-                placeholder="游戏密码"
-                type="text" 
-                className="w-full p-2 border border-slate-300 rounded-lg"
-                value={newAccount.password}
-                onChange={e => setNewAccount({...newAccount, password: e.target.value})}
-              />
-            </div>
-          </div>
-          
-          <div className="md:col-span-2 flex justify-end gap-2 mt-4">
-            <button type="button" onClick={() => setIsAdding(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
-            <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">保存</button>
-          </div>
-        </form>
-      )}
-      
+
+
       {/* 无搜索结果提示 */}
       {searchTerm && filteredAccounts.length === 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
@@ -654,7 +588,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           </button>
         </div>
       )}
-      
+
       <div className="space-y-6">
         {filteredAccounts.map(account => (
           <div key={account.id} className={`bg-white p-5 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow ${selectedAccounts.has(account.id) ? 'ring-2 ring-emerald-500' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
@@ -677,13 +611,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               </div>
               <div className="flex gap-2">
                 {/* 代清状态切换按钮 */}
-                <button 
+                <button
                   onClick={() => {
                     setAccounts(prev => prev.map(a => {
                       if (a.id === account.id) {
-                        return { 
-                          ...a, 
-                          type: a.type === AccountType.CLIENT ? AccountType.OWN : AccountType.CLIENT 
+                        return {
+                          ...a,
+                          type: a.type === AccountType.CLIENT ? AccountType.OWN : AccountType.CLIENT
                         };
                       }
                       return a;
@@ -695,7 +629,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   {account.type === AccountType.CLIENT ? <CheckCircle2 size={16} className="text-green-600" /> : <UserCheck size={16} />}
                 </button>
                 {/* 禁用/启用切换按钮 */}
-                <button 
+                <button
                   onClick={() => {
                     setAccounts(prev => prev.map(a => {
                       if (a.id === account.id) {
@@ -714,14 +648,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 </button>
               </div>
             </div>
-            
+
             {/* 账号信息编辑区域 */}
             <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 mb-4">
               <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
                 <User className="w-4 h-4" />
                 账号信息
               </h4>
-              
+
               <div className="space-y-4">
                 {/* 登录账号 - 自动从账户名称获取，不可编辑 */}
                 <div className="flex items-center gap-3">
@@ -732,7 +666,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     {account.username || account.accountName}
                   </div>
                 </div>
-                
+
                 {/* 密码 */}
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-semibold text-slate-700 w-24 flex-shrink-0">
@@ -750,24 +684,24 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           return a;
                         }));
                       }}
-                        className="flex-1 px-4 py-3 border-2 border-slate-300 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all placeholder:text-slate-400"
+                      className="flex-1 px-4 py-3 border-2 border-slate-300 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all placeholder:text-slate-400"
                       placeholder="输入游戏密码"
                     />
                     <div className="flex gap-1.5">
-                      <button 
+                      <button
                         onClick={() => togglePasswordVisibility(account.id)}
                         className="p-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-indigo-600 transition-colors"
                         title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
                       >
-                        {visiblePasswords.has(account.id) ? <EyeOff size={18}/> : <Eye size={18}/>}
+                        {visiblePasswords.has(account.id) ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                       {account.password && (
-                        <button 
+                        <button
                           onClick={() => copyPassword(account.password, account.id)}
                           className={`p-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-emerald-600 transition-colors ${copySuccess === account.id ? 'bg-green-100 text-green-700' : ''}`}
                           title="复制密码"
                         >
-                          {copySuccess === account.id ? <Check size={18}/> : <Clipboard size={18}/>}
+                          {copySuccess === account.id ? <Check size={18} /> : <Clipboard size={18} />}
                         </button>
                       )}
                     </div>
@@ -783,104 +717,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   <User className="w-4 h-4" />
                   角色列表
                 </h4>
-                <button 
-                  onClick={() => setEditingAccountId(editingAccountId === account.id ? null : account.id)}
+                <button
+                  onClick={() => setAddingRoleToAccountId(account.id)}
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg transition-colors shadow-sm hover:shadow-md"
                 >
                   <Plus className="w-4 h-4" />
                   添加角色
                 </button>
               </div>
-
-              {editingAccountId === account.id && (
-                <div className="bg-emerald-50 p-4 rounded-lg space-y-4 mb-4">
-                  <h5 className="font-medium text-emerald-700">添加新角色</h5>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">角色名 *</label>
-                      <input 
-                        required
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-                        value={newRole.name}
-                        onChange={e => setNewRole({...newRole, name: e.target.value})}
-                        placeholder="输入角色名称"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">大区 *</label>
-                      <input 
-                        required
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-                        value={newRole.region}
-                        onChange={e => setNewRole({...newRole, region: e.target.value})}
-                        placeholder="例如：电信区"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">服务器 *</label>
-                      <input 
-                        required
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                        value={newRole.server}
-                        onChange={e => setNewRole({...newRole, server: e.target.value})}
-                        placeholder="例如：梦江南"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">门派</label>
-                      <select 
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                        value={newRole.sect}
-                        onChange={e => setNewRole({...newRole, sect: e.target.value})}
-                      >
-                        <option value="">请选择门派</option>
-                        {SECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">装分</label>
-                      <input 
-                        type="number"
-                        min="0"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                        value={newRole.equipmentScore === undefined ? '' : newRole.equipmentScore}
-                        onChange={e => {
-                          const value = e.target.value;
-                          setNewRole({...newRole, equipmentScore: value === '' ? undefined : parseInt(value, 10)});
-                        }}
-                        placeholder="请输入装备分数"
-                      />
-                    </div>
-                    <div className="flex items-center">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <input 
-                          type="checkbox"
-                          checked={account.type === AccountType.CLIENT}
-                          onChange={e => setNewRole({...newRole, isClient: e.target.checked})}
-                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                        />
-                        <span className="text-sm text-slate-700">代清角色</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-3 pt-2 border-t border-in-igo100">
-                    <button 
-                      type="button" 
-                      onClick={() => setEditingAccountId(null)}
-                      className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                    >
-                      取消
-                    </button>
-                    <button 
-                        type="button" 
-                        onClick={() => addRole(account.id)}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
-                      >
-                        保存
-                      </button>
-                  </div>
-                </div>
-              )}
 
               <div className="space-y-2">
                 {!Array.isArray(account.roles) || account.roles.length === 0 ? (
@@ -916,14 +760,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                             </div>
                           </div>
                           <div className="flex gap-1">
-                            <button 
+                            <button
                               onClick={() => handleOpenEditRoleModal(account.id, role)}
                               className="text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50"
                               title="修改角色信息"
                             >
                               <Settings size={14} />
                             </button>
-                            <button 
+                            <button
                               onClick={() => {
                                 setAccounts(prev => prev.map(a => {
                                   if (a.id === account.id) {
@@ -945,7 +789,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                             >
                               {role.disabled ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleDeleteRoleClick(account.id, role.id)}
                               className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-full hover:bg-red-50"
                               title="删除角色"
@@ -961,257 +805,287 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               </div>
             </div>
 
-            {account.type === AccountType.CLIENT && (
-              <div className="absolute top-2 right-10">
-                 <span className="text-[10px] font-bold uppercase tracking-wider text-green-600 bg-green-50 px-2 py-1 rounded-full border border-green-100">代清</span>
-              </div>
-            )}
+            {
+              account.type === AccountType.CLIENT && (
+                <div className="absolute top-2 right-10">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-green-600 bg-green-50 px-2 py-1 rounded-full border border-green-100">代清</span>
+                </div>
+              )
+            }
           </div>
         ))}
       </div>
-    
-    {/* Batch Delete Confirmation Dialog */}
-    {showBatchDeleteConfirm && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
-          <p className="text-slate-600 mb-6">确认删除选中的 {selectedAccounts.size} 个账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={handleBatchDeleteCancel}
-              className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleBatchDeleteConfirm}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-            >
-              确定
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
-    
 
-    
-    {/* Single Account Delete Confirmation Dialog */}
-    {confirmDeleteAccountId && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
-          <p className="text-slate-600 mb-6">确认删除此账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={handleDeleteAccountCancel}
-              className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleDeleteAccountConfirm}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-            >
-              确定
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
-    
-    {/* Single Role Delete Confirmation Dialog */}
-    {confirmDeleteRole && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
-          <p className="text-slate-600 mb-6">确认删除此角色？</p>
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={handleDeleteRoleCancel}
-              className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleDeleteRoleConfirm}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-            >
-              确定
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
-    
-    {/* Edit Role Info Modal */}
-    {editRoleModal && editRoleModal.open && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-xl shadow-lg max-w-md w-full mx-4">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">修改角色信息</h3>
-          
-          <div className="space-y-4">
-            {/* 门派选择 */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                门派 <span className="text-red-500">*</span>
-              </label>
-              <select
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all ${
-                  roleFormErrors.sect ? 'border-red-300 bg-red-50' : 'border-slate-300'
-                }`}
-                value={editRoleModal.sect}
-                onChange={(e) => {
-                  setEditRoleModal(prev => prev ? { ...prev, sect: e.target.value } : null);
-                  if (e.target.value.trim()) {
-                    setRoleFormErrors(prev => ({ ...prev, sect: undefined }));
-                  }
-                }}
-              >
-                <option value="">请选择门派</option>
-                {SECTS.map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              {roleFormErrors.sect && (
-                <p className="text-xs text-red-500 mt-1">{roleFormErrors.sect}</p>
-              )}
-            </div>
-            
-            {/* 装分输入 */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                装分
-              </label>
-              <input
-                type="number"
-                min="0"
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all ${
-                  roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-slate-300'
-                }`}
-                value={editRoleModal.equipmentScore === undefined ? '' : editRoleModal.equipmentScore}
-                onChange={(e) => handleEquipmentScoreChange(e.target.value)}
-                placeholder="请输入装备分数"
-              />
-              {roleFormErrors.equipmentScore ? (
-                <p className="text-xs text-red-500 mt-1">{roleFormErrors.equipmentScore}</p>
-              ) : (
-                <p className="text-xs text-slate-500 mt-1">留空表示不设置装分</p>
-              )}
-            </div>
-          </div>
-          
-          <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">
-            <button
-              onClick={handleCloseEditRoleModal}
-              className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSaveRoleInfo}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-            >
-              保存
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
-    
-    {/* Operation Result Dialog */}
-    {operationResult && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto">
-        <div className="bg-white p-6 rounded-xl shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">操作结果详情</h3>
-          
-          <div className="space-y-4">
-            {/* 统计信息 */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-green-700 mb-1">成功数量</h4>
-                <p className="text-2xl font-bold text-green-600">{operationResult.successCount}</p>
-              </div>
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-red-700 mb-1">失败数量</h4>
-                <p className="text-2xl font-bold text-red-600">{operationResult.failureCount}</p>
-              </div>
-            </div>
-            
-            {/* 成功详情 */}
-            {operationResult.successCount > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-slate-700 mb-2">成功列表</h4>
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-60 overflow-y-auto">
-                  <ul className="space-y-1">
-                    {operationResult.successDetails.map((detail, index) => (
-                      <li key={index} className="flex items-center gap-2 text-sm text-green-600">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>{detail}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            )}
-            
-            {/* 失败详情 */}
-            {operationResult.failureCount > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-slate-700 mb-2">失败列表</h4>
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-60 overflow-y-auto">
-                  <ul className="space-y-2">
-                    {operationResult.failureDetails.map((detail, index) => (
-                      <li key={index} className="text-sm">
-                        <div className="flex items-start gap-2 text-red-600">
-                          <XCircle className="w-4 h-4 mt-0.5" />
-                          <div>
-                            <div className="font-medium">{detail.accountName}</div>
-                            <div className="text-xs text-red-500">{detail.reason}</div>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            )}
-            
-            {/* 操作按钮 */}
-            <div className="flex justify-end gap-3 pt-2 border-t border-slate-200">
-              {operationResult.failureCount > 0 && (
+      {/* Batch Delete Confirmation Dialog */}
+      {
+        showBatchDeleteConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
+              <p className="text-slate-600 mb-6">确认删除选中的 {selectedAccounts.size} 个账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
+              <div className="flex justify-end gap-3">
                 <button
-                  onClick={() => {
-                    // 导出失败记录为CSV
-                    const csvContent = [
-                      ['账号ID', '账号名称', '失败原因'],
-                      ...operationResult.failureDetails.map(detail => [detail.accountId, detail.accountName, detail.reason])
-                    ]
-                    .map(row => row.join(','))
-                    .join('\n');
-                    
-                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = `operation_failures_${new Date().toISOString().slice(0, 10)}.csv`;
-                    link.click();
-                  }}
-                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
+                  onClick={handleBatchDeleteCancel}
+                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
                 >
-                  导出失败记录
+                  取消
                 </button>
-              )}
-              <button
-                onClick={() => setOperationResult(null)}
-                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-              >
-                关闭
-              </button>
+                <button
+                  onClick={handleBatchDeleteConfirm}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  确定
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    )}
-  </div>
-);
+        )
+      }
+
+
+
+      {/* Single Account Delete Confirmation Dialog */}
+      {
+        confirmDeleteAccountId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
+              <p className="text-slate-600 mb-6">确认删除此账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={handleDeleteAccountCancel}
+                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleDeleteAccountConfirm}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  确定
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Single Role Delete Confirmation Dialog */}
+      {
+        confirmDeleteRole && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
+              <p className="text-slate-600 mb-6">确认删除此角色？</p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={handleDeleteRoleCancel}
+                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleDeleteRoleConfirm}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  确定
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Edit Role Info Modal */}
+      {
+        editRoleModal && editRoleModal.open && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl shadow-lg max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">修改角色信息</h3>
+
+              <div className="space-y-4">
+                {/* 门派选择 */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    门派 <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all ${roleFormErrors.sect ? 'border-red-300 bg-red-50' : 'border-slate-300'
+                      }`}
+                    value={editRoleModal.sect}
+                    onChange={(e) => {
+                      setEditRoleModal(prev => prev ? { ...prev, sect: e.target.value } : null);
+                      if (e.target.value.trim()) {
+                        setRoleFormErrors(prev => ({ ...prev, sect: undefined }));
+                      }
+                    }}
+                  >
+                    <option value="">请选择门派</option>
+                    {SECTS.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  {roleFormErrors.sect && (
+                    <p className="text-xs text-red-500 mt-1">{roleFormErrors.sect}</p>
+                  )}
+                </div>
+
+                {/* 装分输入 */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    装分
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all ${roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-slate-300'
+                      }`}
+                    value={editRoleModal.equipmentScore === undefined ? '' : editRoleModal.equipmentScore}
+                    onChange={(e) => handleEquipmentScoreChange(e.target.value)}
+                    placeholder="请输入装备分数"
+                  />
+                  {roleFormErrors.equipmentScore ? (
+                    <p className="text-xs text-red-500 mt-1">{roleFormErrors.equipmentScore}</p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-1">留空表示不设置装分</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">
+                <button
+                  onClick={handleCloseEditRoleModal}
+                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveRoleInfo}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Operation Result Dialog */}
+      {
+        operationResult && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto">
+            <div className="bg-white p-6 rounded-xl shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">操作结果详情</h3>
+
+              <div className="space-y-4">
+                {/* 统计信息 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <h4 className="text-sm font-medium text-green-700 mb-1">成功数量</h4>
+                    <p className="text-2xl font-bold text-green-600">{operationResult.successCount}</p>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <h4 className="text-sm font-medium text-red-700 mb-1">失败数量</h4>
+                    <p className="text-2xl font-bold text-red-600">{operationResult.failureCount}</p>
+                  </div>
+                </div>
+
+                {/* 成功详情 */}
+                {operationResult.successCount > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-slate-700 mb-2">成功列表</h4>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-60 overflow-y-auto">
+                      <ul className="space-y-1">
+                        {operationResult.successDetails.map((detail, index) => (
+                          <li key={index} className="flex items-center gap-2 text-sm text-green-600">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>{detail}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* 失败详情 */}
+                {operationResult.failureCount > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-slate-700 mb-2">失败列表</h4>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-60 overflow-y-auto">
+                      <ul className="space-y-2">
+                        {operationResult.failureDetails.map((detail, index) => (
+                          <li key={index} className="text-sm">
+                            <div className="flex items-start gap-2 text-red-600">
+                              <XCircle className="w-4 h-4 mt-0.5" />
+                              <div>
+                                <div className="font-medium">{detail.accountName}</div>
+                                <div className="text-xs text-red-500">{detail.reason}</div>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* 操作按钮 */}
+                <div className="flex justify-end gap-3 pt-2 border-t border-slate-200">
+                  {operationResult.failureCount > 0 && (
+                    <button
+                      onClick={() => {
+                        // 导出失败记录为CSV
+                        const csvContent = [
+                          ['账号ID', '账号名称', '失败原因'],
+                          ...operationResult.failureDetails.map(detail => [detail.accountId, detail.accountName, detail.reason])
+                        ]
+                          .map(row => row.join(','))
+                          .join('\n');
+
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = `operation_failures_${new Date().toISOString().slice(0, 10)}.csv`;
+                        link.click();
+                      }}
+                      className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
+                    >
+                      导出失败记录
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setOperationResult(null)}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Add Account Modal */}
+      < AddAccountModal
+        isOpen={isAddAccountModalOpen}
+        onClose={() => setIsAddAccountModalOpen(false)}
+        onSubmit={handleAddAccountSubmit}
+        existingAccountNames={safeAccounts.map(a => a.accountName)}
+      />
+
+      {/* Add Role Modal */}
+      < AddRoleModal
+        isOpen={!!addingRoleToAccountId}
+        onClose={() => setAddingRoleToAccountId(null)}
+        onSubmit={handleAddRoleSubmit}
+        accountTypeIsClient={
+          addingRoleToAccountId
+            ? safeAccounts.find(a => a.id === addingRoleToAccountId)?.type === AccountType.CLIENT
+            : false
+        }
+      />
+    </div >
+  );
 };
