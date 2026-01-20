@@ -22,6 +22,7 @@ interface RoleWithStatus {
   server: string;
   region: string;
   sect: string;
+  equipmentScore?: number;
   accountId: string;
   accountName: string;
   password?: string;
@@ -323,6 +324,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           server: role.server,
           region: role.region,
           sect: role.sect,
+          equipmentScore: role.equipmentScore,
           accountId: account.id,
           accountName: account.accountName,
           password: account.password,
@@ -467,13 +469,18 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                       <div className="font-semibold text-slate-800 truncate flex items-center gap-2 flex-wrap">
                         <span className="truncate">{role.name}</span>
                         {role.sect && role.sect !== '未知' && (
-                          <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                          <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${
                             isAtLimit
                               ? 'bg-slate-200 text-slate-600'
                               : role.canRun
                                 ? 'bg-emerald-100 text-emerald-700'
                                 : 'bg-amber-100 text-amber-700'
                           }`}>{role.sect}</span>
+                        )}
+                        {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
+                            {role.equipmentScore.toLocaleString()}
+                          </span>
                         )}
                       </div>
                     </div>
