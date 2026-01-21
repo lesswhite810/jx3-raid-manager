@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Users, Download, Shield, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, Download, Shield, Settings, Sun, Moon } from 'lucide-react';
+import { useTheme } from './contexts/ThemeContext';
 import { Dashboard } from './components/Dashboard';
 import { IncomeDetail } from './components/IncomeDetail';
 import { AccountManager } from './components/AccountManager';
@@ -34,6 +35,8 @@ function App() {
   const [contentKey, setContentKey] = useState(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const previousTabRef = useRef<string>('dashboard');
+
+  const { theme, toggleTheme } = useTheme();
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<RaidRecord[]>([]);
@@ -281,15 +284,17 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20 md:pb-0">
+    <div className="min-h-screen bg-base text-main pb-20 md:pb-0 transition-colors duration-200">
       {/* Sidebar / Topbar */}
       {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 px-4 md:px-8 h-16 flex items-center justify-between shadow-sm app-region-drag select-none">
+      {/* Sidebar / Topbar */}
+      {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
+      <nav className="bg-surface border-b border-base sticky top-0 z-50 px-4 md:px-8 h-16 flex items-center justify-between shadow-sm app-region-drag select-none transition-colors duration-200">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-indigo-200 shadow-lg">
             剑
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-800">副本管家 <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">JX3</span></h1>
+          <h1 className="text-xl font-bold tracking-tight text-main">副本管家 <span className="text-xs font-normal text-muted bg-base px-2 py-0.5 rounded-full border border-base">JX3</span></h1>
         </div>
         <div className="flex items-center gap-3 app-region-no-drag">
           <div className="hidden md:flex gap-1 bg-slate-100/50 p-1 rounded-lg border border-slate-200/50">
@@ -298,10 +303,17 @@ function App() {
             <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
             <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18} />} label="配置" />
           </div>
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg text-muted hover:text-main hover:bg-base transition-colors app-region-no-drag"
+            title={theme === 'dark' ? '切换到亮色模式' : '切换到深色模式'}
+          >
+            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
           {deferredPrompt && (
             <button
               onClick={handleInstall}
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+              className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-text text-sm rounded-lg hover:bg-primary-hover transition-colors shadow-sm"
               title="安装到 Windows"
             >
               <Download size={16} />
@@ -367,7 +379,8 @@ function App() {
       </main>
 
       {/* Mobile Bottom Nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 h-16 flex items-center justify-around z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] pb-safe app-region-no-drag">
+      {/* Mobile Bottom Nav */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-surface border-t border-base h-16 flex items-center justify-around z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] pb-safe app-region-no-drag">
         <MobileNavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={20} />} label="概览" />
         <MobileNavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={20} />} label="副本" />
         <MobileNavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={20} />} label="账号" />
@@ -385,7 +398,7 @@ function App() {
 const NavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${active ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/50'
+    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${active ? 'bg-base text-primary shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-muted hover:text-main hover:bg-base'
       }`}
   >
     {icon} {label}

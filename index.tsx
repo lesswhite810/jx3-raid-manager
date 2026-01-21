@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ThemeProvider } from './contexts/ThemeContext';
 import './index.css';
 
 // 添加全局错误捕获
@@ -25,7 +26,9 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );

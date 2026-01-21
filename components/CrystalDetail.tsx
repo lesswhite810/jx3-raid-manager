@@ -18,7 +18,7 @@ interface CrystalRoleStats {
 
 export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts, onBack }) => {
   console.log('[CrystalDetail] Component rendered with records:', records?.length, 'accounts:', accounts?.length);
-  
+
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
 
   const safeRecords = Array.isArray(records) ? records : [];
@@ -26,7 +26,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
 
   const findRoleInfo = (accountId: string, roleId: string): { roleName: string; server: string } => {
     console.log('[CrystalDetail] findRoleInfo called with accountId:', accountId, 'roleId:', roleId);
-    
+
     for (const account of safeAccounts) {
       if (account.id === accountId) {
         const roles = account.roles || [];
@@ -57,7 +57,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     crystalRecords.forEach(record => {
       const roleId = record.roleId || record.accountId;
       console.log('[CrystalDetail] Processing record:', record.id, 'roleId:', roleId, 'accountId:', record.accountId);
-      
+
       if (!roleMap.has(roleId)) {
         const roleInfo = findRoleInfo(record.accountId, record.roleId);
         console.log('[CrystalDetail] roleInfo for record:', roleInfo);
@@ -98,47 +98,47 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
       <div className="flex items-center gap-4">
         <button
           onClick={onBack}
-          className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+          className="p-2 hover:bg-base rounded-lg transition-colors"
         >
-          <ArrowLeft className="w-5 h-5 text-slate-600" />
+          <ArrowLeft className="w-5 h-5 text-muted" />
         </button>
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">玄晶记录</h2>
-          <p className="text-sm text-slate-500 mt-1">
+          <h2 className="text-2xl font-bold text-main">玄晶记录</h2>
+          <p className="text-sm text-muted mt-1">
             共获取 {totalCrystals} 次玄晶，来自 {totalRoles} 个角色
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-slate-100 rounded-lg">
-              <Trophy className="w-5 h-5 text-slate-600" />
+            <div className="p-2 bg-base rounded-lg">
+              <Trophy className="w-5 h-5 text-muted" />
             </div>
-            <span className="text-slate-600 font-medium">总获取次数</span>
+            <span className="text-muted font-medium">总获取次数</span>
           </div>
-          <p className="text-3xl font-bold text-slate-800">{totalCrystals}</p>
+          <p className="text-3xl font-bold text-main">{totalCrystals}</p>
         </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-slate-100 rounded-lg">
-              <Users className="w-5 h-5 text-slate-600" />
+            <div className="p-2 bg-base rounded-lg">
+              <Users className="w-5 h-5 text-muted" />
             </div>
-            <span className="text-slate-600 font-medium">涉及角色</span>
+            <span className="text-muted font-medium">涉及角色</span>
           </div>
-          <p className="text-3xl font-bold text-slate-800">{totalRoles}</p>
+          <p className="text-3xl font-bold text-main">{totalRoles}</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+      <div className="bg-surface rounded-xl shadow-sm border border-base">
         {roleStats.length === 0 ? (
           <div className="text-center py-12">
-            <Trophy className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500">暂无玄晶记录</p>
-            <p className="text-sm text-slate-400 mt-1">通关有玄晶奖励的副本后会自动记录</p>
+            <Trophy className="w-12 h-12 text-muted/30 mx-auto mb-3" />
+            <p className="text-muted">暂无玄晶记录</p>
+            <p className="text-sm text-muted/70 mt-1">通关有玄晶奖励的副本后会自动记录</p>
             {safeRecords.length > 0 && (
-              <p className="text-xs text-slate-300 mt-2">共有 {safeRecords.length} 条记录，其中 {crystalRecords.length} 条有玄晶标记</p>
+              <p className="text-xs text-muted/50 mt-2">共有 {safeRecords.length} 条记录，其中 {crystalRecords.length} 条有玄晶标记</p>
             )}
           </div>
         ) : (
@@ -146,29 +146,29 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
             {roleStats.map((stat, index) => {
               console.log('[CrystalDetail] Rendering role stat:', stat.roleName, 'count:', stat.totalCount, 'records:', stat.records.length);
               return (
-                <div key={stat.roleId} className="border-b last:border-b-0">
+                <div key={stat.roleId} className="border-b border-base last:border-b-0">
                   <button
                     onClick={() => toggleExpand(stat.roleId)}
-                    className="w-full flex items-center gap-4 p-4 hover:bg-slate-50 transition-colors text-left"
+                    className="w-full flex items-center gap-4 p-4 hover:bg-base/50 transition-colors text-left"
                   >
-                    <div className="flex items-center justify-center w-8 h-8 bg-slate-100 rounded-lg font-bold text-sm text-slate-700">
+                    <div className="flex items-center justify-center w-8 h-8 bg-base rounded-lg font-bold text-sm text-main">
                       {index + 1}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h4 className="font-semibold text-slate-800 truncate">{stat.roleName}</h4>
+                        <h4 className="font-semibold text-main truncate">{stat.roleName}</h4>
                         {index === 0 && stat.totalCount > 0 && (
-                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-xs rounded-full">榜首</span>
+                          <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full">榜首</span>
                         )}
                       </div>
-                      <p className="text-sm text-slate-500 truncate">{stat.server}</p>
+                      <p className="text-sm text-muted truncate">{stat.server}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Trophy className="w-4 h-4 text-slate-500" />
-                      <span className="text-xl font-bold text-slate-800">{stat.totalCount}</span>
-                      <span className="text-sm text-slate-400">次</span>
+                      <Trophy className="w-4 h-4 text-muted" />
+                      <span className="text-xl font-bold text-main">{stat.totalCount}</span>
+                      <span className="text-sm text-muted">次</span>
                       <svg
-                        className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${expandedRoleId === stat.roleId ? 'rotate-180' : ''}`}
+                        className={`w-4 h-4 text-muted transition-transform duration-200 ${expandedRoleId === stat.roleId ? 'rotate-180' : ''}`}
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -177,13 +177,13 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                       </svg>
                     </div>
                   </button>
-                  
+
                   {expandedRoleId === stat.roleId && (
-                    <div className="bg-white p-4 border-t border-slate-200">
+                    <div className="bg-surface p-4 border-t border-base">
                       <div className="space-y-3">
                         {stat.records.map((record, recordIndex) => (
-                          <div key={`${record.id || record.date}-${recordIndex}`} className="flex items-center gap-4 p-3 border border-slate-200 rounded-lg">
-                            <div className="flex-shrink-0 text-sm text-slate-500">
+                          <div key={`${record.id || record.date}-${recordIndex}`} className="flex items-center gap-4 p-3 border border-base rounded-lg">
+                            <div className="flex-shrink-0 text-sm text-muted">
                               {new Date(record.date).toLocaleString('zh-CN', {
                                 year: 'numeric',
                                 month: '2-digit',
@@ -193,10 +193,10 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                               })}
                             </div>
                             <div className="flex-1">
-                              <p className="font-medium text-slate-800">{record.raidName}</p>
-                              <p className="text-xs text-slate-500">{record.notes || ''}</p>
+                              <p className="font-medium text-main">{record.raidName}</p>
+                              <p className="text-xs text-muted">{record.notes || ''}</p>
                             </div>
-                            <div className="flex-shrink-0 bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs">
+                            <div className="flex-shrink-0 bg-base text-muted px-2 py-0.5 rounded text-xs">
                               {record.hasXuanjing ? '玄晶' : '普通'}
                             </div>
                           </div>

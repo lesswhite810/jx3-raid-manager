@@ -99,7 +99,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
       .filter(r => clientAccountIds.includes(r.accountId))
       .reduce((acc, r) => acc + (r.goldExpense || 0), 0);
 
-    return { 
+    return {
       totalIncome,
       totalExpense,
       netIncome,
@@ -114,13 +114,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
     const date = new Date(dateString);
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();
-    
+
     if (isToday) {
       return `今天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
     }
-    
-    return date.toLocaleDateString('zh-CN', { 
-      month: 'numeric', 
+
+    return date.toLocaleDateString('zh-CN', {
+      month: 'numeric',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -139,135 +139,129 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
       <div className="flex items-center gap-4">
         <button
           onClick={onBack}
-          className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+          className="p-2 hover:bg-base rounded-lg transition-colors"
         >
-          <ArrowLeft className="w-5 h-5 text-slate-600" />
+          <ArrowLeft className="w-5 h-5 text-muted" />
         </button>
-        <h2 className="text-2xl font-bold text-slate-800">收支明细</h2>
+        <h2 className="text-2xl font-bold text-main">收支明细</h2>
       </div>
 
-      <div className="flex items-center gap-2 bg-white rounded-lg p-1 shadow-sm border border-slate-200 w-fit">
+      <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base w-fit">
         <button
           onClick={() => setPeriod('week')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-            period === 'week'
-              ? 'bg-slate-800 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'week'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
+            }`}
         >
           本周
         </button>
         <button
           onClick={() => setPeriod('month')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-            period === 'month'
-              ? 'bg-slate-800 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'month'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
+            }`}
         >
           本月
         </button>
         <button
           onClick={() => setPeriod('all')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-            period === 'all'
-              ? 'bg-slate-800 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'all'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
+            }`}
         >
           全部
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-slate-100 rounded-lg">
-              <ArrowUpCircle className="w-6 h-6 text-slate-600" />
+            <div className="p-2 bg-base rounded-lg">
+              <ArrowUpCircle className="w-6 h-6 text-muted" />
             </div>
-            <span className="text-slate-600 font-medium">总收入</span>
+            <span className="text-muted font-medium">总收入</span>
           </div>
-          <p className="text-3xl font-bold text-slate-800">{formatGold(stats.totalIncome)}</p>
-          <p className="text-slate-500 text-sm mt-2">代清收入: {formatGold(stats.clientIncome)} 金</p>
+          <p className="text-3xl font-bold text-main">{formatGold(stats.totalIncome)}</p>
+          <p className="text-muted text-sm mt-2">代清收入: {formatGold(stats.clientIncome)} 金</p>
         </div>
 
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-slate-100 rounded-lg">
-              <ArrowDownCircle className="w-6 h-6 text-slate-600" />
+            <div className="p-2 bg-base rounded-lg">
+              <ArrowDownCircle className="w-6 h-6 text-muted" />
             </div>
-            <span className="text-slate-600 font-medium">总支出</span>
+            <span className="text-muted font-medium">总支出</span>
           </div>
-          <p className="text-3xl font-bold text-slate-800">{formatGold(stats.totalExpense)}</p>
-          <p className="text-slate-500 text-sm mt-2">代清支出: {formatGold(stats.clientExpense)} 金</p>
+          <p className="text-3xl font-bold text-main">{formatGold(stats.totalExpense)}</p>
+          <p className="text-muted text-sm mt-2">代清支出: {formatGold(stats.clientExpense)} 金</p>
         </div>
 
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-slate-100 rounded-lg">
-              <TrendingUp className="w-6 h-6 text-slate-600" />
+            <div className="p-2 bg-base rounded-lg">
+              <TrendingUp className="w-6 h-6 text-muted" />
             </div>
-            <span className="text-slate-600 font-medium">净收入</span>
+            <span className="text-muted font-medium">净收入</span>
           </div>
           <p className={`text-3xl font-bold ${stats.netIncome >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
             {stats.netIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.netIncome))}
           </p>
-          <p className="text-slate-500 text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
+          <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-4 border-b border-slate-200">
+      <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden">
+        <div className="p-4 border-b border-base">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-slate-100 rounded-lg">
-                <Coins className="w-5 h-5 text-slate-600" />
+              <div className="p-2 bg-base rounded-lg">
+                <Coins className="w-5 h-5 text-muted" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-slate-800">收支记录</h3>
-                <p className="text-sm text-slate-500">{tabFilteredRecords.length} 条记录</p>
+                <h3 className="text-lg font-semibold text-main">收支记录</h3>
+                <p className="text-sm text-muted">{tabFilteredRecords.length} 条记录</p>
               </div>
             </div>
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
               <input
                 type="text"
                 placeholder="搜索副本或角色"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 w-48"
+                className="pl-9 pr-3 py-2 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary w-48 text-main placeholder:text-muted/50"
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
+          <div className="flex items-center gap-2 bg-base p-1 rounded-lg">
             <button
               onClick={() => setActiveTab('all')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'all'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'all'
+                  ? 'bg-surface text-main shadow-sm'
+                  : 'text-muted hover:text-main'
+                }`}
             >
               全部
             </button>
             <button
               onClick={() => setActiveTab('income')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'income'
-                  ? 'bg-white text-emerald-700 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'income'
+                  ? 'bg-surface text-emerald-700 dark:text-emerald-400 shadow-sm'
+                  : 'text-muted hover:text-main'
+                }`}
             >
               收入
             </button>
             <button
               onClick={() => setActiveTab('expense')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'expense'
-                  ? 'bg-white text-rose-700 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'expense'
+                  ? 'bg-surface text-rose-700 dark:text-rose-400 shadow-sm'
+                  : 'text-muted hover:text-main'
+                }`}
             >
               支出
             </button>
@@ -276,40 +270,38 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
 
         <div className="max-h-[500px] overflow-y-auto">
           {tabFilteredRecords.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-              <Coins className="w-12 h-12 text-slate-200 mb-3" />
+            <div className="flex flex-col items-center justify-center py-16 text-muted">
+              <Coins className="w-12 h-12 text-muted/30 mb-3" />
               <p className="text-base">暂无记录</p>
             </div>
           ) : (
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-base">
               {tabFilteredRecords.map((record) => {
                 const netIncome = record.goldIncome - (record.goldExpense || 0);
                 const isPositive = netIncome >= 0;
-                
+
                 return (
-                  <div key={record.id} className="p-4 hover:bg-slate-50 transition-colors">
+                  <div key={record.id} className="p-4 hover:bg-base transition-colors">
                     <div className="flex items-start gap-4">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                        isPositive ? 'bg-emerald-50' : 'bg-rose-50'
-                      }`}>
-                        <Coins className={`w-5 h-5 ${
-                          isPositive ? 'text-emerald-500' : 'text-rose-500'
-                        }`} />
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${isPositive ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-rose-50 dark:bg-rose-900/20'
+                        }`}>
+                        <Coins className={`w-5 h-5 ${isPositive ? 'text-emerald-500' : 'text-rose-500'
+                          }`} />
                       </div>
-                      
+
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-medium text-slate-800 truncate">{record.raidName}</span>
+                          <span className="font-medium text-main truncate">{record.raidName}</span>
                           {record.hasXuanjing && (
-                            <span className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 text-xs rounded">
+                            <span className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 text-xs rounded">
                               <Trophy className="w-3 h-3" />
                               玄晶
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-slate-500">
+                        <div className="flex items-center gap-2 text-sm text-muted">
                           <span className="truncate">{record.displayRoleName}</span>
-                          <span className="text-slate-300">•</span>
+                          <span className="text-muted/50">•</span>
                           <span className="truncate">{record.displayServer}</span>
                         </div>
                       </div>
@@ -318,22 +310,22 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
                         <div className="flex items-center gap-4">
                           {record.goldIncome > 0 && (
                             <div className="text-right w-20">
-                              <p className="text-xs text-slate-400 mb-0.5">收入</p>
-                              <p className="text-sm font-semibold text-emerald-600">
+                              <p className="text-xs text-muted mb-0.5">收入</p>
+                              <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                                 +{formatGold(record.goldIncome)}
                               </p>
                             </div>
                           )}
                           {record.goldExpense && record.goldExpense > 0 && (
                             <div className="text-right w-20">
-                              <p className="text-xs text-slate-400 mb-0.5">支出</p>
-                              <p className="text-sm font-semibold text-rose-600">
+                              <p className="text-xs text-muted mb-0.5">支出</p>
+                              <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">
                                 -{formatGold(record.goldExpense)}
                               </p>
                             </div>
                           )}
                         </div>
-                        <div className="flex-shrink-0 flex items-center gap-1.5 text-xs text-slate-400 w-20">
+                        <div className="flex-shrink-0 flex items-center gap-1.5 text-xs text-muted w-20">
                           <Calendar className="w-3 h-3 flex-shrink-0" />
                           <span className="truncate">{formatDate(record.date)}</span>
                         </div>

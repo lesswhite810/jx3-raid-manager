@@ -116,10 +116,13 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     
+    // 全量同步：先清空表，再插入
+    tx.execute("DELETE FROM accounts", []).map_err(|e| e.to_string())?;
+    
     for account in parsed {
         let id = account["id"].as_str().unwrap_or_default().to_string();
         tx.execute(
-            "INSERT OR REPLACE INTO accounts (id, data) VALUES (?, ?)",
+            "INSERT INTO accounts (id, data) VALUES (?, ?)",
             params![id, account.to_string()],
         ).map_err(|e| e.to_string())?;
     }
@@ -183,11 +186,16 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // 全量同步：先清空表，再插入
+    tx.execute("DELETE FROM raids", []).map_err(|e| e.to_string())?;
     
     for raid in parsed {
+        // Find existing id logic used name, keeping consistent even if potentially risky if no unique id
+        // The original code used raid["name"] as id.
         let name = raid["name"].as_str().unwrap_or_default().to_string();
         tx.execute(
-            "INSERT OR REPLACE INTO raids (id, data) VALUES (?, ?)",
+            "INSERT INTO raids (id, data) VALUES (?, ?)",
             params![name, raid.to_string()],
         ).map_err(|e| e.to_string())?;
     }

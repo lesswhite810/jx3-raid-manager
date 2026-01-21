@@ -6,22 +6,22 @@ import { toast, TOAST_EVENT, TOAST_DISMISS_EVENT } from '../utils/toastManager';
 // Toast 配置映射
 const TOAST_CONFIG = {
   success: {
-    bgColor: 'bg-emerald-600',
+    bgColor: 'bg-emerald-600 dark:bg-emerald-700',
     textColor: 'text-white',
     icon: CheckCircle2
   },
   error: {
-    bgColor: 'bg-red-600',
+    bgColor: 'bg-red-600 dark:bg-red-700',
     textColor: 'text-white',
     icon: XCircle
   },
   warning: {
-    bgColor: 'bg-amber-600',
+    bgColor: 'bg-amber-600 dark:bg-amber-700',
     textColor: 'text-white',
     icon: AlertCircle
   },
   info: {
-    bgColor: 'bg-blue-600',
+    bgColor: 'bg-blue-600 dark:bg-blue-700',
     textColor: 'text-white',
     icon: Info
   }

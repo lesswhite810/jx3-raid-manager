@@ -77,12 +77,12 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                 onClick={onClose}
             />
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-                <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto animate-in fade-in zoom-in-95 duration-200">
-                    <div className="bg-slate-800 px-6 py-4 flex items-center justify-between">
+                <div className="bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto animate-in fade-in zoom-in-95 duration-200">
+                    <div className="bg-primary px-6 py-4 flex items-center justify-between">
                         <h2 className="text-lg font-semibold text-white">新增角色</h2>
                         <button
                             onClick={onClose}
-                            className="text-slate-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-slate-700"
+                            className="text-white/70 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10"
                         >
                             <X className="w-5 h-5" />
                         </button>
@@ -90,23 +90,23 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
 
                     <form onSubmit={handleSubmit} className="p-6 space-y-4">
                         {error && (
-                            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700 text-sm">
+                            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-red-700 dark:text-red-400 text-sm">
                                 <AlertCircle className="w-4 h-4" />
                                 <span>{error}</span>
                             </div>
                         )}
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                            <label className="block text-sm font-medium text-main mb-1.5">
                                 角色名称 <span className="text-red-500">*</span>
                             </label>
                             <div className="relative">
-                                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                 <input
                                     type="text"
                                     value={name}
                                     onChange={e => setName(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder:text-slate-400"
+                                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all placeholder:text-muted/50 text-main"
                                     placeholder="输入角色名称"
                                     autoFocus
                                 />
@@ -115,45 +115,45 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
 
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                                <label className="block text-sm font-medium text-main mb-1.5">
                                     大区 <span className="text-red-500">*</span>
                                 </label>
                                 <div className="relative">
-                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                     <input
                                         type="text"
                                         value={region}
                                         onChange={e => setRegion(e.target.value)}
-                                        className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all text-main"
                                     />
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                                <label className="block text-sm font-medium text-main mb-1.5">
                                     服务器 <span className="text-red-500">*</span>
                                 </label>
                                 <div className="relative">
-                                    <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                    <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                     <input
                                         type="text"
                                         value={server}
                                         onChange={e => setServer(e.target.value)}
-                                        className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all text-main"
                                     />
                                 </div>
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                            <label className="block text-sm font-medium text-main mb-1.5">
                                 门派
                             </label>
                             <div className="relative">
-                                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                 <select
                                     value={sect}
                                     onChange={e => setSect(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all appearance-none bg-white"
+                                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all appearance-none text-main"
                                 >
                                     <option value="">请选择门派</option>
                                     {SECTS.map(s => (
@@ -164,11 +164,11 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                            <label className="block text-sm font-medium text-main mb-1.5">
                                 装分
                             </label>
                             <div className="relative">
-                                <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
                                 <input
                                     type="number"
                                     min="0"
@@ -177,7 +177,7 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                                         const val = e.target.value;
                                         setEquipmentScore(val === '' ? undefined : parseInt(val));
                                     }}
-                                    className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all text-main"
                                     placeholder="可选"
                                 />
                             </div>
@@ -189,9 +189,9 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                                 id="isClient"
                                 checked={isClient}
                                 onChange={e => setIsClient(e.target.checked)}
-                                className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                                className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
                             />
-                            <label htmlFor="isClient" className="text-sm text-slate-700 select-none cursor-pointer">
+                            <label htmlFor="isClient" className="text-sm text-main select-none cursor-pointer">
                                 这是代清角色
                             </label>
                         </div>
@@ -200,13 +200,13 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                             <button
                                 type="button"
                                 onClick={onClose}
-                                className="flex-1 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+                                className="flex-1 px-4 py-2.5 border border-base text-main rounded-lg font-medium hover:bg-base transition-colors"
                             >
                                 取消
                             </button>
                             <button
                                 type="submit"
-                                className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors shadow-sm"
+                                className="flex-1 px-4 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover transition-colors shadow-sm"
                             >
                                 保存
                             </button>

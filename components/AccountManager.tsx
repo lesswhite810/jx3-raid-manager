@@ -437,9 +437,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   return (
     <div className="space-y-6">
-      <div className="sticky top-0 z-20 bg-slate-50 pt-2 pb-4">
+      <div className="sticky top-0 z-20 bg-base pt-2 pb-4">
         <div className="flex justify-between items-center flex-wrap gap-3">
-          <h2 className="text-2xl font-bold text-slate-800">账号管理</h2>
+          <h2 className="text-2xl font-bold text-main">账号管理</h2>
           <div className="flex gap-2 items-center flex-wrap">
             {/* 搜索框 */}
             <div className="relative">
@@ -449,7 +449,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 placeholder="搜索账号或角色..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="pl-9 pr-8 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 w-48 placeholder:text-slate-400"
+                className="pl-9 pr-8 py-2 border border-base bg-surface rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary w-48 placeholder:text-muted"
               />
               {searchTerm && (
                 <button
@@ -463,7 +463,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
             {/* 搜索结果提示 */}
             {searchTerm && (
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-muted">
                 找到 <span className="font-medium text-emerald-600">{filteredAccounts.length}</span> 个匹配
               </span>
             )}
@@ -490,7 +490,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             )}
             <button
               onClick={() => setIsAddAccountModalOpen(true)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+              className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
             >
               <Plus className="w-4 h-4" /> 新增账号
             </button>
@@ -513,9 +513,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               type="checkbox"
               checked={isAllSelected}
               onChange={handleSelectAll}
-              className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+              className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
             />
-            <label className="text-sm font-medium text-slate-700">全选 ({safeAccounts.length} 个账户)</label>
+            <label className="text-sm font-medium text-main">全选 ({safeAccounts.length} 个账户)</label>
           </div>
         )}
       </div>
@@ -582,7 +582,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           </p>
           <button
             onClick={clearSearch}
-            className="mt-4 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors text-sm"
+            className="mt-4 px-4 py-2 bg-base hover:bg-base/80 text-muted rounded-lg transition-colors text-sm"
           >
             清除搜索
           </button>
@@ -591,7 +591,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       <div className="space-y-6">
         {filteredAccounts.map(account => (
-          <div key={account.id} className={`bg-white p-5 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow ${selectedAccounts.has(account.id) ? 'ring-2 ring-emerald-500' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
+          <div key={account.id} className={`bg-surface p-5 rounded-xl shadow-sm border border-base hover:shadow-md transition-shadow ${selectedAccounts.has(account.id) ? 'ring-2 ring-primary' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
             <div className="flex justify-between items-start mb-4">
               <div className="flex items-center gap-2">
                 {/* 复选框 */}
@@ -599,14 +599,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   type="checkbox"
                   checked={selectedAccounts.has(account.id)}
                   onChange={() => handleSelectAccount(account.id)}
-                  className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                  className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
                 />
                 <span className={`p-2 rounded-full ${account.type === AccountType.OWN ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
                   {account.type === AccountType.OWN ? <User size={18} /> : <UserCheck size={18} />}
                 </span>
                 <div>
-                  <h3 className={`font-bold text-slate-800 ${account.disabled ? 'line-through text-slate-400' : ''}`}>{account.accountName}</h3>
-                  <p className="text-xs text-slate-500">{Array.isArray(account.roles) ? account.roles.length : 0} 个角色</p>
+                  <h3 className={`font-bold text-main ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
+                  <p className="text-xs text-muted">{Array.isArray(account.roles) ? account.roles.length : 0} 个角色</p>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -650,8 +650,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             </div>
 
             {/* 账号信息编辑区域 */}
-            <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 mb-4">
-              <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
+            <div className="bg-surface rounded-lg shadow-sm border border-base p-4 mb-4">
+              <h4 className="font-semibold text-main mb-3 flex items-center gap-2">
                 <User className="w-4 h-4" />
                 账号信息
               </h4>
@@ -659,10 +659,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <div className="space-y-4">
                 {/* 登录账号 - 自动从账户名称获取，不可编辑 */}
                 <div className="flex items-center gap-3">
-                  <label className="text-sm font-semibold text-slate-700 w-24 flex-shrink-0">
+                  <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
                     登录账号
                   </label>
-                  <div className="flex-1 px-4 py-3 bg-slate-100 border border-slate-300 rounded-xl text-slate-800 font-medium">
+                  <div className="flex-1 px-4 py-3 bg-base border border-base rounded-xl text-main font-medium">
                     {account.username || account.accountName}
                   </div>
                 </div>
@@ -684,13 +684,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           return a;
                         }));
                       }}
-                      className="flex-1 px-4 py-3 border-2 border-slate-300 rounded-xl text-slate-800 font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all placeholder:text-slate-400"
+                      className="flex-1 px-4 py-3 border-2 border-base bg-base rounded-xl text-main font-medium focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
                       placeholder="输入游戏密码"
                     />
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => togglePasswordVisibility(account.id)}
-                        className="p-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-indigo-600 transition-colors"
+                        className="p-2.5 rounded-lg bg-base hover:bg-base/80 text-muted hover:text-primary transition-colors"
                         title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
                       >
                         {visiblePasswords.has(account.id) ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -698,7 +698,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                       {account.password && (
                         <button
                           onClick={() => copyPassword(account.password, account.id)}
-                          className={`p-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-emerald-600 transition-colors ${copySuccess === account.id ? 'bg-green-100 text-green-700' : ''}`}
+                          className={`p-2.5 rounded-lg bg-base hover:bg-base/80 text-muted hover:text-primary transition-colors ${copySuccess === account.id ? 'bg-green-100 text-green-700' : ''}`}
                           title="复制密码"
                         >
                           {copySuccess === account.id ? <Check size={18} /> : <Clipboard size={18} />}
@@ -711,15 +711,15 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             </div>
 
             {/* Roles Section */}
-            <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4">
+            <div className="bg-surface rounded-lg shadow-sm border border-base p-4">
               <div className="flex justify-between items-center mb-3">
-                <h4 className="font-semibold text-slate-700 flex items-center gap-2">
+                <h4 className="font-semibold text-main flex items-center gap-2">
                   <User className="w-4 h-4" />
                   角色列表
                 </h4>
                 <button
                   onClick={() => setAddingRoleToAccountId(account.id)}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg transition-colors shadow-sm hover:shadow-md"
+                  className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-3 py-2 rounded-lg transition-colors shadow-sm hover:shadow-md"
                 >
                   <Plus className="w-4 h-4" />
                   添加角色
@@ -728,7 +728,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
               <div className="space-y-2">
                 {!Array.isArray(account.roles) || account.roles.length === 0 ? (
-                  <div className="text-center py-5 text-slate-400">
+                  <div className="text-center py-5 text-muted">
                     <p className="flex items-center justify-center gap-2">
                       <User className="w-5 h-5" />
                       暂无角色，点击上方按钮添加
@@ -737,15 +737,15 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {account.roles.map(role => (
-                      <div key={role.id} className={`bg-slate-50 border border-slate-200 p-3 rounded-lg hover:shadow-sm transition-shadow ${role.disabled ? 'opacity-60' : ''}`}>
+                      <div key={role.id} className={`bg-base border border-base p-3 rounded-lg hover:shadow-sm transition-shadow ${role.disabled ? 'opacity-60' : ''}`}>
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                              <h5 className={`font-medium text-slate-800 ${role.disabled ? 'line-through text-slate-400' : ''}`}>{role.name}</h5>
+                              <h5 className={`font-medium text-main ${role.disabled ? 'line-through text-muted' : ''}`}>{role.name}</h5>
                               {role.sect ? (
-                                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-md font-medium">{role.sect}</span>
+                                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md font-medium">{role.sect}</span>
                               ) : (
-                                <span className="text-xs text-slate-400 italic">未设置门派</span>
+                                <span className="text-xs text-muted italic">未设置门派</span>
                               )}
                               {role.equipmentScore !== undefined && role.equipmentScore !== null && (
                                 <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium">
@@ -754,9 +754,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                               )}
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-xs text-slate-600">{role.region}</span>
-                              <span className="text-xs text-slate-400">·</span>
-                              <span className="text-xs text-slate-600">{role.server}</span>
+                              <span className="text-xs text-muted">{role.region}</span>
+                              <span className="text-xs text-muted">·</span>
+                              <span className="text-xs text-muted">{role.server}</span>
                             </div>
                           </div>
                           <div className="flex gap-1">

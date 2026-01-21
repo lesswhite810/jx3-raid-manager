@@ -24,7 +24,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
   const [pathValid, setPathValid] = useState<boolean | null>(null);
   const [testingAI, setTestingAI] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  
+
   // 使用 useRef 跟踪最新的配置值
   const configRef = useRef(config);
   configRef.current = config;
@@ -33,7 +33,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
   useEffect(() => {
     // 从AI服务获取配置
     const aiConfig = aiService.getConfig();
-    
+
     // 更新全局配置
     const newConfig = {
       ...config,
@@ -46,7 +46,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
         proxyEnabled: aiConfig.proxyEnabled || false
       }
     };
-    
+
     // 只有当配置不同时才更新
     if (JSON.stringify(newConfig) !== JSON.stringify(config)) {
       setConfig(newConfig);
@@ -112,7 +112,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
       setIsSaving(false);
       setSaveSuccess(true);
       console.log('[ConfigManager] 配置保存成功');
-      
+
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (error) {
       console.error('[ConfigManager] 保存配置失败:', error);
@@ -124,16 +124,16 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
   const handleConfigChange = (section: keyof Config, key: string, value: any) => {
     const newConfig = { ...config, [section]: { ...config[section], [key]: value } };
     setConfig(newConfig);
-    
+
     if (section === 'game' && key === 'gameDirectory') {
       isValidGamePath(value).then(result => {
         setPathValid(result.isValid ? true : false);
       });
-      
+
       const gameConfig = { ...config.game, gameDirectory: value };
       saveConfigToStorage({ ...config, game: gameConfig });
     }
-    
+
     if (section === 'ai') {
       // 只在 API key 变化时同步到 AI 服务（用于实时验证）
       if (key === 'apiKey') {
@@ -144,7 +144,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
 
   const handleTestAIConnection = async () => {
     const aiConfig = aiService.getConfig();
-    
+
     if (!aiConfig.apiKey) {
       setTestResult({ success: false, message: '请先配置API密钥' });
       return;
@@ -175,11 +175,11 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-slate-800">系统配置</h2>
+        <h2 className="text-2xl font-bold text-main">系统配置</h2>
         <div className="flex gap-2">
           <button
             onClick={handleSaveConfig}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
+            className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
             disabled={isSaving}
           >
             {isSaving ? (
@@ -199,19 +199,19 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
         </div>
       )}
 
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center gap-2 mb-4">
-          <div className="w-10 h-10 bg-purple-100 text-purple-700 rounded-lg flex items-center justify-center">
+          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
             <Zap className="w-5 h-5" />
           </div>
-          <h3 className="text-lg font-semibold text-slate-800">AI功能配置</h3>
+          <h3 className="text-lg font-semibold text-main">AI功能配置</h3>
         </div>
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h4 className="text-sm font-medium text-slate-700">启用AI功能</h4>
-              <p className="text-xs text-slate-500 mt-0.5">开启后可使用AI辅助分析</p>
+              <h4 className="text-sm font-medium text-main">启用AI功能</h4>
+              <p className="text-xs text-muted mt-0.5">开启后可使用AI辅助分析</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -220,12 +220,12 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                 onChange={(e) => handleConfigChange('ai', 'enabled', e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+              <div className="w-11 h-6 bg-base peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
             </label>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <label className="flex items-center text-slate-600 font-medium">
+            <label className="flex items-center text-muted font-medium">
               API密钥
             </label>
             <div className="col-span-2">
@@ -233,7 +233,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                 type="password"
                 value={config.ai.apiKey}
                 onChange={(e) => handleConfigChange('ai', 'apiKey', e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                className="w-full px-3 py-2 bg-surface border border-base rounded-lg text-main focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-muted"
                 placeholder="输入AI API密钥"
                 disabled={!config.ai.enabled}
               />
@@ -241,14 +241,14 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <label className="flex items-center text-slate-600 font-medium">
+            <label className="flex items-center text-muted font-medium">
               AI模型
             </label>
             <div className="col-span-2">
               <select
                 value={config.ai.model}
                 onChange={(e) => handleConfigChange('ai', 'model', e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                className="w-full px-3 py-2 bg-surface border border-base rounded-lg text-main focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                 disabled={!config.ai.enabled}
               >
                 {aiService.getModels().map((model: any) => (
@@ -256,7 +256,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                 ))}
               </select>
               {selectedModel && (
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-muted mt-1">
                   提供商: {selectedModel.provider}
                   {selectedModel.requiresProxy && (
                     <span className="text-amber-600 ml-2">⚠ 需要代理</span>
@@ -267,7 +267,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <label className="flex items-center text-slate-600 font-medium">
+            <label className="flex items-center text-muted font-medium">
               生成温度
             </label>
             <div className="col-span-2">
@@ -279,10 +279,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                   step="0.1"
                   value={config.ai.temperature}
                   onChange={(e) => handleConfigChange('ai', 'temperature', parseFloat(e.target.value))}
-                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                  className="w-full h-2 bg-base rounded-lg appearance-none cursor-pointer accent-primary"
                   disabled={!config.ai.enabled}
                 />
-                <span className="text-sm font-medium text-slate-700 w-12">{config.ai.temperature.toFixed(1)}</span>
+                <span className="text-sm font-medium text-main w-12">{config.ai.temperature.toFixed(1)}</span>
               </div>
             </div>
           </div>
@@ -296,16 +296,16 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
             </div>
           )}
 
-          <div className="border-t border-slate-200 pt-4 mt-4">
+          <div className="border-t border-base pt-4 mt-4">
             <div className="flex items-center gap-2 mb-3">
-              <Network className="w-4 h-4 text-slate-600" />
-              <h4 className="text-sm font-medium text-slate-700">代理设置</h4>
+              <Network className="w-4 h-4 text-muted" />
+              <h4 className="text-sm font-medium text-main">代理设置</h4>
             </div>
 
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h5 className="text-xs font-medium text-slate-600">启用代理</h5>
-                <p className="text-xs text-slate-500">用于访问需要代理的AI模型</p>
+                <h5 className="text-xs font-medium text-muted">启用代理</h5>
+                <p className="text-xs text-muted">用于访问需要代理的AI模型</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -314,13 +314,13 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                   onChange={(e) => handleConfigChange('ai', 'proxyEnabled', e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                <div className="w-11 h-6 bg-base peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
               </label>
             </div>
 
             {config.ai.proxyEnabled && (
               <div className="grid grid-cols-3 gap-3">
-                <label className="flex items-center text-slate-600 font-medium">
+                <label className="flex items-center text-muted font-medium">
                   代理地址
                 </label>
                 <div className="col-span-2">
@@ -328,10 +328,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                     type="text"
                     value={config.ai.proxyUrl}
                     onChange={(e) => handleConfigChange('ai', 'proxyUrl', e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    className="w-full px-3 py-2 bg-surface border border-base rounded-lg text-main focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-muted"
                     placeholder="http://127.0.0.1:7890"
                   />
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-muted mt-1">
                     支持HTTP/HTTPS/SOCKS代理，格式: 协议://地址:端口
                   </p>
                 </div>
@@ -343,7 +343,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
             <button
               onClick={handleTestAIConnection}
               disabled={!config.ai.enabled || testingAI}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {testingAI ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -361,17 +361,17 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center gap-2 mb-4">
-          <div className="w-10 h-10 bg-green-100 text-green-700 rounded-lg flex items-center justify-center">
+          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
             <FolderOpen className="w-5 h-5" />
           </div>
-          <h3 className="text-lg font-semibold text-slate-800">游戏目录配置</h3>
+          <h3 className="text-lg font-semibold text-main">游戏目录配置</h3>
         </div>
 
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
-            <label className="flex items-center text-slate-600 font-medium">
+            <label className="flex items-center text-muted font-medium">
               游戏安装目录
             </label>
             <div className="col-span-2">
@@ -379,7 +379,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                 type="text"
                 value={config.game.gameDirectory}
                 onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                className="w-full px-3 py-2 bg-surface border border-base rounded-lg text-main focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-muted"
                 placeholder="输入剑网三游戏安装目录"
               />
             </div>

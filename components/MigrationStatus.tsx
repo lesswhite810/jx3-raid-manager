@@ -55,12 +55,12 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const runDiagnostics = async () => {
     setLoading(true);
     setDebugInfo('正在诊断...');
-    
+
     try {
       const diag = await diagnoseMigration();
       setDiagnostic(diag);
       setDebugInfo(`诊断完成 - localStorage: ${diag.localStorage.hasData ? '有数据' : '无数据'}, 数据库: ${diag.database.connectionOk ? '已连接' : '未连接'}`);
-      
+
       const local = await checkLocalStorageData();
       setLocalData(local);
     } catch (error: any) {
@@ -73,7 +73,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const handleMigrate = async () => {
     setMigrating(true);
     setMigrateResult(null);
-    
+
     try {
       const result = await forceMigrate();
       setMigrateResult(result);
@@ -88,7 +88,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const handleDeduplicate = async () => {
     setDeduplicating(true);
     setDeduplicateResult(null);
-    
+
     try {
       const result = await deduplicateAccounts();
       setDeduplicateResult(result);
@@ -103,7 +103,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const handleAnalyze = async () => {
     setAnalyzing(true);
     setAnalyzeResult('');
-    
+
     try {
       const result = await analyzeDuplicates();
       setAnalyzeResult(result);
@@ -117,7 +117,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const handleDeduplicateRaids = async () => {
     setDeduplicating(true);
     setDeduplicateResult(null);
-    
+
     try {
       const result = await deduplicateRaids();
       setDeduplicateResult({ success: true, message: result });
@@ -132,7 +132,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const handleAddConstraint = async () => {
     setConstraining(true);
     setConstraintResult('');
-    
+
     try {
       const result = await addUniqueConstraint();
       setConstraintResult(result);
@@ -146,7 +146,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   const handleConfigDebug = async () => {
     setConfigDebugging(true);
     setConfigDebugResult('');
-    
+
     try {
       const result = await debugConfig();
       setConfigDebugResult(result);
@@ -159,7 +159,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
   const handleConfigReset = async () => {
     setConfigResetting(true);
-    
+
     try {
       const defaultConfig = {
         fontSize: 14,
@@ -188,7 +188,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
         autoBackupEnabled: false,
         backupIntervalDays: 7
       };
-      
+
       const result = await resetConfig(JSON.stringify(defaultConfig));
       setConfigDebugResult('重置结果:\n' + result);
       await runDiagnostics();
@@ -213,16 +213,16 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-auto">
-        <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
+    <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-auto">
+        <div className="flex items-center justify-between p-4 border-b border-base">
+          <h2 className="text-lg font-semibold flex items-center gap-2 text-main">
             <Database className="w-5 h-5" />
             数据迁移与去重管理
           </h2>
-          <button 
+          <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400"
+            className="text-muted hover:text-main"
           >
             ✕
           </button>
@@ -230,47 +230,43 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
         <div className="p-4">
           {/* 标签页切换 */}
-          <div className="flex border-b dark:border-gray-700 mb-4">
+          <div className="flex border-b border-base mb-4">
             <button
               onClick={() => setActiveTab('migration')}
-              className={`px-4 py-2 flex items-center gap-2 ${
-                activeTab === 'migration' 
-                  ? 'border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-                  : 'text-gray-500'
-              }`}
+              className={`px-4 py-2 flex items-center gap-2 ${activeTab === 'migration'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted hover:text-main'
+                }`}
             >
               <RefreshCw className="w-4 h-4" />
               数据迁移
             </button>
             <button
               onClick={() => setActiveTab('deduplicate')}
-              className={`px-4 py-2 flex items-center gap-2 ${
-                activeTab === 'deduplicate' 
-                  ? 'border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-                  : 'text-gray-500'
-              }`}
+              className={`px-4 py-2 flex items-center gap-2 ${activeTab === 'deduplicate'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted hover:text-main'
+                }`}
             >
               <Merge className="w-4 h-4" />
               数据去重
             </button>
             <button
               onClick={() => setActiveTab('analyze')}
-              className={`px-4 py-2 flex items-center gap-2 ${
-                activeTab === 'analyze' 
-                  ? 'border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-                  : 'text-gray-500'
-              }`}
+              className={`px-4 py-2 flex items-center gap-2 ${activeTab === 'analyze'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted hover:text-main'
+                }`}
             >
               <Search className="w-4 h-4" />
               重复分析
             </button>
             <button
               onClick={() => setActiveTab('config')}
-              className={`px-4 py-2 flex items-center gap-2 ${
-                activeTab === 'config' 
-                  ? 'border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-                  : 'text-gray-500'
-              }`}
+              className={`px-4 py-2 flex items-center gap-2 ${activeTab === 'config'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted hover:text-main'
+                }`}
             >
               <Wrench className="w-4 h-4" />
               配置调试
@@ -278,7 +274,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
           </div>
 
           {/* 调试信息 */}
-          <div className="text-xs text-gray-400 bg-gray-100 dark:bg-gray-900 p-2 rounded font-mono mb-4">
+          <div className="text-xs text-muted bg-base p-2 rounded font-mono mb-4">
             {debugInfo || '等待诊断...'}
           </div>
 
@@ -298,10 +294,10 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                   )}
                   {migrating ? '迁移中...' : '执行迁移'}
                 </button>
-                
+
                 <button
                   onClick={handleReloadFromDB}
-                  className="btn btn-secondary flex items-center gap-2"
+                  className="px-4 py-2 bg-base text-main rounded-lg hover:bg-base/80 flex items-center gap-2 transition-colors border border-base"
                 >
                   <RefreshCw className="w-4 h-4" />
                   刷新
@@ -310,51 +306,50 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
               {/* 迁移结果 */}
               {migrateResult && (
-                <div className={`p-3 rounded-lg mb-4 ${
-                  migrateResult.success 
-                    ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' 
-                    : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-                }`}>
+                <div className={`p-3 rounded-lg mb-4 ${migrateResult.success
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'
+                  : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+                  }`}>
                   <div className="flex items-center gap-2">
                     {migrateResult.success ? (
-                      <CheckCircle className="w-5 h-5 text-green-600" />
+                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                     ) : (
-                      <XCircle className="w-5 h-5 text-red-600" />
+                      <XCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
                     )}
-                    <span className="font-medium">
+                    <span className="font-medium text-main">
                       {migrateResult.success ? '迁移成功' : '迁移失败'}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  <p className="mt-1 text-sm text-muted">
                     {migrateResult.message}
                   </p>
                   {migrateResult.migrated && (
                     <div className="mt-2 text-sm space-y-1">
                       <p className="flex justify-between">
-                        <span>新增账号:</span>
-                        <span className={migrateResult.migrated.accounts > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                        <span className="text-muted">新增账号:</span>
+                        <span className={migrateResult.migrated.accounts > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                           {migrateResult.migrated.accounts} 个
                         </span>
                       </p>
                       <p className="flex justify-between">
-                        <span>新增记录:</span>
-                        <span className={migrateResult.migrated.records > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                        <span className="text-muted">新增记录:</span>
+                        <span className={migrateResult.migrated.records > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                           {migrateResult.migrated.records} 条
                         </span>
                       </p>
                       <p className="flex justify-between">
-                        <span>新增副本:</span>
-                        <span className={migrateResult.migrated.raids > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                        <span className="text-muted">新增副本:</span>
+                        <span className={migrateResult.migrated.raids > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                           {migrateResult.migrated.raids} 个
                         </span>
                       </p>
                     </div>
                   )}
                   {migrateResult.details && (
-                    <div className="mt-2 text-xs text-gray-500 border-t dark:border-gray-700 pt-2">
+                    <div className="mt-2 text-xs text-muted border-t border-base pt-2">
                       <p>数据库: {migrateResult.details.dbBefore.accounts} → {migrateResult.details.dbAfter.accounts} 账号</p>
                       {migrateResult.details.skipped.accounts > 0 && (
-                        <p className="text-amber-600">跳过 {migrateResult.details.skipped.accounts} 个重复账号</p>
+                        <p className="text-amber-600 dark:text-amber-400">跳过 {migrateResult.details.skipped.accounts} 个重复账号</p>
                       )}
                     </div>
                   )}
@@ -379,7 +374,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                   )}
                   {deduplicating ? '去重中...' : '账号去重 (保留每个ID第一条)'}
                 </button>
-                
+
                 <button
                   onClick={handleDeduplicateRaids}
                   disabled={deduplicating}
@@ -409,30 +404,29 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
               {/* 去重结果 */}
               {deduplicateResult && (
-                <div className={`p-3 rounded-lg mb-4 ${
-                  deduplicateResult.success 
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800' 
-                    : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-                }`}>
+                <div className={`p-3 rounded-lg mb-4 ${deduplicateResult.success
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'
+                  : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+                  }`}>
                   <div className="flex items-center gap-2">
                     {deduplicateResult.success ? (
-                      <CheckCircle className="w-5 h-5 text-blue-600" />
+                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                     ) : (
-                      <XCircle className="w-5 h-5 text-red-600" />
+                      <XCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
                     )}
-                    <span className="font-medium">
+                    <span className="font-medium text-main">
                       {deduplicateResult.success ? '去重完成' : '去重失败'}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
+                  <p className="mt-1 text-sm text-muted whitespace-pre-wrap">
                     {deduplicateResult.message}
                   </p>
                   {deduplicateResult.removed > 0 && (
                     <div className="mt-2 text-sm">
-                      <p className="text-red-600 font-medium">
+                      <p className="text-red-600 dark:text-red-400 font-medium">
                         已删除 {deduplicateResult.removed} 个重复账号
                       </p>
-                      <p className="text-green-600">
+                      <p className="text-emerald-600 dark:text-emerald-400">
                         剩余 {deduplicateResult.remaining} 个唯一账号
                       </p>
                     </div>
@@ -442,22 +436,21 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
               {/* 约束结果 */}
               {constraintResult && (
-                <div className={`p-3 rounded-lg mb-4 ${
-                  constraintResult.includes('✓') 
-                    ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' 
-                    : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800'
-                }`}>
+                <div className={`p-3 rounded-lg mb-4 ${constraintResult.includes('✓')
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'
+                  : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800'
+                  }`}>
                   <div className="flex items-center gap-2">
                     {constraintResult.includes('✓') ? (
-                      <CheckCircle className="w-5 h-5 text-green-600" />
+                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                     ) : (
-                      <AlertTriangle className="w-5 h-5 text-amber-600" />
+                      <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
                     )}
-                    <span className="font-medium">
+                    <span className="font-medium text-main">
                       唯一性约束
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
+                  <p className="mt-1 text-sm text-muted whitespace-pre-wrap">
                     {constraintResult}
                   </p>
                 </div>
@@ -482,12 +475,12 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
               </button>
 
               {analyzeResult && (
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 mb-4">
-                  <div className="flex items-center gap-2 mb-2">
+                <div className="bg-surface rounded-lg p-3 mb-4 border border-base">
+                  <div className="flex items-center gap-2 mb-2 text-main">
                     <FileText className="w-4 h-4" />
                     <span className="font-medium">分析报告</span>
                   </div>
-                  <pre className="text-sm whitespace-pre-wrap font-mono overflow-auto max-h-64">
+                  <pre className="text-sm text-muted whitespace-pre-wrap font-mono overflow-auto max-h-64">
                     {analyzeResult}
                   </pre>
                 </div>
@@ -511,7 +504,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                   )}
                   {configDebugging ? '调试中...' : '调试配置数据'}
                 </button>
-                
+
                 <button
                   onClick={handleConfigReset}
                   disabled={configResetting}
@@ -527,8 +520,8 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
               </div>
 
               {configDebugResult && (
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 mb-4">
-                  <pre className="text-sm whitespace-pre-wrap font-mono overflow-auto max-h-64">
+                <div className="bg-surface rounded-lg p-3 mb-4 border border-base">
+                  <pre className="text-sm text-muted whitespace-pre-wrap font-mono overflow-auto max-h-64">
                     {configDebugResult}
                   </pre>
                 </div>
@@ -537,36 +530,36 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
           )}
 
           {/* localStorage 数据状态 */}
-          <div className="border dark:border-gray-700 rounded-lg overflow-hidden mb-4">
-            <div className="bg-gray-50 dark:bg-gray-900/50 px-3 py-2 font-medium text-sm">
+          <div className="border border-base rounded-lg overflow-hidden mb-4">
+            <div className="bg-base px-3 py-2 font-medium text-sm text-main">
               localStorage 数据 (浏览器存储)
             </div>
-            <div className="p-3 space-y-2">
+            <div className="p-3 space-y-2 text-main">
               {loading ? (
-                <p className="text-gray-500">正在检查...</p>
+                <p className="text-muted">正在检查...</p>
               ) : localData ? (
                 <>
                   <div className="flex justify-between items-center">
-                    <span>账号</span>
-                    <span className={localData.accountsCount > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                    <span className="text-muted">账号</span>
+                    <span className={localData.accountsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {localData.accountsCount} 个
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span>记录</span>
-                    <span className={localData.recordsCount > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                    <span className="text-muted">记录</span>
+                    <span className={localData.recordsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {localData.recordsCount} 条
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span>副本</span>
-                    <span className={localData.raidsCount > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                    <span className="text-muted">副本</span>
+                    <span className={localData.raidsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {localData.raidsCount} 个
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span>配置</span>
-                    <span className={localData.hasConfig ? 'text-green-600 font-medium' : 'text-gray-500'}>
+                    <span className="text-muted">配置</span>
+                    <span className={localData.hasConfig ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {localData.hasConfig ? '有' : '无'}
                     </span>
                   </div>
@@ -587,8 +580,8 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
           </div>
 
           {/* SQLite 数据库状态 */}
-          <div className="border dark:border-gray-700 rounded-lg overflow-hidden mb-4">
-            <div className="bg-gray-50 dark:bg-gray-900/50 px-3 py-2 font-medium text-sm">
+          <div className="border border-base rounded-lg overflow-hidden mb-4">
+            <div className="bg-base px-3 py-2 font-medium text-sm text-main">
               SQLite 数据库 (C:\Users\[用户]\.jx3-raid-manager\)
             </div>
             <div className="p-3 space-y-2">
@@ -596,49 +589,48 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                 <p className="text-gray-500">正在检查...</p>
               ) : diagnostic?.database ? (
                 <>
-                  <div className={`flex items-center gap-2 ${
-                    diagnostic.database.connectionOk ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <div className={`flex items-center gap-2 ${diagnostic.database.connectionOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                    }`}>
                     {diagnostic.database.connectionOk ? (
                       <CheckCircle className="w-4 h-4" />
                     ) : (
                       <XCircle className="w-4 h-4" />
                     )}
-                    <span>
+                    <span className="text-main">
                       {diagnostic.database.connectionOk ? '连接成功' : '连接失败'}
                     </span>
                   </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-900/30 rounded">
-                    <span>账号</span>
-                    <span className={diagnostic.database.accountsCount > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+
+                  <div className="flex justify-between items-center p-2 bg-base rounded">
+                    <span className="text-muted">账号</span>
+                    <span className={diagnostic.database.accountsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {diagnostic.database.accountsCount} 个
                     </span>
                   </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-900/30 rounded">
-                    <span>记录</span>
-                    <span className={diagnostic.database.recordsCount > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+
+                  <div className="flex justify-between items-center p-2 bg-base rounded">
+                    <span className="text-muted">记录</span>
+                    <span className={diagnostic.database.recordsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {diagnostic.database.recordsCount} 条
                     </span>
                   </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-900/30 rounded">
-                    <span>副本</span>
-                    <span className={diagnostic.database.raidsCount > 0 ? 'text-green-600 font-medium' : 'text-gray-500'}>
+
+                  <div className="flex justify-between items-center p-2 bg-base rounded">
+                    <span className="text-muted">副本</span>
+                    <span className={diagnostic.database.raidsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {diagnostic.database.raidsCount} 个
                     </span>
                   </div>
-                  
-                  <div className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-900/30 rounded">
-                    <span>配置</span>
-                    <span className={diagnostic.database.hasConfig ? 'text-green-600 font-medium' : 'text-gray-500'}>
+
+                  <div className="flex justify-between items-center p-2 bg-base rounded">
+                    <span className="text-muted">配置</span>
+                    <span className={diagnostic.database.hasConfig ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
                       {diagnostic.database.hasConfig ? '有' : '无'}
                     </span>
                   </div>
                 </>
               ) : (
-                <p className="text-gray-500">数据库未连接或出错</p>
+                <p className="text-muted">数据库未连接或出错</p>
               )}
             </div>
           </div>
@@ -661,7 +653,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
           )}
 
           {/* 数据库路径 */}
-          <div className="text-xs text-gray-500 text-center mt-4">
+          <div className="text-xs text-muted text-center mt-4">
             数据库位置: C:\Users\[用户名]\.jx3-raid-manager\jx3-raid-manager.db
           </div>
         </div>

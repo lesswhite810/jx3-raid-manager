@@ -18,12 +18,12 @@ export const DebugConsole: React.FC<DebugConsoleProps> = ({ maxLogs = 50 }) => {
   useEffect(() => {
     // 重写console方法，将日志保存到state
     const logTypes = ['log', 'error', 'warn', 'info', 'debug'] as const;
-    
+
     logTypes.forEach(type => {
       console[type] = (...args: any[]) => {
         // 调用原始方法
         originalConsole.current[type](...args);
-        
+
         // 格式化日志
         const timestamp = new Date().toLocaleTimeString();
         const formattedArgs = args
@@ -38,9 +38,9 @@ export const DebugConsole: React.FC<DebugConsoleProps> = ({ maxLogs = 50 }) => {
             return String(arg);
           })
           .join(' ');
-        
+
         const logEntry = `${timestamp} [${type.toUpperCase()}]: ${formattedArgs}`;
-        
+
         // 更新日志列表
         setLogs(prevLogs => {
           const newLogs = [...prevLogs, logEntry];
@@ -83,46 +83,45 @@ export const DebugConsole: React.FC<DebugConsoleProps> = ({ maxLogs = 50 }) => {
       <button
         onClick={() => setIsVisible(!isVisible)}
         className={`fixed bottom-4 right-4 px-3 py-1.5 text-xs rounded-lg transition-colors z-50 ${isVisible
-          ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' 
-          : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}
+          ? 'bg-base text-muted hover:bg-surface'
+          : 'bg-primary/10 text-primary hover:bg-primary/20'}`}
         title={isVisible ? '隐藏日志' : '显示日志'}
       >
         {isVisible ? '🔇 日志' : '📝 日志'}
       </button>
-      
+
       {/* 日志面板 */}
       {isVisible && (
-        <div className="fixed bottom-16 right-4 w-96 max-h-96 bg-white border border-slate-200 rounded-lg shadow-xl z-50 flex flex-col overflow-hidden">
-          <div className="bg-slate-100 p-2 flex justify-between items-center text-sm font-medium text-slate-700">
+        <div className="fixed bottom-16 right-4 w-96 max-h-96 bg-surface border border-base rounded-lg shadow-xl z-50 flex flex-col overflow-hidden">
+          <div className="bg-base p-2 flex justify-between items-center text-sm font-medium text-main">
             <span>控制台日志</span>
             <div className="flex gap-1">
               <button
                 onClick={exportLogs}
-                className="px-2 py-0.5 text-xs bg-slate-200 text-slate-600 rounded hover:bg-slate-300"
+                className="px-2 py-0.5 text-xs bg-surface text-muted rounded hover:bg-base border border-base"
               >
                 导出
               </button>
               <button
                 onClick={() => setLogs([])}
-                className="px-2 py-0.5 text-xs bg-slate-200 text-slate-600 rounded hover:bg-slate-300"
+                className="px-2 py-0.5 text-xs bg-surface text-muted rounded hover:bg-base border border-base"
               >
                 清空
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 text-sm text-slate-600 font-mono">
+          <div className="flex-1 overflow-y-auto p-2 text-sm text-muted font-mono bg-surface">
             {logs.length === 0 ? (
-              <div className="text-slate-400 italic">暂无日志</div>
+              <div className="text-muted/50 italic">暂无日志</div>
             ) : (
               <div className="space-y-1">
                 {logs.map((log, index) => (
-                  <div key={index} className={`${
-                    log.includes('[ERROR]')
-                      ? 'text-red-600 bg-red-50 p-1 rounded'
+                  <div key={index} className={`${log.includes('[ERROR]')
+                      ? 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-1 rounded'
                       : log.includes('[WARN]')
-                      ? 'text-yellow-600 bg-yellow-50 p-1 rounded'
-                      : 'text-slate-600'
-                  }`}>
+                        ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-1 rounded'
+                        : 'text-muted'
+                    }`}>
                     {log}
                   </div>
                 ))}

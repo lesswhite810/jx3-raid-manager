@@ -6,9 +6,9 @@ interface LoadingSpinnerProps {
   text?: string;
 }
 
-export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ 
-  size = 'md', 
-  text = '加载中...' 
+export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
+  size = 'md',
+  text = '加载中...'
 }) => {
   const sizeClasses = {
     sm: 'w-4 h-4',
@@ -18,8 +18,8 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center py-8">
-      <Loader2 className={`animate-spin text-indigo-600 ${sizeClasses[size]}`} />
-      {text && <p className="mt-2 text-sm text-slate-600">{text}</p>}
+      <Loader2 className={`animate-spin text-primary ${sizeClasses[size]}`} />
+      {text && <p className="mt-2 text-sm text-muted">{text}</p>}
     </div>
   );
 };

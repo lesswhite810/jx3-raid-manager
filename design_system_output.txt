@@ -1,0 +1,49 @@
+﻿+-----------------------------------------------------------------------------------------+
+|  TARGET: JX3 Raid Manager - RECOMMENDED DESIGN SYSTEM                                   |
++-----------------------------------------------------------------------------------------+
+|                                                                                          |
+|  PATTERN: Feature-Rich Showcase                                                         |
+|     CTA: Above fold                                                                     |
+|     Sections:                                                                           |
+|       1. Hero                                                                           |
+|       2. Features                                                                       |
+|       3. CTA                                                                            |
+|                                                                                          |
+|  STYLE: Retro-Futurism                                                                  |
+|     Keywords: Vintage sci-fi, 80s aesthetic, neon glow, geometric patterns, CRT         |
+|     scanlines, pixel art, cyberpunk, synthwave                                          |
+|     Best For: Gaming, entertainment, music platforms, tech brands, artistic projects,   |
+|     nostalgic, cyberpunk                                                                |
+|     Performance: 鈿?Moderate | Accessibility: 鈿?High contrast/strain                     |
+|                                                                                          |
+|  COLORS:                                                                                |
+|     Primary:    #7C3AED                                                                 |
+|     Secondary:  #A78BFA                                                                 |
+|     CTA:        #F43F5E                                                                 |
+|     Background: #0F0F23                                                                 |
+|     Text:       #E2E8F0                                                                 |
+|     Notes: Vibrant + neon + immersive colors                                            |
+|                                                                                          |
+|  TYPOGRAPHY: Russo One / Chakra Petch                                                   |
+|     Mood: gaming, bold, action, esports, competitive, energetic                         |
+|     Best For: Gaming, esports, action games, competitive sports, entertainment          |
+|     Google Fonts: https://fonts.google.com/share?selection.family=Chakra+Petch:wght@300;400;500;600;700|Russo+One|
+|     CSS Import: @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wgh...|
+|                                                                                          |
+|  KEY EFFECTS:                                                                           |
+|     CRT scanlines (::before overlay), neon glow (text-shadow+box-shadow), glitch        |
+|     effects (skew/offset keyframes)                                                     |
+|                                                                                          |
+|  AVOID (Anti-patterns):                                                                 |
+|     Minimalist design + Static assets                                                   |
+|                                                                                          |
+|  PRE-DELIVERY CHECKLIST:                                                                |
+|     [ ] No emojis as icons (use SVG: Heroicons/Lucide)                                  |
+|     [ ] cursor-pointer on all clickable elements                                        |
+|     [ ] Hover states with smooth transitions (150-300ms)                                |
+|     [ ] Light mode: text contrast 4.5:1 minimum                                         |
+|     [ ] Focus states visible for keyboard nav                                           |
+|     [ ] prefers-reduced-motion respected                                                |
+|     [ ] Responsive: 375px, 768px, 1024px, 1440px                                        |
+|                                                                                          |
++-----------------------------------------------------------------------------------------+

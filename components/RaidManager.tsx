@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { Raid } from '../types';
 import { Plus, Trash2, Shield, Filter, Power } from 'lucide-react';
-import { getRaidKey, isDuplicateRaid } from '../utils/raidUtils';
+import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
+import { AddRaidModal } from './AddRaidModal';
 
 interface RaidManagerProps {
   raids: Raid[];
@@ -78,20 +79,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
     });
     return sortedVersions.length > 0 ? sortedVersions[0] : 'all';
   });
-  
-  const [newRaid, setNewRaid] = useState<Partial<Raid>>({
-    name: '',
-    difficulty: 'NORMAL',
-    playerCount: 25,
-    isActive: true
-  });
-  
-  const [formError, setFormError] = useState<string>('');
-  
+
   const isStaticRaid = (raid: Raid) => {
     return !!raid.static;
   };
-  
+
   const filteredRaids = useMemo(() => {
     return raids.filter(raid => raid.version === selectedVersion);
   }, [raids, selectedVersion]);
@@ -105,30 +97,30 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
       }
       groups[version].push(raid);
     });
-    
+
     Object.keys(groups).forEach(version => {
       groups[version].reverse();
     });
-    
+
     return groups;
   }, [filteredRaids]);
 
   const mergedGroupedRaids = useMemo(() => {
     const mergedGroups: Record<string, MergedRaid[]> = {};
-    
+
     Object.entries(groupedRaids).forEach(([version, versionRaids]) => {
       const mergedRaids: MergedRaid[] = [];
-      
+
       // 首先按人数类型分组
       const raidsByPlayerCount: Record<number, Raid[]> = {
         10: [],
         25: []
       };
-      
+
       versionRaids.forEach(raid => {
         raidsByPlayerCount[raid.playerCount].push(raid);
       });
-      
+
       // 处理每个副本名称
       const nameGroups = new Map<string, Raid[]>();
       versionRaids.forEach(raid => {
@@ -138,17 +130,17 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
         }
         nameGroups.get(key)!.push(raid);
       });
-      
+
       nameGroups.forEach((raids, name) => {
         const difficultyLabels: { [key: string]: string } = {};
-        
+
         // 只处理难度标签，不修改 isActive 状态
         const hasMultiplePlayerCounts = new Set(raids.map(r => r.playerCount)).size > 1;
-        
+
         raids.forEach(raid => {
           const key = getRaidKey(raid);
           const difficultyLabel = DIFFICULTY_LABELS[raid.difficulty];
-          
+
           // 如果存在多种人数版本，在标签中添加人数标识
           if (hasMultiplePlayerCounts) {
             difficultyLabels[key] = `${raid.playerCount}人${difficultyLabel}`;
@@ -156,18 +148,18 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
             difficultyLabels[key] = difficultyLabel;
           }
         });
-        
+
         const sortedRaids = raids.sort((a, b) => {
           const playerCountOrder = { 10: 0, 25: 1 };
           const difficultyOrder = { 'NORMAL': 0, 'HEROIC': 1, 'CHALLENGE': 2 };
-          
+
           if (playerCountOrder[a.playerCount] !== playerCountOrder[b.playerCount]) {
             return playerCountOrder[a.playerCount] - playerCountOrder[b.playerCount];
           }
-          
+
           return difficultyOrder[a.difficulty] - difficultyOrder[b.difficulty];
         });
-        
+
         const mergedRaid: MergedRaid = {
           name,
           version: raids[0].version || '其他',
@@ -178,7 +170,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
         };
         mergedRaids.push(mergedRaid);
       });
-      
+
       // 按版本顺序排序
       mergedGroups[version] = mergedRaids.sort((a, b) => {
         const versionOrder = VERSION_ORDER_MAP[a.version] !== undefined ? VERSION_ORDER_MAP[a.version] : 999;
@@ -186,48 +178,12 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
         return versionOrder - versionOrderB;
       });
     });
-    
+
     return mergedGroups;
   }, [groupedRaids]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!newRaid.name || newRaid.name.trim() === '') {
-      setFormError('副本名称不能为空');
-      return;
-    }
-    
-    if (newRaid.name && newRaid.name.length > 50) {
-      setFormError('副本名称不能超过50个字符');
-      return;
-    }
-
-    const isDuplicate = isDuplicateRaid(
-      raids,
-      newRaid.name.trim(),
-      newRaid.playerCount || 25,
-      newRaid.difficulty || 'NORMAL'
-    );
-
-    if (isDuplicate) {
-      setFormError('该副本已存在（相同名称、人数和难度）');
-      return;
-    }
-    
-    setFormError('');
-    
-    const raid: Raid = {
-      name: newRaid.name.trim(),
-      difficulty: newRaid.difficulty || 'NORMAL',
-      playerCount: newRaid.playerCount || 25,
-      notes: newRaid.notes,
-      isActive: newRaid.isActive ?? true
-    };
-    
+  const handleAddRaid = (raid: Raid) => {
     setRaids(prev => [...prev, raid]);
-    setIsAdding(false);
-    setNewRaid({ name: '', difficulty: 'NORMAL', playerCount: 25, isActive: true });
     toast.success(`成功添加副本: ${raid.name}`);
   };
 
@@ -244,7 +200,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
       }
       return r;
     }));
-    
+
     const raidName = raidsWithName[0].name;
     toast.success(`${raidName} 已${newStatus ? '启用所有难度' : '禁用所有难度'}`);
   };
@@ -257,7 +213,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
       }
       return r;
     }));
-    
+
     const raid = raids.find(r => getRaidKey(r) === key);
     if (raid) {
       const isNowActive = !raid.isActive;
@@ -268,13 +224,13 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold text-slate-800">副本管理</h2>
+        <h2 className="text-2xl font-bold text-main">副本管理</h2>
         <div className="flex gap-2">
           {versions.length > 0 && (
-            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200">
-              <Filter className="w-4 h-4 text-slate-500" />
+            <div className="flex items-center gap-2 bg-surface px-3 py-2 rounded-lg border border-base">
+              <Filter className="w-4 h-4 text-muted" />
               <select
-                className="bg-transparent text-sm outline-none cursor-pointer"
+                className="bg-transparent text-sm outline-none cursor-pointer text-main"
                 value={selectedVersion}
                 onChange={e => setSelectedVersion(e.target.value)}
               >
@@ -284,9 +240,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
               </select>
             </div>
           )}
-          <button 
-            onClick={() => setIsAdding(!isAdding)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+          <button
+            onClick={() => setIsAdding(true)}
+            className="bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-md hover:shadow-lg active:scale-95"
           >
             <Plus className="w-4 h-4" /> 新增副本
           </button>
@@ -297,83 +253,13 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
         右键难度框可单独禁用/启用
       </div>
 
-      {isAdding && (
-        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-in fade-in slide-in-from-top-4">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">添加新副本</h3>
-          
-          {formError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-700">{formError}</p>
-            </div>
-          )}
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">副本名称 *</label>
-              <input 
-                required
-                placeholder="例如：冷龙峰"
-                className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={newRaid.name}
-                onChange={e => setNewRaid({...newRaid, name: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">难度</label>
-              <select 
-                className="w-full p-2 border border-slate-300 rounded-lg"
-                value={newRaid.difficulty}
-                onChange={e => setNewRaid({...newRaid, difficulty: e.target.value as any})}
-              >
-                <option value="NORMAL">普通</option>
-                <option value="HEROIC">英雄</option>
-                <option value="CHALLENGE">挑战</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">人数</label>
-              <select 
-                className="w-full p-2 border border-slate-300 rounded-lg"
-                value={newRaid.playerCount}
-                onChange={e => setNewRaid({...newRaid, playerCount: Number(e.target.value) as 10 | 25})}
-              >
-                <option value={10}>10人</option>
-                <option value={25}>25人</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">状态</label>
-              <select 
-                className="w-full p-2 border border-slate-300 rounded-lg"
-                value={newRaid.isActive ? 'true' : 'false'}
-                onChange={e => setNewRaid({...newRaid, isActive: e.target.value === 'true'})}
-              >
-                <option value="true">启用</option>
-                <option value="false">禁用</option>
-              </select>
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">备注</label>
-              <input 
-                placeholder="可选备注信息"
-                className="w-full p-2 border border-slate-300 rounded-lg"
-                value={newRaid.notes || ''}
-                onChange={e => setNewRaid({...newRaid, notes: e.target.value})}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <button type="button" onClick={() => setIsAdding(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
-            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">保存</button>
-          </div>
-        </form>
-      )}
+
 
       {Object.keys(mergedGroupedRaids).length > 0 ? (
         versions.map(version => {
           const versionRaids = mergedGroupedRaids[version];
           if (!versionRaids) return null;
-          
+
           return (
             <div key={version} className="space-y-6">
               <div className="flex items-center gap-3">
@@ -389,9 +275,13 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                   const isStatic = mergedRaid.raids.some(r => isStaticRaid(r));
                   const isDisabled = mergedRaid.disabled;
                   return (
-                    <div 
+                    <div
                       key={getRaidKey(mergedRaid.raids[0])}
-                      className={`bg-white p-4 sm:p-5 rounded-xl shadow-sm border ${isDisabled ? 'border-red-200 bg-red-50/30' : 'border-slate-200'} hover:shadow-md transition-shadow relative group`}
+                      className={`p-4 sm:p-5 rounded-2xl border transition-all duration-300 relative group
+                        ${isDisabled
+                          ? 'border-red-200 bg-red-50/30 dark:bg-red-900/10'
+                          : 'bg-white/50 dark:bg-slate-800/50 backdrop-blur-md border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-xl hover:-translate-y-1'
+                        }`}
                     >
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
@@ -403,23 +293,22 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button 
+                          <button
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleRaidStatus(mergedRaid.name);
                             }}
-                            className={`transition-all p-1 rounded-md ${
-                              isDisabled
-                                ? 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
-                                : isRaidActive 
-                                  ? 'text-green-500 hover:text-green-700 hover:bg-green-50' 
-                                  : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
-                            }`}
+                            className={`transition-all p-1 rounded-md ${isDisabled
+                              ? 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                              : isRaidActive
+                                ? 'text-green-500 hover:text-green-700 hover:bg-green-50'
+                                : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                              }`}
                             title={isDisabled ? '启用此副本' : '禁用此副本（所有难度）'}
                           >
                             <Power size={16} />
                           </button>
-                          <button 
+                          <button
                             onClick={(e) => {
                               e.stopPropagation();
                               if (isStatic) {
@@ -433,24 +322,23 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                                 });
                               }
                             }}
-                            className={`transition-colors p-1 rounded-md ${
-                              isStatic 
-                                ? 'text-slate-200 cursor-not-allowed' 
-                                : 'text-slate-300 hover:text-red-500 hover:bg-red-50'
-                            }`}
+                            className={`transition-colors p-1 rounded-md ${isStatic
+                              ? 'text-slate-200 cursor-not-allowed'
+                              : 'text-slate-300 hover:text-red-500 hover:bg-red-50'
+                              }`}
                             title={isStatic ? '预制副本不能删除' : '删除'}
                           >
                             <Trash2 size={16} />
                           </button>
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-2 mb-3 flex-wrap justify-center sm:justify-start">
                         {mergedRaid.raids.map(raid => {
                           const label = mergedRaid.difficultyLabels[getRaidKey(raid)] || DIFFICULTY_LABELS[raid.difficulty];
                           const isSpecialRaid = raid.name === '弓月城' || raid.name === '缚罪之渊';
                           return (
-                            <div 
+                            <div
                               key={getRaidKey(raid)}
                               onClick={() => onRaidClick?.(raid)}
                               onContextMenu={(e) => {
@@ -458,11 +346,10 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                                 e.stopPropagation();
                                 toggleRaidDifficultyStatus(getRaidKey(raid));
                               }}
-                              className={`relative px-3 py-2 text-xs sm:text-sm font-bold rounded-lg border cursor-pointer transition-all hover:scale-105 hover:shadow-sm min-w-[60px] sm:min-w-[70px] text-center ${
-                                raid.isActive 
-                                  ? DIFFICULTY_COLORS[raid.difficulty] 
-                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100 opacity-60'
-                              }`}
+                              className={`relative px-3 py-2 text-xs sm:text-sm font-bold rounded-lg border cursor-pointer transition-all hover:scale-105 hover:shadow-sm min-w-[60px] sm:min-w-[70px] text-center ${raid.isActive
+                                ? DIFFICULTY_COLORS[raid.difficulty]
+                                : 'bg-base text-muted border-base hover:bg-base/80 opacity-60'
+                                }`}
                               title={raid.isActive ? `${label} - 点击进入详情，右键切换状态` : `已禁用 - ${label} - 右键启用${!raid.isActive && !isSpecialRaid ? '（默认禁用）' : ''}`}
                             >
                               {label}
@@ -478,11 +365,17 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
           );
         })
       ) : (
-        <div className="text-center py-12 text-slate-400 bg-white rounded-xl border border-slate-200">
+        <div className="text-center py-12 text-muted bg-surface rounded-xl border border-base">
           <Shield className="w-12 h-12 mx-auto mb-2 opacity-20" />
           <p>暂无副本，点击上方按钮添加</p>
         </div>
       )}
+      <AddRaidModal
+        isOpen={isAdding}
+        onClose={() => setIsAdding(false)}
+        onSubmit={handleAddRaid}
+        existingRaids={raids}
+      />
     </div>
   );
 };
