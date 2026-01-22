@@ -99,7 +99,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                                         if (error) setError(null);
                                     }}
                                     className="w-full pl-10 pr-4 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all placeholder:text-muted text-main"
-                                    placeholder="例如：ybb18829283218"
+                                    placeholder="例如：123456"
                                     autoFocus
                                 />
                             </div>
