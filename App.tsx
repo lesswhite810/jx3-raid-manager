@@ -324,7 +324,7 @@ function App() {
       </nav>
 
       {/* Main Content */}
-      <main key={contentKey} className="max-w-7xl mx-auto p-4 md:p-8 select-text">
+      <main key={contentKey} className="w-full mx-auto p-4 md:p-8 select-text">
         {isTransitioning ? (
           <LoadingSpinner size="lg" text="切换中..." />
         ) : (

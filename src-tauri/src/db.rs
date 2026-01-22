@@ -153,10 +153,13 @@ pub fn db_save_records(records: String) -> Result<(), String> {
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     
+    // 全量同步：先清空表，再插入
+    tx.execute("DELETE FROM records", []).map_err(|e| e.to_string())?;
+    
     for record in parsed {
         let id = record["id"].as_str().unwrap_or_default().to_string();
         tx.execute(
-            "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
+            "INSERT INTO records (id, data) VALUES (?, ?)",
             params![id, record.to_string()],
         ).map_err(|e| e.to_string())?;
     }
