@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Account, AccountType, Role, Config } from '../types';
 import { SECTS } from '../constants';
-import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings } from 'lucide-react';
+import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight } from 'lucide-react';
 import { convertToSystemAccounts } from '../services/directoryParser';
 import { sortRoles } from '../utils/accountUtils';
 import { generateUUID } from '../utils/uuid';
@@ -22,6 +22,19 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
   const [addingRoleToAccountId, setAddingRoleToAccountId] = useState<string | null>(null);
+  const [expandedAccountIds, setExpandedAccountIds] = useState<Set<string>>(new Set());
+
+  const toggleAccountExpansion = (accountId: string) => {
+    setExpandedAccountIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(accountId)) {
+        newSet.delete(accountId);
+      } else {
+        newSet.add(accountId);
+      }
+      return newSet;
+    });
+  };
 
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
@@ -596,230 +609,259 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       }
 
       <div className="space-y-6">
-        {filteredAccounts.map(account => (
-          <div key={account.id} className={`bg-surface p-5 rounded-lg border border-base hover:border-primary/50 transition-colors ${selectedAccounts.has(account.id) ? 'ring-1 ring-primary border-primary' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex items-center gap-2">
-                {/* 复选框 */}
-                <input
-                  type="checkbox"
-                  checked={selectedAccounts.has(account.id)}
-                  onChange={() => handleSelectAccount(account.id)}
-                  className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
-                />
-                <span className={`p-1.5 rounded-lg ${account.type === AccountType.OWN ? 'bg-primary/10 text-primary' : 'bg-emerald-50 text-emerald-600'}`}>
-                  {account.type === AccountType.OWN ? <User size={16} /> : <UserCheck size={16} />}
-                </span>
-                <div>
-                  <h3 className={`font-medium text-main ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
-                  <p className="text-xs text-muted">{Array.isArray(account.roles) ? account.roles.length : 0} 个角色</p>
-                </div>
-              </div>
-              <div className="flex gap-1">
-                {/* 代清状态切换按钮 */}
-                <button
-                  onClick={() => {
-                    setAccounts(prev => prev.map(a => {
-                      if (a.id === account.id) {
-                        return {
-                          ...a,
-                          type: a.type === AccountType.CLIENT ? AccountType.OWN : AccountType.CLIENT
-                        };
-                      }
-                      return a;
-                    }));
-                  }}
-                  className={`text-slate-300 hover:text-emerald-600 transition-colors p-1 rounded-full hover:bg-emerald-50`}
-                  title={account.type === AccountType.CLIENT ? '取消代清' : '标记代清'}
-                >
-                  {account.type === AccountType.CLIENT ? <CheckCircle2 size={16} className="text-green-600" /> : <UserCheck size={16} />}
-                </button>
-                {/* 禁用/启用切换按钮 */}
-                <button
-                  onClick={() => {
-                    setAccounts(prev => prev.map(a => {
-                      if (a.id === account.id) {
-                        return { ...a, disabled: !a.disabled };
-                      }
-                      return a;
-                    }));
-                  }}
-                  className={`text-slate-300 hover:text-emerald-600 transition-colors p-1 rounded-full hover:bg-emerald-50`}
-                  title={account.disabled ? '启用账号' : '禁用账号'}
-                >
-                  {account.disabled ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
-                </button>
-                <button onClick={() => handleDeleteAccountClick(account.id)} className="text-muted hover:text-red-500 transition-colors p-1 rounded-md hover:bg-red-50">
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
+        {filteredAccounts.map(account => {
+          const isExpanded = expandedAccountIds.has(account.id);
+          return (
+            <div key={account.id} className={`bg-surface rounded-lg border border-base transition-all ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''}`}>
+              {/* 可点击的头部区域 */}
+              <div
+                className={`flex items-center justify-between p-4 cursor-pointer select-none transition-colors ${isExpanded ? 'bg-base/50' : 'hover:bg-base/30'}`}
+                onClick={() => toggleAccountExpansion(account.id)}
+              >
+                <div className="flex items-center gap-3 overflow-hidden">
+                  {/* 展开/折叠图标 */}
+                  <div className="text-muted shrink-0 transition-transform duration-200">
+                    {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </div>
 
-            {/* 账号信息编辑区域 */}
-            <div className="bg-base/30 rounded-lg border border-base p-4 mb-4">
-              <h4 className="font-semibold text-main mb-3 flex items-center gap-2">
-                <User className="w-4 h-4" />
-                账号信息
-              </h4>
+                  {/* 复选框 - 阻止冒泡 */}
+                  <div onClick={e => e.stopPropagation()} className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedAccounts.has(account.id)}
+                      onChange={() => handleSelectAccount(account.id)}
+                      className="w-4 h-4 text-primary border-base rounded focus:ring-primary cursor-pointer"
+                    />
+                  </div>
 
-              <div className="space-y-4">
-                {/* 登录账号 - 自动从账户名称获取，不可编辑 */}
-                <div className="flex items-center gap-3">
-                  <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
-                    登录账号
-                  </label>
-                  <div className="flex-1 px-4 py-2.5 bg-surface border border-base rounded-lg text-main text-sm font-medium">
-                    {account.username || account.accountName}
+                  {/* 账号类型图标 */}
+                  <span className={`p-1.5 rounded-lg shrink-0 ${account.type === AccountType.OWN ? 'bg-primary/10 text-primary' : 'bg-emerald-50 text-emerald-600'}`}>
+                    {account.type === AccountType.OWN ? <User size={16} /> : <UserCheck size={16} />}
+                  </span>
+
+                  {/* 账号信息概要 */}
+                  <div className="min-w-0 flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <h3 className={`font-medium text-main truncate ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
+                      {account.type === AccountType.CLIENT && (
+                        <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">代清</span>
+                      )}
+                    </div>
+                    {!isExpanded && (
+                      <p className="text-xs text-muted truncate mt-0.5">
+                        {Array.isArray(account.roles) ? account.roles.length : 0} 个角色
+                        {account.username && <span className="mx-1">·</span>}
+                        {account.username}
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                {/* 密码 */}
-                <div className="flex items-center gap-3">
-                  <label className="text-sm font-semibold text-slate-700 w-24 flex-shrink-0">
-                    密码
-                  </label>
-                  <div className="flex-1 flex gap-2">
-                    <input
-                      type={visiblePasswords.has(account.id) ? 'text' : 'password'}
-                      value={account.password || ''}
-                      onChange={(e) => {
-                        setAccounts(prev => prev.map(a => {
-                          if (a.id === account.id) {
-                            return { ...a, password: e.target.value };
-                          }
-                          return a;
-                        }));
-                      }}
-                      className="flex-1 px-4 py-2.5 border border-base bg-surface rounded-lg text-main text-sm font-medium focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
-                      placeholder="输入游戏密码"
-                    />
-                    <div className="flex gap-1">
+                {/* 操作按钮区域 - 阻止冒泡 */}
+                <div className="flex gap-1 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+                  <button
+                    onClick={() => {
+                      setAccounts(prev => prev.map(a => {
+                        if (a.id === account.id) {
+                          return {
+                            ...a,
+                            type: a.type === AccountType.CLIENT ? AccountType.OWN : AccountType.CLIENT
+                          };
+                        }
+                        return a;
+                      }));
+                    }}
+                    className={`text-slate-300 hover:text-emerald-600 transition-colors p-1.5 rounded-md hover:bg-emerald-50`}
+                    title={account.type === AccountType.CLIENT ? '取消代清' : '标记代清'}
+                  >
+                    {account.type === AccountType.CLIENT ? <CheckCircle2 size={16} className="text-green-600" /> : <UserCheck size={16} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAccounts(prev => prev.map(a => {
+                        if (a.id === account.id) {
+                          return { ...a, disabled: !a.disabled };
+                        }
+                        return a;
+                      }));
+                    }}
+                    className={`text-slate-300 hover:text-emerald-600 transition-colors p-1.5 rounded-md hover:bg-emerald-50`}
+                    title={account.disabled ? '启用账号' : '禁用账号'}
+                  >
+                    {account.disabled ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteAccountClick(account.id)}
+                    className="text-muted hover:text-red-500 transition-colors p-1.5 rounded-md hover:bg-red-50"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* 折叠内容区域 */}
+              {isExpanded && (
+                <div className="p-4 border-t border-base animate-in slide-in-from-top-2 duration-200 fade-in space-y-4 cursor-default">
+                  {/* 账号信息编辑区域 */}
+                  <div className="bg-base/30 rounded-lg border border-base p-4">
+                    <h4 className="font-semibold text-main mb-3 flex items-center gap-2">
+                      <User className="w-4 h-4" />
+                      账号信息
+                    </h4>
+
+                    <div className="space-y-4">
+                      {/* 登录账号 */}
+                      <div className="flex items-center gap-3">
+                        <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
+                          登录账号
+                        </label>
+                        <div className="flex-1 px-4 py-2.5 bg-surface border border-base rounded-lg text-main text-sm font-medium">
+                          {account.username || account.accountName}
+                        </div>
+                      </div>
+
+                      {/* 密码 */}
+                      <div className="flex items-center gap-3">
+                        <label className="text-sm font-semibold text-slate-700 w-24 flex-shrink-0">
+                          密码
+                        </label>
+                        <div className="flex-1 flex gap-2">
+                          <input
+                            type={visiblePasswords.has(account.id) ? 'text' : 'password'}
+                            value={account.password || ''}
+                            onChange={(e) => {
+                              setAccounts(prev => prev.map(a => {
+                                if (a.id === account.id) {
+                                  return { ...a, password: e.target.value };
+                                }
+                                return a;
+                              }));
+                            }}
+                            className="flex-1 px-4 py-2.5 border border-base bg-surface rounded-lg text-main text-sm font-medium focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
+                            placeholder="输入游戏密码"
+                          />
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => togglePasswordVisibility(account.id)}
+                              className="p-2.5 rounded-lg bg-surface border border-base hover:bg-base text-muted hover:text-primary transition-colors"
+                              title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
+                            >
+                              {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                            {account.password && (
+                              <button
+                                onClick={() => copyPassword(account.password, account.id)}
+                                className={`p-2.5 rounded-lg border border-base transition-colors ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
+                                title="复制密码"
+                              >
+                                {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Roles Section */}
+                  <div className="bg-base/30 rounded-lg border border-base p-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="font-semibold text-main flex items-center gap-2">
+                        <User className="w-4 h-4" />
+                        角色列表
+                      </h4>
                       <button
-                        onClick={() => togglePasswordVisibility(account.id)}
-                        className="p-2.5 rounded-lg bg-surface border border-base hover:bg-base text-muted hover:text-primary transition-colors"
-                        title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
+                        onClick={() => setAddingRoleToAccountId(account.id)}
+                        className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium shadow-sm active:scale-[0.98]"
                       >
-                        {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
+                        <Plus className="w-4 h-4" />
+                        添加角色
                       </button>
-                      {account.password && (
-                        <button
-                          onClick={() => copyPassword(account.password, account.id)}
-                          className={`p-2.5 rounded-lg border border-base transition-colors ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
-                          title="复制密码"
-                        >
-                          {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
-                        </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {!Array.isArray(account.roles) || account.roles.length === 0 ? (
+                        <div className="text-center py-5 text-muted">
+                          <p className="flex items-center justify-center gap-2">
+                            <User className="w-5 h-5" />
+                            暂无角色，点击上方按钮添加
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {account.roles.map(role => (
+                            <div key={role.id} className={`bg-surface border border-base p-3 rounded-lg hover:border-primary/50 transition-colors ${role.disabled ? 'opacity-60' : ''}`}>
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                                    <h5 className={`font-medium text-main ${role.disabled ? 'line-through text-muted' : ''}`}>{role.name}</h5>
+                                    {role.sect ? (
+                                      <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md font-medium">{role.sect}</span>
+                                    ) : (
+                                      <span className="text-xs text-muted italic">未设置门派</span>
+                                    )}
+                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium">
+                                        {role.equipmentScore.toLocaleString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs text-muted">{role.region}</span>
+                                    <span className="text-xs text-muted">·</span>
+                                    <span className="text-xs text-muted">{role.server}</span>
+                                  </div>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => handleOpenEditRoleModal(account.id, role)}
+                                    className="text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50"
+                                    title="修改角色信息"
+                                  >
+                                    <Settings size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setAccounts(prev => prev.map(a => {
+                                        if (a.id === account.id) {
+                                          return {
+                                            ...a,
+                                            roles: a.roles.map(r => {
+                                              if (r.id === role.id) {
+                                                return { ...r, disabled: !r.disabled };
+                                              }
+                                              return r;
+                                            })
+                                          };
+                                        }
+                                        return a;
+                                      }));
+                                    }}
+                                    className={`text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50`}
+                                    title={role.disabled ? '启用角色' : '禁用角色'}
+                                  >
+                                    {role.disabled ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteRoleClick(account.id, role.id)}
+                                    className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-full hover:bg-red-50"
+                                    title="删除角色"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
-
-            {/* Roles Section */}
-            <div className="bg-base/30 rounded-lg border border-base p-4">
-              <div className="flex justify-between items-center mb-3">
-                <h4 className="font-semibold text-main flex items-center gap-2">
-                  <User className="w-4 h-4" />
-                  角色列表
-                </h4>
-                <button
-                  onClick={() => setAddingRoleToAccountId(account.id)}
-                  className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium shadow-sm active:scale-[0.98]"
-                >
-                  <Plus className="w-4 h-4" />
-                  添加角色
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {!Array.isArray(account.roles) || account.roles.length === 0 ? (
-                  <div className="text-center py-5 text-muted">
-                    <p className="flex items-center justify-center gap-2">
-                      <User className="w-5 h-5" />
-                      暂无角色，点击上方按钮添加
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {account.roles.map(role => (
-                      <div key={role.id} className={`bg-surface border border-base p-3 rounded-lg hover:border-primary/50 transition-colors ${role.disabled ? 'opacity-60' : ''}`}>
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                              <h5 className={`font-medium text-main ${role.disabled ? 'line-through text-muted' : ''}`}>{role.name}</h5>
-                              {role.sect ? (
-                                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md font-medium">{role.sect}</span>
-                              ) : (
-                                <span className="text-xs text-muted italic">未设置门派</span>
-                              )}
-                              {role.equipmentScore !== undefined && role.equipmentScore !== null && (
-                                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium">
-                                  {role.equipmentScore.toLocaleString()}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-xs text-muted">{role.region}</span>
-                              <span className="text-xs text-muted">·</span>
-                              <span className="text-xs text-muted">{role.server}</span>
-                            </div>
-                          </div>
-                          <div className="flex gap-1">
-                            <button
-                              onClick={() => handleOpenEditRoleModal(account.id, role)}
-                              className="text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50"
-                              title="修改角色信息"
-                            >
-                              <Settings size={14} />
-                            </button>
-                            <button
-                              onClick={() => {
-                                setAccounts(prev => prev.map(a => {
-                                  if (a.id === account.id) {
-                                    return {
-                                      ...a,
-                                      roles: a.roles.map(r => {
-                                        if (r.id === role.id) {
-                                          return { ...r, disabled: !r.disabled };
-                                        }
-                                        return r;
-                                      })
-                                    };
-                                  }
-                                  return a;
-                                }));
-                              }}
-                              className={`text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50`}
-                              title={role.disabled ? '启用角色' : '禁用角色'}
-                            >
-                              {role.disabled ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRoleClick(account.id, role.id)}
-                              className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-full hover:bg-red-50"
-                              title="删除角色"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {
-              account.type === AccountType.CLIENT && (
-                <div className="absolute top-2 right-10">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-green-600 bg-green-50 px-2 py-1 rounded-full border border-green-100">代清</span>
-                </div>
-              )
-            }
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Batch Delete Confirmation Dialog */}
