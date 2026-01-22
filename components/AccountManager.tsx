@@ -3,6 +3,7 @@ import { Account, AccountType, Role, Config } from '../types';
 import { SECTS } from '../constants';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings } from 'lucide-react';
 import { convertToSystemAccounts } from '../services/directoryParser';
+import { sortRoles } from '../utils/accountUtils';
 import { generateUUID } from '../utils/uuid';
 import { scanGameDirectory, ScanProgress } from '../services/gameDirectoryScanner';
 import { toast } from '../utils/toastManager';
@@ -228,16 +229,18 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setAccounts(prev => prev.map(account => {
       if (account.id !== accountId) return account;
 
+      const updatedRoles = account.roles.map(role => {
+        if (role.id !== roleId) return role;
+        return {
+          ...role,
+          sect: sect.trim(),
+          equipmentScore: equipmentScore !== undefined && equipmentScore !== null ? equipmentScore : undefined
+        };
+      });
+
       return {
         ...account,
-        roles: account.roles.map(role => {
-          if (role.id !== roleId) return role;
-          return {
-            ...role,
-            sect: sect.trim(),
-            equipmentScore: equipmentScore !== undefined && equipmentScore !== null ? equipmentScore : undefined
-          };
-        })
+        roles: sortRoles(updatedRoles)
       };
     }));
 
@@ -355,7 +358,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       if (account.id === addingRoleToAccountId) {
         return {
           ...account,
-          roles: [...account.roles, role]
+          roles: sortRoles([...account.roles, role])
         };
       }
       return account;

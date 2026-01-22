@@ -30,14 +30,46 @@ export const sortAccounts = (accounts: Account[]): Account[] => {
  * Sorts roles based on disabled status.
  * Enabled roles first, disabled roles last.
  */
-const sortRoles = (roles: Role[]): Role[] => {
+/**
+ * Sorts roles based on:
+ * 1. Disabled status (Enabled first)
+ * 2. Configuration status (Both Sect & Score > Either > None)
+ * 3. Equipment Score (Descending) when both configured
+ */
+export const sortRoles = (roles: Role[]): Role[] => {
     return [...roles].sort((a, b) => {
+        // 1. Sort by Disabled status
         const aDisabled = !!a.disabled;
         const bDisabled = !!b.disabled;
-
         if (aDisabled !== bDisabled) {
             return (aDisabled ? 1 : 0) - (bDisabled ? 1 : 0);
         }
+
+        // 2. Sort by Configuration status
+        // Definition of "Configured": Has sect AND/OR equipmentScore
+        // Priority:
+        // 2: Has BOTH Sect and Score
+        // 1: Has Either
+        // 0: Has Neither
+        const getConfigurationScore = (r: Role) => {
+            let score = 0;
+            if (r.sect) score++;
+            if (r.equipmentScore !== undefined && r.equipmentScore !== null) score++;
+            return score;
+        };
+
+        const aConfigScore = getConfigurationScore(a);
+        const bConfigScore = getConfigurationScore(b);
+
+        if (aConfigScore !== bConfigScore) {
+            return bConfigScore - aConfigScore; // Higher score first
+        }
+
+        // 3. Tie-breaker: Equipment Score (High to Low) if available
+        if (a.equipmentScore !== undefined && b.equipmentScore !== undefined) {
+            return b.equipmentScore - a.equipmentScore;
+        }
+
         return 0;
     });
 };
