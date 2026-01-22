@@ -189,22 +189,6 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-3 pt-2">
-                            <label className="flex items-center gap-3 cursor-pointer group">
-                                <div className="relative flex items-center">
-                                    <input
-                                        type="checkbox"
-                                        checked={isClient}
-                                        onChange={e => setIsClient(e.target.checked)}
-                                        className="peer w-4 h-4 border-2 border-muted rounded transition-colors checked:bg-primary checked:border-primary focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-                                    />
-                                </div>
-                                <span className="text-sm text-main group-hover:text-primary transition-colors select-none">
-                                    这是代清角色
-                                </span>
-                            </label>
-                        </div>
-
                         <div className="flex gap-3 pt-4 border-t border-border">
                             <button
                                 type="button"

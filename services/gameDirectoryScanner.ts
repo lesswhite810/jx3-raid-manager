@@ -21,13 +21,13 @@ export interface ScanOptions {
   activeRoles?: Array<{ name: string; server: string; region: string }>;
 }
 
-const GKP_BASE_PATH = '\\interface\\my#data';
-const USERDATA_BASE_PATH = '\\userdata';
+const GKP_BASE_PATH = 'interface\\my#data';
+const USERDATA_BASE_PATH = 'userdata';
 
 export async function scanGameDirectory(options: ScanOptions): Promise<GameDirectoryScanResult> {
   try {
     const { gameDirectory, onProgress, activeRoles } = options;
-    
+
     const accounts: ParsedAccount[] = [];
     const gkpFiles: GkpFileInfo[] = [];
     const errors: string[] = [];
@@ -40,6 +40,7 @@ export async function scanGameDirectory(options: ScanOptions): Promise<GameDirec
     if (accountsResult.success) {
       accounts.push(...accountsResult.accounts);
     } else {
+      console.warn('扫描账号信息部分失败:', accountsResult.error);
       errors.push(accountsResult.error || '扫描账号信息失败');
     }
 
@@ -51,6 +52,7 @@ export async function scanGameDirectory(options: ScanOptions): Promise<GameDirec
     if (gkpResult.success) {
       gkpFiles.push(...gkpResult.files);
     } else {
+      console.warn('扫描GKP文件部分失败:', gkpResult.error);
       errors.push(gkpResult.error || '扫描GKP文件失败');
     }
 
@@ -85,14 +87,15 @@ export async function scanGameDirectory(options: ScanOptions): Promise<GameDirec
 async function scanUserdataDirectory(gameDirectory: string): Promise<{ success: boolean; accounts: ParsedAccount[]; error?: string }> {
   try {
     const accounts: ParsedAccount[] = [];
-    const userdataPath = `${gameDirectory}${USERDATA_BASE_PATH}`;
+    const normalizedGameDir = gameDirectory.endsWith('\\') || gameDirectory.endsWith('/') ? gameDirectory.slice(0, -1) : gameDirectory;
+    const userdataPath = `${normalizedGameDir}\\${USERDATA_BASE_PATH}`;
 
     const entries = await readDir(userdataPath) as any[];
 
     for (const entry of entries) {
       if (entry.children && entry.name) {
         const accountPath = `${userdataPath}\\${entry.name}`;
-        
+
         const accountContext = {
           accountName: entry.name,
           roles: []
@@ -126,7 +129,7 @@ async function parseAccountDirectory(accountPath: string, context: any): Promise
     for (const entry of entries) {
       if (entry.children && entry.name) {
         const regionPath = `${accountPath}\\${entry.name}`;
-        
+
         await parseRegionDirectory(regionPath, context);
       }
     }
@@ -142,7 +145,7 @@ async function parseRegionDirectory(regionPath: string, context: any): Promise<v
     for (const entry of entries) {
       if (entry.children && entry.name) {
         const serverPath = `${regionPath}\\${entry.name}`;
-        
+
         await parseServerDirectory(serverPath, context, entry.name);
       }
     }
@@ -166,39 +169,41 @@ async function parseServerDirectory(serverPath: string, context: any, regionName
     }
   } catch (error) {
     console.warn(`解析服务器目录失败: ${serverPath}`, error);
+    // Don't throw, just log
   }
 }
 
 async function scanGkpFilesDirectory(gameDirectory: string, activeRoles?: Array<{ name: string; server: string; region: string }>): Promise<{ success: boolean; files: GkpFileInfo[]; error?: string }> {
   try {
     const files: GkpFileInfo[] = [];
-    const gkpBasePath = `${gameDirectory}${GKP_BASE_PATH}`;
+    const normalizedGameDir = gameDirectory.endsWith('\\') || gameDirectory.endsWith('/') ? gameDirectory.slice(0, -1) : gameDirectory;
+    const gkpBasePath = `${normalizedGameDir}\\${GKP_BASE_PATH}`;
     const myDataEntries = await readDir(gkpBasePath);
-    
+
     for (const entry of myDataEntries) {
       if (entry.name?.endsWith('@zhcn_hd')) {
         const userDataPath = `${gkpBasePath}\\${entry.name}\\userdata\\gkp`;
-        
+
         try {
           const gkpEntries = await readDir(userDataPath);
-          
+
           for (const gkpEntry of gkpEntries) {
             if (gkpEntry.name?.endsWith('.gkp.jx3dat')) {
               const fileInfo = parseGkpFileName(gkpEntry.name);
-              
+
               if (fileInfo) {
                 const fullPath = `${userDataPath}\\${gkpEntry.name}`;
-                
+
                 // 如果提供了角色列表，尝试匹配角色名
                 let matchedRoleName: string | undefined;
                 if (activeRoles && activeRoles.length > 0) {
                   // 从目录名中提取角色名（例如：342277519517081876@zhcn_hd -> 342277519517081876）
-                  
+
                   // 遍历用户目录下的子目录，查找匹配的角色
                   try {
                     const userDirPath = `${gkpBasePath}\\${entry.name}`;
                     const subEntries = await readDir(userDirPath);
-                    
+
                     for (const subEntry of subEntries) {
                       if (subEntry.name && subEntry.children) {
                         const matchedRole = activeRoles.find(role => role.name === subEntry.name);
@@ -212,7 +217,7 @@ async function scanGkpFilesDirectory(gameDirectory: string, activeRoles?: Array<
                     // 忽略子目录读取错误，继续处理GKP文件
                   }
                 }
-                
+
                 const gkpFile: GkpFileInfo = {
                   filePath: fullPath,
                   fileName: gkpEntry.name,
@@ -231,7 +236,7 @@ async function scanGkpFilesDirectory(gameDirectory: string, activeRoles?: Array<
         }
       }
     }
-    
+
     return {
       success: true,
       files
@@ -257,7 +262,7 @@ export async function validateGameDirectory(gameDirectory: string): Promise<bool
 
   try {
     const entries = await readDir(gameDirectory) as any[];
-    
+
     const hasValidStructure = entries.some((entry: any) => {
       const name = entry.name?.toLowerCase();
       return name === 'userdata' || name === 'interface';

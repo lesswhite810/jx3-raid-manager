@@ -31,7 +31,8 @@
         "scope": [
           "$APPDATA/**",
           "$HOME/**",
-          "$USERPROFILE/**"
+          "$USERPROFILE/**",
+          "**"
         ]
       },
       "window": {

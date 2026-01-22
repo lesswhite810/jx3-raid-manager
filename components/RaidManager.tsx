@@ -27,9 +27,9 @@ const DIFFICULTY_LABELS = {
 };
 
 const DIFFICULTY_COLORS = {
-  NORMAL: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  HEROIC: 'bg-blue-50 text-blue-700 border-blue-200',
-  CHALLENGE: 'bg-rose-50 text-rose-700 border-rose-200'
+  NORMAL: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800',
+  HEROIC: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800',
+  CHALLENGE: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
 };
 
 const VERSION_ORDER_MAP: Record<string, number> = {

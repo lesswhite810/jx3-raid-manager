@@ -330,7 +330,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
                 tickFormatter={(val) => val >= 10000 ? `${(val / 10000).toFixed(1)}w` : val}
               />
               <Tooltip
-                cursor={{ fill: 'var(--bg-base)', opacity: 0.5 }}
+                cursor={{ fill: 'var(--text-muted)', opacity: 0.1 }}
                 contentStyle={{
                   backgroundColor: 'var(--bg-surface)',
                   borderColor: 'var(--border-base)',

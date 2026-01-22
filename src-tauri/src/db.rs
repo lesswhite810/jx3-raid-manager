@@ -193,10 +193,15 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
     for raid in parsed {
         // Find existing id logic used name, keeping consistent even if potentially risky if no unique id
         // The original code used raid["name"] as id.
-        let name = raid["name"].as_str().unwrap_or_default().to_string();
+        // Create a unique composite ID to avoid UNIQUE constraint violations
+        let name = raid["name"].as_str().unwrap_or_default();
+        let player_count = raid["playerCount"].as_i64().unwrap_or(0);
+        let difficulty = raid["difficulty"].as_str().unwrap_or("NORMAL");
+        let id = format!("{}-{}-{}", name, player_count, difficulty);
+
         tx.execute(
             "INSERT INTO raids (id, data) VALUES (?, ?)",
-            params![name, raid.to_string()],
+            params![id, raid.to_string()],
         ).map_err(|e| e.to_string())?;
     }
     
