@@ -289,15 +289,15 @@ function App() {
       {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
       {/* Sidebar / Topbar */}
       {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
-      <nav className="bg-surface border-b border-base sticky top-0 z-50 px-4 md:px-8 h-16 flex items-center justify-between shadow-sm app-region-drag select-none transition-colors duration-200">
+      <nav className="bg-surface/80 backdrop-blur-md border-b border-border sticky top-0 z-50 px-4 md:px-8 h-16 flex items-center justify-between app-region-drag select-none transition-colors duration-200">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-indigo-200 shadow-lg">
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-lg shadow-sm">
             剑
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-main">副本管家 <span className="text-xs font-normal text-muted bg-base px-2 py-0.5 rounded-full border border-base">JX3</span></h1>
+          <h1 className="text-xl font-bold tracking-tight text-main">副本管家 <span className="text-xs font-normal text-muted bg-base px-2 py-0.5 rounded-full border border-border">JX3</span></h1>
         </div>
         <div className="flex items-center gap-3 app-region-no-drag">
-          <div className="hidden md:flex gap-1 bg-slate-100/50 p-1 rounded-lg border border-slate-200/50">
+          <div className="hidden md:flex gap-1">
             <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18} />} label="概览" />
             <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18} />} label="副本管理" />
             <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
@@ -398,7 +398,7 @@ function App() {
 const NavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${active ? 'bg-base text-primary shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-muted hover:text-main hover:bg-base'
+    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${active ? 'bg-base text-primary' : 'text-muted hover:text-main hover:bg-base/50'
       }`}
   >
     {icon} {label}
@@ -408,7 +408,7 @@ const NavButton = ({ active, onClick, icon, label }: { active: boolean, onClick:
 const MobileNavButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
   <button
     onClick={onClick}
-    className={`flex flex-col items-center justify-center w-full h-full gap-1 ${active ? 'text-indigo-600' : 'text-slate-400'
+    className={`flex flex-col items-center justify-center w-full h-full gap-1 transition-colors ${active ? 'text-primary' : 'text-muted'
       }`}
   >
     {icon}

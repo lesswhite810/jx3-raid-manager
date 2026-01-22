@@ -73,40 +73,46 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
     return (
         <>
             <div
-                className="fixed inset-0 bg-slate-900/60 z-40"
+                className="fixed inset-0 bg-black/40 z-40 transition-opacity duration-200"
                 onClick={onClose}
             />
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-                <div className="bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto animate-in fade-in zoom-in-95 duration-200">
-                    <div className="bg-primary px-6 py-4 flex items-center justify-between">
-                        <h2 className="text-lg font-semibold text-white">新增角色</h2>
+                <div className="bg-surface border border-base rounded-xl shadow-xl w-full max-w-md overflow-hidden pointer-events-auto animate-in fade-in zoom-in-95 duration-200">
+                    <div className="px-6 py-4 flex items-center justify-between border-b border-base">
+                        <div className="flex items-center gap-2">
+                            <User className="w-5 h-5 text-primary" />
+                            <h2 className="text-lg font-semibold text-main">新增角色</h2>
+                        </div>
                         <button
                             onClick={onClose}
-                            className="text-white/70 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10"
+                            className="text-muted hover:text-main hover:bg-base p-1.5 rounded-lg transition-colors"
                         >
                             <X className="w-5 h-5" />
                         </button>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                    <form onSubmit={handleSubmit} className="p-6 space-y-5">
                         {error && (
-                            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-red-700 dark:text-red-400 text-sm">
-                                <AlertCircle className="w-4 h-4" />
+                            <div className="p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-red-600 dark:text-red-400 text-sm">
+                                <AlertCircle className="w-4 h-4 shrink-0" />
                                 <span>{error}</span>
                             </div>
                         )}
 
-                        <div>
-                            <label className="block text-sm font-medium text-main mb-1.5">
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-medium text-main ml-1">
                                 角色名称 <span className="text-red-500">*</span>
                             </label>
-                            <div className="relative">
-                                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                            <div className="relative group">
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
                                 <input
                                     type="text"
                                     value={name}
-                                    onChange={e => setName(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all placeholder:text-muted/50 text-main"
+                                    onChange={e => {
+                                        setName(e.target.value);
+                                        if (error) setError(null);
+                                    }}
+                                    className="w-full pl-9 pr-3 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all placeholder:text-muted text-main"
                                     placeholder="输入角色名称"
                                     autoFocus
                                 />
@@ -114,46 +120,46 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-main mb-1.5">
+                            <div className="space-y-1.5">
+                                <label className="block text-sm font-medium text-main ml-1">
                                     大区 <span className="text-red-500">*</span>
                                 </label>
-                                <div className="relative">
-                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                                <div className="relative group">
+                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
                                     <input
                                         type="text"
                                         value={region}
                                         onChange={e => setRegion(e.target.value)}
-                                        className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all text-main"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all text-main"
                                     />
                                 </div>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-main mb-1.5">
+                            <div className="space-y-1.5">
+                                <label className="block text-sm font-medium text-main ml-1">
                                     服务器 <span className="text-red-500">*</span>
                                 </label>
-                                <div className="relative">
-                                    <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                                <div className="relative group">
+                                    <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
                                     <input
                                         type="text"
                                         value={server}
                                         onChange={e => setServer(e.target.value)}
-                                        className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all text-main"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all text-main"
                                     />
                                 </div>
                             </div>
                         </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-main mb-1.5">
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-medium text-main ml-1">
                                 门派
                             </label>
-                            <div className="relative">
-                                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                            <div className="relative group">
+                                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
                                 <select
                                     value={sect}
                                     onChange={e => setSect(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all appearance-none text-main"
+                                    className="w-full pl-9 pr-3 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all appearance-none text-main"
                                 >
                                     <option value="">请选择门派</option>
                                     {SECTS.map(s => (
@@ -163,12 +169,12 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                             </div>
                         </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-main mb-1.5">
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-medium text-main ml-1">
                                 装分
                             </label>
-                            <div className="relative">
-                                <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                            <div className="relative group">
+                                <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
                                 <input
                                     type="number"
                                     min="0"
@@ -177,36 +183,39 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                                         const val = e.target.value;
                                         setEquipmentScore(val === '' ? undefined : parseInt(val));
                                     }}
-                                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-base rounded-lg focus:ring-2 focus:ring-primary outline-none transition-all text-main"
+                                    className="w-full pl-9 pr-3 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all text-main"
                                     placeholder="可选"
                                 />
                             </div>
                         </div>
 
                         <div className="flex items-center gap-3 pt-2">
-                            <input
-                                type="checkbox"
-                                id="isClient"
-                                checked={isClient}
-                                onChange={e => setIsClient(e.target.checked)}
-                                className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                            />
-                            <label htmlFor="isClient" className="text-sm text-main select-none cursor-pointer">
-                                这是代清角色
+                            <label className="flex items-center gap-3 cursor-pointer group">
+                                <div className="relative flex items-center">
+                                    <input
+                                        type="checkbox"
+                                        checked={isClient}
+                                        onChange={e => setIsClient(e.target.checked)}
+                                        className="peer w-4 h-4 border-2 border-muted rounded transition-colors checked:bg-primary checked:border-primary focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+                                    />
+                                </div>
+                                <span className="text-sm text-main group-hover:text-primary transition-colors select-none">
+                                    这是代清角色
+                                </span>
                             </label>
                         </div>
 
-                        <div className="flex gap-3 pt-4">
+                        <div className="flex gap-3 pt-4 border-t border-border">
                             <button
                                 type="button"
                                 onClick={onClose}
-                                className="flex-1 px-4 py-2.5 border border-base text-main rounded-lg font-medium hover:bg-base transition-colors"
+                                className="flex-1 px-4 py-2.5 border border-base text-main rounded-lg font-medium hover:bg-base transition-colors active:scale-[0.98]"
                             >
                                 取消
                             </button>
                             <button
                                 type="submit"
-                                className="flex-1 px-4 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover transition-colors shadow-sm"
+                                className="flex-1 px-4 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg font-medium shadow-sm transition-all active:scale-[0.98]"
                             >
                                 保存
                             </button>

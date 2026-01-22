@@ -74,13 +74,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setSearchTerm('');
   };
 
-  // 操作结果详情
-  const [operationResult, setOperationResult] = useState<{
-    successCount: number;
-    failureCount: number;
-    successDetails: string[];
-    failureDetails: Array<{ accountId: string; accountName: string; reason: string }>;
-  } | null>(null);
+
 
   // 打开修改角色信息弹窗
   const [editRoleModal, setEditRoleModal] = useState<{
@@ -437,78 +431,81 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   return (
     <div className="space-y-6">
-      <div className="sticky top-0 z-20 bg-base pt-2 pb-4">
-        <div className="flex justify-between items-center flex-wrap gap-3">
-          <h2 className="text-2xl font-bold text-main">账号管理</h2>
-          <div className="flex gap-2 items-center flex-wrap">
-            {/* 搜索框 */}
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="搜索账号或角色..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="pl-9 pr-8 py-2 border border-base bg-surface rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary w-48 placeholder:text-muted"
-              />
-              {searchTerm && (
-                <button
-                  onClick={clearSearch}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded hover:bg-slate-100"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            {/* 搜索结果提示 */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h2 className="text-xl font-bold text-main">账号管理</h2>
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          {/* 搜索框 */}
+          <div className="relative flex-1 sm:flex-none">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              placeholder="搜索账号 or 角色..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="pl-9 pr-8 py-1.5 w-full sm:w-48 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-muted text-main transition-all"
+            />
             {searchTerm && (
-              <span className="text-sm text-muted">
-                找到 <span className="font-medium text-emerald-600">{filteredAccounts.length}</span> 个匹配
-              </span>
-            )}
-
-            {/* 使用配置目录解析按钮 */}
-            {config?.game?.gameDirectory && (
               <button
-                onClick={handleUseConfigDirectory}
-                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                disabled={isScanning}
+                onClick={clearSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-main p-0.5 rounded-md hover:bg-base/50"
               >
-                {isScanning ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    解析中...
-                  </>
-                ) : (
-                  <>
-                    <Loader2 className="w-4 h-4" />
-                    使用配置目录解析
-                  </>
-                )}
-              </button>
-            )}
-            <button
-              onClick={() => setIsAddAccountModalOpen(true)}
-              className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-            >
-              <Plus className="w-4 h-4" /> 新增账号
-            </button>
-            {/* 批量删除按钮 - 仅在选中账号时显示 */}
-            {selectedAccounts.size > 0 && (
-              <button
-                onClick={handleBatchDeleteClick}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md"
-              >
-                <Trash2 className="w-4 h-4" />
-                批量删除 ({selectedAccounts.size})
+                <X className="w-3 h-3" />
               </button>
             )}
           </div>
+
+          {/* 搜索结果提示 */}
+          {searchTerm && (
+            <span className="text-sm text-muted">
+              找到 <span className="font-medium text-emerald-600">{filteredAccounts.length}</span> 个匹配
+            </span>
+          )}
+
+          {/* 使用配置目录解析按钮 */}
+          {config?.game?.gameDirectory && (
+            <button
+              onClick={handleUseConfigDirectory}
+              className="bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium"
+              disabled={isScanning}
+            >
+              {isScanning ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>解析中...</span>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="w-4 h-4" />
+                  <span>目录解析</span>
+                </>
+              )}
+            </button>
+          )}
+          <button
+            onClick={() => setIsAddAccountModalOpen(true)}
+            className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm active:scale-[0.98] text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" /> 新增账号
+          </button>
+
+          {/* 批量删除按钮 */}
+          {selectedAccounts.size > 0 && (
+            <button
+              onClick={handleBatchDeleteClick}
+              className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:border-red-300 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium"
+            >
+              <Trash2 className="w-4 h-4" />
+              删除 ({selectedAccounts.size})
+            </button>
+          )}
         </div>
-        {/* 全选功能 */}
-        {safeAccounts.length > 0 && (
-          <div className="flex items-center gap-2 mt-3">
+      </div>
+
+
+      {/* 全选功能 */}
+      {
+        safeAccounts.length > 0 && (
+          <div className="flex items-center gap-2 px-1">
             <input
               type="checkbox"
               checked={isAllSelected}
@@ -517,81 +514,87 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             />
             <label className="text-sm font-medium text-main">全选 ({safeAccounts.length} 个账户)</label>
           </div>
-        )}
-      </div>
+        )
+      }
 
       {/* 解析错误显示 */}
-      {parseError && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="w-5 h-5 text-red-600" />
-              <div>
-                <h4 className="font-medium text-red-800">解析错误</h4>
-                <p className="text-sm text-red-600 mt-1">{parseError}</p>
+      {
+        parseError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                <div>
+                  <h4 className="font-medium text-red-800">解析错误</h4>
+                  <p className="text-sm text-red-600 mt-1">{parseError}</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={handleUseConfigDirectory}
+                  className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
+                >
+                  <Loader2 className="w-3 h-3" /> 重试解析
+                </button>
+                <button
+                  onClick={() => setParseError(null)}
+                  className="text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  关闭
+                </button>
               </div>
             </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={handleUseConfigDirectory}
-                className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
-              >
-                <Loader2 className="w-3 h-3" /> 重试解析
-              </button>
-              <button
-                onClick={() => setParseError(null)}
-                className="text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                关闭
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* 扫描进度显示 */}
-      {scanProgress && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
-            <div className="flex-1">
-              <p className="font-medium text-blue-800">{scanProgress.message}</p>
-              <div className="mt-2 bg-blue-100 rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-blue-600 h-full transition-all duration-300"
-                  style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
-                />
+      {
+        scanProgress && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+              <div className="flex-1">
+                <p className="font-medium text-blue-800">{scanProgress.message}</p>
+                <div className="mt-2 bg-blue-100 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-blue-600 h-full transition-all duration-300"
+                    style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
+                  />
+                </div>
+                <p className="text-xs text-blue-600 mt-1">
+                  {scanProgress.current} / {scanProgress.total}
+                </p>
               </div>
-              <p className="text-xs text-blue-600 mt-1">
-                {scanProgress.current} / {scanProgress.total}
-              </p>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
 
 
       {/* 无搜索结果提示 */}
-      {searchTerm && filteredAccounts.length === 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
-          <Search className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-500 mb-2">未找到匹配的结果</p>
-          <p className="text-sm text-slate-400">
-            搜索关键词: <span className="font-medium text-slate-600">"{searchTerm}"</span>
-          </p>
-          <button
-            onClick={clearSearch}
-            className="mt-4 px-4 py-2 bg-base hover:bg-base/80 text-muted rounded-lg transition-colors text-sm"
-          >
-            清除搜索
-          </button>
-        </div>
-      )}
+      {
+        searchTerm && filteredAccounts.length === 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
+            <Search className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+            <p className="text-slate-500 mb-2">未找到匹配的结果</p>
+            <p className="text-sm text-slate-400">
+              搜索关键词: <span className="font-medium text-slate-600">"{searchTerm}"</span>
+            </p>
+            <button
+              onClick={clearSearch}
+              className="mt-4 px-4 py-2 bg-base hover:bg-base/80 text-muted rounded-lg transition-colors text-sm"
+            >
+              清除搜索
+            </button>
+          </div>
+        )
+      }
 
       <div className="space-y-6">
         {filteredAccounts.map(account => (
-          <div key={account.id} className={`bg-surface p-5 rounded-xl shadow-sm border border-base hover:shadow-md transition-shadow ${selectedAccounts.has(account.id) ? 'ring-2 ring-primary' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
+          <div key={account.id} className={`bg-surface p-5 rounded-lg border border-base hover:border-primary/50 transition-colors ${selectedAccounts.has(account.id) ? 'ring-1 ring-primary border-primary' : ''} ${account.disabled ? 'opacity-60' : ''}`}>
             <div className="flex justify-between items-start mb-4">
               <div className="flex items-center gap-2">
                 {/* 复选框 */}
@@ -601,15 +604,15 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   onChange={() => handleSelectAccount(account.id)}
                   className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
                 />
-                <span className={`p-2 rounded-full ${account.type === AccountType.OWN ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
-                  {account.type === AccountType.OWN ? <User size={18} /> : <UserCheck size={18} />}
+                <span className={`p-1.5 rounded-lg ${account.type === AccountType.OWN ? 'bg-primary/10 text-primary' : 'bg-emerald-50 text-emerald-600'}`}>
+                  {account.type === AccountType.OWN ? <User size={16} /> : <UserCheck size={16} />}
                 </span>
                 <div>
-                  <h3 className={`font-bold text-main ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
+                  <h3 className={`font-medium text-main ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
                   <p className="text-xs text-muted">{Array.isArray(account.roles) ? account.roles.length : 0} 个角色</p>
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1">
                 {/* 代清状态切换按钮 */}
                 <button
                   onClick={() => {
@@ -643,14 +646,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 >
                   {account.disabled ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
                 </button>
-                <button onClick={() => handleDeleteAccountClick(account.id)} className="text-slate-300 hover:text-red-500 transition-colors">
+                <button onClick={() => handleDeleteAccountClick(account.id)} className="text-muted hover:text-red-500 transition-colors p-1 rounded-md hover:bg-red-50">
                   <Trash2 size={16} />
                 </button>
               </div>
             </div>
 
             {/* 账号信息编辑区域 */}
-            <div className="bg-surface rounded-lg shadow-sm border border-base p-4 mb-4">
+            <div className="bg-base/30 rounded-lg border border-base p-4 mb-4">
               <h4 className="font-semibold text-main mb-3 flex items-center gap-2">
                 <User className="w-4 h-4" />
                 账号信息
@@ -662,7 +665,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
                     登录账号
                   </label>
-                  <div className="flex-1 px-4 py-3 bg-base border border-base rounded-xl text-main font-medium">
+                  <div className="flex-1 px-4 py-2.5 bg-surface border border-base rounded-lg text-main text-sm font-medium">
                     {account.username || account.accountName}
                   </div>
                 </div>
@@ -684,24 +687,24 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           return a;
                         }));
                       }}
-                      className="flex-1 px-4 py-3 border-2 border-base bg-base rounded-xl text-main font-medium focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
+                      className="flex-1 px-4 py-2.5 border border-base bg-surface rounded-lg text-main text-sm font-medium focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
                       placeholder="输入游戏密码"
                     />
-                    <div className="flex gap-1.5">
+                    <div className="flex gap-1">
                       <button
                         onClick={() => togglePasswordVisibility(account.id)}
-                        className="p-2.5 rounded-lg bg-base hover:bg-base/80 text-muted hover:text-primary transition-colors"
+                        className="p-2.5 rounded-lg bg-surface border border-base hover:bg-base text-muted hover:text-primary transition-colors"
                         title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
                       >
-                        {visiblePasswords.has(account.id) ? <EyeOff size={18} /> : <Eye size={18} />}
+                        {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                       {account.password && (
                         <button
                           onClick={() => copyPassword(account.password, account.id)}
-                          className={`p-2.5 rounded-lg bg-base hover:bg-base/80 text-muted hover:text-primary transition-colors ${copySuccess === account.id ? 'bg-green-100 text-green-700' : ''}`}
+                          className={`p-2.5 rounded-lg border border-base transition-colors ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
                           title="复制密码"
                         >
-                          {copySuccess === account.id ? <Check size={18} /> : <Clipboard size={18} />}
+                          {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
                         </button>
                       )}
                     </div>
@@ -711,7 +714,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             </div>
 
             {/* Roles Section */}
-            <div className="bg-surface rounded-lg shadow-sm border border-base p-4">
+            <div className="bg-base/30 rounded-lg border border-base p-4">
               <div className="flex justify-between items-center mb-3">
                 <h4 className="font-semibold text-main flex items-center gap-2">
                   <User className="w-4 h-4" />
@@ -719,7 +722,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 </h4>
                 <button
                   onClick={() => setAddingRoleToAccountId(account.id)}
-                  className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-3 py-2 rounded-lg transition-colors shadow-sm hover:shadow-md"
+                  className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium shadow-sm active:scale-[0.98]"
                 >
                   <Plus className="w-4 h-4" />
                   添加角色
@@ -737,7 +740,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {account.roles.map(role => (
-                      <div key={role.id} className={`bg-base border border-base p-3 rounded-lg hover:shadow-sm transition-shadow ${role.disabled ? 'opacity-60' : ''}`}>
+                      <div key={role.id} className={`bg-surface border border-base p-3 rounded-lg hover:border-primary/50 transition-colors ${role.disabled ? 'opacity-60' : ''}`}>
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2 mb-1.5">
@@ -819,14 +822,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Batch Delete Confirmation Dialog */}
       {
         showBatchDeleteConfirm && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
               <p className="text-slate-600 mb-6">确认删除选中的 {selectedAccounts.size} 个账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleBatchDeleteCancel}
-                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
                 >
                   取消
                 </button>
@@ -847,14 +850,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Single Account Delete Confirmation Dialog */}
       {
         confirmDeleteAccountId && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
               <p className="text-slate-600 mb-6">确认删除此账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleDeleteAccountCancel}
-                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
                 >
                   取消
                 </button>
@@ -873,14 +876,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Single Role Delete Confirmation Dialog */}
       {
         confirmDeleteRole && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">确认删除</h3>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
               <p className="text-slate-600 mb-6">确认删除此角色？</p>
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleDeleteRoleCancel}
-                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
                 >
                   取消
                 </button>
@@ -899,9 +902,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Edit Role Info Modal */}
       {
         editRoleModal && editRoleModal.open && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl shadow-lg max-w-md w-full mx-4">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">修改角色信息</h3>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold text-main mb-4">修改角色信息</h3>
 
               <div className="space-y-4">
                 {/* 门派选择 */}
@@ -910,7 +913,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     门派 <span className="text-red-500">*</span>
                   </label>
                   <select
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all ${roleFormErrors.sect ? 'border-red-300 bg-red-50' : 'border-slate-300'
+                    className={`w-full px-3 py-2 border rounded-lg bg-surface text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.sect ? 'border-red-300 bg-red-50' : 'border-base'
                       }`}
                     value={editRoleModal.sect}
                     onChange={(e) => {
@@ -938,7 +941,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   <input
                     type="number"
                     min="0"
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all ${roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-slate-300'
+                    className={`w-full px-3 py-2 border rounded-lg bg-surface text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-base'
                       }`}
                     value={editRoleModal.equipmentScore === undefined ? '' : editRoleModal.equipmentScore}
                     onChange={(e) => handleEquipmentScoreChange(e.target.value)}
@@ -955,13 +958,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">
                 <button
                   onClick={handleCloseEditRoleModal}
-                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleSaveRoleInfo}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors shadow-sm"
                 >
                   保存
                 </button>
@@ -971,101 +974,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         )
       }
 
-      {/* Operation Result Dialog */}
-      {
-        operationResult && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto">
-            <div className="bg-white p-6 rounded-xl shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">操作结果详情</h3>
 
-              <div className="space-y-4">
-                {/* 统计信息 */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <h4 className="text-sm font-medium text-green-700 mb-1">成功数量</h4>
-                    <p className="text-2xl font-bold text-green-600">{operationResult.successCount}</p>
-                  </div>
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <h4 className="text-sm font-medium text-red-700 mb-1">失败数量</h4>
-                    <p className="text-2xl font-bold text-red-600">{operationResult.failureCount}</p>
-                  </div>
-                </div>
-
-                {/* 成功详情 */}
-                {operationResult.successCount > 0 && (
-                  <div>
-                    <h4 className="text-sm font-medium text-slate-700 mb-2">成功列表</h4>
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-60 overflow-y-auto">
-                      <ul className="space-y-1">
-                        {operationResult.successDetails.map((detail, index) => (
-                          <li key={index} className="flex items-center gap-2 text-sm text-green-600">
-                            <CheckCircle2 className="w-4 h-4" />
-                            <span>{detail}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                {/* 失败详情 */}
-                {operationResult.failureCount > 0 && (
-                  <div>
-                    <h4 className="text-sm font-medium text-slate-700 mb-2">失败列表</h4>
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-60 overflow-y-auto">
-                      <ul className="space-y-2">
-                        {operationResult.failureDetails.map((detail, index) => (
-                          <li key={index} className="text-sm">
-                            <div className="flex items-start gap-2 text-red-600">
-                              <XCircle className="w-4 h-4 mt-0.5" />
-                              <div>
-                                <div className="font-medium">{detail.accountName}</div>
-                                <div className="text-xs text-red-500">{detail.reason}</div>
-                              </div>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                {/* 操作按钮 */}
-                <div className="flex justify-end gap-3 pt-2 border-t border-slate-200">
-                  {operationResult.failureCount > 0 && (
-                    <button
-                      onClick={() => {
-                        // 导出失败记录为CSV
-                        const csvContent = [
-                          ['账号ID', '账号名称', '失败原因'],
-                          ...operationResult.failureDetails.map(detail => [detail.accountId, detail.accountName, detail.reason])
-                        ]
-                          .map(row => row.join(','))
-                          .join('\n');
-
-                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                        const link = document.createElement('a');
-                        link.href = URL.createObjectURL(blob);
-                        link.download = `operation_failures_${new Date().toISOString().slice(0, 10)}.csv`;
-                        link.click();
-                      }}
-                      className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
-                    >
-                      导出失败记录
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setOperationResult(null)}
-                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-                  >
-                    关闭
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )
-      }
 
       {/* Add Account Modal */}
       < AddAccountModal
@@ -1086,6 +995,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             : false
         }
       />
-    </div >
+    </div>
   );
 };

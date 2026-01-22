@@ -128,19 +128,17 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
         <div className={`bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto transition-all duration-300`}>
-          <div className="bg-primary px-6 py-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white">添加副本记录</h2>
-                <p className="text-white/80 text-sm mt-0.5">{constructRaidName()}</p>
-              </div>
-              <button
-                onClick={onClose}
-                className="text-white/70 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10"
-              >
-                <X className="w-5 h-5" />
-              </button>
+          <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm">
+            <div>
+              <h2 className="text-lg font-bold text-main">添加副本记录</h2>
+              <p className="text-muted text-xs mt-0.5">{constructRaidName()}</p>
             </div>
+            <button
+              onClick={onClose}
+              className="text-muted hover:text-main transition-colors p-2 rounded-lg hover:bg-base/50"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
           <form onSubmit={handleSubmit} className="p-5 space-y-4">

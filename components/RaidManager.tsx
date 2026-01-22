@@ -27,9 +27,9 @@ const DIFFICULTY_LABELS = {
 };
 
 const DIFFICULTY_COLORS = {
-  NORMAL: 'bg-green-100 text-green-700 border-green-200',
-  HEROIC: 'bg-blue-100 text-blue-700 border-blue-200',
-  CHALLENGE: 'bg-red-100 text-red-700 border-red-200'
+  NORMAL: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  HEROIC: 'bg-blue-50 text-blue-700 border-blue-200',
+  CHALLENGE: 'bg-rose-50 text-rose-700 border-rose-200'
 };
 
 const VERSION_ORDER_MAP: Record<string, number> = {
@@ -224,10 +224,10 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold text-main">副本管理</h2>
+        <h2 className="text-xl font-bold text-main">副本管理</h2>
         <div className="flex gap-2">
           {versions.length > 0 && (
-            <div className="flex items-center gap-2 bg-surface px-3 py-2 rounded-lg border border-base">
+            <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-lg border border-base shadow-sm">
               <Filter className="w-4 h-4 text-muted" />
               <select
                 className="bg-transparent text-sm outline-none cursor-pointer text-main"
@@ -242,18 +242,16 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
           )}
           <button
             onClick={() => setIsAdding(true)}
-            className="bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-md hover:shadow-lg active:scale-95"
+            className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm active:scale-[0.98] text-sm font-medium"
           >
             <Plus className="w-4 h-4" /> 新增副本
           </button>
         </div>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center text-sm text-blue-700">
+      <div className="bg-blue-50/50 border border-blue-100 rounded-lg p-3 text-center text-sm text-blue-600">
         右键难度框可单独禁用/启用
       </div>
-
-
 
       {Object.keys(mergedGroupedRaids).length > 0 ? (
         versions.map(version => {
@@ -261,13 +259,13 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
           if (!versionRaids) return null;
 
           return (
-            <div key={version} className="space-y-6">
+            <div key={version} className="space-y-4">
               <div className="flex items-center gap-3">
-                <div className="h-px bg-slate-300 flex-1"></div>
-                <h3 className="text-xl font-bold text-slate-800 bg-gradient-to-r from-indigo-50 to-blue-50 px-6 py-2 rounded-full border-2 border-indigo-200 shadow-sm">
+                <div className="h-px bg-border flex-1"></div>
+                <h3 className="text-sm font-bold text-muted uppercase tracking-wider bg-base px-3 py-1 rounded-full border border-border">
                   {version}
                 </h3>
-                <div className="h-px bg-slate-300 flex-1"></div>
+                <div className="h-px bg-border flex-1"></div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                 {versionRaids.map(mergedRaid => {
@@ -277,19 +275,19 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                   return (
                     <div
                       key={getRaidKey(mergedRaid.raids[0])}
-                      className={`p-4 sm:p-5 rounded-2xl border transition-all duration-300 relative group
+                      className={`p-4 rounded-xl border transition-all duration-200 relative group
                         ${isDisabled
-                          ? 'border-red-200 bg-red-50/30 dark:bg-red-900/10'
-                          : 'bg-white/50 dark:bg-slate-800/50 backdrop-blur-md border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-xl hover:-translate-y-1'
+                          ? 'border-base bg-base opacity-70'
+                          : 'bg-surface border-base hover:border-primary/50 hover:shadow-sm'
                         }`}
                     >
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
-                          <span className={`p-2 rounded-full ${isDisabled ? 'bg-slate-100 text-slate-400' : 'bg-indigo-100 text-indigo-600'}`}>
-                            <Shield size={18} />
+                          <span className={`p-1.5 rounded-lg ${isDisabled ? 'bg-base text-muted' : 'bg-primary/10 text-primary'}`}>
+                            <Shield size={16} />
                           </span>
                           <div>
-                            <h3 className={`font-bold ${isDisabled ? 'text-slate-500' : 'text-slate-800'}`}>{mergedRaid.name}</h3>
+                            <h3 className={`font-semibold text-sm ${isDisabled ? 'text-muted' : 'text-main'}`}>{mergedRaid.name}</h3>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -299,10 +297,10 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                               toggleRaidStatus(mergedRaid.name);
                             }}
                             className={`transition-all p-1 rounded-md ${isDisabled
-                              ? 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                              ? 'text-muted hover:text-main hover:bg-base'
                               : isRaidActive
-                                ? 'text-green-500 hover:text-green-700 hover:bg-green-50'
-                                : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                                ? 'text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50'
+                                : 'text-muted hover:text-main hover:bg-base'
                               }`}
                             title={isDisabled ? '启用此副本' : '禁用此副本（所有难度）'}
                           >
@@ -323,8 +321,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                               }
                             }}
                             className={`transition-colors p-1 rounded-md ${isStatic
-                              ? 'text-slate-200 cursor-not-allowed'
-                              : 'text-slate-300 hover:text-red-500 hover:bg-red-50'
+                              ? 'text-base cursor-not-allowed opacity-50'
+                              : 'text-muted hover:text-red-500 hover:bg-red-50'
                               }`}
                             title={isStatic ? '预制副本不能删除' : '删除'}
                           >
@@ -346,7 +344,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({ raids, setRaids, onRai
                                 e.stopPropagation();
                                 toggleRaidDifficultyStatus(getRaidKey(raid));
                               }}
-                              className={`relative px-3 py-2 text-xs sm:text-sm font-bold rounded-lg border cursor-pointer transition-all hover:scale-105 hover:shadow-sm min-w-[60px] sm:min-w-[70px] text-center ${raid.isActive
+                              className={`relative px-2 py-1 text-xs font-medium rounded border cursor-pointer transition-all hover:scale-105 min-w-[60px] text-center ${raid.isActive
                                 ? DIFFICULTY_COLORS[raid.difficulty]
                                 : 'bg-base text-muted border-base hover:bg-base/80 opacity-60'
                                 }`}

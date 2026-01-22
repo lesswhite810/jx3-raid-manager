@@ -157,25 +157,23 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   return (
     <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 p-4">
       <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
-        <div className="bg-primary px-5 py-4 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                <span className="text-white font-bold text-lg">{role.name.charAt(0)}</span>
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold text-white">{role.name}</h2>
-                <p className="text-white/80 text-xs mt-0.5">{role.region} {role.server}</p>
-              </div>
+        <div className="px-5 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
+              {role.name.charAt(0)}
             </div>
-            <button
-              onClick={handleClose}
-              className="text-white/70 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/10 active:scale-95"
-              aria-label="关闭"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div>
+              <h2 className="text-lg font-bold text-main">{role.name}</h2>
+              <p className="text-muted text-xs mt-0.5">{role.region} {role.server}</p>
+            </div>
           </div>
+          <button
+            onClick={handleClose}
+            className="text-muted hover:text-main transition-colors p-2 rounded-lg hover:bg-base/50 active:scale-95"
+            aria-label="关闭"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="bg-base px-5 py-3 border-b border-base flex-shrink-0">
@@ -301,8 +299,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           onClick={() => handleDeleteClick(record)}
                           disabled={deletingRecordId === record.id}
                           className={`p-2 rounded-xl transition-all duration-200 ${canDeleteRecord(record)
-                              ? 'text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95'
-                              : 'text-muted/50 cursor-not-allowed'
+                            ? 'text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95'
+                            : 'text-muted/50 cursor-not-allowed'
                             }`}
                           title={canDeleteRecord(record) ? '删除记录' : '无权限'}
                           aria-label={canDeleteRecord(record) ? '删除记录' : '无权限'}

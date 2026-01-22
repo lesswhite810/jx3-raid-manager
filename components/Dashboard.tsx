@@ -129,21 +129,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-main">数据概览</h2>
-        <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base">
+        <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base">
           <button
             onClick={() => setStatsPeriod('week')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
-                ? 'bg-emerald-500 text-white shadow-sm'
-                : 'text-muted hover:text-main hover:bg-base'
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
               }`}
           >
             本周
           </button>
           <button
             onClick={() => setStatsPeriod('month')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
-                ? 'bg-amber-500 text-white shadow-sm'
-                : 'text-muted hover:text-main hover:bg-base'
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
               }`}
           >
             本月
@@ -152,61 +152,63 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 rounded-2xl p-5 text-white shadow-lg">
+        {/* Lucky Role Card */}
+        <div className="bg-surface rounded-xl p-5 border border-base shadow-sm">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-white/20 rounded-xl">
-                <Star className="w-5 h-5 text-amber-300" />
+              <div className="p-2.5 bg-primary/10 rounded-xl">
+                <Star className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-purple-100 text-sm">本期欧皇</p>
-                <h3 className="text-xl font-bold mt-1">{luckyRole.roleName}</h3>
-                <p className="text-purple-200 text-xs mt-0.5">{luckyRole.server}</p>
+                <p className="text-muted text-sm">本期欧皇</p>
+                <h3 className="text-xl font-bold mt-1 text-main">{luckyRole.roleName}</h3>
+                <p className="text-muted text-xs mt-0.5">{luckyRole.server}</p>
               </div>
             </div>
             <div className="flex items-center gap-6">
               <div className="text-right">
-                <p className="text-purple-200 text-xs">金币收益</p>
-                <p className="text-2xl font-bold text-amber-300 mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
+                <p className="text-muted text-xs">金币收益</p>
+                <p className="text-2xl font-bold text-amber-500 mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
               </div>
               {luckyRole.xuanjingCount > 0 && (
                 <div className="text-right">
-                  <p className="text-purple-200 text-xs">玄晶</p>
-                  <p className="text-2xl font-bold text-pink-300 mt-0.5">{luckyRole.xuanjingCount}</p>
+                  <p className="text-muted text-xs">玄晶</p>
+                  <p className="text-2xl font-bold text-pink-500 mt-0.5">{luckyRole.xuanjingCount}</p>
                 </div>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-white/20">
-            <Zap className="w-3.5 h-3.5 text-amber-300" />
-            <span className="text-xs text-purple-100">收入最高的角色</span>
+          <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
+            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <span className="text-xs text-muted">收入最高的角色</span>
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-slate-700 to-slate-800 rounded-2xl p-5 text-white shadow-lg">
+        {/* Big Spender Card */}
+        <div className="bg-surface rounded-xl p-5 border border-base shadow-sm">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-white/20 rounded-xl">
-                <svg className="w-5 h-5 text-rose-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="p-2.5 bg-red-50 dark:bg-red-900/10 rounded-xl">
+                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
               <div>
-                <p className="text-slate-300 text-sm">本期败家子</p>
-                <h3 className="text-xl font-bold mt-1">{bigSpender.roleName}</h3>
-                <p className="text-slate-400 text-xs mt-0.5">{bigSpender.server}</p>
+                <p className="text-muted text-sm">本期败家子</p>
+                <h3 className="text-xl font-bold mt-1 text-main">{bigSpender.roleName}</h3>
+                <p className="text-muted text-xs mt-0.5">{bigSpender.server}</p>
               </div>
             </div>
             <div className="text-right">
-              <p className="text-slate-400 text-xs">总支出</p>
-              <p className="text-2xl font-bold text-rose-300 mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
+              <p className="text-muted text-xs">总支出</p>
+              <p className="text-2xl font-bold text-red-500 mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-white/20">
-            <svg className="w-3.5 h-3.5 text-rose-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
+            <svg className="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
-            <span className="text-xs text-slate-300">支出最高的角色（仅本人账号）</span>
+            <span className="text-xs text-muted">支出最高的角色（仅本人账号）</span>
           </div>
         </div>
       </div>
@@ -308,13 +310,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-base)" />
               <XAxis
                 dataKey="name"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: '#94a3b8' }}
+                tick={{ fill: 'var(--text-muted)' }}
                 interval={0}
                 angle={-20}
                 textAnchor="end"
@@ -324,17 +326,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: '#94a3b8' }}
+                tick={{ fill: 'var(--text-muted)' }}
                 tickFormatter={(val) => val >= 10000 ? `${(val / 10000).toFixed(1)}w` : val}
               />
               <Tooltip
-                cursor={{ fill: 'var(--bg-base)' }}
-                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                cursor={{ fill: 'var(--bg-base)', opacity: 0.5 }}
+                contentStyle={{
+                  backgroundColor: 'var(--bg-surface)',
+                  borderColor: 'var(--border-base)',
+                  borderRadius: '0.5rem',
+                  boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                  color: 'var(--text-main)'
+                }}
                 formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
               />
               <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
                 {chartData.map((_entry, index) => (
-                  <Cell key={`cell-${index}`} fill={['#8b5cf6', '#a855f7', '#c084fc', '#d8b4fe', '#e9d5ff'][index % 5]} />
+                  <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${1 - index * 0.1})`} />
                 ))}
               </Bar>
             </BarChart>
