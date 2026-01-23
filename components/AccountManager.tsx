@@ -471,12 +471,12 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               placeholder="搜索账号 or 角色..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="pl-9 pr-8 py-1.5 w-full sm:w-48 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-muted text-main transition-all"
+              className="pl-9 pr-8 py-1.5 w-full sm:w-48 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder:text-muted text-main transition-all"
             />
             {searchTerm && (
               <button
                 onClick={clearSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-main p-0.5 rounded-md hover:bg-base/50"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary p-1 rounded-md hover:bg-base/80 transition-colors"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -494,7 +494,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           {config?.game?.gameDirectory && (
             <button
               onClick={handleUseConfigDirectory}
-              className="bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium"
+              className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
               disabled={isScanning}
             >
               {isScanning ? (
@@ -512,7 +512,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           )}
           <button
             onClick={() => setIsAddAccountModalOpen(true)}
-            className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm active:scale-[0.98] text-sm font-medium"
+            className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow active:scale-[0.98] text-sm font-medium duration-200"
           >
             <Plus className="w-4 h-4" /> 新增账号
           </button>
@@ -521,7 +521,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           {selectedAccounts.size > 0 && (
             <button
               onClick={handleBatchDeleteClick}
-              className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:border-red-300 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium"
+              className="bg-surface text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
             >
               <Trash2 className="w-4 h-4" />
               删除 ({selectedAccounts.size})
@@ -613,7 +613,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             </p>
             <button
               onClick={clearSearch}
-              className="mt-4 px-4 py-2 bg-base hover:bg-base/80 text-muted rounded-lg transition-colors text-sm"
+              className="mt-4 px-4 py-2 bg-surface border border-base hover:border-primary hover:text-primary hover:bg-base/50 active:scale-[0.98] rounded-lg transition-all text-sm font-medium"
             >
               清除搜索
             </button>
@@ -684,10 +684,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         return a;
                       }));
                     }}
-                    className={`text-slate-300 hover:text-emerald-600 transition-colors p-1.5 rounded-md hover:bg-emerald-50`}
+                    className={`p-2 rounded-lg transition-all active:scale-95 duration-200 ${account.type === AccountType.CLIENT ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-muted hover:text-primary hover:bg-base/80'}`}
                     title={account.type === AccountType.CLIENT ? '取消代清' : '标记代清'}
                   >
-                    {account.type === AccountType.CLIENT ? <CheckCircle2 size={16} className="text-green-600" /> : <UserCheck size={16} />}
+                    {account.type === AccountType.CLIENT ? <UserCheck size={16} /> : <User size={16} />}
                   </button>
                   <button
                     onClick={() => {
@@ -698,14 +698,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         return a;
                       }));
                     }}
-                    className={`text-slate-300 hover:text-emerald-600 transition-colors p-1.5 rounded-md hover:bg-emerald-50`}
+                    className={`p-2 rounded-lg transition-all active:scale-95 duration-200 ${account.disabled ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
                     title={account.disabled ? '启用账号' : '禁用账号'}
                   >
-                    {account.disabled ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                    {account.disabled ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
                   </button>
                   <button
                     onClick={() => handleDeleteAccountClick(account.id)}
-                    className="text-muted hover:text-red-500 transition-colors p-1.5 rounded-md hover:bg-red-50"
+                    className="p-2 rounded-lg text-muted hover:text-red-600 hover:bg-red-50 active:scale-95 transition-all duration-200"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -735,7 +735,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           {(account.username || account.accountName) && (
                             <button
                               onClick={() => copyUsername(account.username || account.accountName, account.id)}
-                              className={`p-2.5 rounded-lg border border-base transition-colors ${copyUsernameSuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
+                              className={`p-2.5 rounded-lg border transition-all duration-200 active:scale-95 ${copyUsernameSuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200 shadow-none' : 'bg-surface border-base text-muted hover:border-primary hover:text-primary hover:bg-base/50'}`}
                               title="复制账号"
                             >
                               {copyUsernameSuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
@@ -767,7 +767,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                             />
                             <button
                               onClick={() => togglePasswordVisibility(account.id)}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-primary transition-colors"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-primary transition-colors active:scale-95 rounded-lg"
                               title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
                             >
                               {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -776,7 +776,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           {account.password && (
                             <button
                               onClick={() => copyPassword(account.password, account.id)}
-                              className={`p-2.5 rounded-lg border border-base transition-colors ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
+                              className={`p-2.5 rounded-lg border transition-all duration-200 active:scale-95 ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200 shadow-none' : 'bg-surface border-base text-muted hover:border-primary hover:text-primary hover:bg-base/50'}`}
                               title="复制密码"
                             >
                               {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
@@ -796,7 +796,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                       </h4>
                       <button
                         onClick={() => setAddingRoleToAccountId(account.id)}
-                        className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium shadow-sm active:scale-[0.98]"
+                        className="flex items-center gap-2 bg-surface hover:bg-base border border-base hover:border-primary/50 text-main hover:text-primary px-3 py-1.5 rounded-lg transition-all active:scale-[0.98] text-sm font-medium shadow-sm"
                       >
                         <Plus className="w-4 h-4" />
                         添加角色
@@ -839,7 +839,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                 <div className="flex gap-1">
                                   <button
                                     onClick={() => handleOpenEditRoleModal(account.id, role)}
-                                    className="text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50"
+                                    className="text-muted hover:text-primary transition-all duration-200 active:scale-95 p-1.5 rounded-lg hover:bg-base/80"
                                     title="修改角色信息"
                                   >
                                     <Settings size={14} />
@@ -898,13 +898,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleBatchDeleteCancel}
-                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleBatchDeleteConfirm}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   确定
                 </button>
@@ -926,13 +926,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleDeleteAccountCancel}
-                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleDeleteAccountConfirm}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   确定
                 </button>
@@ -952,13 +952,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleDeleteRoleCancel}
-                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleDeleteRoleConfirm}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   确定
                 </button>
@@ -1027,13 +1027,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">
                 <button
                   onClick={handleCloseEditRoleModal}
-                  className="px-4 py-2 text-main border border-base rounded-lg hover:bg-base transition-colors"
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleSaveRoleInfo}
-                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors shadow-sm"
+                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
                 >
                   保存
                 </button>
