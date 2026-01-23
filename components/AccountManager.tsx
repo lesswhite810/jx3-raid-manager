@@ -38,6 +38,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  const [copyUsernameSuccess, setCopyUsernameSuccess] = useState<string | null>(null);
 
   const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
   const [isAllSelected, setIsAllSelected] = useState(false);
@@ -418,6 +419,18 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       });
   };
 
+  const copyUsername = (username: string, accountId: string) => {
+    if (!username) return;
+    navigator.clipboard.writeText(username)
+      .then(() => {
+        setCopyUsernameSuccess(accountId);
+        setTimeout(() => setCopyUsernameSuccess(null), 2000);
+      })
+      .catch(err => {
+        console.error('复制账号失败:', err);
+      });
+  };
+
   // 显示删除角色确认对话框
   const handleDeleteRoleClick = (accountId: string, roleId: string) => {
     setConfirmDeleteRole({ accountId, roleId });
@@ -715,49 +728,60 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
                           登录账号
                         </label>
-                        <div className="flex-1 px-4 py-2.5 bg-surface border border-base rounded-lg text-main text-sm font-medium">
-                          {account.username || account.accountName}
+                        <div className="flex-1 flex gap-2">
+                          <div className="flex-1 px-4 py-2.5 bg-surface border border-base rounded-lg text-main text-sm font-medium">
+                            {account.username || account.accountName}
+                          </div>
+                          {(account.username || account.accountName) && (
+                            <button
+                              onClick={() => copyUsername(account.username || account.accountName, account.id)}
+                              className={`p-2.5 rounded-lg border border-base transition-colors ${copyUsernameSuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
+                              title="复制账号"
+                            >
+                              {copyUsernameSuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
+                            </button>
+                          )}
                         </div>
                       </div>
 
                       {/* 密码 */}
                       <div className="flex items-center gap-3">
-                        <label className="text-sm font-semibold text-slate-700 w-24 flex-shrink-0">
+                        <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
                           密码
                         </label>
                         <div className="flex-1 flex gap-2">
-                          <input
-                            type={visiblePasswords.has(account.id) ? 'text' : 'password'}
-                            value={account.password || ''}
-                            onChange={(e) => {
-                              setAccounts(prev => prev.map(a => {
-                                if (a.id === account.id) {
-                                  return { ...a, password: e.target.value };
-                                }
-                                return a;
-                              }));
-                            }}
-                            className="flex-1 px-4 py-2.5 border border-base bg-surface rounded-lg text-main text-sm font-medium focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
-                            placeholder="输入游戏密码"
-                          />
-                          <div className="flex gap-1">
+                          <div className="relative flex-1">
+                            <input
+                              type={visiblePasswords.has(account.id) ? 'text' : 'password'}
+                              value={account.password || ''}
+                              onChange={(e) => {
+                                setAccounts(prev => prev.map(a => {
+                                  if (a.id === account.id) {
+                                    return { ...a, password: e.target.value };
+                                  }
+                                  return a;
+                                }));
+                              }}
+                              className="w-full px-4 py-2.5 pr-10 border border-base bg-surface rounded-lg text-main text-sm font-medium focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
+                              placeholder="输入游戏密码"
+                            />
                             <button
                               onClick={() => togglePasswordVisibility(account.id)}
-                              className="p-2.5 rounded-lg bg-surface border border-base hover:bg-base text-muted hover:text-primary transition-colors"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-primary transition-colors"
                               title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
                             >
                               {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
                             </button>
-                            {account.password && (
-                              <button
-                                onClick={() => copyPassword(account.password, account.id)}
-                                className={`p-2.5 rounded-lg border border-base transition-colors ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
-                                title="复制密码"
-                              >
-                                {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
-                              </button>
-                            )}
                           </div>
+                          {account.password && (
+                            <button
+                              onClick={() => copyPassword(account.password, account.id)}
+                              className={`p-2.5 rounded-lg border border-base transition-colors ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-surface text-muted hover:text-primary hover:bg-base'}`}
+                              title="复制密码"
+                            >
+                              {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

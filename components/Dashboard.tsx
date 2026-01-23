@@ -221,18 +221,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-medium text-muted">收益概览</span>
             {statsPeriod === 'week' ? (
-              <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">本周</span>
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full">本周</span>
             ) : (
-              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">本月</span>
+              <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full">本月</span>
             )}
           </div>
           <div className="flex items-center gap-6">
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 bg-amber-50 rounded-lg">
+                <div className="p-1.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
                   <Coins className="w-5 h-5 text-amber-500" />
                 </div>
-                <span className="text-xs text-slate-400">总收入</span>
+                <span className="text-xs text-muted">总收入</span>
               </div>
               <p className="text-2xl font-bold text-main">
                 {stats.totalGold.toLocaleString()}
@@ -240,10 +240,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
               </p>
               <p className="text-xs text-muted mt-1">代清: {stats.clientIncome.toLocaleString()}金</p>
             </div>
-            <div className="w-px h-12 bg-slate-100" />
+            <div className="w-px h-12 bg-slate-100 dark:bg-slate-700/50" />
             <div className="flex-1">
               <div className="flex items-center gap-1.5 mb-1.5">
-                <div className="p-1 bg-emerald-50 rounded-lg">
+                <div className="p-1 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
                   <Shield className="w-4 h-4 text-emerald-500" />
                 </div>
                 <span className="text-xs text-muted">通关</span>
@@ -251,18 +251,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
               <p className="text-xl font-bold text-main">{stats.totalRaids}</p>
             </div>
           </div>
-          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs text-slate-400">点击查看详细记录</span>
-            <FileText className="w-4 h-4 text-slate-300" />
+          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
+            <span className="text-xs text-muted">点击查看详细记录</span>
+            <FileText className="w-4 h-4 text-slate-300 dark:text-slate-600" />
           </div>
         </div>
+
         <div
           onClick={onShowCrystalDetail}
           className="bg-surface rounded-xl shadow-sm border border-base p-4 cursor-pointer transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-medium text-muted">玄晶统计</span>
-            <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full">
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-full">
               <Trophy className="w-3 h-3" />
               <span className="text-xs font-medium">海景房</span>
             </div>
@@ -270,7 +271,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
           <div className="flex items-center gap-6">
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 bg-amber-50 rounded-lg">
+                <div className="p-1.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
                   <Trophy className="w-5 h-5 text-amber-500" />
                 </div>
                 <span className="text-xs text-muted">获取次数</span>
@@ -281,10 +282,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
               </p>
               <p className="text-xs text-muted mt-1">掉率 {stats.dropRate.toFixed(2)}%</p>
             </div>
-            <div className="w-px h-12 bg-slate-100" />
+            <div className="w-px h-12 bg-slate-100 dark:bg-slate-700/50" />
             <div className="flex-1">
               <div className="flex items-center gap-1.5 mb-1.5">
-                <div className="p-1 bg-emerald-50 rounded-lg">
+                <div className="p-1 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
                   <TrendingUp className="w-4 h-4 text-emerald-500" />
                 </div>
                 <span className="text-xs text-muted">掉率</span>
@@ -295,8 +296,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
               </p>
             </div>
           </div>
-          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs text-slate-400">点击查看所有玄晶记录</span>
+          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
+            <span className="text-xs text-muted">点击查看所有玄晶记录</span>
             <ArrowRight className="w-4 h-4 text-amber-400" />
           </div>
         </div>
@@ -305,18 +306,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
       <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-main">副本收益分布</h3>
-          <span className="text-sm text-slate-400">{statsPeriod === 'week' ? '本周' : '本月'}数据</span>
+          <span className="text-sm text-muted">{statsPeriod === 'week' ? '本周' : '本月'}数据</span>
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-base)" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
               <XAxis
                 dataKey="name"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: 'var(--text-muted)' }}
+                tick={{ fill: 'rgb(var(--text-muted))' }}
                 interval={0}
                 angle={-20}
                 textAnchor="end"
@@ -326,18 +327,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: 'var(--text-muted)' }}
+                tick={{ fill: 'rgb(var(--text-muted))' }}
                 tickFormatter={(val) => val >= 10000 ? `${(val / 10000).toFixed(1)}w` : val}
               />
               <Tooltip
-                cursor={{ fill: 'var(--text-muted)', opacity: 0.1 }}
+                cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
                 contentStyle={{
-                  backgroundColor: 'var(--bg-surface)',
-                  borderColor: 'var(--border-base)',
+                  backgroundColor: 'rgb(var(--bg-surface))',
+                  borderColor: 'rgb(var(--border-base))',
                   borderRadius: '0.5rem',
                   boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                  color: 'var(--text-main)'
+                  color: 'rgb(var(--text-main))'
                 }}
+                itemStyle={{ color: 'rgb(var(--text-main))' }}
                 formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
               />
               <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
@@ -349,6 +351,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
           </ResponsiveContainer>
         </div>
       </div>
-    </div >
+    </div>
   );
 };
