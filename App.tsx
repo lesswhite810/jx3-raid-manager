@@ -12,6 +12,7 @@ import { DebugConsole } from './components/DebugConsole';
 import { ToastContainer } from './components/ToastContainer';
 import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
+import { AddRecordModal } from './components/AddRecordModal';
 import { Account, RaidRecord, Raid, Config } from './types';
 import {
   DEFAULT_CONFIG,
@@ -42,6 +43,7 @@ function App() {
   const [records, setRecords] = useState<RaidRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+  const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
 
   useEffect(() => {
     const initApp = async () => {
@@ -275,6 +277,22 @@ function App() {
     }
   };
 
+  const handleDeleteRecord = (recordId: string) => {
+    setRecords(prev => prev.filter(r => r.id !== recordId));
+  };
+
+  const handleUpdateRecord = (updatedRecord: Partial<RaidRecord>) => {
+    if (!editingRecord) return;
+
+    setRecords(prev => prev.map(r => {
+      if (r.id === editingRecord.id) {
+        return { ...r, ...updatedRecord } as RaidRecord;
+      }
+      return r;
+    }));
+    setEditingRecord(null);
+  };
+
   if (!isInitialized) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -336,6 +354,8 @@ function App() {
                   records={records}
                   accounts={accounts}
                   onBack={() => setShowIncomeDetail(false)}
+                  onDeleteRecord={handleDeleteRecord}
+                  onEditRecord={setEditingRecord}
                 />
               ) : showCrystalDetail ? (
                 <CrystalDetail
@@ -366,6 +386,7 @@ function App() {
                   records={records}
                   onBack={() => setSelectedRaid(null)}
                   setRecords={setRecords}
+                  onEditRecord={setEditingRecord}
                 />
               ) : (
                 <RaidManager key={`raidManager-${contentKey}`} raids={raids} setRaids={setRaids} onRaidClick={setSelectedRaid} />
@@ -388,6 +409,31 @@ function App() {
 
       {/* Debug Console */}
       <DebugConsole />
+
+      {/* Edit Record Modal */}
+      {editingRecord && (
+        <AddRecordModal
+          isOpen={true}
+          onClose={() => setEditingRecord(null)}
+          onSubmit={handleUpdateRecord}
+          initialData={editingRecord}
+          role={{
+            id: editingRecord.roleId,
+            name: editingRecord.roleName || '未知角色',
+            server: editingRecord.server?.split(' ')[1] || '未知服务器',
+            region: editingRecord.server?.split(' ')[0] || '未知大区',
+            sect: '未知', // Editing doesn't need sect strictly for logic
+            accountId: editingRecord.accountId,
+            accountName: '' // Not critical for edit display
+          }}
+          raid={{
+            name: '未知',
+            difficulty: 'NORMAL',
+            playerCount: 25,
+            isActive: true
+          }}
+        />
+      )}
 
       {/* Toast Container */}
       <ToastContainer />

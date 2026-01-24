@@ -46,6 +46,13 @@ export interface RaidRecord {
   roleName?: string;
   server?: string;
   transactionType?: 'income' | 'expense' | 'combined';
+  // Special Drops
+  hasMaJu?: boolean;      // 马具
+  hasPet?: boolean;       // 宠物
+  hasPendant?: boolean;   // 挂件
+  hasMount?: boolean;     // 坐骑
+  hasAppearance?: boolean; // 外观
+  hasTitle?: boolean;     // 称号
 }
 
 export interface DashboardStats {

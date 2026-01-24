@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, ArrowDownToLine, ArrowUpFromLine, Wallet, Info } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, ArrowDownToLine, ArrowUpFromLine, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
 
 interface RoleWithStatus {
@@ -22,6 +22,7 @@ interface RoleRecordsModalProps {
   setRecords?: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
   currentUserId?: string;
   isAdmin?: boolean;
+  onEditRecord?: (record: RaidRecord) => void;
 }
 
 export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
@@ -32,7 +33,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   raid,
   setRecords,
   currentUserId,
-  isAdmin = false
+  isAdmin = false,
+  onEditRecord
 }) => {
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -152,6 +154,14 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     onClose();
   }, [deletingRecordId, onClose]);
 
+  const cleanRoleName = (name: string) => {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length > 1 && parts[0] === parts[1]) {
+      return parts[0];
+    }
+    return name;
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -160,10 +170,10 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
         <div className="px-5 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
-              {role.name.charAt(0)}
+              {cleanRoleName(role.name).charAt(0)}
             </div>
             <div>
-              <h2 className="text-lg font-bold text-main">{role.name}</h2>
+              <h2 className="text-lg font-bold text-main">{cleanRoleName(role.name)}</h2>
               <p className="text-muted text-xs mt-0.5">{role.region} {role.server}</p>
             </div>
           </div>
@@ -252,6 +262,42 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                             玄晶
                           </span>
                         )}
+                        {record.hasMaJu && (
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium flex items-center gap-1">
+                            <Anchor className="w-3.5 h-3.5" />
+                            马具
+                          </span>
+                        )}
+                        {record.hasPet && (
+                          <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded font-medium flex items-center gap-1">
+                            <Ghost className="w-3.5 h-3.5" />
+                            宠物
+                          </span>
+                        )}
+                        {record.hasPendant && (
+                          <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded font-medium flex items-center gap-1">
+                            <Package className="w-3.5 h-3.5" />
+                            挂件
+                          </span>
+                        )}
+                        {record.hasMount && (
+                          <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded font-medium flex items-center gap-1">
+                            <Flag className="w-3.5 h-3.5" />
+                            坐骑
+                          </span>
+                        )}
+                        {record.hasAppearance && (
+                          <span className="px-2 py-0.5 bg-pink-100 text-pink-700 text-xs rounded font-medium flex items-center gap-1">
+                            <Shirt className="w-3.5 h-3.5" />
+                            外观
+                          </span>
+                        )}
+                        {record.hasTitle && (
+                          <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded font-medium flex items-center gap-1">
+                            <Crown className="w-3.5 h-3.5" />
+                            称号
+                          </span>
+                        )}
                       </div>
 
                       <div className="space-y-2">
@@ -295,22 +341,31 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                       </div>
 
                       {setRecords && (
-                        <button
-                          onClick={() => handleDeleteClick(record)}
-                          disabled={deletingRecordId === record.id}
-                          className={`p-2 rounded-xl transition-all duration-200 ${canDeleteRecord(record)
-                            ? 'text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95'
-                            : 'text-muted/50 cursor-not-allowed'
-                            }`}
-                          title={canDeleteRecord(record) ? '删除记录' : '无权限'}
-                          aria-label={canDeleteRecord(record) ? '删除记录' : '无权限'}
-                        >
-                          {deletingRecordId === record.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-4 h-4" />
-                          )}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => onEditRecord?.(record)}
+                            className="p-2 rounded-xl text-muted hover:text-primary hover:bg-base active:scale-95 transition-all duration-200"
+                            title="修改记录"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteClick(record)}
+                            disabled={deletingRecordId === record.id}
+                            className={`p-2 rounded-xl transition-all duration-200 ${canDeleteRecord(record)
+                              ? 'text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95'
+                              : 'text-muted/50 cursor-not-allowed'
+                              }`}
+                            title={canDeleteRecord(record) ? '删除记录' : '无权限'}
+                            aria-label={canDeleteRecord(record) ? '删除记录' : '无权限'}
+                          >
+                            {deletingRecordId === record.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Raid, RaidRecord } from '../types';
-import { X, Calendar, Coins, Sparkles, FileText, ArrowDownToLine, ArrowUpFromLine, Wallet, AlertCircle } from 'lucide-react';
+import { X, Calendar, Coins, Sparkles, FileText, ArrowDownToLine, ArrowUpFromLine, Wallet, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
 
@@ -20,6 +20,7 @@ interface AddRecordModalProps {
   onSubmit: (record: Partial<RaidRecord>) => void;
   raid: Raid;
   role: RoleWithStatus;
+  initialData?: RaidRecord;
 }
 
 export const AddRecordModal: React.FC<AddRecordModalProps> = ({
@@ -27,25 +28,51 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   onClose,
   onSubmit,
   raid,
-  role
+  role,
+  initialData
 }) => {
   const [goldIncome, setGoldIncome] = useState<number>(0);
   const [goldExpense, setGoldExpense] = useState<number>(0);
   const [hasXuanjing, setHasXuanjing] = useState(false);
+  const [hasMaJu, setHasMaJu] = useState(false);
+  const [hasPet, setHasPet] = useState(false);
+  const [hasPendant, setHasPendant] = useState(false);
+  const [hasMount, setHasMount] = useState(false);
+  const [hasAppearance, setHasAppearance] = useState(false);
+  const [hasTitle, setHasTitle] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
-      setGoldIncome(0);
-      setGoldExpense(0);
-      setHasXuanjing(false);
-      setNotes('');
+      if (initialData) {
+        setGoldIncome(initialData.goldIncome || 0);
+        setGoldExpense(initialData.goldExpense || 0);
+        setHasXuanjing(initialData.hasXuanjing || false);
+        setHasMaJu(initialData.hasMaJu || false);
+        setHasPet(initialData.hasPet || false);
+        setHasPendant(initialData.hasPendant || false);
+        setHasMount(initialData.hasMount || false);
+        setHasAppearance(initialData.hasAppearance || false);
+        setHasTitle(initialData.hasTitle || false);
+        setNotes(initialData.notes || '');
+      } else {
+        setGoldIncome(0);
+        setGoldExpense(0);
+        setHasXuanjing(false);
+        setHasMaJu(false);
+        setHasPet(false);
+        setHasPendant(false);
+        setHasMount(false);
+        setHasAppearance(false);
+        setHasTitle(false);
+        setNotes('');
+      }
       setIsSubmitting(false);
       setErrorMessage(null);
     }
-  }, [isOpen]);
+  }, [isOpen, initialData]);
 
   const constructRaidName = (): string => {
     const difficultyLabel = raid.difficulty === 'NORMAL' ? '普通' :
@@ -80,14 +107,20 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
       await new Promise(resolve => setTimeout(resolve, 300));
 
       const record: Partial<RaidRecord> = {
-        id: generateUUID(),
+        id: initialData ? initialData.id : generateUUID(),
         accountId: role.accountId,
         roleId: role.id,
-        raidName: constructRaidName(),
-        date: new Date().toISOString(),
+        raidName: initialData ? initialData.raidName : constructRaidName(),
+        date: initialData ? initialData.date : new Date().toISOString(),
         goldIncome: goldIncome || 0,
         goldExpense: goldExpense > 0 ? goldExpense : undefined,
-        hasXuanjing: hasXuanjing,
+        hasXuanjing,
+        hasMaJu,
+        hasPet,
+        hasPendant,
+        hasMount,
+        hasAppearance,
+        hasTitle,
         notes: notes.trim() || undefined,
         roleName: role.name,
         server: `${role.region} ${role.server}`,
@@ -101,7 +134,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         constructRaidName(),
         true,
         undefined,
-        `收入: ${goldIncome}, 支出: ${goldExpense}, 玄晶: ${hasXuanjing}`
+        `收入: ${goldIncome}, 支出: ${goldExpense}, 玄晶: ${hasXuanjing}, 马具: ${hasMaJu}, 宠物: ${hasPet}, 挂件: ${hasPendant}, 坐骑: ${hasMount}, 外观: ${hasAppearance}, 称号: ${hasTitle}`
       );
 
       onClose();
@@ -130,7 +163,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         <div className={`bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto transition-all duration-300`}>
           <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm">
             <div>
-              <h2 className="text-lg font-bold text-main">添加副本记录</h2>
+              <h2 className="text-lg font-bold text-main">{initialData ? '修改副本记录' : '添加副本记录'}</h2>
               <p className="text-muted text-xs mt-0.5">{constructRaidName()}</p>
             </div>
             <button
@@ -221,18 +254,104 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-3 p-3 bg-base rounded-lg border border-base">
-              <input
-                type="checkbox"
-                checked={hasXuanjing}
-                onChange={e => setHasXuanjing(e.target.checked)}
-                id="xuanjing"
-                className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-              />
-              <label htmlFor="xuanjing" className="flex items-center gap-2 cursor-pointer text-sm text-main">
-                <Sparkles className="w-4 h-4 text-muted" />
-                <span>出玄晶</span>
-              </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-base rounded-lg border border-base">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasXuanjing}
+                  onChange={e => setHasXuanjing(e.target.checked)}
+                  id="xuanjing"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="xuanjing" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>玄晶</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasMaJu}
+                  onChange={e => setHasMaJu(e.target.checked)}
+                  id="maju"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="maju" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Anchor className="w-3.5 h-3.5 text-blue-500" />
+                  <span>马具</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasPet}
+                  onChange={e => setHasPet(e.target.checked)}
+                  id="pet"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="pet" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Ghost className="w-3.5 h-3.5 text-purple-500" />
+                  <span>宠物</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasPendant}
+                  onChange={e => setHasPendant(e.target.checked)}
+                  id="pendant"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="pendant" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Package className="w-3.5 h-3.5 text-orange-500" />
+                  <span>挂件</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasMount}
+                  onChange={e => setHasMount(e.target.checked)}
+                  id="mount"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="mount" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Flag className="w-3.5 h-3.5 text-green-500" />
+                  <span>坐骑</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasAppearance}
+                  onChange={e => setHasAppearance(e.target.checked)}
+                  id="appearance"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="appearance" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Shirt className="w-3.5 h-3.5 text-pink-500" />
+                  <span>外观</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasTitle}
+                  onChange={e => setHasTitle(e.target.checked)}
+                  id="title"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="title" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <Crown className="w-3.5 h-3.5 text-yellow-600" />
+                  <span>称号</span>
+                </label>
+              </div>
             </div>
 
             <div>

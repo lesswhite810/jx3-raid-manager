@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Account, AccountType, Role, Config } from '../types';
 import { SECTS } from '../constants';
-import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key } from 'lucide-react';
 import { convertToSystemAccounts } from '../services/directoryParser';
 import { sortRoles } from '../utils/accountUtils';
 import { generateUUID } from '../utils/uuid';
@@ -656,6 +656,28 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   <div className="min-w-0 flex flex-col">
                     <div className="flex items-center gap-2">
                       <h3 className={`font-medium text-main truncate ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyUsername(account.username || account.accountName, account.id);
+                        }}
+                        className={`p-1 rounded-md transition-colors ${copyUsernameSuccess === account.id ? 'text-emerald-600 bg-emerald-50' : 'text-muted/50 hover:text-primary hover:bg-base'}`}
+                        title="复制账号"
+                      >
+                        {copyUsernameSuccess === account.id ? <Check size={14} /> : <Clipboard size={14} />}
+                      </button>
+                      {account.password && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyPassword(account.password!, account.id);
+                          }}
+                          className={`p-1 rounded-md transition-colors ${copySuccess === account.id ? 'text-emerald-600 bg-emerald-50' : 'text-muted/50 hover:text-primary hover:bg-base'}`}
+                          title="复制密码"
+                        >
+                          {copySuccess === account.id ? <Check size={14} /> : <Key size={14} />}
+                        </button>
+                      )}
                       {account.type === AccountType.CLIENT && (
                         <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">代清</span>
                       )}
@@ -663,8 +685,12 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     {!isExpanded && (
                       <p className="text-xs text-muted truncate mt-0.5">
                         {Array.isArray(account.roles) ? account.roles.length : 0} 个角色
-                        {account.username && <span className="mx-1">·</span>}
-                        {account.username}
+                        {account.username && account.username !== account.accountName && (
+                          <>
+                            <span className="mx-1">·</span>
+                            {account.username}
+                          </>
+                        )}
                       </p>
                     )}
                   </div>
@@ -723,26 +749,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     </h4>
 
                     <div className="space-y-4">
-                      {/* 登录账号 */}
-                      <div className="flex items-center gap-3">
-                        <label className="text-sm font-semibold text-main w-24 flex-shrink-0">
-                          登录账号
-                        </label>
-                        <div className="flex-1 flex gap-2">
-                          <div className="flex-1 px-4 py-2.5 bg-surface border border-base rounded-lg text-main text-sm font-medium">
-                            {account.username || account.accountName}
-                          </div>
-                          {(account.username || account.accountName) && (
-                            <button
-                              onClick={() => copyUsername(account.username || account.accountName, account.id)}
-                              className={`p-2.5 rounded-lg border transition-all duration-200 active:scale-95 ${copyUsernameSuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200 shadow-none' : 'bg-surface border-base text-muted hover:border-primary hover:text-primary hover:bg-base/50'}`}
-                              title="复制账号"
-                            >
-                              {copyUsernameSuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
-                            </button>
-                          )}
-                        </div>
-                      </div>
+
 
                       {/* 密码 */}
                       <div className="flex items-center gap-3">
@@ -773,15 +780,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                               {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
                             </button>
                           </div>
-                          {account.password && (
-                            <button
-                              onClick={() => copyPassword(account.password, account.id)}
-                              className={`p-2.5 rounded-lg border transition-all duration-200 active:scale-95 ${copySuccess === account.id ? 'bg-emerald-50 text-emerald-600 border-emerald-200 shadow-none' : 'bg-surface border-base text-muted hover:border-primary hover:text-primary hover:bg-base/50'}`}
-                              title="复制密码"
-                            >
-                              {copySuccess === account.id ? <Check size={16} /> : <Clipboard size={16} />}
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
