@@ -51,6 +51,12 @@ pub fn init_db() -> Result<Connection, String> {
             status TEXT DEFAULT 'pending',
             error_message TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS cache (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        );
     "#).map_err(|e| e.to_string())?;
     
     Ok(conn)
@@ -592,5 +598,26 @@ pub fn db_restore(restore_path: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_cache(key: String) -> Result<Option<(String, String)>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT value, updated_at FROM cache WHERE key = ?").map_err(|e| e.to_string())?;
+    let result: Option<(String, String)> = stmt.query_row(params![key], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    }).ok();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn db_save_cache(key: String, value: String) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let updated_at = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO cache (key, value, updated_at) VALUES (?, ?, ?)",
+        params![key, value, updated_at],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }

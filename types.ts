@@ -53,7 +53,31 @@ export interface RaidRecord {
   hasMount?: boolean;     // 坐骑
   hasAppearance?: boolean; // 外观
   hasTitle?: boolean;     // 称号
+  type?: 'raid' | 'trial'; // Record Type, default to 'raid'
 }
+
+export interface TrialPlaceRecord {
+  id: string;
+  accountId: string;
+  roleId: string;
+  roleName: string;
+  server: string;
+  date: string;
+  layer: number; // 1-100
+  bosses: [string, string, string]; // 3 bosses
+  cards: {
+    total: 5;
+    flippedIndex: number; // 1-5
+    jingJianIndices: number[]; // 1-5, multiple allowed
+    droppedEquipment?: string; // Name of dropped equipment
+    items?: Record<number, string>; // 1-5 对应的装备名称
+  };
+  type: 'trial';
+  notes?: string;
+  transactionType?: 'income' | 'expense' | 'combined'; // meaningful for trial? prob not but for compatibility
+}
+
+export type AnyRecord = RaidRecord | TrialPlaceRecord;
 
 export interface DashboardStats {
   totalGold: number;

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, Raid, RaidRecord } from '../types';
-import { Shield, Sword, Calendar, MapPin, TrendingUp, TrendingDown, Wallet, RefreshCw, Clock, Copy, Check } from 'lucide-react';
+import { Shield, Sword, Calendar, TrendingUp, TrendingDown, Wallet, RefreshCw, Clock, Copy, Check } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
@@ -124,16 +124,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     return name;
   };
 
-  const cleanServerName = (serverText: string, roleName: string) => {
-    if (!roleName || roleName === '未知角色') return serverText;
-    const cleanRole = cleanRoleName(roleName);
-    // 移除 serverText 中的 roleName (包括清洗前后的)
-    let cleaned = serverText.replace(new RegExp(`\\s*${roleName}\\s*`, 'g'), ' ').trim();
-    if (cleanRole !== roleName) {
-      cleaned = cleaned.replace(new RegExp(`\\s*${cleanRole}\\s*`, 'g'), ' ').trim();
-    }
-    return cleaned;
-  };
+
 
   const showToast = (message: string, duration: number = 3000) => {
     console.log('[Toast] showToast called with message:', message);
@@ -469,7 +460,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
-                        <span className="truncate">{cleanRoleName(role.name)}</span>
+                        <span className="truncate">{cleanRoleName(role.name)}@{role.server}</span>
                         {role.sect && role.sect !== '未知' && (
                           <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${isAtLimit
                             ? 'bg-base text-muted'
@@ -489,12 +480,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 </div>
 
                 <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-muted">
-                    <MapPin className={`w-4 h-4 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-500' : 'text-amber-500'}`} />
-                    <span className="truncate text-xs">
-                      {cleanServerName(role.region === role.server ? role.region : `${role.region} ${role.server}`, role.name)}
-                    </span>
-                  </div>
+
 
                   {role.lastRunDate ? (
                     <div className="space-y-1">

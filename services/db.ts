@@ -239,6 +239,30 @@ class DatabaseService {
       return '重置配置失败: ' + String(error);
     }
   }
+  async getCache(key: string): Promise<{ value: any, updatedAt: string } | null> {
+    await this.init();
+    try {
+      const result = await invoke<[string, string] | null>('db_get_cache', { key });
+      if (!result) return null;
+      return {
+        value: JSON.parse(result[0]),
+        updatedAt: result[1]
+      };
+    } catch (error) {
+      console.error(`Failed to get cache for ${key}:`, error);
+      return null;
+    }
+  }
+
+  async saveCache(key: string, value: any): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_save_cache', { key, value: JSON.stringify(value) });
+    } catch (error) {
+      console.error(`Failed to save cache for ${key}:`, error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();

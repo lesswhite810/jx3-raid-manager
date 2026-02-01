@@ -129,8 +129,8 @@ async function parseAccountDirectory(accountPath: string, context: any): Promise
     for (const entry of entries) {
       if (entry.children && entry.name) {
         const regionPath = `${accountPath}\\${entry.name}`;
-
-        await parseRegionDirectory(regionPath, context);
+        // entry.name is the Region Name (e.g., "电信区")
+        await parseRegionDirectory(regionPath, context, entry.name);
       }
     }
   } catch (error) {
@@ -138,15 +138,15 @@ async function parseAccountDirectory(accountPath: string, context: any): Promise
   }
 }
 
-async function parseRegionDirectory(regionPath: string, context: any): Promise<void> {
+async function parseRegionDirectory(regionPath: string, context: any, regionName: string): Promise<void> {
   try {
     const entries = await readDir(regionPath) as any[];
 
     for (const entry of entries) {
       if (entry.children && entry.name) {
         const serverPath = `${regionPath}\\${entry.name}`;
-
-        await parseServerDirectory(serverPath, context, entry.name);
+        // entry.name is the Server Name (e.g., "梦江南")
+        await parseServerDirectory(serverPath, context, regionName, entry.name);
       }
     }
   } catch (error) {
@@ -154,16 +154,17 @@ async function parseRegionDirectory(regionPath: string, context: any): Promise<v
   }
 }
 
-async function parseServerDirectory(serverPath: string, context: any, regionName: string): Promise<void> {
+async function parseServerDirectory(serverPath: string, context: any, regionName: string, serverName: string): Promise<void> {
   try {
     const entries = await readDir(serverPath) as any[];
 
     for (const entry of entries) {
       if (entry.children && entry.name) {
+        // entry.name is the Role Name (e.g., "少年白了发")
         context.roles.push({
           name: entry.name,
           region: regionName,
-          server: entry.name
+          server: serverName
         });
       }
     }

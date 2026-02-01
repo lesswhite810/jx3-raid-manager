@@ -13,7 +13,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
-import { Account, RaidRecord, Raid, Config } from './types';
+import { Account, RaidRecord, Raid, Config, TrialPlaceRecord } from './types';
 import {
   DEFAULT_CONFIG,
   loadConfigFromStorage,
@@ -25,6 +25,7 @@ import { mergeRaids, getRaidKey, saveRaidCache } from './utils/raidUtils';
 import { sortAccounts } from './utils/accountUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, forceMigrate } from './services/migration';
+import { syncEquipment } from './services/jx3BoxApi';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
@@ -41,6 +42,7 @@ function App() {
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<RaidRecord[]>([]);
+  const [trialRecords, setTrialRecords] = useState<TrialPlaceRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
@@ -118,11 +120,21 @@ function App() {
         }
 
         if (parsedRecords.length > 0) {
-          setRecords(parsedRecords);
+          // @ts-ignore
+          const raidRecords = parsedRecords.filter((r: any) => r.type !== 'trial') as RaidRecord[];
+          // @ts-ignore
+          const trialPlaceRecords = parsedRecords.filter((r: any) => r.type === 'trial') as TrialPlaceRecord[];
+
+          setRecords(raidRecords);
+          setTrialRecords(trialPlaceRecords);
+          console.log(`载入: 副本记录 ${raidRecords.length}, 试炼记录 ${trialPlaceRecords.length}`);
         }
 
         setIsInitialized(true);
         console.log('\n✓ 应用初始化完成');
+
+        // Start background sync
+        syncEquipment().catch(console.error);
       } catch (error) {
         console.error('初始化失败:', error);
         setIsInitialized(true);
@@ -150,13 +162,14 @@ function App() {
 
     const saveData = async () => {
       try {
-        await db.saveRecords(records);
+        const allRecords = [...records, ...trialRecords];
+        await db.saveRecords(allRecords);
       } catch (error) {
         console.error('保存记录失败:', error);
       }
     };
     saveData();
-  }, [records, isInitialized]);
+  }, [records, trialRecords, isInitialized]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -389,9 +402,20 @@ function App() {
                   onEditRecord={setEditingRecord}
                 />
               ) : (
-                <RaidManager key={`raidManager-${contentKey}`} raids={raids} setRaids={setRaids} onRaidClick={setSelectedRaid} />
+
+                // @ts-ignore - passing extra props that aren't defined in interface yet but will be
+                <RaidManager
+                  key={`raidManager-${contentKey}`}
+                  raids={raids}
+                  setRaids={setRaids}
+                  onRaidClick={setSelectedRaid}
+                  trialRecords={trialRecords}
+                  setTrialRecords={setTrialRecords}
+                  accounts={accounts}
+                />
               )
-            )}
+            )
+            }
             {activeTab === 'config' && (
               <ConfigManager key={`config-${contentKey}`} config={config} setConfig={setConfig} />
             )}

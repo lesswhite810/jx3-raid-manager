@@ -91,3 +91,9 @@
 :focus-visible {
     outline: none;
 }
+
+/* Hide native password reveal button in Edge/IE */
+input::-ms-reveal,
+input::-ms-clear {
+    display: none;
+}

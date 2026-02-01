@@ -298,25 +298,87 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       if (result.success && result.accounts.length > 0) {
         const systemAccounts = convertToSystemAccounts(result.accounts);
 
-        const filteredAccounts: Account[] = [];
-        const duplicateAccounts: Account[] = [];
+        const newAccounts: Account[] = [];
+        const updatedAccountsMap = new Map<string, Account>();
+        let updatedCount = 0;
+        let newRoleCount = 0;
 
-        for (const newAccount of systemAccounts) {
-          const existingAccount = safeAccounts.find(acc => acc.accountName === newAccount.accountName);
+        for (const scannedAccount of systemAccounts) {
+          const existingAccount = safeAccounts.find(acc => acc.accountName === scannedAccount.accountName);
 
           if (!existingAccount) {
-            filteredAccounts.push(newAccount);
+            newAccounts.push(scannedAccount);
           } else {
-            duplicateAccounts.push(newAccount);
+            // MERGE & CLEANUP LOGIC
+            let hasChanges = false;
+            let currentRoles = [...existingAccount.roles];
+
+            for (const scannedRole of scannedAccount.roles) {
+              // 1. Try to find an exact correct match
+              const perfectMatch = currentRoles.find(r =>
+                r.name === scannedRole.name &&
+                r.region === scannedRole.region &&
+                r.server === scannedRole.server
+              );
+
+              // 2. Try to find the specific "Bad Mapping" match from previous version
+              // Logic: "Previous Region is Current Server" -> Old.Region == New.Server (and Names match)
+              const legacyBadMatch = currentRoles.find(r =>
+                r.name === scannedRole.name &&
+                r.region === scannedRole.server &&
+                (!perfectMatch || r.id !== perfectMatch.id)
+              );
+
+              if (perfectMatch) {
+                // Case: Perfect match exists. 
+                // If we ALSO have a bad legacy match, it's a duplicate. Remove the bad one.
+                if (legacyBadMatch) {
+                  currentRoles = currentRoles.filter(r => r.id !== legacyBadMatch.id);
+                  hasChanges = true;
+                  updatedCount++;
+                }
+              } else if (legacyBadMatch) {
+                // Case: Only bad legacy match exists. This is our data to migrate.
+                // Fix the Region and Server to correct values from scan.
+                currentRoles = currentRoles.map(r => {
+                  if (r.id === legacyBadMatch.id) {
+                    return {
+                      ...r,
+                      region: scannedRole.region,
+                      server: scannedRole.server
+                    };
+                  }
+                  return r;
+                });
+                hasChanges = true;
+                updatedCount++;
+              } else {
+                // Case: No match at all. Add new.
+                currentRoles.push(scannedRole);
+                hasChanges = true;
+                newRoleCount++;
+              }
+            }
+
+            if (hasChanges) {
+              updatedAccountsMap.set(existingAccount.id, {
+                ...existingAccount,
+                roles: sortRoles(currentRoles)
+              });
+            }
           }
         }
 
-        if (filteredAccounts.length > 0) {
-          setAccounts(prev => [...prev, ...filteredAccounts]);
+        if (newAccounts.length > 0 || updatedAccountsMap.size > 0) {
+          setAccounts(prev => {
+            const next = prev.map(acc => updatedAccountsMap.get(acc.id) || acc);
+            return [...next, ...newAccounts];
+          });
 
-          toast.success(`成功从配置目录解析到 ${filteredAccounts.length} 个账号，共 ${filteredAccounts.reduce((total, acc) => total + acc.roles.length, 0)} 个角色`);
+          const totalNewRoles = newAccounts.reduce((total, acc) => total + acc.roles.length, 0) + newRoleCount;
+          toast.success(`扫描完成：新增 ${newAccounts.length} 个账号，更新 ${updatedCount} 个账号，共发现 ${totalNewRoles} 个新角色`);
         } else {
-          toast.info('解析完成，但所有账号都已存在。');
+          toast.info('解析完成，所有账号和角色已是最新状态。');
         }
       } else {
         setParseError('解析完成，但未找到有效的账号和角色。请检查配置的游戏目录路径是否正确。');
@@ -837,10 +899,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                 <div className="flex gap-1">
                                   <button
                                     onClick={() => handleOpenEditRoleModal(account.id, role)}
-                                    className="text-muted hover:text-primary transition-all duration-200 active:scale-95 p-1.5 rounded-lg hover:bg-base/80"
+                                    className="p-2 rounded-lg text-muted hover:text-primary transition-all duration-200 active:scale-95 hover:bg-base/80"
                                     title="修改角色信息"
                                   >
-                                    <Settings size={14} />
+                                    <Settings size={16} />
                                   </button>
                                   <button
                                     onClick={() => {
@@ -859,14 +921,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                         return a;
                                       }));
                                     }}
-                                    className={`text-slate-400 hover:text-indigo-600 transition-colors p-1 rounded-full hover:bg-indigo-50`}
+                                    className={`p-2 rounded-lg transition-all active:scale-95 duration-200 ${role.disabled ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
                                     title={role.disabled ? '启用角色' : '禁用角色'}
                                   >
-                                    {role.disabled ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                    {role.disabled ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
                                   </button>
                                   <button
                                     onClick={() => handleDeleteRoleClick(account.id, role.id)}
-                                    className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-full hover:bg-red-50"
+                                    className="p-2 rounded-lg text-muted hover:text-red-600 hover:bg-red-50 active:scale-95 transition-all duration-200"
                                     title="删除角色"
                                   >
                                     <Trash2 size={16} />

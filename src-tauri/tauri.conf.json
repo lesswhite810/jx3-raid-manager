@@ -38,6 +38,13 @@
       "window": {
         "all": true
       },
+      "http": {
+        "all": true,
+        "request": true,
+        "scope": [
+          "https://node.jx3box.com/*"
+        ]
+      },
       "process": {
         "all": true
       }
@@ -54,7 +61,7 @@
       ]
     },
     "security": {
-      "csp": "default-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src https://fonts.googleapis.com; connect-src 'self' https://open.bigmodel.cn https://generativelanguage.googleapis.com"
+      "csp": "default-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src https://fonts.googleapis.com; img-src 'self' data: https://icon.jx3box.com; connect-src 'self' https://open.bigmodel.cn https://generativelanguage.googleapis.com https://node.jx3box.com"
     },
     "windows": [
       {

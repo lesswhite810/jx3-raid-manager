@@ -30,6 +30,8 @@ fn main() {
             db::db_add_unique_constraint_raids,
             db::db_backup,
             db::db_restore,
+            db::db_get_cache,
+            db::db_save_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
