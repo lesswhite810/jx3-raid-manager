@@ -65,13 +65,13 @@ export interface TrialPlaceRecord {
   date: string;
   layer: number; // 1-100
   bosses: [string, string, string]; // 3 bosses
-  cards: {
-    total: 5;
-    flippedIndex: number; // 1-5
-    jingJianIndices: number[]; // 1-5, multiple allowed
-    droppedEquipment?: string; // Name of dropped equipment
-    items?: Record<number, string>; // 1-5 对应的装备名称
-  };
+  // Flat structure for cards (Equip IDs)
+  card1: string;
+  card2: string;
+  card3: string;
+  card4: string;
+  card5: string;
+  flippedIndex: number; // 1-5
   type: 'trial';
   notes?: string;
   transactionType?: 'income' | 'expense' | 'combined'; // meaningful for trial? prob not but for compatibility

@@ -263,6 +263,58 @@ class DatabaseService {
       throw error;
     }
   }
+
+  async saveEquipments(equipments: any[]): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_save_equipments', { equipments: JSON.stringify(equipments) });
+    } catch (error) {
+      console.error('Failed to save equipments:', error);
+      throw error;
+    }
+  }
+
+  async getEquipments(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_equipments');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get equipments:', error);
+      return [];
+    }
+  }
+
+  async addTrialRecord(record: any): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_add_trial_record', { record: JSON.stringify(record) });
+    } catch (error) {
+      console.error('Failed to add trial record:', error);
+      throw error;
+    }
+  }
+
+  async getTrialRecords(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_trial_records');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get trial records:', error);
+      return [];
+    }
+  }
+
+  async deleteTrialRecord(id: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_trial_record', { id });
+    } catch (error) {
+      console.error('Failed to delete trial record:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();

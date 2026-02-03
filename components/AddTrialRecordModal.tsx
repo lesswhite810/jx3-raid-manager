@@ -1,9 +1,13 @@
+
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Account, TrialPlaceRecord } from '../types';
-import { X, Calendar, Layers, Trophy, Save, AlertCircle, HelpCircle, Check, Package } from 'lucide-react';
+import { Package, Check, X, AlertCircle, Calendar, Layers, Trophy, Save, HelpCircle } from 'lucide-react';
+import { DualRangeSlider } from './DualRangeSlider';
 import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
 import { getEquip, JX3Equip } from '../services/jx3BoxApi';
+import { db } from '../services/db';
 
 interface RoleWithStatus {
     id: string;
@@ -242,12 +246,64 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [levelBounds, setLevelBounds] = useState({ min: 10000, max: 40000 });
     const [minLevel, setMinLevel] = useState<number>(27000);
     const [maxLevel, setMaxLevel] = useState<number>(36000);
+    const [selectedType, setSelectedType] = useState<string>('全部');
 
     const [notes, setNotes] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     // Attribute filter state
+    const [attrFilters, setAttrFilters] = useState<Set<string>>(new Set());
+
+    // --- Reset State when Modal Opens ---
+    useEffect(() => {
+        if (isOpen) {
+            // Only reset editable fields, keep configuration or smart defaults if needed
+            // But user requested "previous data" to be gone.
+
+            // If we have an initialRole passed in (e.g. from context), keep it or reset if not provided?
+            // The prop is `initialRole`, so we might want to respect that if it changes, 
+            // but usually we just want to clear the form fields.
+            setSelectedRoleId(initialRole?.id || '');
+
+            setLayer(50);
+            setBoss1('');
+            setBoss2('');
+            setBoss3('');
+
+            setFlipIndex(1);
+            setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
+            setSelectedCard(null);
+            setShowEquipSelector(false);
+
+            setNotes('');
+            setError(null);
+            setIsSubmitting(false);
+
+            // Re-apply default filters if desired, or keep user preference? 
+            // Usually form reset implies filters reset too for a fresh start.
+            // But level range might be nice to persist? Let's reset for now as per "redundant data" complaint.
+            // Actually, keep level range might be better UX, but let's reset to ensure "freshness".
+            // setMinLevel(27000); 
+            // setMaxLevel(36000); 
+            setAttrFilters(new Set());
+
+            // Trigger load of equipments if needed (or just ensure they are fresh)
+            loadAllEquipments();
+        }
+    }, [isOpen, initialRole]);
+
+    // 锁定背景滚动
+    useEffect(() => {
+        if (isOpen) {
+            const originalOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            return () => {
+                document.body.style.overflow = originalOverflow;
+            };
+        }
+    }, [isOpen]);
+
     const ATTR_FILTERS = [
         { key: '会心', label: '会心' },
         { key: '会效', label: '会效' },
@@ -258,14 +314,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         { key: '特效', label: '特效' },
         { key: '全能', label: '全能' },
     ];
-    const [attrFilters, setAttrFilters] = useState<Set<string>>(new Set());
-
-    useEffect(() => {
-        if (isOpen) {
-            setSelectedRoleId(initialRole?.id || '');
-            loadAllEquipments();
-        }
-    }, [isOpen, initialRole]);
 
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
@@ -383,6 +431,15 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             });
         }
 
+        // Type Filter
+        if (selectedType !== '全部') {
+            items = items.filter(item => {
+                // 处理特殊的类型映射
+                if (selectedType === '武器') return item.TypeLabel === '武器' || item.TypeLabel === '投掷';
+                return item.TypeLabel === selectedType;
+            });
+        }
+
         return items;
     };
 
@@ -412,27 +469,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             return;
         }
 
-        const jingJianIndices = Object.entries(cardItems)
-            .filter(([_, itemId]) => itemId && itemId.trim().length > 0)
-            .map(([idx, _]) => parseInt(idx))
-            .sort((a, b) => a - b);
-
-        // Convert IDs back to Names for storage compatibility
-        const itemsByName: Record<number, string> = {};
-        Object.entries(cardItems).forEach(([key, itemId]) => {
-            const idx = parseInt(key);
-            if (!itemId) {
-                itemsByName[idx] = '';
-                return;
-            }
-            const equip = allEquipments.find(e => e.ID.toString() === itemId);
-            itemsByName[idx] = equip ? equip.Name : itemId; // Fallback to ID if not found (shouldn't happen)
-        });
-
-        const droppedItemId = cardItems[flipIndex];
-        const droppedEquip = droppedItemId ? allEquipments.find(e => e.ID.toString() === droppedItemId) : null;
-        const droppedEquipmentName = droppedEquip ? droppedEquip.Name : undefined;
-
         try {
             const record: TrialPlaceRecord = {
                 id: generateUUID(),
@@ -443,18 +479,18 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 date: new Date().toISOString(),
                 layer,
                 bosses: [boss1, boss2, boss3],
-                cards: {
-                    total: 5,
-                    flippedIndex: flipIndex,
-                    jingJianIndices: jingJianIndices,
-                    droppedEquipment: droppedEquipmentName,
-                    items: itemsByName
-                },
+                card1: cardItems[1] || '',
+                card2: cardItems[2] || '',
+                card3: cardItems[3] || '',
+                card4: cardItems[4] || '',
+                card5: cardItems[5] || '',
+                flippedIndex: flipIndex,
                 type: 'trial',
                 notes: notes.trim()
             };
 
-            onSubmit(record);
+            await db.addTrialRecord(record);
+            onSubmit(record); // UI update callback
             toast.success('试炼记录添加成功');
             onClose();
         } catch (err) {
@@ -474,8 +510,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         return allEquipments.find(e => e.ID.toString() === id);
     };
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    return createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden">
             <div className="bg-surface w-full max-w-3xl rounded-xl shadow-2xl border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-base bg-base/50">
@@ -733,172 +769,157 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 </form>
             </div>
 
-            {/* Equipment Selector - Bottom Sheet */}
+            {/* Equipment Selector - Modal */}
             {showEquipSelector && (
                 <div
-                    className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm animate-in fade-in duration-200"
+                    className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm animate-in fade-in duration-200 flex items-center justify-center p-8"
                     onClick={() => {
                         setShowEquipSelector(false);
                     }}
                 >
                     <div
-                        className="absolute bottom-0 left-0 right-0 bg-surface rounded-t-2xl shadow-2xl border-t border-base max-h-[45vh] flex flex-col animate-in slide-in-from-bottom duration-300"
+                        className="w-full max-w-5xl h-[80vh] bg-surface rounded-xl shadow-2xl border border-base flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
                         onClick={e => e.stopPropagation()}
                     >
-                        {/* Header */}
-                        <div className="p-3 border-b border-base flex-shrink-0">
-                            <div className="flex items-center justify-between mb-2">
-                                <h3 className="text-sm font-bold text-main">
-                                    为 #{selectedCard} 号牌选择装备
+                        {/* Header Area */}
+                        <div className="flex-shrink-0 bg-base/50 backdrop-blur-md border-b border-base z-10">
+                            {/* Title & Close */}
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-base/50">
+                                <h3 className="text-base font-bold text-main flex items-center gap-2">
+                                    <Package className="w-4 h-4 text-primary" />
+                                    选择装备 <span className="text-xs font-normal text-muted bg-surface px-2 py-0.5 rounded-full border border-base">#{selectedCard}</span>
                                 </h3>
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        setShowEquipSelector(false);
-                                    }}
-                                    className="text-muted hover:text-main"
+                                    onClick={() => setShowEquipSelector(false)}
+                                    className="p-1.5 rounded-lg hover:bg-base text-muted hover:text-main transition-colors"
                                 >
-                                    <X className="w-4 h-4" />
+                                    <X className="w-5 h-5" />
                                 </button>
                             </div>
 
-                            {/* Search and Filters */}
-                            <div>
-                                {/* Level Range Filter */}
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-sm font-bold text-main whitespace-nowrap">品质筛选</span>
-                                    <div className="flex-1 px-2">
-                                        <div className="flex items-center justify-between text-xs text-muted mb-1 font-mono">
-                                            <span>{minLevel}</span>
-                                            <span>{maxLevel}</span>
+                            {/* Filters Container */}
+                            <div className="px-4 py-3 space-y-3">
+                                {/* Top Row: Level Range & Type Filters */}
+                                <div className="space-y-3">
+                                    {/* Level Range Filter (Compact) */}
+                                    <div className="flex items-center gap-3 bg-base/30 p-2 rounded-lg border border-base/50">
+                                        <span className="text-xs font-bold text-muted whitespace-nowrap">品质</span>
+                                        <DualRangeSlider
+                                            min={levelBounds.min}
+                                            max={levelBounds.max}
+                                            value={{ min: minLevel, max: maxLevel }}
+                                            onChange={val => {
+                                                setMinLevel(val.min);
+                                                setMaxLevel(val.max);
+                                            }}
+                                            className="flex-1 mx-2"
+                                        />
+                                        <div className="text-[10px] font-mono font-medium text-main bg-surface px-1.5 py-0.5 rounded border border-base min-w-[80px] text-center">
+                                            {minLevel} - {maxLevel}
                                         </div>
-                                        <div className="relative h-4 flex items-center select-none touch-none">
-                                            {/* Track */}
-                                            <div className="absolute left-0 right-0 h-1 bg-base rounded-full overflow-hidden">
-                                                <div
-                                                    className="absolute h-full bg-primary/30"
-                                                    style={{
-                                                        left: `${((minLevel - levelBounds.min) / (levelBounds.max - levelBounds.min)) * 100}%`,
-                                                        right: `${100 - ((maxLevel - levelBounds.min) / (levelBounds.max - levelBounds.min)) * 100}%`
-                                                    }}
-                                                />
-                                            </div>
+                                    </div>
 
-                                            {/* Min Slider */}
-                                            <input
-                                                type="range"
-                                                min={levelBounds.min}
-                                                max={levelBounds.max}
-                                                value={minLevel}
-                                                onChange={(e) => {
-                                                    const val = Math.min(Number(e.target.value), maxLevel - 1);
-                                                    setMinLevel(val);
-                                                }}
-                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-none appearance-none [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-red-500"
-                                            />
-                                            {/* Custom Thumb Min */}
-                                            <div
-                                                className="absolute w-3.5 h-3.5 bg-white border border-gray-300 rounded-full shadow-sm pointer-events-none"
-                                                style={{
-                                                    left: `${((minLevel - levelBounds.min) / (levelBounds.max - levelBounds.min)) * 100}%`,
-                                                    transform: 'translateX(-50%)'
-                                                }}
-                                            />
-
-                                            {/* Max Slider */}
-                                            <input
-                                                type="range"
-                                                min={levelBounds.min}
-                                                max={levelBounds.max}
-                                                value={maxLevel}
-                                                onChange={(e) => {
-                                                    const val = Math.max(Number(e.target.value), minLevel + 1);
-                                                    setMaxLevel(val);
-                                                }}
-                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-none appearance-none [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:appearance-none"
-                                            />
-                                            {/* Custom Thumb Max */}
-                                            <div
-                                                className="absolute w-3.5 h-3.5 bg-white border border-gray-300 rounded-full shadow-sm pointer-events-none"
-                                                style={{
-                                                    left: `${((maxLevel - levelBounds.min) / (levelBounds.max - levelBounds.min)) * 100}%`,
-                                                    transform: 'translateX(-50%)'
-                                                }}
-                                            />
-                                        </div>
+                                    {/* Type Filters */}
+                                    <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mask-gradient-r">
+                                        {['全部', '投掷', '帽子', '鞋子', '项链', '腰坠'].map(type => (
+                                            <button
+                                                key={type}
+                                                type="button"
+                                                onClick={() => setSelectedType(type)}
+                                                className={`
+                                                px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border
+                                                ${selectedType === type
+                                                        ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
+                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-primary/50'
+                                                    }
+                                            `}
+                                            >
+                                                {type}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
 
-
-
                                 {/* Attribute Filters */}
-                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs">
-                                    <span className="text-muted font-medium">属性筛选：</span>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                                     {ATTR_FILTERS.map(filter => (
-                                        <label key={filter.key} className="flex items-center gap-1 cursor-pointer select-none">
+                                        <label key={filter.key} className="flex items-center gap-1.5 cursor-pointer group select-none">
+                                            <div className={`
+                                                w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors
+                                                ${attrFilters.has(filter.key)
+                                                    ? 'bg-primary border-primary'
+                                                    : 'bg-surface border-gray-400 group-hover:border-primary'
+                                                }
+                                            `}>
+                                                {attrFilters.has(filter.key) && <Check className="w-2.5 h-2.5 text-white" />}
+                                            </div>
                                             <input
                                                 type="checkbox"
                                                 checked={attrFilters.has(filter.key)}
                                                 onChange={(e) => {
                                                     const newFilters = new Set(attrFilters);
-                                                    if (e.target.checked) {
-                                                        newFilters.add(filter.key);
-                                                    } else {
-                                                        newFilters.delete(filter.key);
-                                                    }
+                                                    if (e.target.checked) newFilters.add(filter.key);
+                                                    else newFilters.delete(filter.key);
                                                     setAttrFilters(newFilters);
                                                 }}
-                                                className="w-3.5 h-3.5 rounded border-gray-400 text-primary focus:ring-primary/20"
+                                                className="hidden"
                                             />
-                                            <span className="text-main">{filter.label}</span>
+                                            <span className={`text-xs transition-colors ${attrFilters.has(filter.key) ? 'text-primary font-bold' : 'text-muted group-hover:text-main'}`}>
+                                                {filter.label}
+                                            </span>
                                         </label>
                                     ))}
                                 </div>
                             </div>
                         </div>
 
-                        {/* Equipment List */}
-                        <div className="flex-1 overflow-y-auto min-h-0">
+                        {/* Equipment List Grid */}
+                        <div className="flex-1 overflow-y-auto min-h-0 bg-base/30 p-4">
                             {isLoadingEquipments ? (
-                                <div className="p-8 text-center text-muted text-sm">
-                                    <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-2"></div>
-                                    加载装备中...
+                                <div className="h-full flex flex-col items-center justify-center text-muted">
+                                    <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin mb-3"></div>
+                                    <span className="text-sm font-medium animate-pulse">正在从数据库加载装备...</span>
                                 </div>
                             ) : filteredEquipments.length > 0 ? (
-                                <div className="divide-y divide-base/50">
-                                    {/* Clear option */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {/* Clear Option */}
                                     <button
                                         type="button"
                                         onClick={handleClearEquipment}
-                                        className="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
+                                        className="col-span-full mb-2 flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed border-red-300 text-red-500 hover:bg-red-50 hover:border-red-500 transition-all group"
                                     >
-                                        <span className="text-sm font-medium text-red-500">清空选择</span>
+                                        <X className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                                        <span className="text-xs font-bold">不佩戴装备 / 清空选择</span>
                                     </button>
 
-                                    {/* Equipment items */}
                                     {filteredEquipments.map((equip, idx) => (
-                                        <div
-                                            key={idx}
+                                        <button
+                                            key={`${equip.ID}-${idx}`}
+                                            type="button"
+                                            onClick={() => handleSelectEquipment(equip.ID.toString())}
+                                            className="relative group bg-surface border border-base rounded-xl p-2 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5 transition-all duration-200 text-left overflow-hidden flex flex-col"
                                         >
-                                            <button
-                                                type="button"
-                                                onClick={() => handleSelectEquipment(equip.ID.toString())}
-                                                className="w-full px-3 py-2 text-left hover:bg-base transition-colors group"
-                                            >
-                                                <EquipDisplay item={equip} />
-                                            </button>
-                                        </div>
+                                            <EquipDisplay item={equip} />
+                                            {/* Hover Effect Highlight */}
+                                            <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
+                                        </button>
                                     ))}
                                 </div>
                             ) : (
-                                <div className="p-8 text-center text-muted text-sm">
-                                    {minLevel !== 27000 || maxLevel !== 36000 || attrFilters.size > 0 ? '未找到匹配的装备' : '暂无装备数据'}
+                                <div className="h-full flex flex-col items-center justify-center text-muted gap-2">
+                                    <div className="w-12 h-12 rounded-full bg-base border border-base flex items-center justify-center">
+                                        <Package className="w-6 h-6 text-gray-400" />
+                                    </div>
+                                    <span className="text-sm font-medium">没有找到匹配的装备</span>
+                                    <span className="text-xs opacity-60">尝试调整筛选条件</span>
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
             )}
-        </div>
+        </div>,
+        document.body
     );
 };

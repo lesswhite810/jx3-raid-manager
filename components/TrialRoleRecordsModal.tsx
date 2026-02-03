@@ -1,6 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { TrialPlaceRecord } from '../types';
 import { X, Calendar, Trophy, Search, CheckCircle, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { db } from '../services/db';
+import { JX3Equip } from '../services/jx3BoxApi';
 
 interface RoleDisplayData {
     id: string;
@@ -18,6 +21,40 @@ interface TrialRoleRecordsModalProps {
     onDeleteRecord?: (recordId: string) => void;
 }
 
+// 格式化属性的辅助函数
+const getFormattedAttributes = (item: JX3Equip) => {
+    const attrs: { label: string; color?: string }[] = [];
+    if (item.attributes && Array.isArray(item.attributes)) {
+        item.attributes.forEach((attr: any) => {
+            let name = item.AttributeTypes?.[attr.type];
+            if (!name && attr.label) {
+                name = attr.label.replace(/提高.*$/, '').replace(/[0-9]+$/, '');
+            }
+            if (name) {
+                name = name.replace(/等级$|值$/, '').replace(/^外功|^内功/, '');
+                if (name === '会心效果') name = '会效';
+                if (name === '治疗成效') name = '治疗';
+                attrs.push({
+                    label: name,
+                    color: (attr.color && attr.color.toLowerCase() !== '#ffffff' && attr.color.toLowerCase() !== 'white')
+                        ? attr.color : undefined
+                });
+            }
+        });
+    }
+    return attrs;
+};
+
+// 获取绑定类型标签
+const getBindTypeLabel = (val: any) => {
+    switch (Number(val)) {
+        case 1: return '不绑定';
+        case 2: return '装绑';
+        case 3: return '拾绑';
+        default: return null;
+    }
+};
+
 export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     isOpen,
     onClose,
@@ -28,6 +65,33 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
     const [recordToDelete, setRecordToDelete] = useState<TrialPlaceRecord | null>(null);
     const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+    const [equipments, setEquipments] = useState<JX3Equip[]>([]);
+
+    // 加载装备数据
+    useEffect(() => {
+        if (isOpen) {
+            db.getEquipments().then((data: any[]) => {
+                setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d));
+            }).catch(console.error);
+        }
+    }, [isOpen]);
+
+    // 锁定背景滚动
+    useEffect(() => {
+        if (isOpen) {
+            const originalOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            return () => {
+                document.body.style.overflow = originalOverflow;
+            };
+        }
+    }, [isOpen]);
+
+    // 根据 ID 查找装备
+    const findEquipmentById = (id: string | undefined): JX3Equip | null => {
+        if (!id || !id.trim()) return null;
+        return equipments.find(e => e.ID?.toString() === id) || null;
+    };
 
     // Sort records specific to this role
     const roleRecords = useMemo(() => {
@@ -60,8 +124,8 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
 
     if (!isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 p-4">
+    return createPortal(
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
             <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
                 {/* Header */}
                 <div className="px-5 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
@@ -142,34 +206,55 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                 {/* Cards Info */}
                                                 <div className="bg-base/50 rounded-lg p-2 text-xs flex items-center gap-4 flex-wrap">
                                                     <div>
-                                                        <span className="text-muted block mb-0.5">精简</span>
-                                                        <span className="font-mono font-bold text-amber-600">
-                                                            {record.cards.jingJianIndices && record.cards.jingJianIndices.length > 0
-                                                                ? record.cards.jingJianIndices.join(', ')
-                                                                // @ts-ignore legacy support
-                                                                : (record.cards.jingJianIndex ?? '-')}
-                                                        </span>
-                                                    </div>
-                                                    <div>
                                                         <span className="text-muted block mb-0.5">翻牌</span>
-                                                        <span className="font-mono font-bold text-blue-600">{record.cards.flippedIndex}</span>
+                                                        <span className="font-mono font-bold text-blue-600">{record.flippedIndex}</span>
                                                     </div>
-                                                    {/* Hit Status */}
-                                                    {((record.cards.jingJianIndices && record.cards.jingJianIndices.includes(record.cards.flippedIndex)) ||
-                                                        // @ts-ignore legacy check
-                                                        (record.cards.jingJianIndex === record.cards.flippedIndex)) && (
+
+                                                    {/* Dropped Equipment (Only show when there's a valid equip ID) */}
+                                                    {(() => {
+                                                        const equipId = (record as any)[`card${record.flippedIndex}`];
+                                                        const equip = findEquipmentById(equipId);
+                                                        if (!equip) return null;
+
+                                                        const attrs = getFormattedAttributes(equip);
+                                                        const iconUrl = equip.IconID ? `https://icon.jx3box.com/icon/${equip.IconID}.png` : null;
+                                                        const bindLabel = getBindTypeLabel(equip.BindType);
+
+                                                        return (
                                                             <div className="flex-1 flex justify-end">
-                                                                <div className="flex items-center gap-1 text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded">
-                                                                    <CheckCircle className="w-3.5 h-3.5" />
-                                                                    命中!
-                                                                    {record.cards.droppedEquipment && (
-                                                                        <span className="text-emerald-500 font-normal ml-1">
-                                                                            - {record.cards.droppedEquipment}
-                                                                        </span>
+                                                                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1.5 rounded border border-emerald-200 dark:border-emerald-800">
+                                                                    <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                                                                    {iconUrl && (
+                                                                        <div className="w-7 h-7 rounded border border-gray-600 bg-[#1a1a2e] overflow-hidden flex-shrink-0">
+                                                                            <img src={iconUrl} alt="" className="w-full h-full object-cover" />
+                                                                        </div>
                                                                     )}
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        <span className="font-medium text-emerald-700 dark:text-emerald-400 truncate text-sm">
+                                                                            {equip.Name}
+                                                                        </span>
+                                                                        <div className="flex items-center gap-1.5 text-xs text-muted">
+                                                                            {bindLabel && <span className="text-amber-600">{bindLabel}</span>}
+                                                                            <span>品级 {equip.Level}</span>
+                                                                        </div>
+                                                                        {attrs.length > 0 && (
+                                                                            <div className="flex flex-wrap gap-1 mt-0.5">
+                                                                                {attrs.slice(0, 4).map((a, i) => (
+                                                                                    <span
+                                                                                        key={i}
+                                                                                        className="px-1 py-0.5 rounded bg-base/80 text-[10px]"
+                                                                                        style={a.color ? { color: a.color } : undefined}
+                                                                                    >
+                                                                                        {a.label}
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
                                                             </div>
-                                                        )}
+                                                        );
+                                                    })()}
                                                 </div>
                                             </div>
                                         </div>
@@ -207,40 +292,79 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                 </div>
             </div>
 
-            {/* Delete Confirmation */}
+            {/* Delete Confirmation Dialog */}
             {showConfirmDialog && (
-                <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-[60] animate-in fade-in zoom-in-95">
-                    <div className="bg-surface p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center flex-shrink-0">
-                                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
-                            </div>
-                            <div>
-                                <h3 className="text-lg font-semibold text-main">确认删除</h3>
-                                <p className="text-sm text-muted">此操作不可恢复</p>
+                <div
+                    className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center z-[110] animate-in fade-in duration-200"
+                    onClick={() => {
+                        setShowConfirmDialog(false);
+                        setRecordToDelete(null);
+                    }}
+                >
+                    <div
+                        className="bg-surface rounded-2xl shadow-2xl max-w-sm w-full mx-4 border border-base animate-in zoom-in-95 duration-200"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div className="p-5 pb-0">
+                            <div className="flex items-start gap-4">
+                                <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-xl flex items-center justify-center flex-shrink-0 border border-red-200 dark:border-red-800">
+                                    <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-lg font-bold text-main">确认删除</h3>
+                                    <p className="text-sm text-muted mt-1">
+                                        确定要删除这条 <span className="font-semibold text-main">{recordToDelete?.layer}层</span> 的试炼记录吗？
+                                    </p>
+                                </div>
                             </div>
                         </div>
-                        <p className="text-sm text-muted mb-6">确定要删除这条试炼记录吗？</p>
-                        <div className="flex justify-end gap-3">
+
+                        {/* Record Preview */}
+                        {recordToDelete && (
+                            <div className="px-5 py-3">
+                                <div className="bg-base/50 rounded-xl p-3 border border-base text-sm">
+                                    <div className="flex items-center gap-2 text-muted">
+                                        <Calendar className="w-3.5 h-3.5" />
+                                        <span>{new Date(recordToDelete.date).toLocaleDateString()}</span>
+                                        <span className="mx-1">·</span>
+                                        <span>Boss: {recordToDelete.bosses.join(', ')}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Warning */}
+                        <div className="px-5 pb-4">
+                            <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                                <AlertCircle className="w-3.5 h-3.5" />
+                                此操作不可恢复
+                            </p>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="px-5 py-4 bg-base/50 border-t border-base rounded-b-2xl flex justify-end gap-3">
                             <button
                                 onClick={() => {
                                     setShowConfirmDialog(false);
                                     setRecordToDelete(null);
                                 }}
-                                className="px-4 py-2 border border-base text-main rounded-lg hover:bg-base transition-colors text-sm font-medium"
+                                className="px-4 py-2.5 border border-base text-main rounded-xl hover:bg-surface active:bg-base transition-all duration-200 text-sm font-medium cursor-pointer"
                             >
                                 取消
                             </button>
                             <button
                                 onClick={handleDeleteConfirm}
-                                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                                className="px-4 py-2.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded-xl transition-all duration-200 text-sm font-medium flex items-center gap-2 cursor-pointer shadow-sm"
                             >
+                                <Trash2 className="w-4 h-4" />
                                 确认删除
                             </button>
                         </div>
                     </div>
                 </div>
             )}
-        </div>
+        </div>,
+        document.body
     );
 };

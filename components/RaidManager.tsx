@@ -6,6 +6,7 @@ import { toast } from '../utils/toastManager';
 import { AddRaidModal } from './AddRaidModal';
 import { TrialPlaceManager } from './TrialPlaceManager';
 import { TrialPlaceRecord, Account } from '../types';
+import { db } from '../services/db';
 
 interface RaidManagerProps {
   raids: Raid[];
@@ -263,9 +264,15 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           records={trialRecords}
           accounts={accounts}
           onAddRecord={(record) => setTrialRecords(prev => [...prev, record])}
-          onDeleteRecord={(recordId) => {
-            setTrialRecords(prev => prev.filter(r => r.id !== recordId));
-            toast.success('已删除试炼记录');
+          onDeleteRecord={async (recordId) => {
+            try {
+              await db.deleteTrialRecord(recordId);
+              setTrialRecords(prev => prev.filter(r => r.id !== recordId));
+              toast.success('已删除试炼记录');
+            } catch (error) {
+              console.error('删除失败:', error);
+              toast.error('删除试炼记录失败');
+            }
           }}
         />
       ) : (

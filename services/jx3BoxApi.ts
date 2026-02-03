@@ -2,7 +2,7 @@ import { db } from './db';
 import { fetch } from '@tauri-apps/api/http';
 
 export interface JX3Equip {
-    ID: number;
+    ID: string; // 使用 API 原始的 id 字段（如 "8_41486"）
     Name: string;
     UiID: string;
     IconID: number | null;
@@ -33,29 +33,60 @@ export type EquipType = 'weapon' | 'armor' | 'trinket';
 const CACHE_KEY = 'equip_cache_wuxiu';
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 
+// 同步状态追踪：用于让 getEquip 等待同步完成
+let syncPromise: Promise<void> | null = null;
+
+/**
+ * 等待装备同步完成（如果正在同步）
+ */
+export async function waitForSync(): Promise<void> {
+    if (syncPromise) {
+        await syncPromise;
+    }
+}
+
 /**
  * 同步装备数据到本地数据库
  * 每天只更新一次
  */
 export async function syncEquipment(): Promise<void> {
-    try {
-        const cache = await db.getCache(CACHE_KEY);
-        const now = Date.now();
-
-        if (cache && (now - new Date(cache.updatedAt).getTime() < CACHE_DURATION)) {
-            console.log('Equipment cache is valid, skipping sync.');
-            return;
-        }
-
-        console.log('Starting equipment sync...');
-        const allItems = await fetchAllEquipment('无修');
-        if (allItems.length > 0) {
-            await db.saveCache(CACHE_KEY, allItems);
-            console.log(`Synced ${allItems.length} equipment items to cache.`);
-        }
-    } catch (error) {
-        console.error('Failed to sync equipment:', error);
+    // 如果已经在同步中，等待现有同步完成
+    if (syncPromise) {
+        return syncPromise;
     }
+
+    const doSync = async () => {
+        try {
+            const cache = await db.getCache(CACHE_KEY);
+            const now = Date.now();
+
+            // 检查数据库是否为空
+            const existingEquips = await db.getEquipments();
+            const isEmpty = !existingEquips || existingEquips.length === 0;
+
+            if (!isEmpty && cache && (now - new Date(cache.updatedAt).getTime() < CACHE_DURATION)) {
+                console.log('Equipment cache is valid, skipping sync.');
+                return;
+            }
+
+            console.log('Starting equipment sync...');
+            const allItems = await fetchAllEquipment('无修');
+            if (allItems.length > 0) {
+                // Save to new table
+                await db.saveEquipments(allItems);
+                // Update cache timestamp marker (content is empty string now, just for time check)
+                await db.saveCache(CACHE_KEY, 'synced');
+                console.log(`Synced ${allItems.length} equipment items to database.`);
+            }
+        } catch (error) {
+            console.error('Failed to sync equipment:', error);
+        } finally {
+            syncPromise = null;
+        }
+    };
+
+    syncPromise = doSync();
+    return syncPromise;
 }
 
 /**
@@ -63,53 +94,107 @@ export async function syncEquipment(): Promise<void> {
  */
 async function fetchAllEquipment(keyword: string): Promise<JX3Equip[]> {
     let allItems: JX3Equip[] = [];
-    let page = 1;
     const per = 50;
 
+    // 装备类别配置：auc_genre + auc_sub_type_id
+    const equipCategories = [
+        { auc_genre: 2, auc_sub_type_id: 1, name: '投掷' },
+        { auc_genre: 3, auc_sub_type_id: 2, name: '帽子' },
+        { auc_genre: 3, auc_sub_type_id: 5, name: '鞋子' },
+        { auc_genre: 4, auc_sub_type_id: 1, name: '项链' },
+        { auc_genre: 4, auc_sub_type_id: 3, name: '腰坠' },
+    ];
+
     try {
-        while (true) {
-            const url = new URL('https://node.jx3box.com/api/node/item/search');
-            url.searchParams.append('keyword', keyword);
-            url.searchParams.append('page', page.toString());
-            url.searchParams.append('per', per.toString());
-            url.searchParams.append('client', 'std');
+        // 并发获取所有装备类别
+        const fetchCategory = async (category: typeof equipCategories[0]): Promise<JX3Equip[]> => {
+            const categoryItems: JX3Equip[] = [];
+            let page = 1;
+            console.log(`[Equipment Sync] Fetching category: ${category.name} (genre=${category.auc_genre}, sub_type=${category.auc_sub_type_id})`);
 
-            const response = await fetch(url.toString(), { method: 'GET' });
-            if (!response.ok) break;
+            while (true) {
+                const url = new URL('https://node.jx3box.com/api/node/item/search');
+                url.searchParams.append('ids', ''); // 添加 ids 参数（空值），确保与 API 格式一致
+                url.searchParams.append('keyword', keyword);
+                url.searchParams.append('page', page.toString());
+                url.searchParams.append('per', per.toString());
+                url.searchParams.append('client', 'std');
+                url.searchParams.append('auc_genre', category.auc_genre.toString());
+                url.searchParams.append('auc_sub_type_id', category.auc_sub_type_id.toString());
 
-            const data = response.data as any;
-            const list = data.data && data.data.data ? data.data.data : [];
+                const response = await fetch(url.toString(), { method: 'GET' });
+                if (!response.ok) break;
 
-            if (!list || list.length === 0) break;
+                const data = response.data as any;
+                const list = data.data && data.data.data ? data.data.data : [];
 
-            const mapped = list.map((item: any) => ({
-                ID: item.SourceID || item.id,
-                Name: item.Name || item.label,
-                UiID: item.UiID ? item.UiID.toString() : '',
-                IconID: item.IconID,
-                Level: item.Level || item.level,
-                Quality: item.Quality,
-                ...item
-            }));
+                // 调试日志：记录每页获取的数据
+                console.log(`[Equipment Sync] ${category.name} Page ${page}: API returned ${list.length} items`);
 
-            allItems = allItems.concat(mapped);
+                if (!list || list.length === 0) break;
 
-            if (mapped.length < per) break;
-            if (page > 50) break;
-            page++;
+                const mapped = list.map((item: any) => ({
+                    ...item,
+                    // 直接使用 API 的 id 字段作为主键（如 "8_41486"）
+                    ID: item.id,
+                    Name: item.Name || item.label,
+                    UiID: item.UiID ? String(item.UiID) : '',
+                    IconID: item.IconID,
+                    Level: item.Level || item.level,
+                    Quality: item.Quality ? String(item.Quality) : '',
+                    TypeLabel: item.TypeLabel || '', // 装备类型标签（如：项链、腰坠等）
+                    Recommend: item.Recommend || '', // Ensure it is a string
+                    // 过滤掉不需要的属性类型
+                    attributes: (item.attributes || []).filter((attr: any) =>
+                        !['atRangeWeaponDamageBase', 'atRangeWeaponAttackSpeedBase'].includes(attr.type)
+                    ),
+                    AttributeTypes: item.AttributeTypes || {},
+                    Diamonds: item.Diamonds || [],
+                }));
 
-            await new Promise(r => setTimeout(r, 100));
-        }
+                categoryItems.push(...mapped);
 
-        // Deduplicate by ID
-        const uniqueItems = new Map<number, JX3Equip>();
+                if (mapped.length < per) break;
+                if (page > 50) break;
+                page++;
+
+                await new Promise(r => setTimeout(r, 50)); // 减少延迟以提高效率
+            }
+
+            console.log(`[Equipment Sync] Category ${category.name} completed: ${categoryItems.length} items`);
+            return categoryItems;
+        };
+
+        // 并发执行所有类别的获取
+        console.log(`[Equipment Sync] Starting concurrent fetch for ${equipCategories.length} categories...`);
+        const results = await Promise.all(equipCategories.map(cat => fetchCategory(cat)));
+
+        // 合并所有结果
+        allItems = results.flat();
+        console.log(`[Equipment Sync] All categories completed, total items: ${allItems.length}`);
+
+        // 调试日志：去重前后对比
+        console.log(`[Equipment Sync] Before dedup: ${allItems.length} items`);
+
+        // 使用 ID 字段进行去重（现在 ID = item.id，即 API 原始 id 如 "8_41486"）
+        const uniqueItems = new Map<string, JX3Equip>();
+        let duplicateCount = 0;
         allItems.forEach(item => {
+            // 直接使用 ID 字段（字符串类型）
             if (item.ID && !uniqueItems.has(item.ID)) {
                 uniqueItems.set(item.ID, item);
+            } else {
+                duplicateCount++;
+                // 调试：打印重复项
+                console.log(`[Equipment Sync] Duplicate found: ${item.ID} - ${item.Name}`);
             }
         });
 
-        return Array.from(uniqueItems.values()).filter(item => filterItem(item, keyword));
+        console.log(`[Equipment Sync] After dedup: ${uniqueItems.size} unique items, ${duplicateCount} duplicates removed`);
+
+        // 注意：API 已经按关键词搜索，不再需要本地过滤
+        // 移除 filterItem 调用，保留所有 API 返回的结果
+        return Array.from(uniqueItems.values());
 
     } catch (e) {
         console.error('Error fetching all equipment:', e);
@@ -166,13 +251,24 @@ export async function getEquip(keyword: string | number): Promise<JX3Equip[]> {
     const isId = !isNaN(Number(keyword));
 
     // Try reading from cache first if searching for related items
+    // Try reading from database first if searching for related items
     if (!isId) {
         try {
-            const cache = await db.getCache(CACHE_KEY);
-            if (cache && cache.value && Array.isArray(cache.value)) {
+            // 首先检查数据库是否有数据
+            let storedEquips = await db.getEquipments();
+
+            // 如果数据库为空且正在同步，等待同步完成
+            if ((!storedEquips || storedEquips.length === 0) && syncPromise) {
+                console.log('[getEquip] Database empty, waiting for sync to complete...');
+                await syncPromise;
+                // 同步完成后重新获取
+                storedEquips = await db.getEquipments();
+            }
+
+            if (storedEquips && storedEquips.length > 0) {
                 const term = keyword.toString();
-                // Filter locally with new logic
-                const cachedResults = (cache.value as JX3Equip[]).filter(item =>
+                // Filter locally
+                const cachedResults = (storedEquips as JX3Equip[]).filter(item =>
                     filterItem(item, term)
                 );
 
@@ -181,7 +277,7 @@ export async function getEquip(keyword: string | number): Promise<JX3Equip[]> {
                 }
             }
         } catch (e) {
-            console.error('Error reading cache:', e);
+            console.error('Error reading database:', e);
         }
     }
 
@@ -212,13 +308,17 @@ export async function getEquip(keyword: string | number): Promise<JX3Equip[]> {
         const list = data.data && data.data.data ? data.data.data : [];
 
         const result = list.map((item: any) => ({
+            ...item,
             ID: item.SourceID || item.id,
             Name: item.Name || item.label,
-            UiID: item.UiID ? item.UiID.toString() : '',
+            UiID: item.UiID ? String(item.UiID) : '',
             IconID: item.IconID,
             Level: item.Level || item.level,
-            Quality: item.Quality,
-            ...item
+            Quality: item.Quality ? String(item.Quality) : '',
+            Recommend: item.Recommend || '',
+            attributes: item.attributes || [],
+            AttributeTypes: item.AttributeTypes || {},
+            Diamonds: item.Diamonds || [],
         })).filter((item: JX3Equip) => {
             // Client-side filtering
             if (!isId && keyword) {
@@ -228,7 +328,7 @@ export async function getEquip(keyword: string | number): Promise<JX3Equip[]> {
         });
 
         // Deduplicate the single page result (just in case)
-        const uniqueList = new Map<number, JX3Equip>();
+        const uniqueList = new Map<string, JX3Equip>();
         (result as JX3Equip[]).forEach(item => {
             if (item.ID && !uniqueList.has(item.ID)) {
                 uniqueList.set(item.ID, item);

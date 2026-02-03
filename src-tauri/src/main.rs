@@ -32,6 +32,11 @@ fn main() {
             db::db_restore,
             db::db_get_cache,
             db::db_save_cache,
+            db::db_save_equipments,
+            db::db_get_equipments,
+            db::db_add_trial_record,
+            db::db_get_trial_records,
+            db::db_delete_trial_record,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

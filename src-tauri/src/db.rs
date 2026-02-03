@@ -57,9 +57,268 @@ pub fn init_db() -> Result<Connection, String> {
             value TEXT,
             updated_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS equipments (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            ui_id TEXT,
+            icon_id INTEGER,
+            level INTEGER,
+            quality TEXT,
+            bind_type INTEGER,
+            type_label TEXT,
+            attribute_types TEXT,
+            attributes TEXT,
+            recommend TEXT,
+            diamonds TEXT,
+            data TEXT,
+            updated_at TEXT
+        );
+
+        DROP TABLE IF EXISTS trial_records;
+
+        CREATE TABLE IF NOT EXISTS trial_records (
+            id TEXT PRIMARY KEY,
+            account_id TEXT,
+            role_id TEXT,
+            layer INTEGER,
+            bosses TEXT,
+            card_1 TEXT,
+            card_2 TEXT,
+            card_3 TEXT,
+            card_4 TEXT,
+            card_5 TEXT,
+            flipped_index INTEGER,
+            date TEXT,
+            notes TEXT,
+            updated_at TEXT
+        );
     "#).map_err(|e| e.to_string())?;
     
     Ok(conn)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct Equipment {
+    #[serde(rename = "ID")]
+    pub id: String, // 使用 API 原始的 id 字段（如 "8_41486"）
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "UiID")]
+    pub ui_id: String,
+    #[serde(rename = "IconID")]
+    pub icon_id: Option<i64>,
+    #[serde(rename = "Level")]
+    pub level: i64,
+    #[serde(rename = "Quality")]
+    pub quality: String,
+    #[serde(rename = "BindType")]
+    pub bind_type: Option<i64>,
+    #[serde(rename = "TypeLabel")]
+    pub type_label: Option<String>,
+    
+    // Explicit complex fields stored as JSON strings
+    #[serde(rename = "AttributeTypes")]
+    pub attribute_types: Option<serde_json::Value>,
+    #[serde(rename = "attributes")]
+    pub attributes: Option<Vec<serde_json::Value>>,
+    #[serde(rename = "Recommend")]
+    pub recommend: Option<String>,
+    #[serde(rename = "Diamonds")]
+    pub diamonds: Option<Vec<serde_json::Value>>,
+
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[tauri::command]
+pub fn db_save_equipments(equipments: String) -> Result<(), String> {
+    let items: Vec<Equipment> = serde_json::from_str(&equipments).map_err(|e| e.to_string())?;
+    let mut conn = init_db().map_err(|e| e.to_string())?;
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    {
+        // Try to add columns if not exists (Simple migration for dev)
+        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN bind_type INTEGER", []);
+        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN type_label TEXT", []);
+        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN attribute_types TEXT", []);
+        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN attributes TEXT", []);
+        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN recommend TEXT", []);
+        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN diamonds TEXT", []);
+
+        let mut stmt = tx.prepare(
+            "INSERT OR REPLACE INTO equipments (
+                id, name, ui_id, icon_id, level, quality, bind_type, type_label,
+                attribute_types, attributes, recommend, diamonds, 
+                data, updated_at
+            ) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).map_err(|e| e.to_string())?;
+
+        for item in items {
+            let data = serde_json::to_string(&item).unwrap_or_default();
+            
+            // Serialize complex fields to JSON strings
+            let attr_types_json = item.attribute_types.as_ref().map(|v| v.to_string());
+            let attrs_json = item.attributes.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+            // Recommend is now a String, so use it directly (as ref)
+            let recommend_str = item.recommend.as_ref();
+            let diamonds_json = item.diamonds.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+
+            stmt.execute(params![
+                item.id,
+                item.name,
+                item.ui_id,
+                item.icon_id,
+                item.level,
+                item.quality,
+                item.bind_type,
+                item.type_label,
+                attr_types_json,
+                attrs_json,
+                recommend_str,
+                diamonds_json,
+                data,
+                timestamp
+            ]).map_err(|e| e.to_string())?;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_equipments() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT data FROM equipments ORDER BY level DESC").map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok(row.get::<_, String>(0)?)
+    }).map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        if let Ok(json_str) = row {
+            if let Ok(item) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                result.push(item);
+            }
+        }
+    }
+
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct TrialRecord {
+    pub id: String,
+    #[serde(rename = "accountId")]
+    pub account_id: String,
+    #[serde(rename = "roleId")]
+    pub role_id: String,
+    pub layer: i64,
+    pub bosses: Vec<String>, // JSON array
+    #[serde(rename = "card1")]
+    pub card_1: String,
+    #[serde(rename = "card2")]
+    pub card_2: String,
+    #[serde(rename = "card3")]
+    pub card_3: String,
+    #[serde(rename = "card4")]
+    pub card_4: String,
+    #[serde(rename = "card5")]
+    pub card_5: String,
+    #[serde(rename = "flippedIndex")]
+    pub flipped_index: i64,
+    pub date: String,
+    pub notes: Option<String>,
+}
+
+#[tauri::command]
+pub fn db_add_trial_record(record: String) -> Result<(), String> {
+    let item: TrialRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    
+    // Ensure bosses are serialized
+    let bosses_json = serde_json::to_string(&item.bosses).unwrap_or_default();
+
+    conn.execute(
+        "INSERT INTO trial_records (
+            id, account_id, role_id, layer, bosses, 
+            card_1, card_2, card_3, card_4, card_5, flipped_index,
+            date, notes, updated_at
+        ) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            item.id,
+            item.account_id,
+            item.role_id,
+            item.layer,
+            bosses_json,
+            item.card_1,
+            item.card_2,
+            item.card_3,
+            item.card_4,
+            item.card_5,
+            item.flipped_index,
+            item.date,
+            item.notes,
+            timestamp
+        ],
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_trial_records() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("
+        SELECT id, account_id, role_id, layer, bosses, 
+               card_1, card_2, card_3, card_4, card_5, flipped_index,
+               date, notes 
+        FROM trial_records 
+        ORDER BY date DESC
+    ").map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map([], |row| {
+        let bosses_str: String = row.get(4)?;
+        
+        Ok(TrialRecord {
+            id: row.get(0)?,
+            account_id: row.get(1)?,
+            role_id: row.get(2)?,
+            layer: row.get(3)?,
+            bosses: serde_json::from_str(&bosses_str).unwrap_or_default(),
+            card_1: row.get(5)?,
+            card_2: row.get(6)?,
+            card_3: row.get(7)?,
+            card_4: row.get(8)?,
+            card_5: row.get(9)?,
+            flipped_index: row.get(10)?,
+            date: row.get(11)?,
+            notes: row.get(12)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        if let Ok(item) = row {
+            result.push(item);
+        }
+    }
+
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_delete_trial_record(id: String) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM trial_records WHERE id = ?", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

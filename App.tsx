@@ -83,14 +83,15 @@ function App() {
         }
 
         console.log('\n正在加载数据库数据...');
-        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig] = await Promise.all([
+        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig, loadedTrialRecords] = await Promise.all([
           db.getAccounts(),
           db.getRecords(),
           db.getRaids(),
-          db.getConfig()
+          db.getConfig(),
+          db.getTrialRecords()
         ]);
 
-        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 副本 ${loadedRaids.length}`);
+        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}`);
 
         const parsedAccounts = loadedAccounts;
         const parsedRecords = loadedRecords;
@@ -120,14 +121,15 @@ function App() {
         }
 
         if (parsedRecords.length > 0) {
+          // Filter out any legacy trial records if they exist in standard records
           // @ts-ignore
           const raidRecords = parsedRecords.filter((r: any) => r.type !== 'trial') as RaidRecord[];
-          // @ts-ignore
-          const trialPlaceRecords = parsedRecords.filter((r: any) => r.type === 'trial') as TrialPlaceRecord[];
-
           setRecords(raidRecords);
-          setTrialRecords(trialPlaceRecords);
-          console.log(`载入: 副本记录 ${raidRecords.length}, 试炼记录 ${trialPlaceRecords.length}`);
+        }
+
+        // Set trial records from the dedicated table source
+        if (loadedTrialRecords && loadedTrialRecords.length > 0) {
+          setTrialRecords(loadedTrialRecords as TrialPlaceRecord[]);
         }
 
         setIsInitialized(true);
@@ -162,14 +164,15 @@ function App() {
 
     const saveData = async () => {
       try {
-        const allRecords = [...records, ...trialRecords];
-        await db.saveRecords(allRecords);
+        // Only save raid records to the legacy 'records' table
+        // Trial records are handled individually via db.addTrialRecord / db.deleteTrialRecord
+        await db.saveRecords(records);
       } catch (error) {
-        console.error('保存记录失败:', error);
+        console.error('保存副本记录失败:', error);
       }
     };
     saveData();
-  }, [records, trialRecords, isInitialized]);
+  }, [records, isInitialized]); // Removed trialRecords dependency
 
   useEffect(() => {
     if (!isInitialized) return;
