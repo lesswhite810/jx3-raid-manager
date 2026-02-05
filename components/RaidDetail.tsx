@@ -4,7 +4,7 @@ import { Shield, Sword, Calendar, TrendingUp, TrendingDown, Wallet, RefreshCw, C
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
-import { calculateCooldown, formatCountdown, getRaidRefreshInfo } from '../utils/cooldownManager';
+import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo } from '../utils/cooldownManager';
 import { STATIC_RAIDS } from '../data/staticRaids';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 
@@ -31,13 +31,7 @@ interface RoleWithStatus {
   canAddMore: boolean;
   recordCount: number;
   maxRecords: number;
-  cooldownInfo: {
-    canAdd: boolean;
-    remainingTime: number;
-    nextAvailableTime: Date | null;
-    cooldownType: 'none' | 'weekly' | 'window' | 'daily-bonus';
-    message: string;
-  };
+  cooldownInfo: CooldownInfo;
   lastRunDate?: string;
   lastRunGold?: number;
   lastRunIncome?: number;

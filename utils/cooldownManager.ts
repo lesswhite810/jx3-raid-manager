@@ -4,7 +4,7 @@ export interface CooldownInfo {
   canAdd: boolean;
   remainingTime: number;
   nextAvailableTime: Date | null;
-  cooldownType: 'none' | 'weekly' | 'window' | 'daily-bonus';
+  cooldownType: 'none' | 'weekly' | 'biweekly'; // biweekly 代表一周两次的重置
   message: string;
 }
 
@@ -56,42 +56,69 @@ export const getServerStandardTime = (): Date => {
   return new Date();
 };
 
-const getWeekStart = (date: Date): Date => {
+/**
+ * 获取基于当前时间的“上一个”周一 07:00
+ */
+const getLastMonday7AM = (date: Date): Date => {
   const d = new Date(date);
-  const dayOfWeek = d.getDay();
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  d.setDate(d.getDate() + mondayOffset);
+  const day = d.getDay(); // 0 (Sun) - 6 (Sat)
+  const hour = d.getHours();
+  
+  // 计算当前时间相对于本周一07:00的偏移量
+  // 如果今天是周一且还没到7点，或者今天是周日，都要往前推
+  
+  let daysToSubtract = 0;
+  if (day === 1 && hour < 7) {
+    daysToSubtract = 7;
+  } else if (day === 0) {
+    daysToSubtract = 6;
+  } else if (day > 1) {
+    daysToSubtract = day - 1;
+  } else { // day === 1 && hour >= 7
+    daysToSubtract = 0;
+  }
+
+  d.setDate(d.getDate() - daysToSubtract);
   d.setHours(7, 0, 0, 0);
   return d;
 };
 
-const getFridayStart = (date: Date): Date => {
-  const d = new Date(date);
-  const dayOfWeek = d.getDay();
-  let fridayOffset = 5 - dayOfWeek;
-  if (fridayOffset < 0) fridayOffset += 7;
-  d.setDate(d.getDate() + fridayOffset);
-  d.setHours(7, 0, 0, 0);
-  return d;
+/**
+ * 获取基于当前时间的“下一个”周一 07:00
+ */
+const getNextMonday7AM = (date: Date): Date => {
+  const lastMonday = getLastMonday7AM(date);
+  const nextMonday = new Date(lastMonday);
+  nextMonday.setDate(nextMonday.getDate() + 7);
+  return nextMonday;
 };
 
-const getNextMonday = (date: Date): Date => {
-  const d = new Date(date);
-  const dayOfWeek = d.getDay();
-  const daysUntilMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-  d.setDate(d.getDate() + daysUntilMonday);
-  d.setHours(7, 0, 0, 0);
-  return d;
-};
+/**
+ * 获取 10人本的当前 CD 周期范围
+ * 周期1: 周一 07:00 ~ 周五 07:00
+ * 周期2: 周五 07:00 ~ 下周一 07:00
+ */
+const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
+  const nowTime = date.getTime();
+  const lastMonday = getLastMonday7AM(date);
+  const thisFriday = new Date(lastMonday);
+  thisFriday.setDate(lastMonday.getDate() + 4); // 周一 + 4天 = 周五
+  thisFriday.setHours(7, 0, 0, 0);
 
-const getNextFriday = (date: Date): Date => {
-  const d = new Date(date);
-  const dayOfWeek = d.getDay();
-  let daysUntilFriday = 5 - dayOfWeek;
-  if (daysUntilFriday <= 0) daysUntilFriday += 7;
-  d.setDate(d.getDate() + daysUntilFriday);
-  d.setHours(7, 0, 0, 0);
-  return d;
+  const nextMonday = new Date(lastMonday);
+  nextMonday.setDate(lastMonday.getDate() + 7); // 下周一
+
+  // 检查当前时间是在 周一~周五 还是 周五~下周一
+  if (nowTime >= lastMonday.getTime() && nowTime < thisFriday.getTime()) {
+    // 处于上半周 (Mon 7:00 - Fri 7:00)
+    return { start: lastMonday, end: thisFriday };
+  } else {
+    // 处于下半周 (Fri 7:00 - Next Mon 7:00)
+    // 注意：如果当前是周一凌晨(比如3点)，getLastMonday7AM会返回上周一，
+    // 此时 thisFriday 是上周五。nowTime 肯定 > thisFriday。
+    // 所以这里的逻辑是通用的。
+    return { start: thisFriday, end: nextMonday };
+  }
 };
 
 export const calculateCooldown = (
@@ -100,151 +127,47 @@ export const calculateCooldown = (
   now: Date = getServerStandardTime()
 ): CooldownInfo => {
   const isTenPerson = raid.playerCount === 10;
-  const weekStart = getWeekStart(now);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 7);
   
-  const fridayStart = getFridayStart(now);
-  const nextFriday = getNextFriday(now);
-  const nextMonday = getNextMonday(now);
-  
-  const weekRecords = records.filter(r => new Date(r.date) >= weekStart && new Date(r.date) < weekEnd);
-  
-  if (!isTenPerson) {
-    const weekRecordCount = weekRecords.length;
-    
-    if (weekRecordCount < 1) {
-      return {
-        canAdd: true,
-        remainingTime: 0,
-        nextAvailableTime: null,
-        cooldownType: 'none',
-        message: '本周可添加 1 次记录'
-      };
-    }
-    
+  // 1. 确定当前的 CD 窗口
+  let windowStart: Date;
+  let windowEnd: Date;
+
+  if (isTenPerson) {
+    const cycle = getTenPersonCycle(now);
+    windowStart = cycle.start;
+    windowEnd = cycle.end;
+  } else {
+    // 25人本：周一到周一
+    windowStart = getLastMonday7AM(now);
+    windowEnd = getNextMonday7AM(now);
+  }
+
+  // 2. 检查窗口内是否有记录
+  // 过滤出所有在 [windowStart, windowEnd) 区间内的记录
+  const recordsInWindow = records.filter(r => {
+    const rDate = new Date(r.date);
+    return rDate >= windowStart && rDate < windowEnd;
+  });
+
+  if (recordsInWindow.length > 0) {
+    // 已有记录，CD 中
     return {
       canAdd: false,
-      remainingTime: nextMonday.getTime() - now.getTime(),
-      nextAvailableTime: nextMonday,
-      cooldownType: 'weekly',
-      message: `本周记录已添加，下周 ${nextMonday.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 7:00 后可添加`
+      remainingTime: windowEnd.getTime() - now.getTime(),
+      nextAvailableTime: windowEnd,
+      cooldownType: isTenPerson ? 'biweekly' : 'weekly',
+      message: `本周期记录已存在，${windowEnd.toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} 后刷新`
     };
-  }
-  
-  const fridayStartTime = fridayStart.getTime();
-  const nextFridayTime = nextFriday.getTime();
-  const nowTime = now.getTime();
-  
-  const weekdayRecords = weekRecords.filter(r => new Date(r.date).getTime() < fridayStartTime);
-  
-  const dayOfWeek = now.getDay();
-  
-  if (dayOfWeek >= 1 && dayOfWeek <= 4) {
-    const thisWeekdayStart = new Date(now);
-    thisWeekdayStart.setHours(7, 0, 0, 0);
-    const nextWeekdayStart = new Date(thisWeekdayStart);
-    nextWeekdayStart.setDate(thisWeekdayStart.getDate() + 1);
-    
-    const weekdayWindowRecords = weekRecords.filter(r => {
-      const recordTime = new Date(r.date).getTime();
-      return recordTime >= thisWeekdayStart.getTime() && recordTime < nextWeekdayStart.getTime();
-    });
-    
-    if (weekdayRecords.length === 0 && weekdayWindowRecords.length === 0) {
-      return {
-        canAdd: true,
-        remainingTime: 0,
-        nextAvailableTime: null,
-        cooldownType: 'none',
-        message: '当前时间窗口可添加 1 次记录'
-      };
-    }
-    
+  } else {
+    // 无记录，可添加
     return {
-      canAdd: false,
-      remainingTime: nextWeekdayStart.getTime() - nowTime,
-      nextAvailableTime: nextWeekdayStart,
-      cooldownType: 'window',
-      message: `今日记录已添加，明天 7:00 后可添加`
+      canAdd: true,
+      remainingTime: 0,
+      nextAvailableTime: null,
+      cooldownType: 'none',
+      message: '当前可添加记录'
     };
   }
-  
-  if (dayOfWeek === 5) {
-    if (nowTime < fridayStartTime) {
-      const thisFridayRecords = weekRecords.filter(r => {
-        const recordTime = new Date(r.date).getTime();
-        const prevFridayStart = new Date(fridayStart);
-        prevFridayStart.setDate(fridayStart.getDate() - 7);
-        return recordTime >= prevFridayStart.getTime() && recordTime < fridayStartTime;
-      });
-      
-      if (thisFridayRecords.length < 1) {
-        return {
-          canAdd: true,
-          remainingTime: 0,
-          nextAvailableTime: null,
-          cooldownType: 'none',
-          message: '周五刷新后可添加 1 次记录'
-        };
-      }
-      
-      return {
-        canAdd: false,
-        remainingTime: fridayStart.getTime() - nowTime,
-        nextAvailableTime: fridayStart,
-        cooldownType: 'window',
-        message: `周五 ${fridayStart.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 刷新后可添加`
-      };
-    }
-    
-    const todayRecords = weekRecords.filter(r => {
-      const recordTime = new Date(r.date).getTime();
-      return recordTime >= fridayStartTime && recordTime < nextFridayTime;
-    });
-    
-    if (todayRecords.length < 1) {
-      return {
-        canAdd: true,
-        remainingTime: 0,
-        nextAvailableTime: null,
-        cooldownType: 'daily-bonus',
-        message: '今日可额外添加 1 次记录'
-      };
-    }
-    
-    return {
-      canAdd: false,
-      remainingTime: nextFriday.getTime() - nowTime,
-      nextAvailableTime: nextFriday,
-      cooldownType: 'weekly',
-      message: `今日已添加，下个周期 ${nextFriday.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 7:00 后可添加`
-    };
-  }
-  
-  if (dayOfWeek === 6 || dayOfWeek === 0) {
-    const nextDay7AM = new Date(now);
-    nextDay7AM.setHours(7, 0, 0, 0);
-    if (nowTime >= nextDay7AM.getTime()) {
-      nextDay7AM.setDate(nextDay7AM.getDate() + 1);
-    }
-    
-    return {
-      canAdd: false,
-      remainingTime: nextDay7AM.getTime() - nowTime,
-      nextAvailableTime: nextDay7AM,
-      cooldownType: 'window',
-      message: `周末不开放，明天 7:00 后可添加`
-    };
-  }
-  
-  return {
-    canAdd: true,
-    remainingTime: 0,
-    nextAvailableTime: null,
-    cooldownType: 'none',
-    message: '可添加记录'
-  };
 };
 
 export const formatRemainingTime = (ms: number): string => {
@@ -266,9 +189,9 @@ export const formatRemainingTime = (ms: number): string => {
 export const getRaidCooldownRules = (raid: Raid): string => {
   const isTenPerson = raid.playerCount === 10;
   if (!isTenPerson) {
-    return '25人本：每周一7点刷新，每周可添加1次记录';
+    return '25人本：每周一 7:00 刷新';
   }
-  return '10人本：周一至周五每天7点刷新，每个时间窗口可添加1次，周五刷新后可额外添加1次';
+  return '10人本：每周一 7:00 和 周五 7:00 刷新';
 };
 
 export interface RaidRefreshInfo {
@@ -281,49 +204,25 @@ export interface RaidRefreshInfo {
 
 export const getRaidRefreshInfo = (raid: Raid, now: Date = new Date()): RaidRefreshInfo => {
   const isTenPerson = raid.playerCount === 10;
-  const dayOfWeek = now.getDay();
-  const nowTime = now.getTime();
   
-  const weekStart = getWeekStart(now);
-  const fridayStart = getFridayStart(now);
-  const nextMonday = getNextMonday(now);
-  
-  if (!isTenPerson) {
-    return {
-      nextRefreshTime: nextMonday,
-      formattedTime: '',
-      isRefreshing: false,
-      refreshCount: 1,
-      refreshSchedule: '每周一 7:00'
-    };
-  }
-  
-  if (dayOfWeek === 0 || (dayOfWeek === 1 && nowTime < weekStart.getTime() + 7 * 60 * 60 * 1000)) {
-    return {
-      nextRefreshTime: fridayStart,
-      formattedTime: '',
-      isRefreshing: false,
-      refreshCount: 2,
-      refreshSchedule: '周一/周五 7:00'
-    };
-  }
-  
-  if (dayOfWeek >= 1 && dayOfWeek < 5) {
-    return {
-      nextRefreshTime: fridayStart,
-      formattedTime: '',
-      isRefreshing: false,
-      refreshCount: 2,
-      refreshSchedule: '周一/周五 7:00'
-    };
+  let nextRefresh: Date;
+  let scheduleStr: string;
+
+  if (isTenPerson) {
+    const cycle = getTenPersonCycle(now);
+    nextRefresh = cycle.end;
+    scheduleStr = '周一/周五 7:00';
+  } else {
+    nextRefresh = getNextMonday7AM(now);
+    scheduleStr = '每周一 7:00';
   }
   
   return {
-    nextRefreshTime: nextMonday,
-    formattedTime: '',
+    nextRefreshTime: nextRefresh,
+    formattedTime: '', // 这一项似乎没用到，或者在外层格式化
     isRefreshing: false,
-    refreshCount: 2,
-    refreshSchedule: '周一/周五 7:00'
+    refreshCount: isTenPerson ? 2 : 1,
+    refreshSchedule: scheduleStr
   };
 };
 
@@ -335,8 +234,10 @@ export const formatCountdown = (ms: number): string => {
   const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((ms % (1000 * 60)) / 1000);
   
+  const p = (n: number) => n.toString().padStart(2, '0');
+
   if (days > 0) {
-    return `${days}天 ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    return `${days}天 ${p(hours)}:${p(minutes)}:${p(seconds)}`;
   }
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${p(hours)}:${p(minutes)}:${p(seconds)}`;
 };
