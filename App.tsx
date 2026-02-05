@@ -8,7 +8,7 @@ import { RaidManager } from './components/RaidManager';
 import { RaidDetail } from './components/RaidDetail';
 import { CrystalDetail } from './components/CrystalDetail';
 
-import { DebugConsole } from './components/DebugConsole';
+
 import { ToastContainer } from './components/ToastContainer';
 import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -434,8 +434,7 @@ function App() {
         <MobileNavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={20} />} label="账号" />
       </div>
 
-      {/* Debug Console */}
-      <DebugConsole />
+
 
       {/* Edit Record Modal */}
       {editingRecord && (

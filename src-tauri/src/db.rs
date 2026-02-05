@@ -3,17 +3,23 @@ use std::path::PathBuf;
 
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
-pub fn get_db_path() -> Result<PathBuf, String> {
+pub fn get_app_dir() -> Result<PathBuf, String> {
     let home_dir = dirs::home_dir()
         .ok_or_else(|| "无法获取用户主目录".to_string())?;
     
-    let db_path = home_dir.join(".jx3-raid-manager").join(DATABASE_NAME);
+    let app_dir = home_dir.join(".jx3-raid-manager");
+
+    if !app_dir.exists() {
+        std::fs::create_dir_all(&app_dir)
+            .map_err(|e| format!("无法创建应用目录: {}", e))?;
+    }
     
-    std::fs::create_dir_all(
-        db_path.parent().ok_or_else(|| "无法获取父目录".to_string())?
-    ).map_err(|e| e.to_string())?;
-    
-    Ok(db_path)
+    Ok(app_dir)
+}
+
+pub fn get_db_path() -> Result<PathBuf, String> {
+    let app_dir = get_app_dir()?;
+    Ok(app_dir.join(DATABASE_NAME))
 }
 
 pub fn init_db() -> Result<Connection, String> {

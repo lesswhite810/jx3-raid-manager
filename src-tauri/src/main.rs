@@ -3,8 +3,26 @@
 mod gkp_parser;
 mod db;
 
+use tauri_plugin_log::{LogTarget, RotationStrategy};
+
 fn main() {
+    // 设置 panic hook
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("Panic occurred: {:?}", info);
+    }));
+
     tauri::Builder::default()
+
+        .plugin(tauri_plugin_log::Builder::default()
+            .targets([
+                LogTarget::Stdout,
+                LogTarget::Webview,
+                // Log to custom folder: ~/.jx3-raid-manager/logs/
+                LogTarget::Folder(db::get_app_dir().unwrap_or(std::path::PathBuf::from("."))),
+            ])
+            .rotation_strategy(RotationStrategy::KeepOne)
+            .max_file_size(10 * 1024 * 1024) // 10MB
+            .build())
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
             db::db_init,
