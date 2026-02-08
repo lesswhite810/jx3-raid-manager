@@ -26,3 +26,6 @@ dist-ssr
 .agent/*
 # Rust/Tauri build files
 src-tauri/target
+.claude/*
+.sisyphus/*
+.trae/*
