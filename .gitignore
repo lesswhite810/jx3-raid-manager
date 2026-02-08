@@ -29,3 +29,15 @@ src-tauri/target
 .claude/*
 .sisyphus/*
 .trae/*
+
+# AI / LLM directories and files
+.ai/
+.claude/
+.sisyphus/
+*.ai/
+.khoj/
+.continue/
+.context7/
+cody/
+cline/
+
