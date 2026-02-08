@@ -35,9 +35,10 @@ pub fn parse_binary_gkp(request: GkpParseRequest) -> Result<GkpParseResponse, St
                 sig[i] = request.buffer[i];
             }
         }
-        
+
         // 检查常见二进制标识
-        if sig == [0x20, 0x61, 0x74, 0x17, 0x46, 0x14, 0x46, 0x17] { // " aF\x14F\x17"
+        if sig == [0x20, 0x61, 0x74, 0x17, 0x46, 0x14, 0x46, 0x17] {
+            // " aF\x14F\x17"
             is_binary = true;
         }
     }
@@ -104,12 +105,12 @@ pub fn parse_binary_gkp(request: GkpParseRequest) -> Result<GkpParseResponse, St
 // 简单的Lua解析函数
 fn parse_lua_from_binary(buffer: &[u8]) -> Result<serde_json::Value, String> {
     let text = String::from_utf8(buffer.to_vec()).map_err(|_| "UTF-8解码失败".to_string())?;
-    
+
     // 简单的Lua表解析
     if !text.trim().starts_with('{') || !text.trim().ends_with('}') {
         return Err("不是Lua表格式".to_string());
     }
-    
+
     // 尝试解析为JSON
     serde_json::from_str(&text).map_err(|e| format!("JSON解析失败: {}", e))
 }

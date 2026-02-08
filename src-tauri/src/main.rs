@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod gkp_parser;
 mod db;
+mod gkp_parser;
 
 use tauri_plugin_log::{LogTarget, RotationStrategy};
 
@@ -12,17 +12,18 @@ fn main() {
     }));
 
     tauri::Builder::default()
-
-        .plugin(tauri_plugin_log::Builder::default()
-            .targets([
-                LogTarget::Stdout,
-                LogTarget::Webview,
-                // Log to custom folder: ~/.jx3-raid-manager/logs/
-                LogTarget::Folder(db::get_app_dir().unwrap_or(std::path::PathBuf::from("."))),
-            ])
-            .rotation_strategy(RotationStrategy::KeepOne)
-            .max_file_size(10 * 1024 * 1024) // 10MB
-            .build())
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .targets([
+                    LogTarget::Stdout,
+                    LogTarget::Webview,
+                    // Log to custom folder: ~/.jx3-raid-manager/logs/
+                    LogTarget::Folder(db::get_app_dir().unwrap_or(std::path::PathBuf::from("."))),
+                ])
+                .rotation_strategy(RotationStrategy::KeepOne)
+                .max_file_size(10 * 1024 * 1024) // 10MB
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
             db::db_init,
@@ -31,6 +32,16 @@ fn main() {
             db::db_set_migration_status,
             db::db_get_accounts,
             db::db_save_accounts,
+            db::db_get_accounts_structured,
+            db::db_get_accounts_with_roles,
+            db::db_get_roles_by_account,
+            db::db_get_all_roles,
+            db::db_save_account_structured,
+            db::db_save_role_structured,
+            db::db_delete_account_structured,
+            db::db_delete_role_structured,
+            db::db_get_schema_version,
+            db::db_check_migration_needed,
             db::db_get_records,
             db::db_save_records,
             db::db_get_raids,

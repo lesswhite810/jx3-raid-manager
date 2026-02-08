@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "jx3-raid-manager"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -1775,6 +1775,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
+ "uuid",
 ]
 
 [[package]]

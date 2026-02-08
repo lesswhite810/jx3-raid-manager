@@ -1,6 +1,6 @@
 [package]
 name = "jx3-raid-manager"
-version = "1.0.0"
+version = "1.2.0"
 description = "剑网三副本管家"
 authors = ["you"]
 license = ""
@@ -19,6 +19,7 @@ dirs = "5"
 chrono = { version = "0.4", features = ["std"] }
 log = "0.4"
 tauri-plugin-log = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "v1" }
+uuid = { version = "1", features = ["v4"] }
 
 [features]
 default = ["custom-protocol"]

@@ -14,11 +14,32 @@ class DatabaseService {
     }
   }
 
+  // Version management
+  async getSchemaVersion(): Promise<number> {
+    await this.init();
+    try {
+      return await invoke<number>('db_get_schema_version');
+    } catch (error) {
+      console.error('Failed to get schema version:', error);
+      return 0;
+    }
+  }
+
+  async checkMigrationNeeded(): Promise<boolean> {
+    await this.init();
+    try {
+      return await invoke<boolean>('db_check_migration_needed');
+    } catch (error) {
+      console.error('Failed to check migration needed:', error);
+      return false;
+    }
+  }
+
   async getAccounts(): Promise<any[]> {
     await this.init();
     try {
-      const data = await invoke<string[]>('db_get_accounts');
-      return data.map(item => JSON.parse(item));
+      const data = await invoke<string>('db_get_accounts_with_roles');
+      return JSON.parse(data);
     } catch (error) {
       console.error('Failed to get accounts:', error);
       return [];
@@ -31,6 +52,80 @@ class DatabaseService {
       await invoke('db_save_accounts', { accounts: JSON.stringify(accounts) });
     } catch (error) {
       console.error('Failed to save accounts:', error);
+      throw error;
+    }
+  }
+
+  // Structured accounts API (V1+)
+  async getAccountsStructured(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_accounts_structured');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get structured accounts:', error);
+      return [];
+    }
+  }
+
+  async getRolesByAccount(accountId: string): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_roles_by_account', { accountId });
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get roles by account:', error);
+      return [];
+    }
+  }
+
+  async getAllRoles(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_all_roles');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get all roles:', error);
+      return [];
+    }
+  }
+
+  async saveAccountStructured(account: any): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_save_account_structured', { accountJson: JSON.stringify(account) });
+    } catch (error) {
+      console.error('Failed to save structured account:', error);
+      throw error;
+    }
+  }
+
+  async saveRoleStructured(role: any): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_save_role_structured', { roleJson: JSON.stringify(role) });
+    } catch (error) {
+      console.error('Failed to save structured role:', error);
+      throw error;
+    }
+  }
+
+  async deleteAccountStructured(accountId: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_account_structured', { accountId });
+    } catch (error) {
+      console.error('Failed to delete structured account:', error);
+      throw error;
+    }
+  }
+
+  async deleteRoleStructured(roleId: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_role_structured', { roleId });
+    } catch (error) {
+      console.error('Failed to delete structured role:', error);
       throw error;
     }
   }
