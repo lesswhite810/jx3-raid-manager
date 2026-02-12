@@ -30,7 +30,8 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     ...role,
                     accountId: acc.id,
                     accountName: acc.accountName,
-                    password: acc.password // Pass password for display
+                    password: acc.password, // Pass password for display
+                    equipmentScore: role.equipmentScore // Ensure equipmentScore is passed
                 }))
             );
     }, [accounts]);
@@ -39,7 +40,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
     // Statistics per role
     const roleStats = useMemo(() => {
-        const stats = new Map<string, { weeklyCount: number, maxLayer: number }>();
+        const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string }>();
 
         // Helper to get week start
         const now = new Date();
@@ -54,13 +55,48 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             const thisWeekRecords = roleRecords.filter(r => new Date(r.date) >= startOfWeek);
             const maxLayer = roleRecords.length > 0 ? Math.max(...roleRecords.map(r => r.layer)) : 0;
 
+            // Find last run date
+            const lastRunRecord = [...roleRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+            const lastRunDate = lastRunRecord ? lastRunRecord.date : undefined;
+
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
-                maxLayer
+                maxLayer,
+                lastRunDate
             });
         });
         return stats;
     }, [allRoles, records]);
+
+    const sortedRoles = useMemo(() => {
+        const sorted = [...allRoles];
+        sorted.sort((a, b) => {
+            const statsA = roleStats.get(a.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
+            const statsB = roleStats.get(b.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
+
+            // 1. Availability (canRun) - Runs < 3 first
+            const aCanRun = statsA.weeklyCount < 3 ? 0 : 1;
+            const bCanRun = statsB.weeklyCount < 3 ? 0 : 1;
+            if (aCanRun !== bCanRun) return aCanRun - bCanRun;
+
+            // 2. Equipment Score (Desc)
+            const aScore = a.equipmentScore || 0;
+            const bScore = b.equipmentScore || 0;
+            if (aScore !== bScore) return bScore - aScore;
+
+            // 3. Last Record Date (Desc - Newest first)
+            const aDate = statsA.lastRunDate ? new Date(statsA.lastRunDate).getTime() : 0;
+            const bDate = statsB.lastRunDate ? new Date(statsB.lastRunDate).getTime() : 0;
+            if (aDate !== bDate) return bDate - aDate;
+
+            // 4. Server (Asc)
+            if (a.server !== b.server) return a.server.localeCompare(b.server);
+
+            // 5. Name (Asc)
+            return a.name.localeCompare(b.name);
+        });
+        return sorted;
+    }, [allRoles, roleStats]);
 
     const handleOpenAddModal = (role?: any) => {
         setSelectedRole(role || null);
@@ -100,14 +136,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     </h2>
                 </div>
 
-                {allRoles.length === 0 ? (
+                {sortedRoles.length === 0 ? (
                     <div className="text-center py-8 text-muted bg-surface rounded-xl border border-base border-dashed">
                         请先在账号管理中添加并启用角色
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {allRoles.map(role => {
-                            const stats = roleStats.get(role.id) || { weeklyCount: 0, maxLayer: 0 };
+                        {sortedRoles.map(role => {
+                            const stats = roleStats.get(role.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
                             const isAtLimit = stats.weeklyCount >= 3;
                             const canRun = !isAtLimit;
 
@@ -134,36 +170,38 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                             )}
 
                                             <div className="min-w-0 flex-1">
-                                                <div className="font-semibold text-main flex items-center gap-1">
-                                                    <span className="truncate" title={role.name}>{role.name}</span>
-                                                    <span className="text-muted font-normal text-xs flex-shrink-0">@{role.server}</span>
+                                                <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
+                                                    <span className="truncate" title={`${role.name}@${role.server}`}>{role.name}@{role.server}</span>
+                                                    {role.sect && (
+                                                        <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${canRun
+                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                                            : 'bg-base text-muted'
+                                                            }`}>
+                                                            {role.sect}
+                                                        </span>
+                                                    )}
+                                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                                                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
+                                                            {role.equipmentScore.toLocaleString()}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {role.sect && (
-                                                    <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${canRun
-                                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                                        : 'bg-base text-muted'
-                                                        }`}>
-                                                        {role.sect}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="text-right flex-shrink-0 ml-2">
-                                            <div className="text-xs text-muted mb-0.5">本周</div>
-                                            <div className={`font-bold ${stats.weeklyCount >= 3 ? 'text-green-500' : 'text-main'}`}>
-                                                {stats.weeklyCount}<span className="text-xs text-muted font-normal">/3</span>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div className="space-y-2 text-sm">
-
-
-                                        <div className="flex items-center gap-2 text-muted">
+                                    <div className="flex items-center justify-between text-sm mb-3">
+                                        <div className="flex items-center gap-2">
                                             <Trophy className={`w-3.5 h-3.5 flex-shrink-0 ${stats.maxLayer > 0 ? 'text-amber-500' : 'text-muted'}`} />
-                                            <span className="text-xs">
+                                            <span className="text-xs text-muted">
                                                 最高层数: <span className="font-medium text-main">{stats.maxLayer > 0 ? `${stats.maxLayer}层` : '-'}</span>
+                                            </span>
+                                        </div>
+
+                                        <div className="flex items-baseline gap-1">
+                                            <span className="text-xs text-muted">本周进度:</span>
+                                            <span className={`font-bold ${stats.weeklyCount >= 3 ? 'text-green-500' : 'text-main'}`}>
+                                                {stats.weeklyCount}<span className="text-xs text-muted font-normal">/3</span>
                                             </span>
                                         </div>
                                     </div>

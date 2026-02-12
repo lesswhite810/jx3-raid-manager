@@ -68,7 +68,7 @@ pub fn init_db() -> Result<Connection, String> {
             updated_at TEXT
         );
 
-        DROP TABLE IF EXISTS trial_records;
+
 
         CREATE TABLE IF NOT EXISTS trial_records (
             id TEXT PRIMARY KEY,
