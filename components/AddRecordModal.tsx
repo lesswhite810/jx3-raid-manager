@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Raid, RaidRecord } from '../types';
 import { X, Calendar, Coins, Sparkles, FileText, ArrowDownToLine, ArrowUpFromLine, Wallet, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
+import { getRaidBossConfig } from '../data/raidBosses';
 
 interface RoleWithStatus {
   id: string;
@@ -43,6 +44,31 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [selectedBossId, setSelectedBossId] = useState<string>('');
+  const [recordDate, setRecordDate] = useState<string>('');
+
+  const bossConfig = useMemo(() => {
+    return getRaidBossConfig(raid.name, raid.difficulty, raid.playerCount);
+  }, [raid]);
+
+  const availableBosses = useMemo(() => {
+    return bossConfig?.bosses || [];
+  }, [bossConfig]);
+
+  const formatDateForInput = (date: Date | string): string => {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  const formatDateFromInput = (dateStr: string): string => {
+    if (!dateStr) return new Date().toISOString();
+    return new Date(dateStr).toISOString();
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -57,6 +83,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasAppearance(initialData.hasAppearance || false);
         setHasTitle(initialData.hasTitle || false);
         setNotes(initialData.notes || '');
+        setSelectedBossId(initialData.bossId || '');
+        setRecordDate(formatDateForInput(initialData.date || new Date()));
       } else {
         setGoldIncome(0);
         setGoldExpense(0);
@@ -68,6 +96,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasAppearance(false);
         setHasTitle(false);
         setNotes('');
+        setSelectedBossId('');
+        setRecordDate(formatDateForInput(new Date()));
       }
       setIsSubmitting(false);
       setErrorMessage(null);
@@ -79,16 +109,6 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
       raid.difficulty === 'HEROIC' ? '英雄' :
         '挑战';
     return `${raid.playerCount}人${difficultyLabel}${raid.name}`;
-  };
-
-  const formatDate = (): string => {
-    const now = new Date();
-    return now.toLocaleDateString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -111,7 +131,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         accountId: role.accountId,
         roleId: role.id,
         raidName: initialData ? initialData.raidName : constructRaidName(),
-        date: initialData ? initialData.date : new Date().toISOString(),
+        date: formatDateFromInput(recordDate),
         goldIncome: goldIncome || 0,
         goldExpense: goldExpense > 0 ? goldExpense : undefined,
         hasXuanjing,
@@ -124,7 +144,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         notes: notes.trim() || undefined,
         roleName: role.name,
         server: `${role.region} ${role.server}`,
-        transactionType: 'combined'
+        transactionType: 'combined',
+        bossId: selectedBossId || undefined,
+        bossName: availableBosses.find(b => b.id === selectedBossId)?.name || undefined
       };
 
       onSubmit(record);
@@ -190,12 +212,42 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-muted">
-                <Calendar className="w-3.5 h-3.5" />
-                {formatDate()}
-              </div>
+            <div>
+              <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
+                <Calendar className="w-4 h-4 text-primary" />
+                记录日期
+              </label>
+              <input
+                type="datetime-local"
+                value={recordDate}
+                onChange={e => setRecordDate(e.target.value)}
+                className="w-full px-3 py-2.5 bg-surface border border-base rounded-lg text-main focus:outline-none focus:ring-2 focus:ring-primary transition-all text-sm"
+              />
             </div>
+
+            {availableBosses.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-main mb-1.5">
+                  击败BOSS
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {availableBosses.map((boss) => (
+                    <button
+                      key={boss.id}
+                      type="button"
+                      onClick={() => setSelectedBossId(selectedBossId === boss.id ? '' : boss.id)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                        selectedBossId === boss.id
+                          ? 'bg-primary text-white'
+                          : 'bg-base text-muted border border-base hover:border-primary hover:text-primary'
+                      }`}
+                    >
+                      {boss.order}. {boss.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {errorMessage && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg">

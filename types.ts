@@ -33,7 +33,7 @@ export interface Account {
 
 export interface RaidRecord {
   id: string;
-  transactionId?: string; // 交易ID，用于关联同一副本的收入和支出记录
+  transactionId?: string;
   accountId: string;
   roleId: string;
   raidName: string;
@@ -46,14 +46,15 @@ export interface RaidRecord {
   roleName?: string;
   server?: string;
   transactionType?: 'income' | 'expense' | 'combined';
-  // Special Drops
-  hasMaJu?: boolean;      // 马具
-  hasPet?: boolean;       // 宠物
-  hasPendant?: boolean;   // 挂件
-  hasMount?: boolean;     // 坐骑
-  hasAppearance?: boolean; // 外观
-  hasTitle?: boolean;     // 称号
-  type?: 'raid' | 'trial'; // Record Type, default to 'raid'
+  hasMaJu?: boolean;
+  hasPet?: boolean;
+  hasPendant?: boolean;
+  hasMount?: boolean;
+  hasAppearance?: boolean;
+  hasTitle?: boolean;
+  type?: 'raid' | 'trial';
+  bossId?: string;
+  bossName?: string;
 }
 
 export interface TrialPlaceRecord {
@@ -95,6 +96,40 @@ export interface Raid {
   notes?: string;
   isActive: boolean;
   static?: boolean;
+}
+
+// BOSS CD 追踪相关类型
+export interface Boss {
+  id: string;
+  name: string;
+  order: number; // BOSS 顺序 (1-6)
+}
+
+export interface RaidBossConfig {
+  raidName: string;
+  difficulty: 'NORMAL' | 'HEROIC' | 'CHALLENGE';
+  playerCount: 10 | 25;
+  version: string;
+  bosses: Boss[];
+  hasBossTracking: boolean; // 是否启用 BOSS CD 追踪
+}
+
+export interface BossRecord {
+  id: string;
+  raidRecordId: string; // 关联的副本记录 ID
+  bossId: string;
+  bossName: string;
+  date: string;
+  roleId: string;
+  accountId: string;
+}
+
+export interface BossCooldownInfo {
+  bossId: string;
+  bossName: string;
+  hasRecord: boolean; // 本 CD 周期内是否有记录
+  lastRecordDate?: string;
+  canAddRecord: boolean; // 是否可以添加记录
 }
 
 // 配置接口

@@ -1,12 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Account, Raid, RaidRecord } from '../types';
+import { Account, Raid, RaidRecord, BossCooldownInfo } from '../types';
 import { Shield, Sword, Calendar, TrendingUp, TrendingDown, Wallet, RefreshCw, Clock, Copy, Check } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
+import { BossCooldownDisplay } from './BossCooldownDisplay';
 import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
 import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo } from '../utils/cooldownManager';
 import { STATIC_RAIDS } from '../data/staticRaids';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
+import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -37,6 +39,7 @@ interface RoleWithStatus {
   lastRunIncome?: number;
   lastRunExpense?: number;
   cooldownDays?: number;
+  bossCooldowns?: BossCooldownInfo[];
 }
 
 interface CountdownState {
@@ -298,7 +301,16 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         lastRunGold,
         lastRunIncome,
         lastRunExpense,
-        cooldownDays
+        cooldownDays,
+        bossCooldowns: calculateBossCooldowns(raid, roleRecords.map(r => ({
+          id: r.id,
+          raidRecordId: r.id,
+          bossId: r.bossId || '',
+          bossName: r.bossName || '',
+          date: r.date,
+          roleId: r.roleId,
+          accountId: r.accountId
+        })), record.roleId)
       });
 
       processedRoleIds.add(record.roleId);
@@ -340,7 +352,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           lastRunGold: undefined,
           lastRunIncome: undefined,
           lastRunExpense: undefined,
-          cooldownDays
+          cooldownDays,
+          bossCooldowns: calculateBossCooldowns(raid, [], role.id)
         });
       });
     });
@@ -507,6 +520,15 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                     <div className="flex items-center gap-2 text-muted">
                       <Calendar className={`w-4 h-4 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-400' : 'text-amber-400'}`} />
                       <span className="text-xs">暂无记录</span>
+                    </div>
+                  )}
+
+                  {role.bossCooldowns && role.bossCooldowns.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-base/50">
+                      <BossCooldownDisplay
+                        bossCooldowns={role.bossCooldowns}
+                        compact={true}
+                      />
                     </div>
                   )}
                 </div>

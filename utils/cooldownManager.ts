@@ -59,7 +59,7 @@ export const getServerStandardTime = (): Date => {
 /**
  * 获取基于当前时间的“上一个”周一 07:00
  */
-const getLastMonday7AM = (date: Date): Date => {
+export const getLastMonday7AM = (date: Date): Date => {
   const d = new Date(date);
   const day = d.getDay(); // 0 (Sun) - 6 (Sat)
   const hour = d.getHours();
@@ -86,7 +86,7 @@ const getLastMonday7AM = (date: Date): Date => {
 /**
  * 获取基于当前时间的“下一个”周一 07:00
  */
-const getNextMonday7AM = (date: Date): Date => {
+export const getNextMonday7AM = (date: Date): Date => {
   const lastMonday = getLastMonday7AM(date);
   const nextMonday = new Date(lastMonday);
   nextMonday.setDate(nextMonday.getDate() + 7);
@@ -98,7 +98,7 @@ const getNextMonday7AM = (date: Date): Date => {
  * 周期1: 周一 07:00 ~ 周五 07:00
  * 周期2: 周五 07:00 ~ 下周一 07:00
  */
-const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
+export const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
   const nowTime = date.getTime();
   const lastMonday = getLastMonday7AM(date);
   const thisFriday = new Date(lastMonday);
