@@ -251,6 +251,22 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [notes, setNotes] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [recordDate, setRecordDate] = useState<string>('');
+
+    const formatDateForInput = (date: Date | string): string => {
+        const d = typeof date === 'string' ? new Date(date) : date;
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+    };
+
+    const formatDateFromInput = (dateStr: string): string => {
+        if (!dateStr) return new Date().toISOString();
+        return new Date(dateStr).toISOString();
+    };
 
     // Attribute filter state
     const [attrFilters, setAttrFilters] = useState<Set<string>>(new Set());
@@ -279,6 +295,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setNotes('');
             setError(null);
             setIsSubmitting(false);
+            setRecordDate(formatDateForInput(new Date()));
 
             // Re-apply default filters if desired, or keep user preference? 
             // Usually form reset implies filters reset too for a fresh start.
@@ -476,7 +493,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 roleId: role.id,
                 roleName: role.name,
                 server: `${role.region} ${role.server}`,
-                date: new Date().toISOString(),
+                date: formatDateFromInput(recordDate),
                 layer,
                 bosses: [boss1, boss2, boss3],
                 card1: cardItems[1] || '',
@@ -623,14 +640,17 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             </div>
                         </div>
 
-                        {/* Date Display (Read Only) */}
-                        <div className="w-32 opacity-80">
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">日期</label>
+                        {/* Date Picker */}
+                        <div className="w-48">
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">记录日期</label>
                             <div className="relative">
                                 <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted" />
-                                <div className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-base/50 border border-base text-xs font-medium text-muted cursor-default">
-                                    {new Date().toLocaleDateString()}
-                                </div>
+                                <input
+                                    type="datetime-local"
+                                    value={recordDate}
+                                    onChange={e => setRecordDate(e.target.value)}
+                                    className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface border border-base text-xs font-medium text-main focus:ring-2 focus:ring-primary/20 outline-none"
+                                />
                             </div>
                         </div>
                     </div>
