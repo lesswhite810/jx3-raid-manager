@@ -172,3 +172,30 @@ export interface ToastOptions {
   duration?: number;
   dismissible?: boolean;
 }
+
+// 百战记录类型
+export interface BaizhanRecord {
+  id: string;
+  accountId: string;
+  roleId: string;
+  roleName: string;
+  server: string;
+  date: string;
+  difficulty: 3 | 6 | 10; // 3人/6人/10人
+  bossId: string;
+  bossName: string;
+  skillColor: string; // 百战技能颜色
+  skillLevel: number; // 精耐等级
+  rewards?: string[]; // 奖励列表
+  notes?: string;
+  type: 'baizhan';
+}
+
+// 百战BOSS信息
+export interface BaizhanBoss {
+  id: string;
+  name: string;
+  tier: number; // 阶数 (1-10)
+  recommendedSkillLevel: number; // 推荐精耐等级
+  difficulty: 3 | 6 | 10; // 可挑战难度
+}

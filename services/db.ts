@@ -410,6 +410,38 @@ class DatabaseService {
       throw error;
     }
   }
+
+  async addBaizhanRecord(record: any): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_add_baizhan_record', { record: JSON.stringify(record) });
+    } catch (error) {
+      console.error('Failed to add baizhan record:', error);
+      throw error;
+    }
+  }
+
+  async getBaizhanRecords(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_baizhan_records');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get baizhan records:', error);
+      return [];
+    }
+  }
+
+  async deleteBaizhanRecord(id: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_baizhan_record', { id });
+    } catch (error) {
+      console.error('Failed to delete baizhan record:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();
+

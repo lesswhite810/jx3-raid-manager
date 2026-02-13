@@ -5,7 +5,8 @@ import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
 import { AddRaidModal } from './AddRaidModal';
 import { TrialPlaceManager } from './TrialPlaceManager';
-import { TrialPlaceRecord, Account } from '../types';
+import { BaizhanManager } from './BaizhanManager';
+import { TrialPlaceRecord, Account, BaizhanRecord } from '../types';
 import { db } from '../services/db';
 
 interface RaidManagerProps {
@@ -14,6 +15,8 @@ interface RaidManagerProps {
   onRaidClick?: (raid: Raid) => void;
   trialRecords: TrialPlaceRecord[];
   setTrialRecords: React.Dispatch<React.SetStateAction<TrialPlaceRecord[]>>;
+  baizhanRecords: BaizhanRecord[];
+  setBaizhanRecords: React.Dispatch<React.SetStateAction<BaizhanRecord[]>>;
   accounts: Account[];
 }
 
@@ -57,9 +60,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   onRaidClick,
   trialRecords,
   setTrialRecords,
+  baizhanRecords,
+  setBaizhanRecords,
   accounts
 }) => {
-  const [activeTab, setActiveTab] = useState<'raid' | 'trial'>('raid');
+  const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [isAdding, setIsAdding] = useState(false);
 
   const versions = useMemo(() => {
@@ -257,9 +262,34 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         >
           试炼之地
         </button>
+        <button
+          onClick={() => setActiveTab('baizhan')}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'baizhan'
+            ? 'bg-base text-primary border border-base border-b-transparent'
+            : 'text-muted hover:text-main hover:bg-base/50'
+            }`}
+        >
+          百战
+        </button>
       </div>
 
-      {activeTab === 'trial' ? (
+      {activeTab === 'baizhan' ? (
+        <BaizhanManager
+          records={baizhanRecords}
+          accounts={accounts}
+          onAddRecord={(record) => setBaizhanRecords(prev => [...prev, record])}
+          onDeleteRecord={async (recordId) => {
+            try {
+              await db.deleteBaizhanRecord(recordId);
+              setBaizhanRecords(prev => prev.filter(r => r.id !== recordId));
+              toast.success('已删除百战记录');
+            } catch (error) {
+              console.error('删除失败:', error);
+              toast.error('删除百战记录失败');
+            }
+          }}
+        />
+      ) : activeTab === 'trial' ? (
         <TrialPlaceManager
           records={trialRecords}
           accounts={accounts}
