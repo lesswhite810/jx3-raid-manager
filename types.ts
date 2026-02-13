@@ -55,6 +55,8 @@ export interface RaidRecord {
   type?: 'raid' | 'trial';
   bossId?: string;
   bossName?: string;
+  bossIds?: string[]; // 多选BOSS ID列表（25人本）
+  bossNames?: string[]; // 多选BOSS名称列表（25人本）
 }
 
 export interface TrialPlaceRecord {
@@ -122,6 +124,8 @@ export interface BossRecord {
   date: string;
   roleId: string;
   accountId: string;
+  bossIds?: string[]; // 多选BOSS ID列表（25人本）
+  bossNames?: string[]; // 多选BOSS名称列表（25人本）
 }
 
 export interface BossCooldownInfo {

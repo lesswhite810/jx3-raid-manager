@@ -34,7 +34,11 @@ export const calculateBossCooldowns = (
 
   return config.bosses.map(boss => {
     const recordsInWindow = roleBossRecords.filter(record => {
-      if (record.bossId !== boss.id) return false;
+      // 支持单选和多选BOSS
+      if (record.bossId === boss.id) return true;
+      // 检查 bossIds 数组中是否包含该 boss
+      if (record.bossIds && record.bossIds.includes(boss.id)) return true;
+      return false;
       const recordDate = new Date(record.date);
       return recordDate >= windowStart && recordDate < windowEnd;
     });

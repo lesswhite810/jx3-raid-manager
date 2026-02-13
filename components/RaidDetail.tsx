@@ -302,15 +302,30 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         lastRunIncome,
         lastRunExpense,
         cooldownDays,
-        bossCooldowns: calculateBossCooldowns(raid, roleRecords.map(r => ({
-          id: r.id,
-          raidRecordId: r.id,
-          bossId: r.bossId || '',
-          bossName: r.bossName || '',
-          date: r.date,
-          roleId: r.roleId,
-          accountId: r.accountId
-        })), record.roleId)
+        bossCooldowns: calculateBossCooldowns(raid, roleRecords.flatMap(r => {
+          // 支持多选BOSS：为每个bossId创建一个记录
+          if (r.bossIds && r.bossIds.length > 0) {
+            return r.bossIds.map(bossId => ({
+              id: r.id,
+              raidRecordId: r.id,
+              bossId: bossId,
+              bossName: r.bossNames?.[r.bossIds?.indexOf(bossId) || 0] || '',
+              date: r.date,
+              roleId: r.roleId,
+              accountId: r.accountId
+            }));
+          }
+          // 向后兼容单选BOSS
+          return [{
+            id: r.id,
+            raidRecordId: r.id,
+            bossId: r.bossId || '',
+            bossName: r.bossName || '',
+            date: r.date,
+            roleId: r.roleId,
+            accountId: r.accountId
+          }];
+        }), record.roleId)
       });
 
       processedRoleIds.add(record.roleId);

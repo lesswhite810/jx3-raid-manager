@@ -44,7 +44,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [selectedBossId, setSelectedBossId] = useState<string>('');
+  const [selectedBossIds, setSelectedBossIds] = useState<string[]>([]);
   const [recordDate, setRecordDate] = useState<string>('');
 
   const bossConfig = useMemo(() => {
@@ -83,7 +83,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasAppearance(initialData.hasAppearance || false);
         setHasTitle(initialData.hasTitle || false);
         setNotes(initialData.notes || '');
-        setSelectedBossId(initialData.bossId || '');
+        setSelectedBossIds(initialData.bossIds || (initialData.bossId ? [initialData.bossId] : []));
         setRecordDate(formatDateForInput(initialData.date || new Date()));
       } else {
         setGoldIncome(0);
@@ -96,7 +96,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasAppearance(false);
         setHasTitle(false);
         setNotes('');
-        setSelectedBossId('');
+        setSelectedBossIds([]);
         setRecordDate(formatDateForInput(new Date()));
       }
       setIsSubmitting(false);
@@ -145,8 +145,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         roleName: role.name,
         server: `${role.region} ${role.server}`,
         transactionType: 'combined',
-        bossId: selectedBossId || undefined,
-        bossName: availableBosses.find(b => b.id === selectedBossId)?.name || undefined
+        bossIds: selectedBossIds.length > 0 ? selectedBossIds : undefined,
+        bossNames: selectedBossIds.map(id => availableBosses.find(b => b.id === id)?.name).filter(Boolean) as string[] || undefined,
       };
 
       onSubmit(record);
@@ -228,24 +228,40 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
             {availableBosses.length > 0 && (
               <div>
                 <label className="block text-sm font-medium text-main mb-1.5">
-                  击败BOSS
+                  击败BOSS（可多选）
                 </label>
-                <div className="flex flex-wrap gap-2">
-                  {availableBosses.map((boss) => (
-                    <button
-                      key={boss.id}
-                      type="button"
-                      onClick={() => setSelectedBossId(selectedBossId === boss.id ? '' : boss.id)}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                        selectedBossId === boss.id
-                          ? 'bg-primary text-white'
-                          : 'bg-base text-muted border border-base hover:border-primary hover:text-primary'
-                      }`}
-                    >
-                      {boss.order}. {boss.name}
-                    </button>
-                  ))}
+                <div className="grid grid-cols-3 gap-2 p-3 bg-base rounded-lg border border-base">
+                  {availableBosses.map((boss) => {
+                    const isSelected = selectedBossIds.includes(boss.id);
+                    return (
+                      <label
+                        key={boss.id}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-primary text-white'
+                            : 'bg-surface text-muted border border-base hover:border-primary hover:text-primary'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedBossIds([...selectedBossIds, boss.id]);
+                            } else {
+                              setSelectedBossIds(selectedBossIds.filter(id => id !== boss.id));
+                            }
+                          }}
+                          className="sr-only"
+                        />
+                        <span className="text-sm font-medium">{boss.order}. {boss.name}</span>
+                      </label>
+                    );
+                  })}
                 </div>
+                {selectedBossIds.length > 0 && (
+                  <p className="text-xs text-muted mt-1">已选择 {selectedBossIds.length} 个BOSS</p>
+                )}
               </div>
             )}
 
