@@ -93,6 +93,128 @@ export const RAID_BOSS_CONFIGS: RaidBossConfig[] = [
       { id: 'gongyuecheng_pt_5', name: '尹雪尘', order: 5 },
     ]
   },
+
+  // ========== 横刀断浪版本 ==========
+  // 冷龙峰 - 25人
+  {
+    raidName: '冷龙峰',
+    difficulty: 'HEROIC',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'lenglongfeng_1', name: '葛木寒', order: 1 },
+      { id: 'lenglongfeng_2', name: '雨轻红', order: 2 },
+      { id: 'lenglongfeng_3', name: '喜雅', order: 3 },
+      { id: 'lenglongfeng_4', name: '无支祈', order: 4 },
+      { id: 'lenglongfeng_5', name: '赤厄明', order: 5 },
+    ]
+  },
+  {
+    raidName: '冷龙峰',
+    difficulty: 'NORMAL',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'lenglongfeng_pt_1', name: '葛木寒', order: 1 },
+      { id: 'lenglongfeng_pt_2', name: '雨轻红', order: 2 },
+      { id: 'lenglongfeng_pt_3', name: '喜雅', order: 3 },
+      { id: 'lenglongfeng_pt_4', name: '无支祈', order: 4 },
+      { id: 'lenglongfeng_pt_5', name: '赤厄明', order: 5 },
+    ]
+  },
+  // 西津渡 - 25人
+  {
+    raidName: '西津渡',
+    difficulty: 'HEROIC',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'xijindu_1', name: '张景超', order: 1 },
+      { id: 'xijindu_2', name: '刘展', order: 2 },
+      { id: 'xijindu_3', name: '苏凤楼', order: 3 },
+      { id: 'xijindu_4', name: '韩敬青', order: 4 },
+      { id: 'xijindu_5', name: '藤原佑野', order: 5 },
+      { id: 'xijindu_6', name: '李重茂', order: 6 },
+    ]
+  },
+  {
+    raidName: '西津渡',
+    difficulty: 'NORMAL',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'xijindu_pt_1', name: '张景超', order: 1 },
+      { id: 'xijindu_pt_2', name: '刘展', order: 2 },
+      { id: 'xijindu_pt_3', name: '苏凤楼', order: 3 },
+      { id: 'xijindu_pt_4', name: '韩敬青', order: 4 },
+      { id: 'xijindu_pt_5', name: '藤原佑野', order: 5 },
+      { id: 'xijindu_pt_6', name: '李重茂', order: 6 },
+    ]
+  },
+  // 武狱黑牢 - 25人
+  {
+    raidName: '武狱黑牢',
+    difficulty: 'HEROIC',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'wuyuheilao_1', name: '时风', order: 1 },
+      { id: 'wuyuheilao_2', name: '乐临川', order: 2 },
+      { id: 'wuyuheilao_3', name: '牛波', order: 3 },
+      { id: 'wuyuheilao_4', name: '和正', order: 4 },
+      { id: 'wuyuheilao_5', name: '武云阙', order: 5 },
+    ]
+  },
+  {
+    raidName: '武狱黑牢',
+    difficulty: 'NORMAL',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'wuyuheilao_pt_1', name: '时风', order: 1 },
+      { id: 'wuyuheilao_pt_2', name: '乐临川', order: 2 },
+      { id: 'wuyuheilao_pt_3', name: '牛波', order: 3 },
+      { id: 'wuyuheilao_pt_4', name: '和正', order: 4 },
+      { id: 'wuyuheilao_pt_5', name: '武云阙', order: 5 },
+    ]
+  },
+  // 九老洞 - 25人
+  {
+    raidName: '九老洞',
+    difficulty: 'HEROIC',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'jiulaodong_1', name: '魏华', order: 1 },
+      { id: 'jiulaodong_2', name: '方有涯', order: 2 },
+      { id: 'jiulaodong_3', name: '月行空', order: 3 },
+      { id: 'jiulaodong_4', name: '洪瑀', order: 4 },
+      { id: 'jiulaodong_5', name: '麒麟', order: 5 },
+      { id: 'jiulaodong_6', name: '月泉淮', order: 6 },
+    ]
+  },
+  {
+    raidName: '九老洞',
+    difficulty: 'NORMAL',
+    playerCount: 25,
+    version: '横刀断浪',
+    hasBossTracking: true,
+    bosses: [
+      { id: 'jiulaodong_pt_1', name: '魏华', order: 1 },
+      { id: 'jiulaodong_pt_2', name: '方有涯', order: 2 },
+      { id: 'jiulaodong_pt_3', name: '月行空', order: 3 },
+      { id: 'jiulaodong_pt_4', name: '洪瑀', order: 4 },
+      { id: 'jiulaodong_pt_5', name: '麒麟', order: 5 },
+      { id: 'jiulaodong_pt_6', name: '月泉淮', order: 6 },
+    ]
+  },
 ];
 
 export const getRaidBossConfig = (
