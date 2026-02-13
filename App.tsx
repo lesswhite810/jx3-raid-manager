@@ -13,7 +13,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
-import { Account, RaidRecord, Raid, Config, TrialPlaceRecord } from './types';
+import { Account, RaidRecord, Raid, Config, TrialPlaceRecord, BaizhanRecord } from './types';
 import {
   DEFAULT_CONFIG,
   loadConfigFromStorage,
@@ -43,6 +43,7 @@ function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<RaidRecord[]>([]);
   const [trialRecords, setTrialRecords] = useState<TrialPlaceRecord[]>([]);
+  const [baizhanRecords, setBaizhanRecords] = useState<BaizhanRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
@@ -83,15 +84,16 @@ function App() {
         }
 
         console.log('\n正在加载数据库数据...');
-        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig, loadedTrialRecords] = await Promise.all([
+        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords] = await Promise.all([
           db.getAccounts(),
           db.getRecords(),
           db.getRaids(),
           db.getConfig(),
-          db.getTrialRecords()
+          db.getTrialRecords(),
+          db.getBaizhanRecords()
         ]);
 
-        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}`);
+        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}, 百战 ${loadedBaizhanRecords.length}`);
 
         const parsedAccounts = loadedAccounts;
         const parsedRecords = loadedRecords;
@@ -130,6 +132,11 @@ function App() {
         // Set trial records from the dedicated table source
         if (loadedTrialRecords && loadedTrialRecords.length > 0) {
           setTrialRecords(loadedTrialRecords as TrialPlaceRecord[]);
+        }
+
+        // Set baizhan records from the dedicated table source
+        if (loadedBaizhanRecords && loadedBaizhanRecords.length > 0) {
+          setBaizhanRecords(loadedBaizhanRecords as BaizhanRecord[]);
         }
 
         setIsInitialized(true);
@@ -414,6 +421,8 @@ function App() {
                   onRaidClick={setSelectedRaid}
                   trialRecords={trialRecords}
                   setTrialRecords={setTrialRecords}
+                  baizhanRecords={baizhanRecords}
+                  setBaizhanRecords={setBaizhanRecords}
                   accounts={accounts}
                 />
               )
