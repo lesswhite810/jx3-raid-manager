@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { RaidRecord, Raid } from '../types';
 import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, ArrowDownToLine, ArrowUpFromLine, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
+import { getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
 
 interface RoleWithStatus {
   id: string;
@@ -48,20 +49,10 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
   const weekInfo = useMemo(() => {
     const now = new Date();
-    const dayOfWeek = now.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() + mondayOffset);
-    weekStart.setHours(0, 0, 0, 0);
-
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
-
-    return {
-      start: weekStart,
-      end: weekEnd
-    };
+    // 副本周期起点：周一 07:00，复用 cooldownManager 的统一函数
+    const weekStart = getLastMonday7AM(now);
+    const weekEnd = getNextMonday7AM(now);
+    return { start: weekStart, end: weekEnd };
   }, []);
 
   const roleRecords = useMemo(() => {

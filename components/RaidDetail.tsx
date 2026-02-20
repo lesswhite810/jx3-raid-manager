@@ -5,7 +5,7 @@ import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownDisplay } from './BossCooldownDisplay';
 import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
-import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo } from '../utils/cooldownManager';
+import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
 import { STATIC_RAIDS } from '../data/staticRaids';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
@@ -190,20 +190,10 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
   const weekInfo = useMemo(() => {
     const now = new Date();
-    const dayOfWeek = now.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() + mondayOffset);
-    weekStart.setHours(0, 0, 0, 0);
-
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
-
-    return {
-      start: weekStart,
-      end: weekEnd
-    };
+    // 25人本：周一 07:00 ~ 下周一 07:00
+    const weekStart = getLastMonday7AM(now);
+    const weekEnd = getNextMonday7AM(now);
+    return { start: weekStart, end: weekEnd };
   }, []);
 
   const rolesWithStatus = useMemo(() => {

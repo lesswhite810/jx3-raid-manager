@@ -3,6 +3,7 @@ import { TrialPlaceRecord, Account } from '../types';
 import { Trophy, Check, Copy, Target } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
+import { getLastMonday7AM } from '../utils/cooldownManager';
 
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
@@ -42,13 +43,9 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const roleStats = useMemo(() => {
         const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string }>();
 
-        // Helper to get week start
+        // 副本 CD 每周一 07:00 刷新，复用 cooldownManager 的统一函数
         const now = new Date();
-        const startOfWeek = new Date(now);
-        const day = startOfWeek.getDay();
-        const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
-        startOfWeek.setDate(diff);
-        startOfWeek.setHours(0, 0, 0, 0);
+        const startOfWeek = getLastMonday7AM(now);
 
         allRoles.forEach(role => {
             const roleRecords = records.filter(r => r.roleId === role.id);
