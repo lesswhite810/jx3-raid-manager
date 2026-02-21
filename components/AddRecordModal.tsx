@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Raid, RaidRecord } from '../types';
-import { X, Calendar, Coins, Sparkles, FileText, ArrowDownToLine, ArrowUpFromLine, Wallet, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag } from 'lucide-react';
+import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
-import { getRaidBossConfig } from '../data/raidBosses';
+import { DateTimePicker } from './DateTimePicker';
 
 interface RoleWithStatus {
   id: string;
@@ -47,13 +47,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   const [selectedBossIds, setSelectedBossIds] = useState<string[]>([]);
   const [recordDate, setRecordDate] = useState<string>('');
 
-  const bossConfig = useMemo(() => {
-    return getRaidBossConfig(raid.name, raid.difficulty, raid.playerCount);
-  }, [raid]);
-
   const availableBosses = useMemo(() => {
-    return bossConfig?.bosses || [];
-  }, [bossConfig]);
+    return raid.bosses || [];
+  }, [raid]);
 
   const formatDateForInput = (date: Date | string): string => {
     const d = typeof date === 'string' ? new Date(date) : date;
@@ -96,7 +92,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasAppearance(false);
         setHasTitle(false);
         setNotes('');
-        setSelectedBossIds([]);
+        setSelectedBossIds(availableBosses.map(b => b.id));
         setRecordDate(formatDateForInput(new Date()));
       }
       setIsSubmitting(false);
@@ -105,10 +101,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   }, [isOpen, initialData]);
 
   const constructRaidName = (): string => {
-    const difficultyLabel = raid.difficulty === 'NORMAL' ? '普通' :
-      raid.difficulty === 'HEROIC' ? '英雄' :
-        '挑战';
-    return `${raid.playerCount}人${difficultyLabel}${raid.name}`;
+    return `${raid.playerCount}人${raid.difficulty}${raid.name}`;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -174,19 +167,23 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   return (
     <>
       <div
-        className="fixed inset-0 bg-slate-900/60 z-40"
+        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100]"
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             onClose();
           }
         }}
       />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none">
         <div className={`bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto transition-all duration-300`}>
           <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm">
             <div>
               <h2 className="text-lg font-bold text-main">{initialData ? '修改副本记录' : '添加副本记录'}</h2>
-              <p className="text-muted text-xs mt-0.5">{constructRaidName()}</p>
+              <p className="text-muted text-xs mt-0.5">
+                <span className="font-medium text-main">{role.name}@{role.server}</span>
+                <span className="mx-1.5 text-muted/40">·</span>
+                {constructRaidName()}
+              </p>
             </div>
             <button
               onClick={onClose}
@@ -197,31 +194,15 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
           </div>
 
           <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            <div className="flex items-center justify-between p-3 bg-base rounded-lg border border-base">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-surface rounded-full flex items-center justify-center border border-base">
-                  <span className="text-muted font-bold text-sm">{role.name.charAt(0)}</span>
-                </div>
-                <div>
-                  <p className="font-medium text-main text-sm">{role.name}</p>
-                  <p className="text-xs text-muted">{role.region} {role.server}</p>
-                </div>
-              </div>
-              {role.sect && role.sect !== '未知' && (
-                <span className="text-xs bg-surface text-muted border border-base px-2 py-0.5 rounded-full">{role.sect}</span>
-              )}
-            </div>
 
             <div>
               <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
                 <Calendar className="w-4 h-4 text-primary" />
                 记录日期
               </label>
-              <input
-                type="datetime-local"
+              <DateTimePicker
                 value={recordDate}
-                onChange={e => setRecordDate(e.target.value)}
-                className="w-full px-3 py-2.5 bg-surface border border-base rounded-lg text-main focus:outline-none focus:ring-2 focus:ring-primary transition-all text-sm"
+                onChange={setRecordDate}
               />
             </div>
 
@@ -236,11 +217,10 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                     return (
                       <label
                         key={boss.id}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${
-                          isSelected
-                            ? 'bg-primary text-white'
-                            : 'bg-surface text-muted border border-base hover:border-primary hover:text-primary'
-                        }`}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${isSelected
+                          ? 'bg-primary text-white'
+                          : 'bg-surface text-muted border border-base hover:border-primary hover:text-primary'
+                          }`}
                       >
                         <input
                           type="checkbox"
@@ -254,7 +234,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                           }}
                           className="sr-only"
                         />
-                        <span className="text-sm font-medium">{boss.order}. {boss.name}</span>
+                        <span className="text-sm font-medium">{boss.name}</span>
                       </label>
                     );
                   })}
@@ -274,10 +254,10 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
               </div>
             )}
 
-            <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                  <ArrowDownToLine className="w-4 h-4 text-emerald-600" />
+                  <TrendingUp className="w-4 h-4 text-emerald-600" />
                   金币收入
                 </label>
                 <div className="relative">
@@ -288,14 +268,14 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                     value={goldIncome || ''}
                     onChange={e => setGoldIncome(Number(e.target.value))}
                     placeholder="收入金额"
-                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all font-mono text-base"
+                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all font-mono text-[1rem]"
                   />
                 </div>
               </div>
 
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                  <ArrowUpFromLine className="w-4 h-4 text-amber-600" />
+                  <TrendingDown className="w-4 h-4 text-amber-600" />
                   金币支出
                 </label>
                 <div className="relative">
@@ -306,20 +286,10 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                     value={goldExpense || ''}
                     onChange={e => setGoldExpense(Number(e.target.value))}
                     placeholder="支出金额"
-                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 transition-all font-mono text-base"
+                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 transition-all font-mono text-[1rem]"
                   />
                 </div>
               </div>
-
-              {(goldIncome > 0 || goldExpense > 0) && (
-                <div className="flex items-center gap-2 p-3 bg-base rounded-lg border border-base">
-                  <Wallet className="w-4 h-4 text-muted" />
-                  <span className="text-sm text-muted">净收入:</span>
-                  <span className={`text-lg font-bold font-mono ${goldIncome - goldExpense >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                    {goldIncome - goldExpense >= 0 ? '+' : ''}{(goldIncome - goldExpense).toLocaleString()}金
-                  </span>
-                </div>
-              )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-base rounded-lg border border-base">

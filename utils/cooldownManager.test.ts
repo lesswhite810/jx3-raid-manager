@@ -53,7 +53,7 @@ function makeRaid(playerCount: 10 | 25): Raid {
         id: `raid-${playerCount}`,
         name: playerCount === 25 ? '燃木京25' : '燃木京10',
         playerCount,
-        difficulty: 'NORMAL',
+        difficulty: '普通',
         version: 'jx3',
         bossCount: 6,
         bosses: [],

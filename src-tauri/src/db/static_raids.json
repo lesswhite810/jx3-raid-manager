@@ -1,0 +1,997 @@
+[
+  {
+    "name": "战宝迦兰",
+    "level": 70,
+    "version": "风起稻香",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "持国天王殿",
+    "level": 70,
+    "version": "风起稻香",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "宫中神武遗迹",
+    "level": 70,
+    "version": "风起稻香",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "荻花宫后山",
+    "level": 70,
+    "version": "风起稻香",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "荻花圣殿",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "龙渊泽",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "荻花洞窟",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "持国回忆录",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "烛龙殿",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "会战唐门",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "南诏皇宫",
+    "level": 80,
+    "version": "巴蜀风云",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "战宝军械库",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "大明宫",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "血战天策",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "风雪稻香村",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "秦皇陵",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "太原之战·夜守孤城",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "太原之战·逐虎驱狼",
+    "level": 90,
+    "version": "安史之乱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "永王行宫·仙侣庭园",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "挑战",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "永王行宫·花月别院",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 10,
+        "difficulty": "挑战",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "上阳宫·观风殿",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "上阳宫·双曜亭",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "风雷刀谷·锻刀厅",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "风雷刀谷·千雷殿",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "狼牙堡·战兽山",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "狼牙堡·燕然峰",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "狼牙堡·辉天堑",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "狼牙堡·狼神殿",
+    "level": 95,
+    "version": "剑胆琴心",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "冰火岛·荒血路",
+    "level": 100,
+    "version": "世外蓬莱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "冰火岛·青莲狱",
+    "level": 100,
+    "version": "世外蓬莱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "尘归海·巨冥湾",
+    "level": 100,
+    "version": "世外蓬莱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "尘归海·饕餮洞",
+    "level": 100,
+    "version": "世外蓬莱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "敖龙岛",
+    "level": 100,
+    "version": "世外蓬莱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "范阳夜变",
+    "level": 100,
+    "version": "世外蓬莱",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "达摩洞",
+    "level": 110,
+    "version": "奉天证道",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "白帝江关",
+    "level": 110,
+    "version": "奉天证道",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "雷域大泽",
+    "level": 110,
+    "version": "奉天证道",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "河阳之战",
+    "level": 110,
+    "version": "奉天证道",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "西津渡",
+    "level": 120,
+    "version": "横刀断浪",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "武狱黑牢",
+    "level": 120,
+    "version": "横刀断浪",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "九老洞",
+    "level": 120,
+    "version": "横刀断浪",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "冷龙峰",
+    "level": 120,
+    "version": "横刀断浪",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "一之窟",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "太极宫",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": true
+      }
+    ]
+  },
+  {
+    "name": "空城殿·上",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "空城殿·下",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": false
+      }
+    ]
+  },
+  {
+    "name": "弓月城",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": true
+      }
+    ],
+    "bosses": [
+      {
+        "id": "gongyuecheng_1",
+        "name": "巴图仁钦",
+        "order": 1
+      },
+      {
+        "id": "gongyuecheng_2",
+        "name": "竭勒",
+        "order": 2
+      },
+      {
+        "id": "gongyuecheng_3",
+        "name": "图南子",
+        "order": 3
+      },
+      {
+        "id": "gongyuecheng_4",
+        "name": "叶葵",
+        "order": 4
+      },
+      {
+        "id": "gongyuecheng_5",
+        "name": "尹雪尘",
+        "order": 5
+      }
+    ]
+  },
+  {
+    "name": "缚罪之渊",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": true
+      }
+    ],
+    "bosses": [
+      {
+        "id": "fuzuizhiyuan_1",
+        "name": "阿里曼幻身",
+        "order": 1
+      },
+      {
+        "id": "fuzuizhiyuan_2",
+        "name": "阿萨辛",
+        "order": 2
+      }
+    ]
+  }
+]

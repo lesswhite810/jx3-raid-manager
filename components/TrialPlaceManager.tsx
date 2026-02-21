@@ -150,7 +150,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                     key={role.id}
                                     className={`p-4 rounded-xl border-2 transition-all duration-300 ${canRun
                                         ? 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300'
-                                        : 'bg-gradient-to-br from-base to-base border-base hover:shadow-md'
+                                        : 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-800 hover:shadow-lg hover:border-amber-300'
                                         }`}
                                 >
                                     <div className="flex items-center justify-between mb-3">
@@ -161,8 +161,8 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                                     <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                                                 </div>
                                             ) : (
-                                                <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
-                                                    <Check className="w-4 h-4 text-muted" />
+                                                <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                                                 </div>
                                             )}
 
@@ -172,7 +172,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                                     {role.sect && (
                                                         <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${canRun
                                                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                                            : 'bg-base text-muted'
+                                                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
                                                             }`}>
                                                             {role.sect}
                                                         </span>
@@ -260,7 +260,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                             onClick={() => handleOpenAddModal(role)}
                                             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${canRun
                                                 ? 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5'
-                                                : 'bg-base text-muted hover:bg-base/80 hover:text-main'
+                                                : 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5'
                                                 }`}
                                         >
                                             添加记录
@@ -290,15 +290,17 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 initialRole={selectedRole}
             />
 
-            {viewRecordsRole && (
-                <TrialRoleRecordsModal
-                    isOpen={!!viewRecordsRole}
-                    onClose={() => setViewRecordsRole(null)}
-                    role={viewRecordsRole}
-                    records={records}
-                    onDeleteRecord={onDeleteRecord}
-                />
-            )}
+            {
+                viewRecordsRole && (
+                    <TrialRoleRecordsModal
+                        isOpen={!!viewRecordsRole}
+                        onClose={() => setViewRecordsRole(null)}
+                        role={viewRecordsRole}
+                        records={records}
+                        onDeleteRecord={onDeleteRecord}
+                    />
+                )
+            }
         </div >
     );
 };

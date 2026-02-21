@@ -5,7 +5,7 @@ import { Dashboard } from './components/Dashboard';
 import { IncomeDetail } from './components/IncomeDetail';
 import { AccountManager } from './components/AccountManager';
 import { RaidManager } from './components/RaidManager';
-import { RaidDetail } from './components/RaidDetail';
+
 import { CrystalDetail } from './components/CrystalDetail';
 
 
@@ -21,7 +21,8 @@ import {
   validateConfig,
   getConfigSummary
 } from './utils/configUtils';
-import { mergeRaids, getRaidKey, saveRaidCache } from './utils/raidUtils';
+import { saveRaidCache } from './utils/raidUtils';
+import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts } from './utils/accountUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, forceMigrate } from './services/migration';
@@ -31,7 +32,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
   const [showIncomeDetail, setShowIncomeDetail] = useState(false);
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);
-  const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
+
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [contentKey, setContentKey] = useState(0);
@@ -107,9 +108,10 @@ function App() {
           console.log('没有账号数据');
         }
 
-        const mergedRaids = parsedRaids.length > 0 ? mergeRaids(parsedRaids) : mergeRaids([]);
-        saveRaidCache(mergedRaids);
-        setRaids(mergedRaids);
+        // 自动为已知副本注入默认 BOSS 配置
+        const raidsWithBosses = injectDefaultBossesForRaids(parsedRaids);
+        saveRaidCache(raidsWithBosses);
+        setRaids(raidsWithBosses);
 
         if (loadedConfig) {
           const configData = typeof loadedConfig === 'string' ? JSON.parse(loadedConfig) : loadedConfig;
@@ -264,7 +266,6 @@ function App() {
 
     setIsTransitioning(true);
     setActiveTab(tab);
-    setSelectedRaid(null);
     setShowIncomeDetail(false);
     setShowCrystalDetail(false);
 
@@ -401,33 +402,20 @@ function App() {
               <AccountManager key={`accounts-${contentKey}`} accounts={accounts} setAccounts={setAccounts} config={config} />
             )}
             {activeTab === 'raidManager' && (
-              selectedRaid ? (
-                <RaidDetail
-                  key={`raidDetail-${getRaidKey(selectedRaid)}-${contentKey}`}
-                  raid={selectedRaid}
-                  accounts={accounts}
-                  records={records}
-                  onBack={() => setSelectedRaid(null)}
-                  setRecords={setRecords}
-                  onEditRecord={setEditingRecord}
-                />
-              ) : (
-
-                // @ts-ignore - passing extra props that aren't defined in interface yet but will be
-                <RaidManager
-                  key={`raidManager-${contentKey}`}
-                  raids={raids}
-                  setRaids={setRaids}
-                  onRaidClick={setSelectedRaid}
-                  trialRecords={trialRecords}
-                  setTrialRecords={setTrialRecords}
-                  baizhanRecords={baizhanRecords}
-                  setBaizhanRecords={setBaizhanRecords}
-                  accounts={accounts}
-                />
-              )
-            )
-            }
+              <RaidManager
+                key={`raidManager-${contentKey}`}
+                raids={raids}
+                setRaids={setRaids}
+                records={records}
+                setRecords={setRecords}
+                onEditRecord={setEditingRecord}
+                trialRecords={trialRecords}
+                setTrialRecords={setTrialRecords}
+                baizhanRecords={baizhanRecords}
+                setBaizhanRecords={setBaizhanRecords}
+                accounts={accounts}
+              />
+            )}
             {activeTab === 'config' && (
               <ConfigManager key={`config-${contentKey}`} config={config} setConfig={setConfig} />
             )}
@@ -463,7 +451,7 @@ function App() {
           }}
           raid={{
             name: '未知',
-            difficulty: 'NORMAL',
+            difficulty: '普通',
             playerCount: 25,
             isActive: true
           }}

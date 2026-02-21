@@ -6,13 +6,16 @@ import { toast } from '../utils/toastManager';
 import { AddRaidModal } from './AddRaidModal';
 import { TrialPlaceManager } from './TrialPlaceManager';
 import { BaizhanManager } from './BaizhanManager';
-import { TrialPlaceRecord, Account, BaizhanRecord } from '../types';
+import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
+import { RaidDetail } from './RaidDetail';
 
 interface RaidManagerProps {
   raids: Raid[];
   setRaids: React.Dispatch<React.SetStateAction<Raid[]>>;
-  onRaidClick?: (raid: Raid) => void;
+  records: RaidRecord[];
+  setRecords: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
+  onEditRecord?: (record: RaidRecord) => void;
   trialRecords: TrialPlaceRecord[];
   setTrialRecords: React.Dispatch<React.SetStateAction<TrialPlaceRecord[]>>;
   baizhanRecords: BaizhanRecord[];
@@ -29,16 +32,16 @@ interface MergedRaid {
   difficultyLabels: { [key: string]: string };
 }
 
-const DIFFICULTY_LABELS = {
-  NORMAL: '普通',
-  HEROIC: '英雄',
-  CHALLENGE: '挑战'
+const DIFFICULTY_LABELS: Record<string, string> = {
+  '普通': '普通',
+  '英雄': '英雄',
+  '挑战': '挑战'
 };
 
-const DIFFICULTY_COLORS = {
-  NORMAL: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800',
-  HEROIC: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800',
-  CHALLENGE: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
+const DIFFICULTY_COLORS: Record<string, string> = {
+  '普通': 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800',
+  '英雄': 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800',
+  '挑战': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
 };
 
 const VERSION_ORDER_MAP: Record<string, number> = {
@@ -57,7 +60,9 @@ const VERSION_ORDER_MAP: Record<string, number> = {
 export const RaidManager: React.FC<RaidManagerProps> = ({
   raids,
   setRaids,
-  onRaidClick,
+  records,
+  setRecords,
+  onEditRecord,
   trialRecords,
   setTrialRecords,
   baizhanRecords,
@@ -66,6 +71,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [isAdding, setIsAdding] = useState(false);
+  const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
 
   const versions = useMemo(() => {
     const versionSet = new Set<string>();
@@ -170,7 +176,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
         const sortedRaids = raids.sort((a, b) => {
           const playerCountOrder = { 10: 0, 25: 1 };
-          const difficultyOrder = { 'NORMAL': 0, 'HEROIC': 1, 'CHALLENGE': 2 };
+          const difficultyOrder: Record<string, number> = { '普通': 0, '英雄': 1, '挑战': 2 };
 
           if (playerCountOrder[a.playerCount] !== playerCountOrder[b.playerCount]) {
             return playerCountOrder[a.playerCount] - playerCountOrder[b.playerCount];
@@ -245,7 +251,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
       {/* Tabs */}
       <div className="flex gap-2 border-b border-base pb-1">
         <button
-          onClick={() => setActiveTab('raid')}
+          onClick={() => { setActiveTab('raid'); setSelectedRaid(null); }}
           className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'raid'
             ? 'bg-base text-primary border border-base border-b-transparent'
             : 'text-muted hover:text-main hover:bg-base/50'
@@ -254,7 +260,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           团队副本
         </button>
         <button
-          onClick={() => setActiveTab('trial')}
+          onClick={() => { setActiveTab('trial'); setSelectedRaid(null); }}
           className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'trial'
             ? 'bg-base text-primary border border-base border-b-transparent'
             : 'text-muted hover:text-main hover:bg-base/50'
@@ -263,7 +269,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           试炼之地
         </button>
         <button
-          onClick={() => setActiveTab('baizhan')}
+          onClick={() => { setActiveTab('baizhan'); setSelectedRaid(null); }}
           className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'baizhan'
             ? 'bg-base text-primary border border-base border-b-transparent'
             : 'text-muted hover:text-main hover:bg-base/50'
@@ -304,6 +310,16 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
               toast.error('删除试炼记录失败');
             }
           }}
+        />
+      ) : selectedRaid ? (
+        <RaidDetail
+          key={`raidDetail-${getRaidKey(selectedRaid)}`}
+          raid={selectedRaid}
+          accounts={accounts}
+          records={records}
+          onBack={() => setSelectedRaid(null)}
+          setRecords={setRecords}
+          onEditRecord={onEditRecord}
         />
       ) : (
         <>
@@ -405,7 +421,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                   }
                                 }}
                                 className={`transition-colors p-1 rounded-md ${isStatic
-                                  ? 'text-base cursor-not-allowed opacity-50'
+                                  ? 'text-muted cursor-not-allowed opacity-50'
                                   : 'text-muted hover:text-red-500 hover:bg-red-50'
                                   }`}
                                 title={isStatic ? '预制副本不能删除' : '删除'}
@@ -422,7 +438,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                               return (
                                 <div
                                   key={getRaidKey(raid)}
-                                  onClick={() => onRaidClick?.(raid)}
+                                  onClick={() => setSelectedRaid(raid)}
                                   onContextMenu={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();

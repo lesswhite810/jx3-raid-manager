@@ -63,7 +63,7 @@ export async function diagnoseMigration(): Promise<{
 
   try {
     log('INFO', '[诊断 1/2] 检查 localStorage 数据...');
-    
+
     const accountsRaw = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
     const recordsRaw = localStorage.getItem(STORAGE_KEYS.RECORDS);
     const raidsRaw = localStorage.getItem(STORAGE_KEYS.RAIDS);
@@ -120,9 +120,9 @@ export async function diagnoseMigration(): Promise<{
       log('INFO', `  配置: 无`);
     }
 
-    result.localStorage.hasData = 
-      result.localStorage.accountsCount > 0 || 
-      result.localStorage.recordsCount > 0 || 
+    result.localStorage.hasData =
+      result.localStorage.accountsCount > 0 ||
+      result.localStorage.recordsCount > 0 ||
       result.localStorage.raidsCount > 0 ||
       result.localStorage.hasConfig;
 
@@ -133,7 +133,7 @@ export async function diagnoseMigration(): Promise<{
 
   try {
     log('INFO', '[诊断 2/2] 检查 SQLite 数据库...');
-    
+
     await db.init();
     result.database.connectionOk = true;
     log('INFO', '  数据库连接成功');
@@ -190,7 +190,7 @@ export async function deduplicateAccounts(): Promise<{
   try {
     const result = await db.deduplicateAccounts();
     log('INFO', `  ${result}`);
-    
+
     // 解析结果
     const match = result.match(/处理前: (\d+) 条.*删除: (\d+) 条.*保留: (\d+) 条/);
     if (match) {
@@ -201,7 +201,7 @@ export async function deduplicateAccounts(): Promise<{
         remaining: parseInt(match[3])
       };
     }
-    
+
     return { success: true, message: result, removed: 0, remaining: 0 };
   } catch (error: any) {
     log('ERROR', `去重失败: ${error.message}`);
@@ -410,7 +410,7 @@ export async function forceMigrate(): Promise<{
     const hasNewData = result.accounts > 0 || result.records > 0 || result.raids > 0 || result.config;
 
     log('INFO', '[6/6] 完成迁移状态记录...');
-    
+
     if (allMatch && hasNewData) {
       log('INFO', '  ✓ 迁移成功！记录迁移状态');
       await db.setMigrationStatus('completed');
@@ -424,20 +424,20 @@ export async function forceMigrate(): Promise<{
 
     return {
       success: allMatch || !hasNewData,
-      message: hasNewData 
-        ? (allMatch ? '迁移成功' : '部分数据未完全匹配') 
+      message: hasNewData
+        ? (allMatch ? '迁移成功' : '部分数据未完全匹配')
         : '数据已是最新的',
       migrated: result,
       details: {
-        dbBefore: { 
-          accounts: dbAccountsBefore.length, 
-          records: dbRecordsBefore.length, 
-          raids: dbRaidsBefore.length 
+        dbBefore: {
+          accounts: dbAccountsBefore.length,
+          records: dbRecordsBefore.length,
+          raids: dbRaidsBefore.length
         },
-        dbAfter: { 
-          accounts: dbAccountsAfter.length, 
-          records: dbRecordsAfter.length, 
-          raids: dbRaidsAfter.length 
+        dbAfter: {
+          accounts: dbAccountsAfter.length,
+          records: dbRecordsAfter.length,
+          raids: dbRaidsAfter.length
         },
         skipped
       }
@@ -519,9 +519,9 @@ export async function manualMigrate(): Promise<{
   message: string;
 }> {
   log('INFO', '=== 手动触发迁移 ===');
-  
+
   const result = await forceMigrate();
-  
+
   if (result.success) {
     log('INFO', '迁移成功！请重启应用。');
     return { success: true, message: '迁移成功！请重启应用。' };

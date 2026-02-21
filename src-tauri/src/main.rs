@@ -66,6 +66,10 @@ fn main() {
             db::db_add_trial_record,
             db::db_get_trial_records,
             db::db_delete_trial_record,
+            db::db_add_baizhan_record,
+            db::db_get_baizhan_records,
+            db::db_delete_baizhan_record,
+            db::db_update_baizhan_record,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

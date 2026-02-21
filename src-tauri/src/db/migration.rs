@@ -1,10 +1,10 @@
 use rusqlite::{params, Connection, Error as SqliteError};
 
 /// Current database schema version
-pub const CURRENT_SCHEMA_VERSION: i32 = 1;
+pub const CURRENT_SCHEMA_VERSION: i32 = 2;
 pub const SCHEMA_VERSION_TABLE: &str = "schema_versions";
 
-fn error_to_string(e: SqliteError) -> String {
+pub fn error_to_string(e: SqliteError) -> String {
     format!("Database error: {}", e)
 }
 
@@ -51,19 +51,37 @@ pub fn get_current_version(conn: &Connection) -> Result<i32, String> {
     Ok(version)
 }
 
+use crate::db::migrations::{v1, v2};
+
 /// Apply migrations up to current version
 pub fn apply_migrations(conn: &Connection) -> Result<(), String> {
-    let current_version = get_current_version(conn)?;
+    let mut current_version = get_current_version(conn)?;
 
-    if current_version < CURRENT_SCHEMA_VERSION {
-        if current_version < 1 {
-            apply_v1_migration(conn)?;
-            mark_version_applied(
-                conn,
-                1,
-                "Split accounts table into accounts and roles tables",
-            )?;
+    while current_version < CURRENT_SCHEMA_VERSION {
+        let next_version = current_version + 1;
+        match next_version {
+            1 => {
+                v1::apply_v1_migration(conn)?;
+                mark_version_applied(
+                    conn,
+                    1,
+                    "Split accounts table into accounts and roles tables",
+                )?;
+            }
+            2 => {
+                v2::apply_v2_migration(conn)?;
+                mark_version_applied(
+                    conn,
+                    2,
+                    "Upgrade raids table to structured columns with raid_bosses",
+                )?;
+            }
+            _ => {
+                return Err(format!("Unknown migration version: {}", next_version));
+            }
         }
+        current_version = next_version;
+        log::info!("Successfully migrated database to version {}", current_version);
     }
 
     Ok(())
@@ -87,155 +105,6 @@ pub fn mark_version_applied(
     Ok(())
 }
 
-/// V1 Migration: Split accounts table into structured accounts and roles tables
-fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
-    let timestamp = chrono::Utc::now().to_rfc3339();
-
-    // Step 1: Check if old accounts table exists
-    let old_accounts_exists: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='accounts'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(error_to_string)?;
-
-    if old_accounts_exists == 0 {
-        return Ok(());
-    }
-
-    // Step 2: Create new structured tables
-    conn.execute_batch(
-        r#"
-        -- Rename old accounts table
-        ALTER TABLE accounts RENAME TO accounts_legacy;
-
-        -- Create new accounts table (with password field)
-        CREATE TABLE accounts (
-            id TEXT PRIMARY KEY,
-            account_name TEXT NOT NULL,
-            account_type TEXT NOT NULL DEFAULT 'OWN',
-            password TEXT,
-            notes TEXT,
-            hidden INTEGER DEFAULT 0,
-            disabled INTEGER DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT
-        );
-
-        -- Create new roles table
-        CREATE TABLE roles (
-            id TEXT PRIMARY KEY,
-            account_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            server TEXT,
-            region TEXT,
-            sect TEXT,
-            equipment_score INTEGER,
-            disabled INTEGER DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT,
-            FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-        );
-
-        -- Create indexes for better query performance
-        CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
-        CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
-    "#,
-    )
-    .map_err(error_to_string)?;
-
-    // Step 3: Migrate data from JSON to structured tables
-    let mut stmt = conn
-        .prepare("SELECT id, data FROM accounts_legacy")
-        .map_err(error_to_string)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(error_to_string)?;
-
-    for row in rows {
-        let (account_id, data_str) = row.map_err(error_to_string)?;
-        let data: serde_json::Value =
-            serde_json::from_str(&data_str).map_err(|e| format!("JSON parse error: {}", e))?;
-
-        // Extract account fields (drop username, keep accountName and password)
-        let account_name = data["accountName"]
-            .as_str()
-            .or(data["username"].as_str())
-            .unwrap_or("")
-            .to_string();
-        let account_type = data["type"].as_str().unwrap_or("OWN").to_string();
-        let password = data["password"].as_str().map(|s| s.to_string());
-        let notes = data["notes"].as_str().map(|s| s.to_string());
-        let hidden = data["hidden"].as_bool().unwrap_or(false) as i32;
-        let disabled = data["disabled"].as_bool().unwrap_or(false) as i32;
-
-        // Insert into new accounts table
-        conn.execute(
-            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                account_id,
-                account_name,
-                account_type,
-                password,
-                notes,
-                hidden,
-                disabled,
-                timestamp,
-                timestamp
-            ],
-        )
-        .map_err(error_to_string)?;
-
-        // Extract and insert roles
-        if let Some(roles_array) = data["roles"].as_array() {
-            for role_json in roles_array {
-                let role_id = role_json["id"]
-                    .as_str()
-                    .or(role_json["name"].as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-                let role_name = role_json["name"].as_str().unwrap_or("").to_string();
-                let server = role_json["server"].as_str().map(|s| s.to_string());
-                let region = role_json["region"].as_str().map(|s| s.to_string());
-                let sect = role_json["sect"].as_str().map(|s| s.to_string());
-                let role_disabled = role_json["disabled"].as_bool().unwrap_or(false) as i32;
-
-                // equipmentScore might be string or number
-                let equipment_score = role_json["equipmentScore"]
-                    .as_i64()
-                    .or(role_json["equipmentScore"]
-                        .as_str()
-                        .and_then(|s| s.parse().ok()));
-
-                conn.execute(
-                    "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    params![
-                        role_id,
-                        account_id,
-                        role_name,
-                        server,
-                        region,
-                        sect,
-                        equipment_score,
-                        role_disabled,
-                        timestamp,
-                        timestamp
-                    ],
-                )
-                .map_err(error_to_string)?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Check if migration is needed
 pub fn is_migration_needed(conn: &Connection) -> Result<bool, String> {
     let old_accounts_exists: i64 = conn
@@ -247,4 +116,62 @@ pub fn is_migration_needed(conn: &Connection) -> Result<bool, String> {
         .map_err(error_to_string)?;
 
     Ok(old_accounts_exists > 0)
+}
+
+
+/// 初始化预制副本数据（从 static_raids.json 读取）
+/// 该方法会在空库初次加载或者新增加预制数据时注入缺失的默认副本
+/// raid_bosses 按副本名称关联，每个副本只存一份 boss 数据
+pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
+    let static_json = include_str!("static_raids.json");
+    let static_raids: Vec<serde_json::Value> = serde_json::from_str(static_json)
+        .map_err(|e| format!("解析预制副本数据失败: {}", e))?;
+
+    let mut inserted_count = 0;
+    let mut boss_inserted_names = std::collections::HashSet::new();
+
+    for raid in static_raids {
+        let name = raid["name"].as_str().unwrap_or_default();
+        let version = raid["version"].as_str().unwrap_or_default();
+
+        // 插入各难度/人数配置
+        if let Some(configs) = raid["configurations"].as_array() {
+            for config in configs {
+                let player_count = config["playerCount"].as_i64().unwrap_or(25);
+                let difficulty = config["difficulty"].as_str().unwrap_or("普通");
+                let is_active = if config["isActive"].as_bool().unwrap_or(true) { 1 } else { 0 };
+                let id = format!("{}人{}{}", player_count, difficulty, name);
+
+                let changes = conn.execute(
+                    "INSERT OR IGNORE INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                    params![&id, name, difficulty, player_count, version, "", is_active],
+                ).map_err(error_to_string)?;
+
+                inserted_count += changes;
+            }
+        }
+
+        // boss 按副本名称只写一次，所有难度配置共享
+        if !boss_inserted_names.contains(name) {
+            if let Some(bosses) = raid["bosses"].as_array() {
+                for boss in bosses {
+                    let boss_id = boss["id"].as_str().unwrap_or_default();
+                    let boss_name = boss["name"].as_str().unwrap_or_default();
+                    let boss_order = boss["order"].as_i64().unwrap_or(0);
+
+                    conn.execute(
+                        "INSERT OR IGNORE INTO raid_bosses (id, raid_name, name, boss_order) VALUES (?, ?, ?, ?)",
+                        params![boss_id, name, boss_name, boss_order],
+                    ).map_err(error_to_string)?;
+                }
+                boss_inserted_names.insert(name.to_string());
+            }
+        }
+    }
+
+    if inserted_count > 0 {
+        log::info!("成功注入 {} 条预制副本数据", inserted_count);
+    }
+
+    Ok(())
 }

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Coins, ArrowUpCircle, ArrowDownCircle, TrendingUp, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown } from 'lucide-react';
 import { RaidRecord, Account, AccountType, Role } from '../types';
 import { toast } from '../utils/toastManager';
 
@@ -212,7 +212,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-base rounded-lg">
-              <ArrowUpCircle className="w-6 h-6 text-muted" />
+              <TrendingUp className="w-6 h-6 text-muted" />
             </div>
             <span className="text-muted font-medium">总收入</span>
           </div>
@@ -223,7 +223,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-base rounded-lg">
-              <ArrowDownCircle className="w-6 h-6 text-muted" />
+              <TrendingDown className="w-6 h-6 text-muted" />
             </div>
             <span className="text-muted font-medium">总支出</span>
           </div>
@@ -238,7 +238,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
             </div>
             <span className="text-muted font-medium">净收入</span>
           </div>
-          <p className={`text-3xl font-bold ${stats.netIncome >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+          <p className={`text-3xl font-bold ${stats.netIncome >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
             {stats.netIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.netIncome))}
           </p>
           <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
@@ -304,7 +304,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
           {tabFilteredRecords.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted">
               <Coins className="w-12 h-12 text-muted/30 mb-3" />
-              <p className="text-base">暂无记录</p>
+              <p className="text-[1rem]">暂无记录</p>
             </div>
           ) : (
             <div className="divide-y divide-base">
@@ -333,7 +333,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
                         </div>
 
                         <div className="min-w-0">
-                          <div className="font-semibold text-main truncate text-base leading-tight mb-0.5">
+                          <div className="font-semibold text-main truncate text-[1rem] leading-tight mb-0.5">
                             {record.raidName}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted truncate">
@@ -391,8 +391,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
                       <div className="flex items-center gap-4 flex-shrink-0">
                         {/* Net Income */}
                         <div className="text-right flex flex-col items-end w-24">
-                          <span className={`font-bold text-base tabular-nums ${netIncome > 0 ? 'text-emerald-600 dark:text-emerald-400' :
-                              netIncome < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted'
+                          <span className={`font-bold text-[1rem] tabular-nums ${netIncome > 0 ? 'text-emerald-600 dark:text-emerald-400' :
+                            netIncome < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted'
                             }`}>
                             {netIncome > 0 ? '+' : ''}{formatGold(netIncome)}
                           </span>
@@ -438,12 +438,12 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
                           {/* Income & Expense Breakdown */}
                           <div className="flex gap-6 text-sm">
                             <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 px-2 py-1 rounded">
-                              <ArrowUpCircle className="w-3.5 h-3.5" />
+                              <TrendingUp className="w-3.5 h-3.5" />
                               <span className="font-medium">收入: {formatGold(record.goldIncome)}</span>
                             </div>
                             {(record.goldExpense || 0) > 0 && (
-                              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/10 px-2 py-1 rounded">
-                                <ArrowDownCircle className="w-3.5 h-3.5" />
+                              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/10 px-2 py-1 rounded">
+                                <TrendingDown className="w-3.5 h-3.5" />
                                 <span className="font-medium">支出: {formatGold(record.goldExpense || 0)}</span>
                               </div>
                             )}

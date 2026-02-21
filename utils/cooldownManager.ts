@@ -6,6 +6,7 @@ export interface CooldownInfo {
   nextAvailableTime: Date | null;
   cooldownType: 'none' | 'weekly' | 'biweekly'; // biweekly 代表一周两次的重置
   message: string;
+  hasRecordInCurrentCycle: boolean;
 }
 
 export interface RecordLog {
@@ -40,7 +41,7 @@ export const logOperation = (
     details
   };
   OPERATION_LOGS.push(log);
-  
+
   console.log('[Record Operation]', success ? '✅' : '❌', log);
 };
 
@@ -63,10 +64,10 @@ export const getLastMonday7AM = (date: Date): Date => {
   const d = new Date(date);
   const day = d.getDay(); // 0 (Sun) - 6 (Sat)
   const hour = d.getHours();
-  
+
   // 计算当前时间相对于本周一07:00的偏移量
   // 如果今天是周一且还没到7点，或者今天是周日，都要往前推
-  
+
   let daysToSubtract = 0;
   if (day === 1 && hour < 7) {
     daysToSubtract = 7;
@@ -127,7 +128,7 @@ export const calculateCooldown = (
   now: Date = getServerStandardTime()
 ): CooldownInfo => {
   const isTenPerson = raid.playerCount === 10;
-  
+
   // 1. 确定当前的 CD 窗口
   let windowStart: Date;
   let windowEnd: Date;
@@ -150,13 +151,29 @@ export const calculateCooldown = (
   });
 
   if (recordsInWindow.length > 0) {
+    // 如果该副本配置了Boss进度追踪（即存在boss记录），则不限制总记录数
+    // 如果该副本配置了Boss进度追踪，则不限制总记录数
+    const trackBosses = raid.bosses && raid.bosses.length > 0;
+
+    if (trackBosses) {
+      return {
+        canAdd: true,
+        remainingTime: 0,
+        nextAvailableTime: windowEnd,
+        cooldownType: isTenPerson ? 'biweekly' : 'weekly',
+        message: '可继续添加本周期的记录（按Boss分配）',
+        hasRecordInCurrentCycle: true
+      };
+    }
+
     // 已有记录，CD 中
     return {
       canAdd: false,
       remainingTime: windowEnd.getTime() - now.getTime(),
       nextAvailableTime: windowEnd,
       cooldownType: isTenPerson ? 'biweekly' : 'weekly',
-      message: `本周期记录已存在，${windowEnd.toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} 后刷新`
+      message: `本周期记录已存在，${windowEnd.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} 后刷新`,
+      hasRecordInCurrentCycle: true
     };
   } else {
     // 无记录，可添加
@@ -165,18 +182,19 @@ export const calculateCooldown = (
       remainingTime: 0,
       nextAvailableTime: null,
       cooldownType: 'none',
-      message: '当前可添加记录'
+      message: '当前可添加记录',
+      hasRecordInCurrentCycle: false
     };
   }
 };
 
 export const formatRemainingTime = (ms: number): string => {
   if (ms <= 0) return '可添加';
-  
+
   const days = Math.floor(ms / (1000 * 60 * 60 * 24));
   const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
   const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
-  
+
   if (days > 0) {
     return `${days}天${hours}小时`;
   }
@@ -204,7 +222,7 @@ export interface RaidRefreshInfo {
 
 export const getRaidRefreshInfo = (raid: Raid, now: Date = new Date()): RaidRefreshInfo => {
   const isTenPerson = raid.playerCount === 10;
-  
+
   let nextRefresh: Date;
   let scheduleStr: string;
 
@@ -216,7 +234,7 @@ export const getRaidRefreshInfo = (raid: Raid, now: Date = new Date()): RaidRefr
     nextRefresh = getNextMonday7AM(now);
     scheduleStr = '每周一 7:00';
   }
-  
+
   return {
     nextRefreshTime: nextRefresh,
     formattedTime: '', // 这一项似乎没用到，或者在外层格式化
@@ -228,12 +246,12 @@ export const getRaidRefreshInfo = (raid: Raid, now: Date = new Date()): RaidRefr
 
 export const formatCountdown = (ms: number): string => {
   if (ms <= 0) return '已刷新';
-  
+
   const days = Math.floor(ms / (1000 * 60 * 60 * 24));
   const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
   const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((ms % (1000 * 60)) / 1000);
-  
+
   const p = (n: number) => n.toString().padStart(2, '0');
 
   if (days > 0) {

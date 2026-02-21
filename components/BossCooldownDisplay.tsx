@@ -24,17 +24,15 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
           <button
             key={boss.bossId}
             onClick={() => onBossClick?.(boss.bossId, boss.bossName)}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-all ${
-              boss.hasRecord
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-all ${boss.hasRecord
                 ? 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
                 : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 hover:bg-emerald-100'
-            } ${onBossClick ? 'cursor-pointer' : 'cursor-default'}`}
+              } ${onBossClick ? 'cursor-pointer' : 'cursor-default'}`}
             title={boss.hasRecord ? `${boss.bossName} - 已完成` : `${boss.bossName} - 可打`}
           >
             <span
-              className={`w-2 h-2 rounded-full ${
-                boss.hasRecord ? 'bg-gray-400' : 'bg-emerald-500 animate-pulse'
-              }`}
+              className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-emerald-500 animate-pulse'
+                }`}
             />
             <span>{boss.bossName}</span>
           </button>
@@ -56,34 +54,31 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
           <button
             key={boss.bossId}
             onClick={() => onBossClick?.(boss.bossId, boss.bossName)}
-            className={`relative p-2 rounded-lg border transition-all text-center ${
-              boss.hasRecord
+            className={`relative p-2 rounded-lg border transition-all text-center ${boss.hasRecord
                 ? 'bg-gray-50 border-gray-200 dark:bg-gray-800/50 dark:border-gray-700'
                 : 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800 hover:border-emerald-300 hover:shadow-sm'
-            } ${onBossClick ? 'cursor-pointer' : 'cursor-default'}`}
-            title={boss.hasRecord 
-              ? `${boss.bossName} - 已完成 (${boss.lastRecordDate ? new Date(boss.lastRecordDate).toLocaleDateString('zh-CN') : ''})` 
+              } ${onBossClick ? 'cursor-pointer' : 'cursor-default'}`}
+            title={boss.hasRecord
+              ? `${boss.bossName} - 已完成 (${boss.lastRecordDate ? new Date(boss.lastRecordDate).toLocaleDateString('zh-CN') : ''})`
               : `${boss.bossName} - 可打`
             }
           >
             <div className="flex flex-col items-center gap-1">
               <div
-                className={`w-3 h-3 rounded-full flex items-center justify-center ${
-                  boss.hasRecord
+                className={`w-3 h-3 rounded-full flex items-center justify-center ${boss.hasRecord
                     ? 'bg-gray-400'
                     : 'bg-emerald-500 animate-pulse'
-                }`}
+                  }`}
               >
                 {boss.hasRecord && (
                   <Check className="w-2 h-2 text-white" />
                 )}
               </div>
               <span
-                className={`text-xs font-medium truncate max-w-full ${
-                  boss.hasRecord
+                className={`text-xs font-medium truncate max-w-full ${boss.hasRecord
                     ? 'text-gray-500 dark:text-gray-400'
                     : 'text-emerald-600 dark:text-emerald-400'
-                }`}
+                  }`}
               >
                 {boss.bossName}
               </span>
@@ -106,10 +101,12 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
 
 interface BossCooldownSummaryProps {
   bossCooldowns: BossCooldownInfo[];
+  transparent?: boolean;
 }
 
 export const BossCooldownSummary: React.FC<BossCooldownSummaryProps> = ({
-  bossCooldowns
+  bossCooldowns,
+  transparent = false
 }) => {
   if (!bossCooldowns || bossCooldowns.length === 0) {
     return null;
@@ -120,18 +117,19 @@ export const BossCooldownSummary: React.FC<BossCooldownSummaryProps> = ({
   const allComplete = completedCount === totalCount;
 
   return (
-    <div className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs ${
-      allComplete
-        ? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
-        : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
-    }`}>
+    <div className={`flex items-center gap-2 text-xs ${transparent
+        ? 'bg-transparent text-main'
+        : `px-2 py-1 rounded-lg ${allComplete
+          ? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+          : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
+        }`
+      }`}>
       <div className="flex items-center gap-1">
         {bossCooldowns.map((boss) => (
           <span
             key={boss.bossId}
-            className={`w-2 h-2 rounded-full ${
-              boss.hasRecord ? 'bg-gray-400' : 'bg-emerald-500'
-            }`}
+            className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-emerald-500'
+              }`}
             title={boss.bossName}
           />
         ))}

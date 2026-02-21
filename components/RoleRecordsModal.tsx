@@ -1,8 +1,10 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, ArrowDownToLine, ArrowUpFromLine, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
 import { getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
+import { calculateBossCooldowns } from '../utils/bossCooldownManager';
+import { BossCooldownSummary } from './BossCooldownDisplay';
 
 interface RoleWithStatus {
   id: string;
@@ -60,7 +62,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     const weekStartTime = weekInfo.start.getTime();
     const weekEndTime = weekInfo.end.getTime();
 
-    const difficultyText = raid.difficulty === 'HEROIC' ? '英雄' : raid.difficulty === 'CHALLENGE' ? '挑战' : '普通';
+    const difficultyText = raid.difficulty;
 
     return safeRecords
       .filter(r => {
@@ -76,10 +78,37 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [records, role.id, raid, weekInfo]);
 
-  const totalIncome = roleRecords.reduce((sum, r) => sum + (r.goldIncome || 0), 0);
-  const totalExpense = roleRecords.reduce((sum, r) => sum + (r.goldExpense || 0), 0);
+  const totalIncome = roleRecords.reduce((sum, r) => sum + (Number(r.goldIncome) || 0), 0);
+  const totalExpense = roleRecords.reduce((sum, r) => sum + (Number(r.goldExpense) || 0), 0);
   const xuanjingCount = roleRecords.filter(r => r.hasXuanjing).length;
   const totalNet = totalIncome - totalExpense;
+
+  const bossCooldowns = useMemo(() => {
+    return calculateBossCooldowns(raid, roleRecords.flatMap(r => {
+      // 支持多选BOSS：为每个bossId创建一个记录
+      if (r.bossIds && r.bossIds.length > 0) {
+        return r.bossIds.map(bossId => ({
+          id: r.id,
+          raidRecordId: r.id,
+          bossId: bossId,
+          bossName: r.bossNames?.[r.bossIds?.indexOf(bossId) || 0] || '',
+          date: r.date,
+          roleId: r.roleId,
+          accountId: r.accountId
+        }));
+      }
+      // 向后兼容单选BOSS
+      return [{
+        id: r.id,
+        raidRecordId: r.id,
+        bossId: r.bossId || '',
+        bossName: r.bossName || '',
+        date: r.date,
+        roleId: r.roleId,
+        accountId: r.accountId
+      }];
+    }), role.id);
+  }, [raid, roleRecords, role.id]);
 
   const canDeleteRecord = useCallback((record: RaidRecord): boolean => {
     if (isAdmin) return true;
@@ -145,28 +174,20 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     onClose();
   }, [deletingRecordId, onClose]);
 
-  const cleanRoleName = (name: string) => {
-    const parts = name.trim().split(/\s+/);
-    if (parts.length > 1 && parts[0] === parts[1]) {
-      return parts[0];
-    }
-    return name;
-  };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
       <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
-        <div className="px-5 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
-              {cleanRoleName(role.name).charAt(0)}
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-main">{cleanRoleName(role.name)}</h2>
-              <p className="text-muted text-xs mt-0.5">{role.region} {role.server}</p>
-            </div>
+        <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-main">副本记录详情</h2>
+            <p className="text-muted text-xs mt-0.5">
+              <span className="font-medium text-main">{role.name}@{role.server}</span>
+              <span className="mx-1.5 text-muted/40">·</span>
+              {isTenPerson ? '10人' : '25人'}{raid.difficulty}{raid.name}
+            </p>
           </div>
           <button
             onClick={handleClose}
@@ -178,46 +199,37 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
         </div>
 
         <div className="bg-base px-5 py-3 border-b border-base flex-shrink-0">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-4">
-              <div className="text-center">
-                <div className="text-xl font-bold text-main">{roleRecords.length}/{maxRecords}</div>
-                <div className="text-xs text-muted">记录</div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-1.5" title="总收入">
+                <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-500 flex-shrink-0" />
+                <span className="text-[1rem] font-bold text-emerald-600 dark:text-emerald-500">{formatGoldAmount(totalIncome || 0)}</span>
               </div>
-              <div className="h-8 w-px bg-base" />
-              <div className="text-center">
-                <div className="text-xl font-bold text-emerald-600">{formatGoldAmount(totalIncome)}</div>
-                <div className="text-xs text-muted">收入</div>
+              <div className="flex items-center gap-1.5" title="总支出">
+                <TrendingDown className="w-4 h-4 text-amber-600 dark:text-amber-500 flex-shrink-0" />
+                <span className="text-[1rem] font-bold text-amber-600 dark:text-amber-500">{formatGoldAmount(totalExpense || 0)}</span>
               </div>
-              {totalExpense > 0 && (
-                <>
-                  <div className="h-8 w-px bg-base" />
-                  <div className="text-center">
-                    <div className="text-xl font-bold text-amber-600">{formatGoldAmount(totalExpense)}</div>
-                    <div className="text-xs text-muted">支出</div>
-                  </div>
-                </>
-              )}
-              <div className="h-8 w-px bg-base" />
-              <div className="text-center">
-                <div className={`text-xl font-bold ${totalNet >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{formatGoldAmount(totalNet)}</div>
-                <div className="text-xs text-muted">净收入</div>
+              <div className="flex items-center gap-1.5" title="净收入">
+                <Wallet className="w-4 h-4 text-muted flex-shrink-0" />
+                <span className={`text-[1rem] font-bold ${totalNet >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-amber-600 dark:text-amber-500'}`}>{formatGoldAmount(totalNet || 0)}</span>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {isTenPerson ? (
-                <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-medium">10人</span>
-              ) : (
-                <span className="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-medium">25人</span>
-              )}
-              {role.sect && role.sect !== '未知' && (
-                <span className="text-xs bg-surface text-muted border border-base px-2.5 py-1 rounded-full font-medium">{role.sect}</span>
-              )}
               {xuanjingCount > 0 && (
-                <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-medium flex items-center gap-1">
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md font-medium flex items-center gap-1 shadow-sm">
                   <Sparkles className="w-3 h-3" />
                   {xuanjingCount}
                 </span>
+              )}
+            </div>
+
+            <div className="flex flex-col flex-shrink-0">
+              {bossCooldowns && bossCooldowns.length > 0 ? (
+                <div className="flex items-center justify-center p-1">
+                  <BossCooldownSummary bossCooldowns={bossCooldowns} transparent />
+                </div>
+              ) : (
+                <div className="flex items-center justify-center bg-surface border border-base px-3 py-1.5 rounded-md shadow-sm">
+                  <span className="text-sm font-bold text-main">{roleRecords.length} <span className="text-muted text-xs font-normal mx-0.5">/</span> {maxRecords}</span>
+                </div>
               )}
             </div>
           </div>
@@ -229,12 +241,11 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
               <div className="w-16 h-16 bg-base rounded-full flex items-center justify-center mb-4">
                 <Search className="w-8 h-8 text-muted/50" />
               </div>
-              <p className="text-base font-medium mb-2">暂无记录</p>
-              <p className="text-sm">本周 {isTenPerson ? '最多2条' : '仅1条'} 记录</p>
+              <p className="text-[1rem] font-medium mb-2">暂无记录</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {roleRecords.map((record, index) => (
+              {roleRecords.map((record) => (
                 <div
                   key={record.id}
                   className={`p-4 rounded-xl border-2 transition-all duration-200 hover:shadow-md ${deletingRecordId === record.id ? 'opacity-50' : ''
@@ -242,100 +253,83 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-xs bg-base text-muted px-2 py-0.5 rounded font-bold">
-                          #{index + 1}
-                        </span>
-                        <span className="font-semibold text-main">{record.raidName}</span>
-                        {record.hasXuanjing && (
-                          <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Sparkles className="w-3.5 h-3.5" />
-                            玄晶
-                          </span>
-                        )}
-                        {record.hasMaJu && (
-                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Anchor className="w-3.5 h-3.5" />
-                            马具
-                          </span>
-                        )}
-                        {record.hasPet && (
-                          <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Ghost className="w-3.5 h-3.5" />
-                            宠物
-                          </span>
-                        )}
-                        {record.hasPendant && (
-                          <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Package className="w-3.5 h-3.5" />
-                            挂件
-                          </span>
-                        )}
-                        {record.hasMount && (
-                          <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Flag className="w-3.5 h-3.5" />
-                            坐骑
-                          </span>
-                        )}
-                        {record.hasAppearance && (
-                          <span className="px-2 py-0.5 bg-pink-100 text-pink-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Shirt className="w-3.5 h-3.5" />
-                            外观
-                          </span>
-                        )}
-                        {record.hasTitle && (
-                          <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded font-medium flex items-center gap-1">
-                            <Crown className="w-3.5 h-3.5" />
-                            称号
-                          </span>
-                        )}
-                      </div>
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
 
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-xs text-muted">
-                          <Calendar className="w-4 h-4 flex-shrink-0" />
+                        <div className="flex items-center gap-1.5 text-xs text-muted">
+                          <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
                           <span className="font-medium">{formatDate(record.date)}</span>
                         </div>
 
-                        <div className="flex items-center gap-3 flex-wrap">
-                          {record.goldIncome > 0 && (
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-                              <ArrowDownToLine className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                              <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">{formatGoldAmount(record.goldIncome)}金</span>
-                            </div>
-                          )}
-                          {record.goldExpense && record.goldExpense > 0 && (
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-                              <ArrowUpFromLine className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                              <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">{formatGoldAmount(record.goldExpense)}金</span>
-                            </div>
-                          )}
-                        </div>
+                        {record.goldIncome > 0 && (
+                          <div className="flex items-center gap-1" title="收入">
+                            <TrendingUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-500 flex-shrink-0" />
+                            <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-500">{formatGoldAmount(record.goldIncome)}</span>
+                          </div>
+                        )}
+                        {record.goldExpense && record.goldExpense > 0 ? (
+                          <div className="flex items-center gap-1" title="支出">
+                            <TrendingDown className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 flex-shrink-0" />
+                            <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{formatGoldAmount(record.goldExpense)}</span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle) && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {record.hasXuanjing && (
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Sparkles className="w-3 h-3" />玄晶
+                              </span>
+                            )}
+                            {record.hasMaJu && (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Anchor className="w-3 h-3" />马具
+                              </span>
+                            )}
+                            {record.hasPet && (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Ghost className="w-3 h-3" />宠物
+                              </span>
+                            )}
+                            {record.hasPendant && (
+                              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Package className="w-3 h-3" />挂件
+                              </span>
+                            )}
+                            {record.hasMount && (
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Flag className="w-3 h-3" />坐骑
+                              </span>
+                            )}
+                            {record.hasAppearance && (
+                              <span className="px-2 py-0.5 bg-pink-100 text-pink-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Shirt className="w-3 h-3" />外观
+                              </span>
+                            )}
+                            {record.hasTitle && (
+                              <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded font-medium flex items-center gap-1">
+                                <Crown className="w-3 h-3" />称号
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {record.notes && (
-                          <div className="flex items-start gap-2 text-xs text-muted">
-                            <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                            <p className="flex-1 break-words">{record.notes}</p>
+                          <div className="flex items-start gap-1.5 text-xs text-muted bg-base/50 p-2 rounded-lg">
+                            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-muted/70" />
+                            <p className="flex-1 break-words leading-relaxed">{record.notes}</p>
                           </div>
                         )}
                       </div>
                     </div>
 
-                    <div className="flex flex-col items-center gap-2 flex-shrink-0">
-                      <div className="flex items-center gap-1 px-3 py-2 bg-base rounded-xl">
-                        <Wallet className="w-4 h-4 text-muted flex-shrink-0" />
-                        <span className={`text-base font-bold font-mono ${(record.goldIncome || 0) - (record.goldExpense || 0) >= 0 ? 'text-emerald-600' : 'text-amber-600'
-                          }`}>
-                          {(record.goldIncome || 0) - (record.goldExpense || 0) >= 0 ? '+' : ''}
-                          {formatGoldAmount((record.goldIncome || 0) - (record.goldExpense || 0))}金
-                        </span>
-                      </div>
-
+                    <div className="flex flex-row items-center gap-1.5 flex-shrink-0">
                       {setRecords && (
                         <>
                           <button
                             onClick={() => onEditRecord?.(record)}
-                            className="p-2 rounded-xl text-muted hover:text-primary hover:bg-base active:scale-95 transition-all duration-200"
+                            className="p-1.5 rounded-lg text-muted hover:text-primary hover:bg-base active:scale-95 transition-all duration-200"
                             title="修改记录"
                           >
                             <Pencil className="w-4 h-4" />
@@ -343,7 +337,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           <button
                             onClick={() => handleDeleteClick(record)}
                             disabled={deletingRecordId === record.id}
-                            className={`p-2 rounded-xl transition-all duration-200 ${canDeleteRecord(record)
+                            className={`p-1.5 rounded-lg transition-all duration-200 ${canDeleteRecord(record)
                               ? 'text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95'
                               : 'text-muted/50 cursor-not-allowed'
                               }`}
@@ -379,7 +373,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       </div>
 
       {showConfirmDialog && recordToDelete && (
-        <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50 animate-in">
+        <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-[110] animate-in fade-in duration-200">
           <div className="bg-surface p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 animate-in">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center flex-shrink-0">

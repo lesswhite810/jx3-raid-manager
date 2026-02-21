@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, Raid, RaidRecord, BossCooldownInfo } from '../types';
-import { Shield, Sword, Calendar, TrendingUp, TrendingDown, Wallet, RefreshCw, Clock, Copy, Check } from 'lucide-react';
+import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
-import { BossCooldownDisplay } from './BossCooldownDisplay';
+import { BossCooldownSummary } from './BossCooldownDisplay';
 import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
 import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
-import { STATIC_RAIDS } from '../data/staticRaids';
+
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 
@@ -208,7 +208,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
     const thisWeekRecords = safeRecords.filter(r => {
       const matchesName = r.raidName.includes(raid.name);
-      const difficultyText = raid.difficulty === 'HEROIC' ? '英雄' : raid.difficulty === 'CHALLENGE' ? '挑战' : '普通';
+      const difficultyText = raid.difficulty;
       const matchesDifficulty = r.raidName.includes(difficultyText);
       const matchesPlayerCount = r.raidName.includes(`${raid.playerCount}人`);
 
@@ -217,7 +217,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         new Date(r.date).getTime() <= periodEndTime;
     });
 
-    const shouldShowClientRoles = shouldShowClientRoleInRaid(raid.playerCount, raid.version || '', STATIC_RAIDS);
+    const shouldShowClientRoles = shouldShowClientRoleInRaid(raid.playerCount, raid.version || '');
 
     thisWeekRecords.forEach(record => {
       if (processedRoleIds.has(record.roleId)) return;
@@ -229,6 +229,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       let accountName = record.accountId || '未知账号';
       let password: string | undefined;
       let isClientAccount = false;
+      let equipmentScore: number | undefined = undefined;
 
       safeAccounts.forEach(account => {
         if (account.id === record.accountId) {
@@ -241,6 +242,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             sect = role.sect || '';
             region = role.region || '';
             server = role.server;
+            equipmentScore = role.equipmentScore;
           }
         }
       });
@@ -279,10 +281,11 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         server: server,
         region: region || '未知',
         sect: sect || '未知',
+        equipmentScore,
         accountId: record.accountId,
         accountName,
         password,
-        canRun: false,
+        canRun: !cooldownInfo.hasRecordInCurrentCycle,
         canAddMore: cooldownInfo.canAdd,
         recordCount,
         maxRecords,
@@ -348,8 +351,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           accountId: account.id,
           accountName: account.accountName,
           password: account.password,
-          canRun: true,
-          canAddMore: true,
+          canRun: !cooldownInfo.hasRecordInCurrentCycle,
+          canAddMore: cooldownInfo.canAdd,
           recordCount: 0,
           maxRecords,
           cooldownInfo,
@@ -407,226 +410,216 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-surface rounded-xl shadow-sm border border-base p-6 relative z-10">
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {/* Header + Card Grid */}
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <button
               onClick={onBack}
-              className="px-4 py-2 bg-base text-main rounded-lg hover:bg-base/80 transition-colors flex items-center gap-2 text-sm font-medium"
+              className="text-sm text-muted hover:text-main transition-colors"
             >
-              <Sword className="w-4 h-4" />
-              返回
+              ← 返回
             </button>
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-bold text-main">{raid.name}</h2>
-              <RaidRefreshCountdown raid={raid} />
-              <span className="px-2.5 py-1 bg-base text-muted rounded-lg text-sm font-medium">
-                {raid.playerCount}人 • {raid.difficulty === 'HEROIC' ? '英雄' : raid.difficulty === 'CHALLENGE' ? '挑战' : '普通'}
-              </span>
-            </div>
+            <span className="text-muted/40">|</span>
+            <h2 className="text-lg font-bold text-main flex items-center gap-2">
+              <Shield className="w-5 h-5 text-primary" />
+              {raid.playerCount}人{raid.difficulty}{raid.name}
+            </h2>
+            <RaidRefreshCountdown raid={raid} />
           </div>
 
-          <div className="flex items-center gap-6">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-emerald-600">{availableCount}</div>
-              <div className="text-xs text-muted">可打</div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className="font-bold text-emerald-600">{availableCount}</span>
+              <span className="text-muted text-xs">可打</span>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-amber-600">{unavailableCount}</div>
-              <div className="text-xs text-muted">已打</div>
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className="font-bold text-amber-600">{unavailableCount}</span>
+              <span className="text-muted text-xs">已打</span>
             </div>
           </div>
         </div>
 
 
+        {/* Role Cards */}
+        {sortedRoles.length === 0 ? (
+          <div className="text-center py-8 text-muted bg-surface rounded-xl border border-base border-dashed">
+            没有找到符合条件的角色，请先在账号管理中添加并启用角色
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sortedRoles.map((role) => {
+              const isAtLimit = !role.cooldownInfo.canAdd;
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedRoles.map((role) => {
-            const isAtLimit = !role.cooldownInfo.canAdd;
-
-            return (
-              <div
-                key={role.id}
-                className={`p-4 rounded-xl border-2 transition-all duration-300 ${role.canRun
-                  ? isAtLimit
-                    ? 'bg-gradient-to-br from-base to-base border-base hover:shadow-md'
-                    : 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300'
-                  : 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-800 hover:shadow-lg hover:border-amber-300'
-                  }`}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {isAtLimit ? (
-                      <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
-                        <RefreshCw className="w-4 h-4 text-muted" />
-                      </div>
-                    ) : role.canRun ? (
-                      <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                      </div>
-                    ) : (
-                      <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                        <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
-                        <span className="truncate">{cleanRoleName(role.name)}@{role.server}</span>
-                        {role.sect && role.sect !== '未知' && (
-                          <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${isAtLimit
-                            ? 'bg-base text-muted'
-                            : role.canRun
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                            }`}>{role.sect}</span>
-                        )}
-                        {role.equipmentScore !== undefined && role.equipmentScore !== null && (
-                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
-                            {role.equipmentScore.toLocaleString()}
-                          </span>
-                        )}
+              return (
+                <div
+                  key={role.id}
+                  className={`p-4 rounded-xl border-2 transition-all duration-300 ${role.canRun
+                    ? isAtLimit
+                      ? 'bg-gradient-to-br from-base to-base border-base hover:shadow-md'
+                      : 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300'
+                    : 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-800 hover:shadow-lg hover:border-amber-300'
+                    }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {isAtLimit ? (
+                        <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
+                          <RefreshCw className="w-4 h-4 text-muted" />
+                        </div>
+                      ) : role.canRun ? (
+                        <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+                          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                        </div>
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                          <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
+                          <span className="truncate">{cleanRoleName(role.name)}@{role.server}</span>
+                          {role.sect && role.sect !== '未知' && (
+                            <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${isAtLimit
+                              ? 'bg-base text-muted'
+                              : role.canRun
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                              }`}>{role.sect}</span>
+                          )}
+                          {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
+                              {role.equipmentScore.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="space-y-2 text-sm">
+                  <div className="space-y-2 text-sm">
 
 
-                  {role.lastRunDate ? (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 text-muted">
-                        <Clock className={`w-4 h-4 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-500' : 'text-amber-500'}`} />
-                        <span className="text-xs">{formatDate(role.lastRunDate)}</span>
+                    <div className="flex items-center justify-between min-h-[24px]">
+                      <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                        {role.lastRunDate ? (
+                          <>
+                            <div className="flex items-center gap-1.5 text-muted overflow-hidden">
+                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-500' : 'text-amber-500'}`} />
+                              <span className="text-[11px] whitespace-nowrap">{formatDate(role.lastRunDate)}</span>
+                            </div>
+                            {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
+                              <div className="flex items-center gap-1 text-emerald-600 ml-1">
+                                <TrendingUp className="w-3 h-3 flex-shrink-0" />
+                                <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunIncome)}金</span>
+                              </div>
+                            )}
+                            {role.lastRunExpense !== undefined && role.lastRunExpense > 0 && (
+                              <div className="flex items-center gap-1 text-amber-600 ml-1">
+                                <TrendingDown className="w-3 h-3 flex-shrink-0" />
+                                <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunExpense)}金</span>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-muted">
+                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-400' : 'text-amber-400'}`} />
+                            <span className="text-[11px] whitespace-nowrap">暂无记录</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 ml-6">
-                        {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
-                          <div className="flex items-center gap-1 text-emerald-600">
-                            <TrendingUp className="w-3 h-3" />
-                            <span className="text-xs font-medium">{formatGoldAmount(role.lastRunIncome)}金</span>
-                          </div>
-                        )}
-                        {role.lastRunExpense !== undefined && role.lastRunExpense > 0 && (
-                          <div className="flex items-center gap-1 text-amber-600">
-                            <TrendingDown className="w-3 h-3" />
-                            <span className="text-xs font-medium">{formatGoldAmount(role.lastRunExpense)}金</span>
-                          </div>
-                        )}
-                        {role.lastRunGold !== undefined && (
-                          <div className="flex items-center gap-1 text-main">
-                            <Wallet className="w-3 h-3" />
-                            <span className="text-xs font-medium">{formatGoldAmount(role.lastRunGold)}金</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-muted">
-                      <Calendar className={`w-4 h-4 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-400' : 'text-amber-400'}`} />
-                      <span className="text-xs">暂无记录</span>
-                    </div>
-                  )}
 
-                  {role.bossCooldowns && role.bossCooldowns.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-base/50">
-                      <BossCooldownDisplay
-                        bossCooldowns={role.bossCooldowns}
-                        compact={true}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-3 pt-3 border-t border-base space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-muted flex-shrink-0">账号</div>
-                    <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                      <span className="text-xs text-main truncate flex-1">{role.accountName}</span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copyToClipboard(role.accountName, `account-${role.id}`);
-                        }}
-                        className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `account-${role.id}`
-                          ? 'text-emerald-600'
-                          : 'text-muted hover:text-main hover:bg-surface'
-                          }`}
-                        title={copiedField === `account-${role.id}` ? '已复制!' : '复制账号'}
-                      >
-                        {copiedField === `account-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      </button>
+                      {role.bossCooldowns && role.bossCooldowns.length > 0 && (
+                        <div className="flex-shrink-0 ml-2">
+                          <BossCooldownSummary bossCooldowns={role.bossCooldowns} />
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-muted flex-shrink-0">密码</div>
-                    {role.password ? (
+                  <div className="mt-3 pt-3 border-t border-base space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-muted flex-shrink-0">账号</div>
                       <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                        <span className="text-xs text-main font-mono truncate flex-1">
-                          {getMaskedPassword(role.password)}
-                        </span>
+                        <span className="text-xs text-main truncate flex-1">{role.accountName}</span>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            copyToClipboard(role.password!, `password-${role.id}`);
+                            copyToClipboard(role.accountName, `account-${role.id}`);
                           }}
-                          className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
+                          className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `account-${role.id}`
                             ? 'text-emerald-600'
                             : 'text-muted hover:text-main hover:bg-surface'
                             }`}
-                          title="复制密码"
+                          title={copiedField === `account-${role.id}` ? '已复制!' : '复制账号'}
                         >
-                          {copiedField === `password-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          {copiedField === `account-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                         </button>
                       </div>
-                    ) : (
-                      <div className="flex-1 min-w-0 bg-base rounded px-2 py-1">
-                        <span className="text-xs text-muted truncate flex-1">该账户未配置密码</span>
-                      </div>
-                    )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-muted flex-shrink-0">密码</div>
+                      {role.password ? (
+                        <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
+                          <span className="text-xs text-main font-mono truncate flex-1">
+                            {getMaskedPassword(role.password)}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyToClipboard(role.password!, `password-${role.id}`);
+                            }}
+                            className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
+                              ? 'text-emerald-600'
+                              : 'text-muted hover:text-main hover:bg-surface'
+                              }`}
+                            title="复制密码"
+                          >
+                            {copiedField === `password-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex-1 min-w-0 bg-base rounded px-2 py-1">
+                          <span className="text-xs text-muted truncate flex-1">该账户未配置密码</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAddRecordClick(role);
+                      }}
+                      disabled={!role.canAddMore}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${role.canAddMore
+                        ? role.canRun
+                          ? 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5'
+                          : 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5'
+                        : 'bg-base text-muted cursor-not-allowed border border-base'
+                        }`}
+                    >
+                      添加记录
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewRecordsClick(role);
+                      }}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${role.canRun
+                        ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300'
+                        : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300'
+                        }`}
+                    >
+                      查看详情
+                    </button>
                   </div>
                 </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAddRecordClick(role);
-                    }}
-                    disabled={!role.canAddMore}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${role.canAddMore
-                      ? role.canRun
-                        ? 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5'
-                        : 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5'
-                      : 'bg-base text-muted cursor-not-allowed border border-base'
-                      }`}
-                  >
-                    添加记录
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleViewRecordsClick(role);
-                    }}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${role.canRun
-                      ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300'
-                      : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300'
-                      }`}
-                  >
-                    查看详情
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {sortedRoles.length === 0 && (
-          <div className="text-center py-12 text-muted">
-            <Shield className="w-16 h-16 mx-auto mb-4 text-muted/50" />
-            <p className="text-lg">没有找到符合条件的角色</p>
-            <p className="text-sm mt-2">请尝试切换排序方式</p>
+              );
+            })}
           </div>
         )}
       </div>
@@ -665,3 +658,4 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     </div>
   );
 };
+

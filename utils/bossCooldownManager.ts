@@ -1,21 +1,19 @@
 import { Raid, BossCooldownInfo, BossRecord } from '../types';
-import { getRaidBossConfig } from '../data/raidBosses';
-import { getLastMonday7AM, getNextMonday7AM, getTenPersonCycle } from './cooldownManager';
+import { getTenPersonCycle, getLastMonday7AM, getNextMonday7AM } from './cooldownManager';
 
 export const calculateBossCooldowns = (
   raid: Raid,
   bossRecords: BossRecord[],
-  roleId: string
+  roleId: string,
+  now: Date = new Date()
 ): BossCooldownInfo[] => {
-  const config = getRaidBossConfig(raid.name, raid.difficulty, raid.playerCount);
-  
-  if (!config || !config.hasBossTracking) {
+  const bosses = raid.bosses;
+
+  if (!bosses || bosses.length === 0) {
     return [];
   }
 
-  const now = new Date();
   const isTenPerson = raid.playerCount === 10;
-
   let windowStart: Date;
   let windowEnd: Date;
 
@@ -28,19 +26,19 @@ export const calculateBossCooldowns = (
     windowEnd = getNextMonday7AM(now);
   }
 
-  const roleBossRecords = bossRecords.filter(
-    record => record.roleId === roleId
-  );
+  const roleBossRecords = bossRecords.filter(record => {
+    if (record.roleId !== roleId) return false;
+    const rDate = new Date(record.date);
+    return rDate >= windowStart && rDate < windowEnd;
+  });
 
-  return config.bosses.map(boss => {
+  return bosses.map(boss => {
     const recordsInWindow = roleBossRecords.filter(record => {
       // 支持单选和多选BOSS
       if (record.bossId === boss.id) return true;
       // 检查 bossIds 数组中是否包含该 boss
       if (record.bossIds && record.bossIds.includes(boss.id)) return true;
       return false;
-      const recordDate = new Date(record.date);
-      return recordDate >= windowStart && recordDate < windowEnd;
     });
 
     const hasRecord = recordsInWindow.length > 0;
@@ -80,8 +78,8 @@ export const canAddRecordForBoss = (
 ): boolean => {
   if (!bossId) return true;
 
-  const config = getRaidBossConfig(raid.name, raid.difficulty, raid.playerCount);
-  if (!config || !config.hasBossTracking) return true;
+  const bosses = raid.bosses;
+  if (!bosses || bosses.length === 0) return true;
 
   const cooldowns = calculateBossCooldowns(raid, bossRecords, roleId);
   const bossCooldown = cooldowns.find(bc => bc.bossId === bossId);
@@ -94,14 +92,14 @@ export const getAvailableBosses = (
   bossRecords: BossRecord[],
   roleId: string
 ): { id: string; name: string }[] => {
-  const config = getRaidBossConfig(raid.name, raid.difficulty, raid.playerCount);
-  
-  if (!config || !config.hasBossTracking) {
+  const bosses = raid.bosses;
+
+  if (!bosses || bosses.length === 0) {
     return [];
   }
 
   const cooldowns = calculateBossCooldowns(raid, bossRecords, roleId);
-  
+
   return cooldowns
     .filter(bc => bc.canAddRecord)
     .map(bc => ({ id: bc.bossId, name: bc.bossName }));

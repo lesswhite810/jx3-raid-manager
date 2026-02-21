@@ -2,12 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Account, TrialPlaceRecord } from '../types';
-import { Package, Check, X, AlertCircle, Calendar, Layers, Trophy, Save, HelpCircle } from 'lucide-react';
+import { Package, Check, X, AlertCircle, Layers, Trophy, Save, HelpCircle } from 'lucide-react';
 import { DualRangeSlider } from './DualRangeSlider';
 import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
 import { getEquip, JX3Equip } from '../services/jx3BoxApi';
 import { db } from '../services/db';
+import { DateTimePicker } from './DateTimePicker';
 
 interface RoleWithStatus {
     id: string;
@@ -537,35 +538,34 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             <div className="p-2 bg-amber-500/10 rounded-lg">
                                 <Trophy className="w-5 h-5 text-amber-500" />
                             </div>
-                            <h2 className="text-lg font-bold text-main">记录试炼</h2>
+                            <div>
+                                <h2 className="text-lg font-bold text-main">记录试炼</h2>
+                                {initialRole && (
+                                    <p className="text-xs text-muted mt-0.5">
+                                        <span className="font-medium text-main">{initialRole.name}@{initialRole.server}</span>
+                                    </p>
+                                )}
+                            </div>
                         </div>
 
                         {/* Role Selector in Header */}
-                        <div className="h-6 w-px bg-base mx-2"></div>
-                        <div className="flex items-center gap-3">
-                            {initialRole ? (
-                                <div className="flex items-center gap-2 px-3 py-1.5 bg-base rounded-full border border-base/60 pr-4">
-                                    <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
-                                        {initialRole.name.charAt(0)}
-                                    </div>
-                                    <div className="flex flex-col leading-none">
-                                        <span className="font-bold text-main text-xs">{initialRole.name}</span>
-                                        <span className="text-[10px] text-muted">{initialRole.server}</span>
-                                    </div>
+                        {!initialRole && (
+                            <>
+                                <div className="h-6 w-px bg-base mx-2"></div>
+                                <div className="flex items-center gap-3">
+                                    <select
+                                        className="pl-2 pr-8 py-1.5 rounded-lg bg-base border border-base text-sm focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer hover:bg-base/80"
+                                        value={selectedRoleId}
+                                        onChange={e => setSelectedRoleId(e.target.value)}
+                                    >
+                                        <option value="">选择挑战角色...</option>
+                                        {allRoles.map(r => (
+                                            <option key={r.id} value={r.id}>{r.name} @ {r.server}</option>
+                                        ))}
+                                    </select>
                                 </div>
-                            ) : (
-                                <select
-                                    className="pl-2 pr-8 py-1.5 rounded-lg bg-base border border-base text-sm focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer hover:bg-base/80"
-                                    value={selectedRoleId}
-                                    onChange={e => setSelectedRoleId(e.target.value)}
-                                >
-                                    <option value="">选择挑战角色...</option>
-                                    {allRoles.map(r => (
-                                        <option key={r.id} value={r.id}>{r.name} @ {r.server}</option>
-                                    ))}
-                                </select>
-                            )}
-                        </div>
+                            </>
+                        )}
                     </div>
 
                     <button
@@ -644,12 +644,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                         <div className="w-48">
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">记录日期</label>
                             <div className="relative">
-                                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted" />
-                                <input
-                                    type="datetime-local"
+                                <DateTimePicker
                                     value={recordDate}
-                                    onChange={e => setRecordDate(e.target.value)}
-                                    className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface border border-base text-xs font-medium text-main focus:ring-2 focus:ring-primary/20 outline-none"
+                                    onChange={setRecordDate}
                                 />
                             </div>
                         </div>
@@ -695,7 +692,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             `}
                                         >
                                             {/* Card Number Watermark */}
-                                            <div className="absolute -bottom-4 -right-2 text-[60px] font-black text-base/40 pointer-events-none select-none z-0">
+                                            <div className="absolute -bottom-4 -right-2 text-[60px] font-black text-muted/40 pointer-events-none select-none z-0">
                                                 {idx}
                                             </div>
 
@@ -805,7 +802,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                         <div className="flex-shrink-0 bg-base/50 backdrop-blur-md border-b border-base z-10">
                             {/* Title & Close */}
                             <div className="flex items-center justify-between px-4 py-3 border-b border-base/50">
-                                <h3 className="text-base font-bold text-main flex items-center gap-2">
+                                <h3 className="text-[1rem] font-bold text-main flex items-center gap-2">
                                     <Package className="w-4 h-4 text-primary" />
                                     选择装备 <span className="text-xs font-normal text-muted bg-surface px-2 py-0.5 rounded-full border border-base">#{selectedCard}</span>
                                 </h3>

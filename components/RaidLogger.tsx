@@ -80,9 +80,9 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
     }
 
     // 2. 按难度排序（挑战 → 英雄 → 普通）
-    const difficultyOrder = { 'CHALLENGE': 0, 'HEROIC': 1, 'NORMAL': 2 };
-    if (difficultyOrder[a.difficulty] !== difficultyOrder[b.difficulty]) {
-      return difficultyOrder[a.difficulty] - difficultyOrder[b.difficulty];
+    const difficultyOrder: Record<string, number> = { '挑战': 0, '英雄': 1, '普通': 2 };
+    if ((difficultyOrder[a.difficulty] ?? 9) !== (difficultyOrder[b.difficulty] ?? 9)) {
+      return (difficultyOrder[a.difficulty] ?? 9) - (difficultyOrder[b.difficulty] ?? 9);
     }
 
     // 3. 按资料片排序（保持现有逻辑）
@@ -189,12 +189,9 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
     };
   };
 
-  // 构建副本名称
+  // 构建副本名称（difficulty 已是中文，直接拼接）
   const constructRaidName = (raid: Raid): string => {
-    const difficultyLabel = raid.difficulty === 'NORMAL' ? '普通' :
-      raid.difficulty === 'HEROIC' ? '英雄' :
-        '挑战'; // 只有普通、英雄、挑战三种难度
-    return `${raid.playerCount}人${difficultyLabel}${raid.name}`;
+    return `${raid.playerCount}人${raid.difficulty}${raid.name}`;
   };
 
   const handleAddRecord = (e: React.FormEvent) => {
@@ -404,11 +401,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
                 onChange={e => setSelectedRaidKey(e.target.value)}
               >
                 {activeRaids.map(r => {
-                  // 所有副本使用统一的命名格式
-                  const difficultyLabel = r.difficulty === 'NORMAL' ? '普通' :
-                    r.difficulty === 'HEROIC' ? '英雄' :
-                      '挑战'; // 只有普通、英雄、挑战三种难度
-                  const displayText = `${r.playerCount}人${difficultyLabel}${r.name}`;
+                  const displayText = `${r.playerCount}人${r.difficulty}${r.name}`;
                   const raidKey = getRaidKey(r);
                   return (
                     <option key={raidKey} value={raidKey}>{displayText}</option>

@@ -92,12 +92,13 @@ export interface DashboardStats {
 
 export interface Raid {
   name: string;
-  difficulty: 'NORMAL' | 'HEROIC' | 'CHALLENGE';
+  difficulty: '普通' | '英雄' | '挑战';
   playerCount: 10 | 25;
   version?: string;
   notes?: string;
   isActive: boolean;
   static?: boolean;
+  bosses?: Boss[]; // BOSS 列表，有值时启用 BOSS CD 追踪
 }
 
 // BOSS CD 追踪相关类型
@@ -109,7 +110,7 @@ export interface Boss {
 
 export interface RaidBossConfig {
   raidName: string;
-  difficulty: 'NORMAL' | 'HEROIC' | 'CHALLENGE';
+  difficulty: '普通' | '英雄' | '挑战';
   playerCount: 10 | 25;
   version: string;
   bosses: Boss[];
@@ -181,21 +182,8 @@ export interface BaizhanRecord {
   roleName: string;
   server: string;
   date: string;
-  difficulty: 3 | 6 | 10; // 3人/6人/10人
-  bossId: string;
-  bossName: string;
-  skillColor: string; // 百战技能颜色
-  skillLevel: number; // 精耐等级
-  rewards?: string[]; // 奖励列表
+  goldIncome: number;   // 收入（金）
+  goldExpense?: number; // 支出（金）
   notes?: string;
   type: 'baizhan';
-}
-
-// 百战BOSS信息
-export interface BaizhanBoss {
-  id: string;
-  name: string;
-  tier: number; // 阶数 (1-10)
-  recommendedSkillLevel: number; // 推荐精耐等级
-  difficulty: 3 | 6 | 10; // 可挑战难度
 }

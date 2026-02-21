@@ -1,35 +1,8 @@
 import { Raid } from '../types';
-import { STATIC_RAIDS, StaticRaid } from '../data/staticRaids';
 
+// ID 格式：{playerCount}人{difficulty}{name}，例如 "25人普通弓月城"
 export const getRaidKey = (raid: Raid): string => {
-  return `${raid.name}-${raid.playerCount}-${raid.difficulty}`;
-};
-
-export const convertStaticRaidToRaid = (staticRaid: StaticRaid): Raid => {
-  const description = staticRaid.description || '';
-  let difficulty: 'NORMAL' | 'HEROIC' | 'CHALLENGE' = 'NORMAL';
-  let playerCount: 10 | 25 = 25;
-
-  if (description.includes('英雄')) {
-    difficulty = 'HEROIC';
-  } else if (description.includes('挑战')) {
-    difficulty = 'CHALLENGE';
-  }
-
-  if (description.includes('10人')) {
-    playerCount = 10;
-  } else if (description.includes('25人')) {
-    playerCount = 25;
-  }
-
-  return {
-    name: staticRaid.name,
-    difficulty,
-    playerCount,
-    version: staticRaid.version,
-    notes: staticRaid.description,
-    isActive: staticRaid.isActive ?? true
-  };
+  return `${raid.playerCount}人${raid.difficulty}${raid.name}`;
 };
 
 export const getRaidCacheKey = (): string => {
@@ -66,51 +39,12 @@ export const clearRaidCache = (): void => {
   }
 };
 
-export const mergeRaids = (cachedRaids: Raid[]): Raid[] => {
-  const staticRaids = STATIC_RAIDS.map(convertStaticRaidToRaid);
-  
-  const raidMap = new Map<string, Raid>();
-  
-  // 首先处理静态副本，添加标记
-  staticRaids.forEach(raid => {
-    const key = getRaidKey(raid);
-    raid.static = true;
-    raidMap.set(key, raid);
-  });
-  
-  // 合并缓存的副本数据，保留用户的自定义状态
-  cachedRaids.forEach(raid => {
-    const key = getRaidKey(raid);
-    const existingRaid = raidMap.get(key);
-    
-    if (existingRaid) {
-      // 如果缓存的副本与静态副本同名（相同 key），保留用户的 isActive 状态
-      // 同时保留其他可能的自定义属性
-      raidMap.set(key, {
-        ...existingRaid,
-        isActive: raid.isActive,
-        notes: raid.notes || existingRaid.notes,
-        static: true // 保持静态标记
-      });
-    } else {
-      // 新的自定义副本
-      raidMap.set(key, raid);
-    }
-  });
-  
-  return Array.from(raidMap.values());
-};
-
-export const getStaticRaids = (): Raid[] => {
-  return STATIC_RAIDS.map(convertStaticRaidToRaid);
-};
-
-export const findRaidByKey = (raids: Raid[], name: string, playerCount: 10 | 25, difficulty: 'NORMAL' | 'HEROIC' | 'CHALLENGE'): Raid | undefined => {
-  const key = `${name}-${playerCount}-${difficulty}`;
+export const findRaidByKey = (raids: Raid[], name: string, playerCount: 10 | 25, difficulty: '普通' | '英雄' | '挑战'): Raid | undefined => {
+  const key = `${playerCount}人${difficulty}${name}`;
   return raids.find(raid => getRaidKey(raid) === key);
 };
 
-export const isDuplicateRaid = (raids: Raid[], name: string, playerCount: 10 | 25, difficulty: 'NORMAL' | 'HEROIC' | 'CHALLENGE'): boolean => {
-  const key = `${name}-${playerCount}-${difficulty}`;
+export const isDuplicateRaid = (raids: Raid[], name: string, playerCount: 10 | 25, difficulty: '普通' | '英雄' | '挑战'): boolean => {
+  const key = `${playerCount}人${difficulty}${name}`;
   return raids.some(raid => getRaidKey(raid) === key);
 };

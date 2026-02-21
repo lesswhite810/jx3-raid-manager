@@ -18,9 +18,10 @@ export const AddRaidModal: React.FC<AddRaidModalProps> = ({
 }) => {
     const [newRaid, setNewRaid] = useState<Partial<Raid>>({
         name: '',
-        difficulty: 'NORMAL',
+        difficulty: '普通',
         playerCount: 25,
         isActive: true,
+        version: '',
         notes: ''
     });
     const [error, setError] = useState<string | null>(null);
@@ -29,9 +30,10 @@ export const AddRaidModal: React.FC<AddRaidModalProps> = ({
         if (isOpen) {
             setNewRaid({
                 name: '',
-                difficulty: 'NORMAL',
+                difficulty: '普通',
                 playerCount: 25,
                 isActive: true,
+                version: '',
                 notes: ''
             });
             setError(null);
@@ -55,8 +57,7 @@ export const AddRaidModal: React.FC<AddRaidModalProps> = ({
             existingRaids,
             newRaid.name.trim(),
             newRaid.playerCount || 25,
-            newRaid.difficulty || 'NORMAL'
-        );
+            newRaid.difficulty || '普通');
 
         if (isDuplicate) {
             setError('该副本已存在（相同名称、人数和难度）');
@@ -65,8 +66,9 @@ export const AddRaidModal: React.FC<AddRaidModalProps> = ({
 
         const raid: Raid = {
             name: newRaid.name.trim(),
-            difficulty: newRaid.difficulty || 'NORMAL',
+            difficulty: newRaid.difficulty || '普通',
             playerCount: newRaid.playerCount || 25,
+            version: newRaid.version?.trim() || '其他',
             notes: newRaid.notes,
             isActive: newRaid.isActive ?? true
         };
@@ -138,9 +140,9 @@ export const AddRaidModal: React.FC<AddRaidModalProps> = ({
                                         value={newRaid.difficulty}
                                         onChange={e => setNewRaid({ ...newRaid, difficulty: e.target.value as any })}
                                     >
-                                        <option value="NORMAL">普通</option>
-                                        <option value="HEROIC">英雄</option>
-                                        <option value="CHALLENGE">挑战</option>
+                                        <option value="普通">普通</option>
+                                        <option value="英雄">英雄</option>
+                                        <option value="挑战">挑战</option>
                                     </select>
                                 </div>
                             </div>
@@ -159,6 +161,22 @@ export const AddRaidModal: React.FC<AddRaidModalProps> = ({
                                         <option value={25}>25人</option>
                                     </select>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-medium text-main ml-1">
+                                所属资料片版本
+                            </label>
+                            <div className="relative group">
+                                <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
+                                <input
+                                    type="text"
+                                    value={newRaid.version || ''}
+                                    onChange={e => setNewRaid({ ...newRaid, version: e.target.value })}
+                                    className="w-full pl-10 pr-4 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all placeholder:text-muted text-main"
+                                    placeholder="例如：丝路风雨（留空为 其他）"
+                                />
                             </div>
                         </div>
 

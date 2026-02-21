@@ -1,4 +1,3 @@
-import { StaticRaid } from '../data/staticRaids';
 
 export const GAME_VERSIONS = [
   '丝路风雨',   // 最新版本 130级
@@ -39,14 +38,13 @@ export interface RaidCheckResult {
 }
 
 export function checkRaidForClientRoles(
-  _raidName: string, 
-  playerCount: number, 
-  version: string, 
-  _staticRaids: StaticRaid[]
+  _raidName: string,
+  playerCount: number,
+  version: string
 ): RaidCheckResult {
   const isLatest = isLatestVersion(version);
   const is25Raid = playerCount === 25;
-  
+
   return {
     isLatestVersion25Raid: isLatest && is25Raid,
     shouldShowClientRoles: isLatest && is25Raid
@@ -56,24 +54,22 @@ export function checkRaidForClientRoles(
 export function isClientRoleVisible(
   accountType: 'OWN' | 'CLIENT' | undefined,
   playerCount: number,
-  version: string,
-  _staticRaids: StaticRaid[]
+  version: string
 ): boolean {
   if (accountType !== 'CLIENT') {
     return true;
   }
-  
-  return checkRaidForClientRoles('', playerCount, version, []).shouldShowClientRoles;
+
+  return checkRaidForClientRoles('', playerCount, version).shouldShowClientRoles;
 }
 
 export function shouldShowClientRoleInRaid(
   playerCount: number,
-  version: string,
-  _staticRaids: StaticRaid[]
+  version: string
 ): boolean {
   const isLatest = isLatestVersion(version);
   const is25Raid = playerCount === 25;
-  
+
   return isLatest && is25Raid;
 }
 
@@ -81,15 +77,14 @@ export function filterRolesForRaid<T extends { id: string; name: string }>(
   roles: T[],
   playerCount: number,
   version: string,
-  staticRaids: StaticRaid[],
   getAccountType: (role: T) => 'OWN' | 'CLIENT' | undefined
 ): T[] {
-  const shouldShowClient = shouldShowClientRoleInRaid(playerCount, version, staticRaids);
-  
+  const shouldShowClient = shouldShowClientRoleInRaid(playerCount, version);
+
   if (shouldShowClient) {
     return roles;
   }
-  
+
   return roles.filter(role => getAccountType(role) !== 'CLIENT');
 }
 

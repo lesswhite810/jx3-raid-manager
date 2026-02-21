@@ -170,7 +170,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                             <div className="w-16 h-16 bg-base rounded-full flex items-center justify-center mb-4">
                                 <Search className="w-8 h-8 text-muted/50" />
                             </div>
-                            <p className="text-base font-medium mb-2">暂无记录</p>
+                            <p className="text-[1rem] font-medium mb-2">暂无记录</p>
                         </div>
                     ) : (
                         <div className="space-y-3">

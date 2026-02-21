@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, Result};
 use std::path::PathBuf;
-
 mod migration;
+pub mod migrations;
 
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
@@ -86,6 +86,20 @@ pub fn init_db() -> Result<Connection, String> {
             notes TEXT,
             updated_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS baizhan_records (
+            id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            role_name TEXT,
+            server TEXT,
+            date TEXT NOT NULL,
+            gold_income INTEGER DEFAULT 0,
+            gold_expense INTEGER DEFAULT 0,
+            notes TEXT,
+            record_type TEXT DEFAULT 'baizhan',
+            updated_at TEXT
+        );
     "#,
     )
     .map_err(|e| e.to_string())?;
@@ -93,6 +107,9 @@ pub fn init_db() -> Result<Connection, String> {
     // Initialize schema versions table and apply migrations
     migration::init_schema_versions(&conn).map_err(|e| e.to_string())?;
     migration::apply_migrations(&conn).map_err(|e| e.to_string())?;
+
+    // 初始化预制副本数据
+    migration::init_static_raids(&conn).map_err(|e| e.to_string())?;
 
     Ok(conn)
 }
@@ -336,6 +353,140 @@ pub fn db_delete_trial_record(id: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM trial_records WHERE id = ?", params![id])
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ========== 百战记录 CRUD ==========
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct BaizhanRecord {
+    pub id: String,
+    #[serde(rename = "accountId")]
+    pub account_id: String,
+    #[serde(rename = "roleId")]
+    pub role_id: String,
+    #[serde(rename = "roleName")]
+    pub role_name: Option<String>,
+    pub server: Option<String>,
+    pub date: String,
+    #[serde(rename = "goldIncome")]
+    pub gold_income: i64,
+    #[serde(rename = "goldExpense", default)]
+    pub gold_expense: Option<i64>,
+    pub notes: Option<String>,
+    #[serde(rename = "type", default = "default_baizhan_type")]
+    pub record_type: String,
+}
+
+fn default_baizhan_type() -> String {
+    "baizhan".to_string()
+}
+
+#[tauri::command]
+pub fn db_add_baizhan_record(record: String) -> Result<(), String> {
+    let item: BaizhanRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO baizhan_records (
+            id, account_id, role_id, role_name, server,
+            date, gold_income, gold_expense, notes, record_type, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            item.id,
+            item.account_id,
+            item.role_id,
+            item.role_name,
+            item.server,
+            item.date,
+            item.gold_income,
+            item.gold_expense.unwrap_or(0),
+            item.notes,
+            item.record_type,
+            timestamp
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_baizhan_records() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, account_id, role_id, role_name, server,
+                    date, gold_income, gold_expense, notes, record_type
+             FROM baizhan_records
+             ORDER BY date DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(BaizhanRecord {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                role_id: row.get(2)?,
+                role_name: row.get(3)?,
+                server: row.get(4)?,
+                date: row.get(5)?,
+                gold_income: row.get(6)?,
+                gold_expense: row.get(7)?,
+                notes: row.get(8)?,
+                record_type: row.get::<_, Option<String>>(9)?.unwrap_or_else(|| "baizhan".to_string()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        if let Ok(item) = row {
+            result.push(item);
+        }
+    }
+
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_delete_baizhan_record(id: String) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM baizhan_records WHERE id = ?", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_update_baizhan_record(record: String) -> Result<(), String> {
+    let item: BaizhanRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "UPDATE baizhan_records SET
+            account_id = ?, role_id = ?, role_name = ?, server = ?,
+            date = ?, gold_income = ?, gold_expense = ?, notes = ?,
+            record_type = ?, updated_at = ?
+         WHERE id = ?",
+        params![
+            item.account_id,
+            item.role_id,
+            item.role_name,
+            item.server,
+            item.date,
+            item.gold_income,
+            item.gold_expense.unwrap_or(0),
+            item.notes,
+            item.record_type,
+            timestamp,
+            item.id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -738,17 +889,79 @@ pub fn db_save_records(records: String) -> Result<(), String> {
 #[tauri::command]
 pub fn db_get_raids() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 从 raids 读取结构化数据
     let mut stmt = conn
-        .prepare("SELECT data FROM raids")
+        .prepare("SELECT id, name, difficulty, player_count, version, notes, is_active, is_static FROM raids")
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-    let mut raids = Vec::new();
+
+    let mut raids: Vec<serde_json::Value> = Vec::new();
+    let mut raid_ids: Vec<String> = Vec::new();
+
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        if let Ok(data) = row.get(0) {
-            raids.push(data);
+        let id: String = row.get(0).map_err(|e| e.to_string())?;
+        let name: String = row.get(1).map_err(|e| e.to_string())?;
+        let difficulty: String = row.get(2).map_err(|e| e.to_string())?;
+        let player_count: i64 = row.get(3).map_err(|e| e.to_string())?;
+        let version: Option<String> = row.get(4).map_err(|e| e.to_string())?;
+        let notes: Option<String> = row.get(5).map_err(|e| e.to_string())?;
+        let is_active: i64 = row.get(6).map_err(|e| e.to_string())?;
+        let is_static: i64 = row.get(7).map_err(|e| e.to_string())?;
+
+        let mut raid = serde_json::json!({
+            "name": name,
+            "difficulty": difficulty,
+            "playerCount": player_count,
+            "isActive": is_active == 1,
+            "static": is_static == 1
+        });
+
+        if let Some(v) = &version {
+            if !v.is_empty() {
+                raid["version"] = serde_json::json!(v);
+            }
+        }
+        if let Some(n) = &notes {
+            if !n.is_empty() {
+                raid["notes"] = serde_json::json!(n);
+            }
+        }
+
+        raids.push(raid);
+        raid_ids.push(id);
+    }
+    drop(rows);
+    drop(stmt);
+
+    // 为每个副本加载 BOSS 列表（按副本名称关联）
+    for (i, _raid_id) in raid_ids.iter().enumerate() {
+        let raid_name = raids[i]["name"].as_str().unwrap_or_default().to_string();
+        let mut boss_stmt = conn
+            .prepare("SELECT id, name, boss_order FROM raid_bosses WHERE raid_name = ? ORDER BY boss_order")
+            .map_err(|e| e.to_string())?;
+        let mut boss_rows = boss_stmt.query(params![raid_name]).map_err(|e| e.to_string())?;
+        let mut bosses: Vec<serde_json::Value> = Vec::new();
+
+        while let Some(boss_row) = boss_rows.next().map_err(|e| e.to_string())? {
+            let boss_id: String = boss_row.get(0).map_err(|e| e.to_string())?;
+            let boss_name: String = boss_row.get(1).map_err(|e| e.to_string())?;
+            let boss_order: i64 = boss_row.get(2).map_err(|e| e.to_string())?;
+            bosses.push(serde_json::json!({
+                "id": boss_id,
+                "name": boss_name,
+                "order": boss_order
+            }));
+        }
+
+        if !bosses.is_empty() {
+            raids[i]["bosses"] = serde_json::json!(bosses);
         }
     }
-    Ok(raids)
+
+    // 序列化为 JSON 字符串数组（兼容前端解析方式）
+    let result: Vec<String> = raids.iter().map(|r| r.to_string()).collect();
+    Ok(result)
 }
 
 #[tauri::command]
@@ -759,23 +972,42 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // 全量同步：先清空表，再插入
+    tx.execute("DELETE FROM raid_bosses", [])
+        .map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM raids", [])
         .map_err(|e| e.to_string())?;
 
-    for raid in parsed {
-        // Find existing id logic used name, keeping consistent even if potentially risky if no unique id
-        // The original code used raid["name"] as id.
-        // Create a unique composite ID to avoid UNIQUE constraint violations
+    let mut boss_saved_names = std::collections::HashSet::new();
+    for raid in &parsed {
         let name = raid["name"].as_str().unwrap_or_default();
-        let player_count = raid["playerCount"].as_i64().unwrap_or(0);
-        let difficulty = raid["difficulty"].as_str().unwrap_or("NORMAL");
-        let id = format!("{}-{}-{}", name, player_count, difficulty);
+        let difficulty = raid["difficulty"].as_str().unwrap_or("普通");
+        let player_count = raid["playerCount"].as_i64().unwrap_or(25);
+        let version = raid["version"].as_str().unwrap_or_default();
+        let notes = raid["notes"].as_str().unwrap_or_default();
+        let is_active = if raid["isActive"].as_bool().unwrap_or(true) { 1 } else { 0 };
+        let is_static = if raid["static"].as_bool().unwrap_or(false) { 1 } else { 0 };
+        let id = format!("{}人{}{}", player_count, difficulty, name);
 
         tx.execute(
-            "INSERT INTO raids (id, data) VALUES (?, ?)",
-            params![id, raid.to_string()],
-        )
-        .map_err(|e| e.to_string())?;
+            "INSERT OR REPLACE INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![id, name, difficulty, player_count, version, notes, is_active, is_static],
+        ).map_err(|e| e.to_string())?;
+
+        // 插入 raid_bosses（按副本名称去重，只写一次）
+        if !boss_saved_names.contains(name) {
+            if let Some(bosses) = raid["bosses"].as_array() {
+                for boss in bosses {
+                    let boss_id = boss["id"].as_str().unwrap_or_default();
+                    let boss_name = boss["name"].as_str().unwrap_or_default();
+                    let boss_order = boss["order"].as_i64().unwrap_or(0);
+                    tx.execute(
+                        "INSERT OR REPLACE INTO raid_bosses (id, raid_name, name, boss_order) VALUES (?, ?, ?, ?)",
+                        params![boss_id, name, boss_name, boss_order],
+                    ).map_err(|e| e.to_string())?;
+                }
+                boss_saved_names.insert(name.to_string());
+            }
+        }
     }
 
     tx.commit().map_err(|e| e.to_string())?;

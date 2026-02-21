@@ -15,8 +15,11 @@
     "@google/genai": "^1.34.0",
     "@jx3box/jx3-luadata": "^0.0.5",
     "@tauri-apps/plugin-log": "^2.7.1",
+    "@types/react-datepicker": "^6.2.0",
+    "date-fns": "^4.1.0",
     "lucide-react": "^0.562.0",
     "react": "^18.2.0",
+    "react-datepicker": "^9.1.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.12.0"
   },

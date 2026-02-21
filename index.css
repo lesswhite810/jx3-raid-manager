@@ -97,3 +97,50 @@ input::-ms-reveal,
 input::-ms-clear {
     display: none;
 }
+
+/* React Datepicker Custom Styles Override */
+.react-datepicker-wrapper {
+    width: 100%;
+}
+
+.custom-datepicker-popper {
+    z-index: 50;
+}
+
+.react-datepicker {
+    @apply bg-surface border-base text-main font-sans shadow-lg rounded-xl !important;
+}
+
+.react-datepicker__header {
+    @apply bg-surface border-b border-base rounded-t-xl pt-3 !important;
+}
+
+.react-datepicker__current-month,
+.react-datepicker-time__header,
+.react-datepicker-year-header {
+    @apply text-main font-semibold !important;
+}
+
+.react-datepicker__day-name,
+.react-datepicker__day,
+.react-datepicker__time-name {
+    @apply text-muted hover:bg-base hover:text-main rounded-lg transition-colors !important;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected,
+.react-datepicker__time-list-item--selected {
+    @apply bg-primary text-white hover:bg-primary-hover hover:text-white !important;
+}
+
+.react-datepicker__time-container {
+    @apply border-l border-base bg-surface !important;
+}
+
+.react-datepicker__time-list-item {
+    @apply text-muted hover:bg-base transition-colors rounded-lg mx-1 !important;
+}
+
+.react-datepicker__triangle {
+    display: none !important;
+}

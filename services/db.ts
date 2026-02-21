@@ -441,6 +441,18 @@ class DatabaseService {
       throw error;
     }
   }
+
+  async updateBaizhanRecord(record: any): Promise<void> {
+    await this.init();
+    try {
+      // 先删除旧记录，再添加更新后的记录（复用现有 Tauri 命令）
+      await invoke('db_delete_baizhan_record', { id: record.id });
+      await invoke('db_add_baizhan_record', { record: JSON.stringify(record) });
+    } catch (error) {
+      console.error('Failed to update baizhan record:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();

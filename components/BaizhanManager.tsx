@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { BaizhanRecord, Account } from '../types';
-import { Swords, Check, Copy, Target } from 'lucide-react';
+import { Swords, Check, Copy } from 'lucide-react';
 import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
 import { getLastMonday7AM } from '../utils/cooldownManager';
@@ -40,9 +40,9 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
 
     // Statistics per role
     const roleStats = useMemo(() => {
-        const stats = new Map<string, { weeklyCount: number, highestTier: number, lastRunDate?: string }>();
+        const stats = new Map<string, { weeklyCount: number, weeklyIncome: number, lastRunDate?: string }>();
 
-        // 副本 CD 每周一 07:00 刷新，复用 cooldownManager 的统一函数
+        // 副本 CD 每周一 07:00 刷新
         const now = new Date();
         const startOfWeek = getLastMonday7AM(now);
 
@@ -50,21 +50,16 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
             const roleRecords = records.filter(r => r.roleId === role.id);
             const thisWeekRecords = roleRecords.filter(r => new Date(r.date) >= startOfWeek);
 
-            // Calculate highest tier based on boss tier
-            const { getBossById } = require('../data/baizhanBosses');
-            const tiers = roleRecords.map(r => {
-                const boss = getBossById(r.bossId);
-                return boss?.tier || 0;
-            });
-            const highestTier = tiers.length > 0 ? Math.max(...tiers) : 0;
+            // 本周收入合计
+            const weeklyIncome = thisWeekRecords.reduce((sum, r) => sum + (r.goldIncome || 0), 0);
 
-            // Find last run date
+            // 最后运行日期
             const lastRunRecord = [...roleRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
             const lastRunDate = lastRunRecord ? lastRunRecord.date : undefined;
 
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
-                highestTier,
+                weeklyIncome,
                 lastRunDate
             });
         });
@@ -74,8 +69,8 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     const sortedRoles = useMemo(() => {
         const sorted = [...allRoles];
         sorted.sort((a, b) => {
-            const statsA = roleStats.get(a.id) || { weeklyCount: 0, highestTier: 0, lastRunDate: undefined };
-            const statsB = roleStats.get(b.id) || { weeklyCount: 0, highestTier: 0, lastRunDate: undefined };
+            const statsA = roleStats.get(a.id) || { weeklyCount: 0, weeklyIncome: 0, lastRunDate: undefined };
+            const statsB = roleStats.get(b.id) || { weeklyCount: 0, weeklyIncome: 0, lastRunDate: undefined };
 
             // 1. Availability - haven't run this week first
             const aCanRun = statsA.weeklyCount === 0 ? 0 : 1;
@@ -146,27 +141,27 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {sortedRoles.map(role => {
-                            const stats = roleStats.get(role.id) || { weeklyCount: 0, highestTier: 0, lastRunDate: undefined };
+                            const stats = roleStats.get(role.id) || { weeklyCount: 0, weeklyIncome: 0, lastRunDate: undefined };
                             const canRun = stats.weeklyCount === 0;
 
                             return (
                                 <div
                                     key={role.id}
                                     className={`p-4 rounded-xl border-2 transition-all duration-300 ${canRun
-                                        ? 'bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/10 dark:to-pink-900/10 border-purple-200 dark:border-purple-800 hover:shadow-lg hover:border-purple-300'
-                                        : 'bg-gradient-to-br from-base to-base border-base hover:shadow-md'
+                                        ? 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300'
+                                        : 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-800 hover:shadow-lg hover:border-amber-300'
                                         }`}
                                 >
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2 flex-1 min-w-0">
                                             {/* Status Icon */}
                                             {canRun ? (
-                                                <div className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center flex-shrink-0">
-                                                    <div className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse" />
+                                                <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                                                 </div>
                                             ) : (
-                                                <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
-                                                    <Check className="w-4 h-4 text-muted" />
+                                                <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                                                 </div>
                                             )}
 
@@ -175,8 +170,8 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                     <span className="truncate" title={`${role.name}@${role.server}`}>{role.name}@{role.server}</span>
                                                     {role.sect && (
                                                         <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${canRun
-                                                            ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                                                            : 'bg-base text-muted'
+                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
                                                             }`}>
                                                             {role.sect}
                                                         </span>
@@ -191,18 +186,12 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center justify-between text-sm mb-3">
-                                        <div className="flex items-center gap-2">
-                                            <Target className={`w-3.5 h-3.5 flex-shrink-0 ${stats.highestTier > 0 ? 'text-amber-500' : 'text-muted'}`} />
-                                            <span className="text-xs text-muted">
-                                                最高阶数: <span className="font-medium text-main">{stats.highestTier > 0 ? `${stats.highestTier}阶` : '-'}</span>
-                                            </span>
-                                        </div>
-
+                                    <div className="flex justify-end text-sm mb-3">
                                         <div className="flex items-baseline gap-1">
-                                            <span className="text-xs text-muted">本周进度:</span>
-                                            <span className={`font-bold ${stats.weeklyCount > 0 ? 'text-green-500' : 'text-main'}`}>
-                                                {stats.weeklyCount}<span className="text-xs text-muted font-normal">次</span>
+                                            <span className="text-xs text-muted">本周收入:</span>
+                                            <span className={`font-bold font-mono ${stats.weeklyIncome > 0 ? 'text-emerald-600' : 'text-main'}`}>
+                                                {stats.weeklyIncome > 0 ? `+${stats.weeklyIncome.toLocaleString()}` : '-'}
+                                                {stats.weeklyIncome > 0 && <span className="text-xs text-muted font-normal">金</span>}
                                             </span>
                                         </div>
                                     </div>
@@ -219,7 +208,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                         copyToClipboard(role.accountName, `baizhan-account-${role.id}`);
                                                     }}
                                                     className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `baizhan-account-${role.id}`
-                                                        ? 'text-purple-600'
+                                                        ? 'text-emerald-600'
                                                         : 'text-muted hover:text-main hover:bg-surface'
                                                         }`}
                                                     title={copiedField === `baizhan-account-${role.id}` ? '已复制!' : '复制账号'}
@@ -242,7 +231,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                             copyToClipboard((role as any).password, `baizhan-password-${role.id}`);
                                                         }}
                                                         className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `baizhan-password-${role.id}`
-                                                            ? 'text-purple-600'
+                                                            ? 'text-emerald-600'
                                                             : 'text-muted hover:text-main hover:bg-surface'
                                                             }`}
                                                         title="复制密码"
@@ -263,8 +252,8 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                         <button
                                             onClick={() => handleOpenAddModal(role)}
                                             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${canRun
-                                                ? 'bg-purple-500 text-white hover:bg-purple-600 hover:shadow-md transform hover:-translate-y-0.5'
-                                                : 'bg-base text-muted hover:bg-base/80 hover:text-main'
+                                                ? 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5'
+                                                : 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5'
                                                 }`}
                                         >
                                             添加记录
@@ -272,7 +261,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                         <button
                                             onClick={() => handleOpenRecordsModal(role)}
                                             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${canRun
-                                                ? 'bg-white text-purple-700 border border-purple-200 hover:bg-purple-50 hover:border-purple-300'
+                                                ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300'
                                                 : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300'
                                                 }`}
                                         >
@@ -294,15 +283,17 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                 initialRole={selectedRole}
             />
 
-            {viewRecordsRole && (
-                <BaizhanRoleRecordsModal
-                    isOpen={!!viewRecordsRole}
-                    onClose={() => setViewRecordsRole(null)}
-                    role={viewRecordsRole}
-                    records={records}
-                    onDeleteRecord={onDeleteRecord}
-                />
-            )}
-        </div>
+            {
+                viewRecordsRole && (
+                    <BaizhanRoleRecordsModal
+                        isOpen={!!viewRecordsRole}
+                        onClose={() => setViewRecordsRole(null)}
+                        role={viewRecordsRole}
+                        records={records}
+                        onDeleteRecord={onDeleteRecord}
+                    />
+                )
+            }
+        </div >
     );
 };

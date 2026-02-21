@@ -168,7 +168,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
             <div className="flex items-center gap-6">
               <div className="text-right">
                 <p className="text-muted text-xs">金币收益</p>
-                <p className="text-2xl font-bold text-amber-500 mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-emerald-600 mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
               </div>
               {luckyRole.xuanjingCount > 0 && (
                 <div className="text-right">
@@ -201,7 +201,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
             </div>
             <div className="text-right">
               <p className="text-muted text-xs">总支出</p>
-              <p className="text-2xl font-bold text-red-500 mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-amber-600 mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
