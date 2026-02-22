@@ -21,6 +21,16 @@ interface TrialRoleRecordsModalProps {
     onDeleteRecord?: (recordId: string) => void;
 }
 
+const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+};
+
 // 格式化属性的辅助函数
 const getFormattedAttributes = (item: JX3Equip) => {
     const attrs: { label: string; color?: string }[] = [];
@@ -100,7 +110,6 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [records, role.id]);
 
-    const maxLayer = roleRecords.length > 0 ? Math.max(...roleRecords.map(r => r.layer)) : 0;
 
     const handleDeleteClick = (record: TrialPlaceRecord) => {
         setRecordToDelete(record);
@@ -127,41 +136,29 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     return createPortal(
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
             <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-                {/* Header */}
-                <div className="px-5 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
-                            {role.name.charAt(0)}
-                        </div>
-                        <div>
-                            <h2 className="text-lg font-bold text-main">{role.name}</h2>
-                            <p className="text-muted text-xs mt-0.5">@{role.server} {role.sect ? `· ${role.sect}` : ''}</p>
-                        </div>
+                {/* Header - 对齐团本风格 */}
+                <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
+                    <div>
+                        <h2 className="text-lg font-bold text-main">试炼之地记录</h2>
+                        <p className="text-muted text-xs mt-0.5">
+                            <span className="font-medium text-main">{role.name}@{role.server}</span>
+                            {role.sect && (
+                                <>
+                                    <span className="mx-1.5 text-muted/40">·</span>
+                                    {role.sect}
+                                </>
+                            )}
+                        </p>
                     </div>
                     <button
                         onClick={onClose}
                         className="text-muted hover:text-main transition-colors p-2 rounded-lg hover:bg-base/50 active:scale-95"
+                        aria-label="关闭"
                     >
                         <X className="w-5 h-5" />
                     </button>
                 </div>
 
-                {/* Stats Summary */}
-                <div className="bg-base px-5 py-3 border-b border-base flex-shrink-0">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-6">
-                            <div className="text-center">
-                                <div className="text-xl font-bold text-main">{roleRecords.length}</div>
-                                <div className="text-xs text-muted">总记录</div>
-                            </div>
-                            <div className="h-8 w-px bg-base border-r border-base/50" />
-                            <div className="text-center">
-                                <div className="text-xl font-bold text-amber-600">{maxLayer > 0 ? maxLayer : '-'}</div>
-                                <div className="text-xs text-muted">最高层数</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
                 {/* Records List */}
                 <div className="flex-1 overflow-y-auto p-4 scroll-smooth">
@@ -174,88 +171,86 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                         </div>
                     ) : (
                         <div className="space-y-3">
-                            {roleRecords.map((record, index) => (
+                            {roleRecords.map((record) => (
                                 <div
                                     key={record.id}
                                     className={`p-4 rounded-xl border-2 transition-all duration-200 bg-surface border-base hover:shadow-sm`}
                                 >
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="flex-1 min-w-0">
-                                            {/* Header Line */}
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-xs bg-base text-muted px-2 py-0.5 rounded font-bold">
-                                                    #{roleRecords.length - index}
-                                                </span>
-                                                <div className="font-bold text-main flex items-center gap-2">
-                                                    <Trophy className="w-4 h-4 text-amber-500" />
-                                                    {record.layer}层
+                                            {/* Line 1: Time, Layer, Flipped Index */}
+                                            <div className="flex items-center gap-3 mb-2 flex-wrap">
+                                                <div className="flex items-center gap-1.5 text-xs text-muted">
+                                                    <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
+                                                    <span className="font-medium">{formatDate(record.date)}</span>
                                                 </div>
-                                                <div className="text-xs text-muted flex items-center gap-1 ml-auto">
-                                                    <Calendar className="w-3.5 h-3.5" />
-                                                    {new Date(record.date).toLocaleDateString()}
+                                                <div className="flex items-center gap-1" title="层数">
+                                                    <Trophy className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 flex-shrink-0" />
+                                                    <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{record.layer} 层面</span>
+                                                </div>
+                                                <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+                                                    <span>翻牌</span>
+                                                    <span className="font-bold">{record.flippedIndex}</span>
                                                 </div>
                                             </div>
 
-                                            {/* Content */}
-                                            <div className="space-y-2 pl-1">
-                                                <div className="text-sm text-main">
-                                                    <span className="text-muted text-xs mr-2">Boss:</span>
-                                                    {record.bosses.join(', ')}
+                                            {/* Line 2: Boss */}
+                                            <div className="mb-2">
+                                                <div className="flex items-center gap-1.5 text-xs text-muted bg-base/50 p-2 rounded-lg">
+                                                    <span className="text-muted font-medium flex-shrink-0">Boss:</span>
+                                                    <span className="flex-1 break-words">{record.bosses.join(', ')}</span>
                                                 </div>
+                                            </div>
 
-                                                {/* Cards Info */}
-                                                <div className="bg-base/50 rounded-lg p-2 text-xs flex items-center gap-4 flex-wrap">
-                                                    <div>
-                                                        <span className="text-muted block mb-0.5">翻牌</span>
-                                                        <span className="font-mono font-bold text-blue-600">{record.flippedIndex}</span>
-                                                    </div>
+                                            {/* Line 3: Cards Info (Equipment) */}
+                                            <div className="text-xs">
+                                                {/* Dropped Equipment */}
+                                                {(() => {
+                                                    const equipId = (record as any)[`card${record.flippedIndex}`];
+                                                    const equip = findEquipmentById(equipId);
+                                                    if (!equip) return (
+                                                        <div className="flex items-center gap-2 text-muted px-3 py-2 bg-base/30 rounded-lg border border-base/50 italic">
+                                                            未获得有效装备/物品
+                                                        </div>
+                                                    );
 
-                                                    {/* Dropped Equipment (Only show when there's a valid equip ID) */}
-                                                    {(() => {
-                                                        const equipId = (record as any)[`card${record.flippedIndex}`];
-                                                        const equip = findEquipmentById(equipId);
-                                                        if (!equip) return null;
+                                                    const attrs = getFormattedAttributes(equip);
+                                                    const iconUrl = equip.IconID ? `https://icon.jx3box.com/icon/${equip.IconID}.png` : null;
+                                                    const bindLabel = getBindTypeLabel(equip.BindType);
 
-                                                        const attrs = getFormattedAttributes(equip);
-                                                        const iconUrl = equip.IconID ? `https://icon.jx3box.com/icon/${equip.IconID}.png` : null;
-                                                        const bindLabel = getBindTypeLabel(equip.BindType);
-
-                                                        return (
-                                                            <div className="flex-1 flex justify-end">
-                                                                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1.5 rounded border border-emerald-200 dark:border-emerald-800">
-                                                                    <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                                                                    {iconUrl && (
-                                                                        <div className="w-7 h-7 rounded border border-gray-600 bg-[#1a1a2e] overflow-hidden flex-shrink-0">
-                                                                            <img src={iconUrl} alt="" className="w-full h-full object-cover" />
-                                                                        </div>
-                                                                    )}
-                                                                    <div className="flex flex-col min-w-0">
-                                                                        <span className="font-medium text-emerald-700 dark:text-emerald-400 truncate text-sm">
-                                                                            {equip.Name}
-                                                                        </span>
-                                                                        <div className="flex items-center gap-1.5 text-xs text-muted">
-                                                                            {bindLabel && <span className="text-amber-600">{bindLabel}</span>}
-                                                                            <span>品级 {equip.Level}</span>
-                                                                        </div>
-                                                                        {attrs.length > 0 && (
-                                                                            <div className="flex flex-wrap gap-1 mt-0.5">
-                                                                                {attrs.slice(0, 4).map((a, i) => (
-                                                                                    <span
-                                                                                        key={i}
-                                                                                        className="px-1 py-0.5 rounded bg-base/80 text-[10px]"
-                                                                                        style={a.color ? { color: a.color } : undefined}
-                                                                                    >
-                                                                                        {a.label}
-                                                                                    </span>
-                                                                                ))}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
+                                                    return (
+                                                        <div className="w-full flex items-center gap-3 px-3 py-2 bg-base/50 rounded-lg border border-base/50">
+                                                            <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                                                            {iconUrl && (
+                                                                <div className="w-8 h-8 rounded border border-gray-600 bg-[#1a1a2e] overflow-hidden flex-shrink-0">
+                                                                    <img src={iconUrl} alt="" className="w-full h-full object-cover" />
                                                                 </div>
+                                                            )}
+                                                            <div className="flex flex-col min-w-0 flex-1">
+                                                                <span className="font-medium text-emerald-700 dark:text-emerald-400 truncate text-sm">
+                                                                    {equip.Name}
+                                                                </span>
+                                                                <div className="flex items-center gap-1.5 text-xs text-muted mb-0.5">
+                                                                    {bindLabel && <span className="text-amber-600">{bindLabel}</span>}
+                                                                    <span>品级 {equip.Level}</span>
+                                                                </div>
+                                                                {attrs.length > 0 && (
+                                                                    <div className="flex flex-wrap gap-1">
+                                                                        {attrs.slice(0, 4).map((a, i) => (
+                                                                            <span
+                                                                                key={i}
+                                                                                className="px-1.5 py-0.5 rounded bg-white/50 dark:bg-black/20 text-[10px] border border-black/5 dark:border-white/5"
+                                                                                style={a.color ? { color: a.color } : undefined}
+                                                                            >
+                                                                                {a.label}
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
                                                             </div>
-                                                        );
-                                                    })()}
-                                                </div>
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
 

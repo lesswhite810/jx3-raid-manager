@@ -13,6 +13,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
+import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
 import { Account, RaidRecord, Raid, Config, TrialPlaceRecord, BaizhanRecord } from './types';
 import {
   DEFAULT_CONFIG,
@@ -48,6 +49,7 @@ function App() {
   const [raids, setRaids] = useState<Raid[]>([]);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
+  const [editingBaizhanRecord, setEditingBaizhanRecord] = useState<BaizhanRecord | null>(null);
 
   useEffect(() => {
     const initApp = async () => {
@@ -301,8 +303,24 @@ function App() {
     }
   };
 
-  const handleDeleteRecord = (recordId: string) => {
-    setRecords(prev => prev.filter(r => r.id !== recordId));
+  const handleDeleteRecord = async (recordId: string, isBaizhan?: boolean, isTrial?: boolean) => {
+    if (isTrial) {
+      try {
+        await db.deleteTrialRecord(recordId);
+        setTrialRecords(prev => prev.filter(r => r.id !== recordId));
+      } catch (error) {
+        console.error('删除试炼记录失败:', error);
+      }
+    } else if (isBaizhan) {
+      try {
+        await db.deleteBaizhanRecord(recordId);
+        setBaizhanRecords(prev => prev.filter(r => r.id !== recordId));
+      } catch (error) {
+        console.error('删除百战记录失败:', error);
+      }
+    } else {
+      setRecords(prev => prev.filter(r => r.id !== recordId));
+    }
   };
 
   const handleUpdateRecord = (updatedRecord: Partial<RaidRecord>) => {
@@ -376,15 +394,18 @@ function App() {
                 <IncomeDetail
                   key={`incomeDetail-${contentKey}`}
                   records={records}
+                  baizhanRecords={baizhanRecords}
                   accounts={accounts}
                   onBack={() => setShowIncomeDetail(false)}
                   onDeleteRecord={handleDeleteRecord}
                   onEditRecord={setEditingRecord}
+                  onEditBaizhanRecord={setEditingBaizhanRecord}
                 />
               ) : showCrystalDetail ? (
                 <CrystalDetail
                   key={`crystalDetail-${contentKey}`}
                   records={records}
+                  trialRecords={trialRecords}
                   accounts={accounts}
                   onBack={() => setShowCrystalDetail(false)}
                 />
@@ -393,6 +414,8 @@ function App() {
                   key={`dashboard-${contentKey}`}
                   records={records}
                   accounts={accounts}
+                  baizhanRecords={baizhanRecords}
+                  trialRecords={trialRecords}
                   onShowIncomeDetail={() => setShowIncomeDetail(true)}
                   onShowCrystalDetail={() => setShowCrystalDetail(true)}
                 />
@@ -455,6 +478,26 @@ function App() {
             playerCount: 25,
             isActive: true
           }}
+        />
+      )}
+
+      {/* Edit Baizhan Record Modal */}
+      {editingBaizhanRecord && (
+        <AddBaizhanRecordModal
+          isOpen={true}
+          onClose={() => setEditingBaizhanRecord(null)}
+          onSubmit={(updatedRecord) => {
+            setBaizhanRecords(prev => {
+              const exists = prev.some(r => r.id === updatedRecord.id);
+              if (exists) {
+                return prev.map(r => r.id === updatedRecord.id ? updatedRecord : r);
+              }
+              return [updatedRecord, ...prev];
+            });
+            setEditingBaizhanRecord(null);
+          }}
+          accounts={accounts}
+          initialData={editingBaizhanRecord}
         />
       )}
 

@@ -124,7 +124,7 @@ export const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
 
 export const calculateCooldown = (
   raid: Raid,
-  records: { date: string }[],
+  records: { date: string; bossIds?: string[]; bossId?: string }[],
   now: Date = getServerStandardTime()
 ): CooldownInfo => {
   const isTenPerson = raid.playerCount === 10;
@@ -152,17 +152,29 @@ export const calculateCooldown = (
 
   if (recordsInWindow.length > 0) {
     // 如果该副本配置了Boss进度追踪（即存在boss记录），则不限制总记录数
-    // 如果该副本配置了Boss进度追踪，则不限制总记录数
     const trackBosses = raid.bosses && raid.bosses.length > 0;
 
     if (trackBosses) {
+      // 计算当前周期内打掉的不同 boss 数量
+      const killedBossIds = new Set<string>();
+      recordsInWindow.forEach(r => {
+        if (r.bossIds && r.bossIds.length > 0) {
+          r.bossIds.forEach(id => killedBossIds.add(id));
+        } else if (r.bossId) {
+          killedBossIds.add(r.bossId);
+        }
+      });
+
+      const totalBossesCount = raid.bosses!.length;
+      const isCleared = killedBossIds.size >= totalBossesCount;
+
       return {
         canAdd: true,
         remainingTime: 0,
         nextAvailableTime: windowEnd,
         cooldownType: isTenPerson ? 'biweekly' : 'weekly',
-        message: '可继续添加本周期的记录（按Boss分配）',
-        hasRecordInCurrentCycle: true
+        message: isCleared ? '本周期已全通（可继续分配Boss记录）' : '本周期可继续打剩余Boss',
+        hasRecordInCurrentCycle: isCleared
       };
     }
 

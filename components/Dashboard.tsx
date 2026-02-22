@@ -1,17 +1,32 @@
 import React, { useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { RaidRecord, Account, AccountType, DashboardStats } from '../types';
-import { Coins, Trophy, Shield, TrendingUp, Star, Zap, FileText, ArrowRight } from 'lucide-react';
+import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialPlaceRecord } from '../types';
+import { ArrowRight, Star, Zap } from 'lucide-react';
+import { db } from '../services/db';
 
 interface DashboardProps {
   records: RaidRecord[];
   accounts: Account[];
+  baizhanRecords: BaizhanRecord[];
+  trialRecords: TrialPlaceRecord[];
   onShowIncomeDetail: () => void;
   onShowCrystalDetail: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowIncomeDetail, onShowCrystalDetail }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhanRecords, trialRecords, onShowIncomeDetail, onShowCrystalDetail }) => {
   const [statsPeriod, setStatsPeriod] = useState<'week' | 'month'>('week');
+  const [equipments, setEquipments] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    db.getEquipments().then((data: any[]) => {
+      setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d));
+    }).catch(console.error);
+  }, []);
+
+  const findEquipmentById = React.useCallback((id: string | undefined) => {
+    if (!id || !id.trim()) return null;
+    return equipments.find(e => e.ID?.toString() === id) || null;
+  }, [equipments]);
 
   const safeRecords = Array.isArray(records) ? records : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
@@ -33,34 +48,94 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
     return safeRecords.filter(r => new Date(r.date) >= startOfPeriod);
   }, [safeRecords, statsPeriod]);
 
+  const safeBaizhanRecords = Array.isArray(baizhanRecords) ? baizhanRecords : [];
+
+  const filteredBaizhanRecords = useMemo(() => {
+    const now = new Date();
+    const startOfPeriod = new Date();
+
+    if (statsPeriod === 'week') {
+      const dayOfWeek = now.getDay();
+      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      startOfPeriod.setDate(now.getDate() - diff);
+    } else {
+      startOfPeriod.setDate(1);
+    }
+
+    startOfPeriod.setHours(0, 0, 0, 0);
+
+    return safeBaizhanRecords.filter(r => new Date(r.date) >= startOfPeriod);
+  }, [safeBaizhanRecords, statsPeriod]);
+
+  const safeTrialRecords = Array.isArray(trialRecords) ? trialRecords : [];
+
+  const filteredTrialRecords = useMemo(() => {
+    const now = new Date();
+    const startOfPeriod = new Date();
+
+    if (statsPeriod === 'week') {
+      const dayOfWeek = now.getDay();
+      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      startOfPeriod.setDate(now.getDate() - diff);
+    } else {
+      startOfPeriod.setDate(1);
+    }
+
+    startOfPeriod.setHours(0, 0, 0, 0);
+
+    return safeTrialRecords.filter(r => new Date(r.date) >= startOfPeriod);
+  }, [safeTrialRecords, statsPeriod]);
+
   const stats: DashboardStats = useMemo(() => {
-    const totalGold = filteredRecords.reduce((acc, r) => acc + r.goldIncome, 0);
+    const totalRaidGold = filteredRecords.reduce((acc, r) => acc + r.goldIncome, 0);
+    const totalBaizhanGold = filteredBaizhanRecords.reduce((acc, r) => acc + r.goldIncome, 0);
+    const totalGold = totalRaidGold + totalBaizhanGold;
+
     const xuanjingCount = filteredRecords.filter(r => r.hasXuanjing).length;
     const dropRate = filteredRecords.length > 0 ? (xuanjingCount / filteredRecords.length) * 100 : 0;
 
     const clientAccountIds = safeAccounts
       .filter(a => a.type === AccountType.CLIENT && !a.disabled)
       .map(a => a.id);
-    const clientIncome = filteredRecords
+    const clientRaidIncome = filteredRecords
       .filter(r => clientAccountIds.includes(r.accountId))
       .reduce((acc, r) => acc + r.goldIncome, 0);
+    const clientBaizhanIncome = filteredBaizhanRecords
+      .filter(r => clientAccountIds.includes(r.accountId))
+      .reduce((acc, r) => acc + r.goldIncome, 0);
+    const clientIncome = clientRaidIncome + clientBaizhanIncome;
+
+    let equipCount = 0;
+    filteredTrialRecords.forEach((r) => {
+      const equipId = (r as any)[`card${r.flippedIndex}`];
+      if (equipId) {
+        const equip = findEquipmentById(equipId);
+        if (equip && (equip.BindType === 1 || equip.BindType === 2)) {
+          equipCount++;
+        }
+      }
+    });
 
     return {
       totalGold,
-      totalRaids: filteredRecords.length,
+      totalRaids: filteredRecords.length + filteredBaizhanRecords.length,
       xuanjingCount,
+      equipCount,
       dropRate,
-      clientIncome
+      clientIncome,
     };
-  }, [filteredRecords, safeAccounts]);
+  }, [filteredRecords, filteredBaizhanRecords, filteredTrialRecords, safeAccounts, findEquipmentById]);
 
   const chartData = useMemo(() => {
     const grouped: Record<string, number> = {};
     filteredRecords.forEach(r => {
       grouped[r.raidName] = (grouped[r.raidName] || 0) + r.goldIncome;
     });
+    filteredBaizhanRecords.forEach(r => {
+      grouped['百战异闻录'] = (grouped['百战异闻录'] || 0) + r.goldIncome;
+    });
     return Object.keys(grouped).map(k => ({ name: k, value: grouped[k] }));
-  }, [filteredRecords]);
+  }, [filteredRecords, filteredBaizhanRecords, filteredTrialRecords]);
 
   const luckyRole = useMemo(() => {
     const roleMap = new Map<string, { roleName: string; server: string; totalGold: number; xuanjingCount: number }>();
@@ -79,6 +154,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
       if (r.hasXuanjing) role.xuanjingCount++;
     });
 
+    filteredBaizhanRecords.forEach(r => {
+      const roleId = r.roleId || r.accountId;
+      const roleName = r.roleName || '未知角色';
+      const server = r.server || '未知服务器';
+
+      if (!roleMap.has(roleId)) {
+        roleMap.set(roleId, { roleName, server, totalGold: 0, xuanjingCount: 0 });
+      }
+
+      const role = roleMap.get(roleId)!;
+      role.totalGold += r.goldIncome;
+    });
+
     let maxRole: typeof roleMap extends Map<string, infer V> ? V : never = { roleName: '暂无数据', server: '', totalGold: 0, xuanjingCount: 0 };
     roleMap.forEach(role => {
       if (role.totalGold > maxRole.totalGold) {
@@ -87,7 +175,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
     });
 
     return maxRole;
-  }, [filteredRecords]);
+  }, [filteredRecords, filteredBaizhanRecords]);
 
   const bigSpender = useMemo(() => {
     const roleMap = new Map<string, { roleName: string; server: string; totalExpense: number }>();
@@ -115,6 +203,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
         }
       });
 
+    filteredBaizhanRecords
+      .filter(r => ownAccountIds.has(r.accountId))
+      .forEach(r => {
+        if (r.goldExpense && r.goldExpense > 0) {
+          const roleId = r.roleId || r.accountId;
+          const roleName = r.roleName || '未知角色';
+          const server = r.server || '未知服务器';
+
+          if (!roleMap.has(roleId)) {
+            roleMap.set(roleId, { roleName, server, totalExpense: 0 });
+          }
+
+          const role = roleMap.get(roleId)!;
+          role.totalExpense += r.goldExpense;
+        }
+      });
+
     let maxRole: typeof roleMap extends Map<string, infer V> ? V : never = { roleName: '暂无数据', server: '', totalExpense: 0 };
     roleMap.forEach(role => {
       if (role.totalExpense > maxRole.totalExpense) {
@@ -123,7 +228,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
     });
 
     return maxRole;
-  }, [filteredRecords, safeAccounts]);
+  }, [filteredRecords, filteredBaizhanRecords, safeAccounts]);
 
   return (
     <div className="space-y-5">
@@ -156,8 +261,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
         <div className="bg-surface rounded-xl p-5 border border-base shadow-sm">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-primary/10 rounded-xl">
-                <Star className="w-5 h-5 text-primary" />
+              <div className="p-2.5 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                <Star className="w-5 h-5 text-primary/80" />
               </div>
               <div>
                 <p className="text-muted text-sm">本期欧皇</p>
@@ -173,13 +278,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
               {luckyRole.xuanjingCount > 0 && (
                 <div className="text-right">
                   <p className="text-muted text-xs">玄晶</p>
-                  <p className="text-2xl font-bold text-pink-500 mt-0.5">{luckyRole.xuanjingCount}</p>
+                  <p className="text-2xl font-bold text-violet-600 dark:text-violet-400 mt-0.5">{luckyRole.xuanjingCount}</p>
                 </div>
               )}
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
-            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <Zap className="w-3.5 h-3.5 text-primary/70" />
             <span className="text-xs text-muted">收入最高的角色</span>
           </div>
         </div>
@@ -188,8 +293,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
         <div className="bg-surface rounded-xl p-5 border border-base shadow-sm">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-red-50 dark:bg-red-900/10 rounded-xl">
-                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="p-2.5 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                <svg className="w-5 h-5 text-rose-500/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
@@ -205,7 +310,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
-            <svg className="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5 text-rose-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
             <span className="text-xs text-muted">支出最高的角色（仅本人账号）</span>
@@ -219,41 +324,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
           className="bg-surface rounded-xl shadow-sm border border-base p-4 cursor-pointer transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-medium text-muted">收益概览</span>
-            {statsPeriod === 'week' ? (
-              <span className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full">本周</span>
-            ) : (
-              <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full">本月</span>
-            )}
+            <span className="text-sm font-bold text-main">收益概览</span>
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200 dark:border-slate-700/50">
+              <span className="text-xs">{statsPeriod === 'week' ? '本周' : '本月'}</span>
+              <ArrowRight className="w-3 h-3 text-muted" />
+            </div>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-                  <Coins className="w-5 h-5 text-amber-500" />
-                </div>
-                <span className="text-xs text-muted">总收入</span>
+
+          <div className="flex items-center gap-4">
+            {/* 总收益区块 - 柔和琥珀色 */}
+            <div className="flex-1 bg-gradient-to-br from-amber-50/50 to-orange-50/50 dark:from-amber-900/10 dark:to-orange-900/10 rounded-lg p-3 border border-amber-100/50 dark:border-amber-800/20">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-xs font-medium text-amber-700 dark:text-amber-300">本期总收入</span>
               </div>
-              <p className="text-2xl font-bold text-main">
+              <p className="text-2xl font-bold text-amber-900 dark:text-amber-100">
                 {stats.totalGold.toLocaleString()}
-                <span className="text-sm font-normal text-muted ml-1">金</span>
+                <span className="text-xs font-normal text-amber-600/70 dark:text-amber-400/70 ml-1">金</span>
               </p>
-              <p className="text-xs text-muted mt-1">代清: {stats.clientIncome.toLocaleString()}金</p>
-            </div>
-            <div className="w-px h-12 bg-slate-100 dark:bg-slate-700/50" />
-            <div className="flex-1">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <div className="p-1 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-                  <Shield className="w-4 h-4 text-emerald-500" />
-                </div>
-                <span className="text-xs text-muted">通关</span>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-[10px] text-amber-600/60 dark:text-amber-400/60">代清所得</span>
+                <span className="text-[10px] font-medium text-amber-700/80 dark:text-amber-300/80">{stats.clientIncome.toLocaleString()}</span>
               </div>
-              <p className="text-xl font-bold text-main">{stats.totalRaids}</p>
             </div>
-          </div>
-          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
-            <span className="text-xs text-muted">点击查看详细记录</span>
-            <FileText className="w-4 h-4 text-slate-300 dark:text-slate-600" />
+
+            {/* 通关统计区块 - 柔和靛蓝色 */}
+            <div className="flex-1 bg-gradient-to-br from-indigo-50/50 to-blue-50/50 dark:from-indigo-900/10 dark:to-blue-900/10 rounded-lg p-3 border border-indigo-100/50 dark:border-indigo-800/20">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">通关统计</span>
+              </div>
+              <p className="text-2xl font-bold text-indigo-900 dark:text-indigo-100">
+                {stats.totalRaids}
+                <span className="text-xs font-normal text-indigo-600/70 dark:text-indigo-400/70 ml-1">次</span>
+              </p>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60">活跃度</span>
+                <span className="text-[10px] font-medium text-indigo-700/80 dark:text-indigo-300/80">
+                  {stats.totalRaids >= 10 ? '活跃' : '普通'}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -262,43 +371,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
           className="bg-surface rounded-xl shadow-sm border border-base p-4 cursor-pointer transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-medium text-muted">玄晶统计</span>
-            <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-full">
-              <Trophy className="w-3 h-3" />
-              <span className="text-xs font-medium">海景房</span>
+            <span className="text-sm font-bold text-main">稀有掉落统计</span>
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200 dark:border-slate-700/50">
+              <span className="text-xs">详情</span>
+              <ArrowRight className="w-3 h-3 text-muted" />
             </div>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="p-1.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-                  <Trophy className="w-5 h-5 text-amber-500" />
-                </div>
-                <span className="text-xs text-muted">获取次数</span>
+
+          <div className="flex items-center gap-4">
+            {/* 玄晶掉落区块 - 柔和紫金色 */}
+            <div className="flex-1 bg-gradient-to-br from-violet-50/50 to-amber-50/50 dark:from-violet-900/10 dark:to-amber-900/10 rounded-lg p-3 border border-violet-100/50 dark:border-violet-800/20">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-xs font-medium text-violet-700 dark:text-violet-300">玄晶获取</span>
               </div>
-              <p className="text-2xl font-bold text-main">
+              <p className="text-2xl font-bold text-violet-900 dark:text-violet-100">
                 {stats.xuanjingCount}
-                <span className="text-sm font-normal text-muted ml-1">次</span>
+                <span className="text-xs font-normal text-violet-600/70 dark:text-violet-400/70 ml-1">次</span>
               </p>
-              <p className="text-xs text-muted mt-1">掉率 {stats.dropRate.toFixed(2)}%</p>
-            </div>
-            <div className="w-px h-12 bg-slate-100 dark:bg-slate-700/50" />
-            <div className="flex-1">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <div className="p-1 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-                  <TrendingUp className="w-4 h-4 text-emerald-500" />
-                </div>
-                <span className="text-xs text-muted">掉率</span>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-[10px] text-violet-600/60 dark:text-violet-400/60">掉率</span>
+                <span className="text-[10px] font-medium text-violet-700/80 dark:text-violet-300/80">{stats.dropRate.toFixed(2)}%</span>
               </div>
-              <p className="text-xl font-bold text-main">
-                {stats.dropRate.toFixed(2)}
-                <span className="text-sm font-normal text-muted ml-0.5">%</span>
-              </p>
             </div>
-          </div>
-          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
-            <span className="text-xs text-muted">点击查看所有玄晶记录</span>
-            <ArrowRight className="w-4 h-4 text-amber-400" />
+
+            {/* 装备掉落区块 - 柔和翠绿色 */}
+            <div className="flex-1 bg-gradient-to-br from-emerald-50/50 to-teal-50/50 dark:from-emerald-900/10 dark:to-teal-900/10 rounded-lg p-3 border border-emerald-100/50 dark:border-emerald-800/20">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">可交易装备</span>
+              </div>
+              <p className="text-2xl font-bold text-emerald-900 dark:text-emerald-100">
+                {stats.equipCount}
+                <span className="text-xs font-normal text-emerald-600/70 dark:text-emerald-400/70 ml-1">件</span>
+              </p>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-[10px] text-emerald-600/60 dark:text-emerald-400/60">总计</span>
+                <span className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-300/80">试炼之地</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -344,7 +453,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, onShowI
               />
               <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
                 {chartData.map((_entry, index) => (
-                  <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${1 - index * 0.1})`} />
+                  <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${0.7 - index * 0.05})`} />
                 ))}
               </Bar>
             </BarChart>

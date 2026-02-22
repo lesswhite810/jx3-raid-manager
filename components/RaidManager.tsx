@@ -1,9 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Raid } from '../types';
-import { Plus, Trash2, Shield, Filter, Power } from 'lucide-react';
+import { Trash2, Shield, Filter, Power } from 'lucide-react';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
-import { AddRaidModal } from './AddRaidModal';
 import { TrialPlaceManager } from './TrialPlaceManager';
 import { BaizhanManager } from './BaizhanManager';
 import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
@@ -16,6 +15,7 @@ interface RaidManagerProps {
   records: RaidRecord[];
   setRecords: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
   onEditRecord?: (record: RaidRecord) => void;
+  onEditBaizhanRecord?: (record: BaizhanRecord) => void;
   trialRecords: TrialPlaceRecord[];
   setTrialRecords: React.Dispatch<React.SetStateAction<TrialPlaceRecord[]>>;
   baizhanRecords: BaizhanRecord[];
@@ -44,18 +44,7 @@ const DIFFICULTY_COLORS: Record<string, string> = {
   '挑战': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
 };
 
-const VERSION_ORDER_MAP: Record<string, number> = {
-  "丝路风雨": 0,
-  "横刀断浪": 1,
-  "奉天证道": 2,
-  "世外蓬莱": 3,
-  "重制版": 4,
-  "风骨霸刀": 5,
-  "剑胆琴心": 6,
-  "安史之乱": 7,
-  "巴蜀风云": 8,
-  "风起稻香": 9
-};
+
 
 export const RaidManager: React.FC<RaidManagerProps> = ({
   raids,
@@ -63,6 +52,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   records,
   setRecords,
   onEditRecord,
+  onEditBaizhanRecord,
   trialRecords,
   setTrialRecords,
   baizhanRecords,
@@ -70,8 +60,58 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   accounts
 }) => {
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
-  const [isAdding, setIsAdding] = useState(false);
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
+
+  const [versionOrderMap, setVersionOrderMap] = useState<Record<string, number>>({});
+  const [isOrderLoaded, setIsOrderLoaded] = useState(false);
+
+  useEffect(() => {
+    const fetchVersions = async () => {
+      try {
+        const cacheKey = 'raid_versions_cache_v2';
+        const cache = await db.getCache(cacheKey);
+
+        let shouldFetch = true;
+
+        if (cache && cache.updatedAt) {
+          const now = new Date();
+          const lastUpdate = new Date(cache.updatedAt);
+          // 每天早上7点刷新
+          const refreshTime = new Date(now);
+          refreshTime.setHours(7, 0, 0, 0);
+
+          if (now.getTime() < refreshTime.getTime()) {
+            refreshTime.setDate(refreshTime.getDate() - 1);
+          }
+
+          if (lastUpdate.getTime() > refreshTime.getTime()) {
+            shouldFetch = false;
+            const orderMap: Record<string, number> = {};
+            cache.value.forEach((v: string, i: number) => {
+              orderMap[v] = i;
+            });
+            setVersionOrderMap(orderMap);
+          }
+        }
+
+        if (shouldFetch) {
+          const versions = await db.getRaidVersions();
+          const orderMap: Record<string, number> = {};
+          versions.forEach((v: string, i: number) => {
+            orderMap[v] = i;
+          });
+          setVersionOrderMap(orderMap);
+          await db.saveCache(cacheKey, versions);
+        }
+        setIsOrderLoaded(true);
+      } catch (err) {
+        console.error('Failed to fetch raid versions order', err);
+        setIsOrderLoaded(true);
+      }
+    };
+
+    fetchVersions();
+  }, []);
 
   const versions = useMemo(() => {
     const versionSet = new Set<string>();
@@ -82,28 +122,26 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     });
 
     return Array.from(versionSet).sort((a, b) => {
-      const orderA = VERSION_ORDER_MAP[a] !== undefined ? VERSION_ORDER_MAP[a] : 999;
-      const orderB = VERSION_ORDER_MAP[b] !== undefined ? VERSION_ORDER_MAP[b] : 999;
+      const orderA = versionOrderMap[a] !== undefined ? versionOrderMap[a] : 999;
+      const orderB = versionOrderMap[b] !== undefined ? versionOrderMap[b] : 999;
       return orderA - orderB;
     });
-  }, [raids]);
+  }, [raids, versionOrderMap]);
 
-  // 默认选择最新版本（第一个版本）
-  const [selectedVersion, setSelectedVersion] = useState<string>(() => {
-    // 从 raids 中提取版本并排序，获取最新版本
-    const versionSet = new Set<string>();
-    raids.forEach(raid => {
-      if (raid.version) {
-        versionSet.add(raid.version);
-      }
-    });
-    const sortedVersions = Array.from(versionSet).sort((a, b) => {
-      const orderA = VERSION_ORDER_MAP[a] !== undefined ? VERSION_ORDER_MAP[a] : 999;
-      const orderB = VERSION_ORDER_MAP[b] !== undefined ? VERSION_ORDER_MAP[b] : 999;
-      return orderA - orderB;
-    });
-    return sortedVersions.length > 0 ? sortedVersions[0] : 'all';
-  });
+  // 默认选择最新版本（由于需要等待后端字典加载完毕，故初始化为空/降级值，随后通过效应重置）
+  const [selectedVersion, setSelectedVersion] = useState<string>('all');
+
+  useEffect(() => {
+    if (isOrderLoaded && versions.length > 0) {
+      setSelectedVersion((prev) => {
+        // 如果当前是无意义的 all 或已不在现存列表里，则推诿到数组首位（即最新版本）
+        if (prev === 'all' || !versions.includes(prev)) {
+          return versions[0];
+        }
+        return prev;
+      });
+    }
+  }, [versions, isOrderLoaded]);
 
   const isStaticRaid = (raid: Raid) => {
     return !!raid.static;
@@ -196,21 +234,15 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         mergedRaids.push(mergedRaid);
       });
 
-      // 按版本顺序排序
-      mergedGroups[version] = mergedRaids.sort((a, b) => {
-        const versionOrder = VERSION_ORDER_MAP[a.version] !== undefined ? VERSION_ORDER_MAP[a.version] : 999;
-        const versionOrderB = VERSION_ORDER_MAP[b.version] !== undefined ? VERSION_ORDER_MAP[b.version] : 999;
-        return versionOrder - versionOrderB;
-      });
+      // 这里不再需要对版本下的副本数组按版本再次排序，因为它们本身就是同一个版本的副本。
+      // 如果是为了某种内部顺序，我们可以保留原状或按名称排序
+      mergedGroups[version] = mergedRaids;
     });
 
     return mergedGroups;
   }, [groupedRaids]);
 
-  const handleAddRaid = (raid: Raid) => {
-    setRaids(prev => [...prev, raid]);
-    toast.success(`成功添加副本: ${raid.name}`);
-  };
+
 
   const toggleRaidStatus = (name: string) => {
     const raidsWithName = raids.filter(r => r.name === name);
@@ -294,6 +326,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
               toast.error('删除百战记录失败');
             }
           }}
+          onEditRecord={onEditBaizhanRecord}
         />
       ) : activeTab === 'trial' ? (
         <TrialPlaceManager
@@ -340,12 +373,6 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                   </select>
                 </div>
               )}
-              <button
-                onClick={() => setIsAdding(true)}
-                className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm active:scale-[0.98] text-sm font-medium"
-              >
-                <Plus className="w-4 h-4" /> 新增副本
-              </button>
             </div>
           </div>
 
@@ -465,15 +492,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           ) : (
             <div className="text-center py-12 text-muted bg-surface rounded-xl border border-base">
               <Shield className="w-12 h-12 mx-auto mb-2 opacity-20" />
-              <p>暂无副本，点击上方按钮添加</p>
+              <p>暂无副本数据</p>
             </div>
           )}
-          <AddRaidModal
-            isOpen={isAdding}
-            onClose={() => setIsAdding(false)}
-            onSubmit={handleAddRaid}
-            existingRaids={raids}
-          />
         </>
       )}
     </div>

@@ -82,7 +82,7 @@ pub fn init_db() -> Result<Connection, String> {
             card_4 TEXT,
             card_5 TEXT,
             flipped_index INTEGER,
-            date TEXT,
+            date TEXT NOT NULL,
             notes TEXT,
             updated_at TEXT
         );
@@ -273,10 +273,9 @@ pub fn db_add_trial_record(record: String) -> Result<(), String> {
     let bosses_json = serde_json::to_string(&item.bosses).unwrap_or_default();
 
     conn.execute(
-        "INSERT INTO trial_records (
+        "INSERT OR REPLACE INTO trial_records (
             id, account_id, role_id, layer, bosses, 
-            card_1, card_2, card_3, card_4, card_5, flipped_index,
-            date, notes, updated_at
+            card_1, card_2, card_3, card_4, card_5, flipped_index, date, notes, updated_at
         ) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
@@ -309,7 +308,7 @@ pub fn db_get_trial_records() -> Result<String, String> {
             "
         SELECT id, account_id, role_id, layer, bosses, 
                card_1, card_2, card_3, card_4, card_5, flipped_index,
-               date, notes 
+               date, notes, updated_at
         FROM trial_records 
         ORDER BY date DESC
     ",
@@ -356,6 +355,7 @@ pub fn db_delete_trial_record(id: String) -> Result<(), String> {
     Ok(())
 }
 
+
 // ========== 百战记录 CRUD ==========
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -389,7 +389,7 @@ pub fn db_add_baizhan_record(record: String) -> Result<(), String> {
     let timestamp = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO baizhan_records (
+        "INSERT OR REPLACE INTO baizhan_records (
             id, account_id, role_id, role_name, server,
             date, gold_income, gold_expense, notes, record_type, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -558,17 +558,46 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 全量同步：先清空表，再插入
-    tx.execute("DELETE FROM accounts", [])
-        .map_err(|e| e.to_string())?;
+    // 全量同步：先清空表，再插入（注意级联或手动清空对应关联表）
+    tx.execute("DELETE FROM roles", []).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM accounts", []).map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
 
     for account in parsed {
         let id = account["id"].as_str().unwrap_or_default().to_string();
+        let account_name = account["accountName"].as_str().unwrap_or("").to_string();
+        let account_type = account["type"].as_str().unwrap_or("OWN").to_string();
+        let password = account["password"].as_str().map(|s| s.to_string());
+        let notes = account["notes"].as_str().map(|s| s.to_string());
+        let hidden = account["hidden"].as_bool().unwrap_or(false) as i32;
+        let disabled = account["disabled"].as_bool().unwrap_or(false) as i32;
+
         tx.execute(
-            "INSERT INTO accounts (id, data) VALUES (?, ?)",
-            params![id, account.to_string()],
+            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
         )
         .map_err(|e| e.to_string())?;
+
+        if let Some(roles) = account["roles"].as_array() {
+            for role in roles {
+                let role_id = role["id"].as_str().unwrap_or_default().to_string();
+                let name = role["name"].as_str().unwrap_or("").to_string();
+                let server = role["server"].as_str().map(|s| s.to_string());
+                let region = role["region"].as_str().map(|s| s.to_string());
+                let sect = role["sect"].as_str().map(|s| s.to_string());
+                let r_disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
+                let equipment_score = role["equipmentScore"].as_i64();
+
+                tx.execute(
+                    "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![role_id, id, name, server, region, sect, equipment_score, r_disabled, timestamp],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
     }
 
     tx.commit().map_err(|e| e.to_string())?;
@@ -962,6 +991,25 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
     // 序列化为 JSON 字符串数组（兼容前端解析方式）
     let result: Vec<String> = raids.iter().map(|r| r.to_string()).collect();
     Ok(result)
+}
+
+#[tauri::command]
+pub fn db_get_raid_versions() -> Result<Vec<String>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT name FROM raid_versions ORDER BY id DESC")
+        .map_err(|e| e.to_string())?;
+
+    let version_iter = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let mut versions = Vec::new();
+    for version in version_iter {
+        versions.push(version.map_err(|e| e.to_string())?);
+    }
+
+    Ok(versions)
 }
 
 #[tauri::command]

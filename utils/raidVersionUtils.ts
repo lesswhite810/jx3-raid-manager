@@ -1,37 +1,3 @@
-
-export const GAME_VERSIONS = [
-  '丝路风雨',   // 最新版本 130级
-  '横刀断浪',   // 120级
-  '奉天证道',   // 110级
-  '世外蓬莱',   // 100级
-  '重制版',     // 95级
-  '风骨霸刀',   // 95级
-  '剑胆琴心',   // 95级
-  '安史之乱',   // 90级
-  '巴蜀风云',   // 80级
-  '风起稻香',   // 70级
-] as const;
-
-export type GameVersion = typeof GAME_VERSIONS[number];
-
-export const LATEST_VERSION: GameVersion = '丝路风雨';
-
-export function isLatestVersion(version: string): boolean {
-  return version === LATEST_VERSION;
-}
-
-export function getVersionIndex(version: string): number {
-  return GAME_VERSIONS.indexOf(version as GameVersion);
-}
-
-export function isNewerVersion(version1: string, version2: string): boolean {
-  return getVersionIndex(version1) < getVersionIndex(version2);
-}
-
-export function isOlderVersion(version1: string, version2: string): boolean {
-  return getVersionIndex(version1) > getVersionIndex(version2);
-}
-
 export interface RaidCheckResult {
   isLatestVersion25Raid: boolean;
   shouldShowClientRoles: boolean;
@@ -40,14 +6,15 @@ export interface RaidCheckResult {
 export function checkRaidForClientRoles(
   _raidName: string,
   playerCount: number,
-  version: string
+  _version: string
 ): RaidCheckResult {
-  const isLatest = isLatestVersion(version);
+  // 原本判断是否是最新版本，既然已经没法确切维护最新版本列表
+  // 我们默认 25 人本都显示老板号，或者根据实际业务保留此接口
   const is25Raid = playerCount === 25;
 
   return {
-    isLatestVersion25Raid: isLatest && is25Raid,
-    shouldShowClientRoles: isLatest && is25Raid
+    isLatestVersion25Raid: is25Raid,
+    shouldShowClientRoles: is25Raid
   };
 }
 
@@ -65,12 +32,9 @@ export function isClientRoleVisible(
 
 export function shouldShowClientRoleInRaid(
   playerCount: number,
-  version: string
+  _version: string
 ): boolean {
-  const isLatest = isLatestVersion(version);
-  const is25Raid = playerCount === 25;
-
-  return isLatest && is25Raid;
+  return playerCount === 25;
 }
 
 export function filterRolesForRaid<T extends { id: string; name: string }>(
@@ -86,10 +50,4 @@ export function filterRolesForRaid<T extends { id: string; name: string }>(
   }
 
   return roles.filter(role => getAccountType(role) !== 'CLIENT');
-}
-
-export function getVersionDisplayName(version: string): string {
-  const index = getVersionIndex(version);
-  if (index === -1) return version;
-  return `${version} (第${GAME_VERSIONS.length - index}版)`;
 }

@@ -249,6 +249,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [maxLevel, setMaxLevel] = useState<number>(36000);
     const [selectedType, setSelectedType] = useState<string>('全部');
 
+
     const [notes, setNotes] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -292,7 +293,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
             setSelectedCard(null);
             setShowEquipSelector(false);
-
             setNotes('');
             setError(null);
             setIsSubmitting(false);
@@ -528,6 +528,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         return allEquipments.find(e => e.ID.toString() === id);
     };
 
+    const flippedItemId = cardItems[flipIndex];
+    const flippedEquip = flippedItemId ? getEquipForCard(flippedItemId) : null;
+    const isTradable = flippedEquip && (flippedEquip.BindType === 1 || flippedEquip.BindType === 2);
+
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden">
             <div className="bg-surface w-full max-w-3xl rounded-xl shadow-2xl border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
@@ -535,8 +539,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 <div className="flex items-center justify-between px-6 py-4 border-b border-base bg-base/50">
                     <div className="flex items-center gap-6">
                         <div className="flex items-center gap-2">
-                            <div className="p-2 bg-amber-500/10 rounded-lg">
-                                <Trophy className="w-5 h-5 text-amber-500" />
+                            <div className="p-2 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                                <Trophy className="w-5 h-5 text-amber-500/80" />
                             </div>
                             <div>
                                 <h2 className="text-lg font-bold text-main">记录试炼</h2>
@@ -584,6 +588,17 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             {error}
                         </div>
                     )}
+
+                    {/* Date Picker */}
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">记录日期</label>
+                        <div className="relative w-full">
+                            <DateTimePicker
+                                value={recordDate}
+                                onChange={setRecordDate}
+                            />
+                        </div>
+                    </div>
 
                     {/* Challenge Info Bar */}
                     <div className="bg-base/30 rounded-xl p-4 border border-base/50 flex flex-wrap gap-6 items-end">
@@ -639,17 +654,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 </select>
                             </div>
                         </div>
-
-                        {/* Date Picker */}
-                        <div className="w-48">
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">记录日期</label>
-                            <div className="relative">
-                                <DateTimePicker
-                                    value={recordDate}
-                                    onChange={setRecordDate}
-                                />
-                            </div>
-                        </div>
                     </div>
 
                     {/* Cards Section */}
@@ -682,11 +686,11 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 relative w-full aspect-[3/4] rounded-xl border-2 p-0 flex flex-col items-center justify-start overflow-hidden
                                                 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl
                                                 ${hasItem
-                                                    ? 'bg-surface border-amber-400/50 dark:border-amber-600/50'
+                                                    ? 'bg-surface border-slate-200 dark:border-slate-700 shadow-sm'
                                                     : 'bg-surface border-dashed border-base/60 hover:border-primary/50 hover:bg-base/30'
                                                 }
                                                 ${isFlipped
-                                                    ? 'ring-2 ring-primary ring-offset-2 ring-offset-surface shadow-lg shadow-primary/10'
+                                                    ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-surface shadow-lg shadow-primary/10'
                                                     : ''
                                                 }
                                             `}
@@ -748,15 +752,20 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                         </div>
                     </div>
 
-                    {/* Notes */}
-                    <div>
-                        <label className="block text-xs font-medium text-muted mb-1.5">备注（可选）</label>
-                        <textarea
-                            value={notes}
-                            onChange={e => setNotes(e.target.value)}
-                            className="w-full p-3 rounded-lg bg-base border border-base text-sm text-main focus:ring-2 focus:ring-primary/20 outline-none resize-none h-20"
-                            placeholder="记录一些细节..."
-                        />
+                    {/* Flipped Item Notes */}
+                    <div className="grid grid-cols-1 gap-6">
+                        <div>
+                            <label className="block text-xs font-medium text-muted mb-1.5 flex items-center gap-1.5">
+                                <Trophy className={`w-3.5 h-3.5 ${isTradable ? 'text-emerald-500/80' : 'text-slate-400'}`} />
+                                {isTradable ? '开出可交易物品！(可添加备注)' : '当前翻开物品绑定'}
+                            </label>
+                            <textarea
+                                value={notes}
+                                onChange={e => setNotes(e.target.value)}
+                                className="w-full p-3 rounded-lg bg-base border border-base text-sm text-main focus:ring-2 focus:ring-primary/20 outline-none resize-none h-[46px]"
+                                placeholder="记录一些细节..."
+                            />
+                        </div>
                     </div>
 
                     {/* Actions */}

@@ -77,15 +77,15 @@ export interface TrialPlaceRecord {
   flippedIndex: number; // 1-5
   type: 'trial';
   notes?: string;
-  transactionType?: 'income' | 'expense' | 'combined'; // meaningful for trial? prob not but for compatibility
 }
 
-export type AnyRecord = RaidRecord | TrialPlaceRecord;
+export type AnyRecord = RaidRecord | TrialPlaceRecord | BaizhanRecord;
 
 export interface DashboardStats {
   totalGold: number;
   totalRaids: number;
   xuanjingCount: number;
+  equipCount: number;
   dropRate: number;
   clientIncome: number;
 }

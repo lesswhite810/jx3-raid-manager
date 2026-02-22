@@ -10,13 +10,15 @@ interface BaizhanManagerProps {
     accounts: Account[];
     onAddRecord: (record: BaizhanRecord) => void;
     onDeleteRecord?: (recordId: string) => void;
+    onEditRecord?: (record: BaizhanRecord) => void;
 }
 
 export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     records,
     accounts,
     onAddRecord,
-    onDeleteRecord
+    onDeleteRecord,
+    onEditRecord
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
@@ -119,8 +121,8 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     };
 
     const getMaskedPassword = (password: string | undefined) => {
-        if (!password) return '•••••';
-        return '•••••';
+        if (!password) return '••••••';
+        return '••••••';
     };
 
     return (
@@ -186,7 +188,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                         </div>
                                     </div>
 
-                                    <div className="flex justify-end text-sm mb-3">
+                                    <div className="flex justify-start text-sm mb-3">
                                         <div className="flex items-baseline gap-1">
                                             <span className="text-xs text-muted">本周收入:</span>
                                             <span className={`font-bold font-mono ${stats.weeklyIncome > 0 ? 'text-emerald-600' : 'text-main'}`}>
@@ -291,6 +293,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                         role={viewRecordsRole}
                         records={records}
                         onDeleteRecord={onDeleteRecord}
+                        onEditRecord={onEditRecord}
                     />
                 )
             }

@@ -1,22 +1,43 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown } from 'lucide-react';
-import { RaidRecord, Account, AccountType, Role } from '../types';
+import { RaidRecord, Account, AccountType, Role, BaizhanRecord } from '../types';
 import { toast } from '../utils/toastManager';
 
 interface IncomeDetailProps {
   records: RaidRecord[];
+  baizhanRecords: BaizhanRecord[];
   accounts: Account[];
   onBack: () => void;
-  onDeleteRecord: (recordId: string) => void;
+  onDeleteRecord: (recordId: string, isBaizhan?: boolean, isTrial?: boolean) => void;
   onEditRecord: (record: RaidRecord) => void;
+  onEditBaizhanRecord: (record: BaizhanRecord) => void;
 }
 
-interface EnhancedRecord extends RaidRecord {
+interface EnhancedRecord {
+  id: string;
+  accountId: string;
+  roleId: string;
+  roleName?: string;
+  server?: string;
+  date: string;
+  raidName: string;
+  goldIncome: number;
+  goldExpense?: number;
+  notes?: string;
+  hasXuanjing?: boolean;
+  hasMaJu?: boolean;
+  hasPet?: boolean;
+  hasPendant?: boolean;
+  hasMount?: boolean;
+  hasAppearance?: boolean;
+  hasTitle?: boolean;
   displayRoleName: string;
   displayServer: string;
+  isBaizhan?: boolean;
+  isTrial?: boolean;
 }
 
-export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, onBack, onDeleteRecord, onEditRecord }) => {
+export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanRecords, accounts, onBack, onDeleteRecord, onEditRecord, onEditBaizhanRecord }) => {
   const [period, setPeriod] = useState<'week' | 'month' | 'all'>('week');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'income' | 'expense'>('all');
@@ -24,6 +45,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
 
   const safeRecords = Array.isArray(records) ? records : [];
+  const safeBaizhanRecords = Array.isArray(baizhanRecords) ? baizhanRecords : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
   const findRoleInfo = (accountId: string, roleId: string): { roleName: string; server: string } => {
@@ -42,26 +64,39 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
   };
 
   const enhancedRecords = useMemo<EnhancedRecord[]>(() => {
-    return safeRecords.map(record => {
+    const raidList: EnhancedRecord[] = safeRecords.map(record => {
       const roleInfo = findRoleInfo(record.accountId, record.roleId);
       const roleName = record.roleName || roleInfo.roleName || '未知角色';
-
-      // 优先使用最新的 roleInfo.server，如果不存在则使用 record.server
       let rawServer = roleInfo.server || record.server || '未知服务器';
-
-      // 清洗 server 字段，移除可能包含的角色名
-      // 例如：如果 server 是 "梦江南 风闪"，而 roleName 是 "风闪"，则替换为 "梦江南"
       if (roleName && roleName !== '未知角色') {
         rawServer = rawServer.replace(new RegExp(`\\s*${roleName}\\s*`, 'g'), ' ').trim();
       }
-
       return {
         ...record,
         displayRoleName: roleName,
-        displayServer: rawServer
+        displayServer: rawServer,
+        isBaizhan: false
       };
     });
-  }, [safeRecords, safeAccounts]);
+
+    const baizhanList: EnhancedRecord[] = safeBaizhanRecords.map(record => {
+      const roleInfo = findRoleInfo(record.accountId, record.roleId);
+      const roleName = record.roleName || roleInfo.roleName || '未知角色';
+      let rawServer = roleInfo.server || record.server || '未知服务器';
+      if (roleName && roleName !== '未知角色') {
+        rawServer = rawServer.replace(new RegExp(`\\s*${roleName}\\s*`, 'g'), ' ').trim();
+      }
+      return {
+        ...record,
+        raidName: '百战异闻录',
+        displayRoleName: roleName,
+        displayServer: rawServer,
+        isBaizhan: true
+      };
+    });
+
+    return [...raidList, ...baizhanList].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [safeRecords, safeBaizhanRecords, safeAccounts]);
 
   const filteredRecords = useMemo(() => {
     const now = new Date();
@@ -156,7 +191,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
 
   const handleConfirmDelete = () => {
     if (deleteConfirmRecordId) {
-      onDeleteRecord(deleteConfirmRecordId);
+      const recordToDelete = tabFilteredRecords.find(r => r.id === deleteConfirmRecordId);
+      onDeleteRecord(deleteConfirmRecordId, !!recordToDelete?.isBaizhan, !!recordToDelete?.isTrial);
       toast.success('删除成功');
       setDeleteConfirmRecordId(null);
     }
@@ -403,16 +439,32 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, accounts, o
 
                         {/* Actions */}
                         <div className="flex items-center gap-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onEditRecord(record);
-                            }}
-                            className="p-2 rounded-lg text-muted hover:text-primary hover:bg-surface active:scale-95 transition-all"
-                            title="修改"
-                          >
-                            <Pencil size={18} />
-                          </button>
+                          {record.isTrial ? (
+                            /* 试炼记录：不提供编辑按钮（通过试炼详情弹窗 inline-edit 修改） */
+                            null
+                          ) : !record.isBaizhan ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditRecord(record as RaidRecord);
+                              }}
+                              className="p-2 rounded-lg text-muted hover:text-primary hover:bg-surface active:scale-95 transition-all"
+                              title="修改"
+                            >
+                              <Pencil size={18} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditBaizhanRecord(record as unknown as BaizhanRecord);
+                              }}
+                              className="p-2 rounded-lg text-muted hover:text-primary hover:bg-surface active:scale-95 transition-all"
+                              title="修改百战记录"
+                            >
+                              <Pencil size={18} />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

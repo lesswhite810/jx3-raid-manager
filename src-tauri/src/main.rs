@@ -46,6 +46,7 @@ fn main() {
             db::db_save_records,
             db::db_get_raids,
             db::db_save_raids,
+            db::db_get_raid_versions,
             db::db_get_config,
             db::db_save_config,
             db::db_get_config_debug,

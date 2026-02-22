@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { BaizhanRecord } from '../types';
-import { X, Calendar, Swords, Trash2, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info } from 'lucide-react';
+import { X, Calendar, Swords, Trash2, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Pencil } from 'lucide-react';
 
 // 格式化金币显示（对齐 RoleRecordsModal 风格）
 const formatGoldAmount = (amount: number): string => {
@@ -25,6 +25,7 @@ interface BaizhanRoleRecordsModalProps {
     role: RoleDisplayData;
     records: BaizhanRecord[];
     onDeleteRecord?: (recordId: string) => void;
+    onEditRecord?: (record: BaizhanRecord) => void;
 }
 
 export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = ({
@@ -32,7 +33,8 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
     onClose,
     role,
     records,
-    onDeleteRecord
+    onDeleteRecord,
+    onEditRecord
 }) => {
     const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
     const [recordToDelete, setRecordToDelete] = useState<BaizhanRecord | null>(null);
@@ -210,9 +212,18 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                                                 )}
                                             </div>
 
-                                            {/* 删除按钮 */}
-                                            {onDeleteRecord && (
-                                                <div className="flex flex-row items-center gap-1.5 flex-shrink-0">
+                                            {/* Action按钮集合 */}
+                                            <div className="flex flex-row items-center gap-1.5 flex-shrink-0">
+                                                {onEditRecord && (
+                                                    <button
+                                                        onClick={() => onEditRecord(record)}
+                                                        className="p-1.5 rounded-lg text-muted hover:text-primary hover:bg-primary/10 active:scale-95 transition-all duration-200"
+                                                        title="修改记录"
+                                                    >
+                                                        <Pencil className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                                {onDeleteRecord && (
                                                     <button
                                                         onClick={() => handleDeleteClick(record)}
                                                         disabled={deletingRecordId === record.id}
@@ -225,8 +236,8 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                                                             <Trash2 className="w-4 h-4" />
                                                         )}
                                                     </button>
-                                                </div>
-                                            )}
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 );

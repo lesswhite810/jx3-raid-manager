@@ -272,7 +272,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       const cooldownDays = raid.playerCount === 25 ? 7 : raid.playerCount === 10 ? 3 : 7;
       const maxRecords = raid.playerCount === 10 ? 2 : 1;
       const recordCount = roleRecords.length;
-      const roleRecordDates = roleRecords.map(r => ({ date: r.date }));
+      const roleRecordDates = roleRecords.map(r => ({ date: r.date, bossIds: r.bossIds, bossId: r.bossId }));
       const cooldownInfo = calculateCooldown(raid, roleRecordDates);
 
       roles.push({

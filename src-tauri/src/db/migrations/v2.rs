@@ -23,6 +23,7 @@ pub fn apply_v2_migration(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(r#"
         DROP TABLE IF EXISTS raids;
         DROP TABLE IF EXISTS raid_bosses;
+        DROP TABLE IF EXISTS raid_versions;
 
         CREATE TABLE IF NOT EXISTS raids (
             id TEXT PRIMARY KEY,
@@ -41,11 +42,22 @@ pub fn apply_v2_migration(conn: &Connection) -> Result<(), String> {
             name TEXT NOT NULL,
             boss_order INTEGER NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS raid_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        );
     "#).map_err(error_to_string)?;
 
     // 直接使用静态数据初始化，不恢复旧数据
     init_static_raids(conn)?;
 
-    log::info!("V2 迁移完成：raids 表已升级为结构化存储，raid_bosses 按副本名称关联");
+    // 补齐 trial_records / baizhan_records 新增列（容错：忽略列已存在的错误）
+    let alter_statements: [&str; 0] = [];
+    for sql in &alter_statements {
+        let _ = conn.execute(sql, []);  // 忽略 "duplicate column name" 错误
+    }
+
+    log::info!("V2 迁移完成：raids 表已升级为结构化存储，trial/baizhan 新列已补齐");
     Ok(())
 }

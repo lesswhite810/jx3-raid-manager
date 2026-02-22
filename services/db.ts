@@ -162,6 +162,16 @@ class DatabaseService {
     }
   }
 
+  async getRaidVersions(): Promise<string[]> {
+    await this.init();
+    try {
+      return await invoke<string[]>('db_get_raid_versions');
+    } catch (error) {
+      console.error('Failed to get raid versions:', error);
+      return [];
+    }
+  }
+
   async saveRaids(raids: any[]): Promise<void> {
     await this.init();
     try {

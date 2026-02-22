@@ -275,6 +275,29 @@ describe('calculateCooldown - 25人本（每周一 07:00 刷新）', () => {
         expect(result.nextAvailableTime!.getDay()).toBe(1);   // 下周一
         expect(result.nextAvailableTime!.getHours()).toBe(7);
     });
+
+    it('部分通关（配置了bosses且击杀数小于总数） → 应当视为可打（未全通）', () => {
+        const raidWithBosses: Raid = { ...raid25, bosses: [{ id: 'b1', name: 'Boss 1', order: 1 }, { id: 'b2', name: 'Boss 2', order: 2 }, { id: 'b3', name: 'Boss 3', order: 3 }] };
+        const now = makeDate(3, 12, 0); // 本周三
+        const record = { date: makeDate(2, 20, 0).toISOString(), bossIds: ['b1', 'b2'] }; // 只打了2个Boss
+        const result = calculateCooldown(raidWithBosses, [record], now);
+
+        expect(result.canAdd).toBe(true);
+        expect(result.hasRecordInCurrentCycle).toBe(false);
+        expect(result.message).toBe('本周期可继续打剩余Boss');
+    });
+
+    it('全部通关（配置了bosses且击杀数等于或大于总数） → 应当视为已CD（全通）', () => {
+        const raidWithBosses: Raid = { ...raid25, bosses: [{ id: 'b1', name: 'Boss 1', order: 1 }, { id: 'b2', name: 'Boss 2', order: 2 }] };
+        const now = makeDate(3, 12, 0); // 本周三
+        const record1 = { date: makeDate(2, 20, 0).toISOString(), bossIds: ['b1'] };
+        const record2 = { date: makeDate(2, 21, 0).toISOString(), bossId: 'b2' }; // 测试拼凑起来能满
+        const result = calculateCooldown(raidWithBosses, [record1, record2], now);
+
+        expect(result.canAdd).toBe(true); // 业务逻辑里目前对于 boss 配置的情况，直接返回 canAdd = true 走分配路线
+        expect(result.hasRecordInCurrentCycle).toBe(true);
+        expect(result.message).toBe('本周期已全通（可继续分配Boss记录）');
+    });
 });
 
 // ─── calculateCooldown 测试 - 10人本 ─────────────────────────────────────────

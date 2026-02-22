@@ -129,10 +129,20 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
 
     let mut inserted_count = 0;
     let mut boss_inserted_names = std::collections::HashSet::new();
+    let mut version_inserted_names = std::collections::HashSet::new();
 
     for raid in static_raids {
         let name = raid["name"].as_str().unwrap_or_default();
         let version = raid["version"].as_str().unwrap_or_default();
+
+        // 将版本名称按 JSON 出现顺序入库 `raid_versions`
+        if !version.is_empty() && !version_inserted_names.contains(version) {
+            conn.execute(
+                "INSERT OR IGNORE INTO raid_versions (name) VALUES (?)",
+                params![version],
+            ).map_err(error_to_string)?;
+            version_inserted_names.insert(version.to_string());
+        }
 
         // 插入各难度/人数配置
         if let Some(configs) = raid["configurations"].as_array() {

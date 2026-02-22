@@ -24,6 +24,7 @@ interface AddBaizhanRecordModalProps {
     onSubmit: (record: BaizhanRecord) => void;
     accounts: Account[];
     initialRole?: RoleWithStatus;
+    initialData?: BaizhanRecord;
 }
 
 export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
@@ -31,9 +32,10 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
     onClose,
     onSubmit,
     accounts,
-    initialRole
+    initialRole,
+    initialData
 }) => {
-    const [selectedRoleId, setSelectedRoleId] = useState<string>(initialRole?.id || '');
+    const [selectedRoleId, setSelectedRoleId] = useState<string>(initialData?.roleId || initialRole?.id || '');
     const [goldIncome, setGoldIncome] = useState<number>(0);
     const [goldExpense, setGoldExpense] = useState<number>(0);
     const [notes, setNotes] = useState<string>('');
@@ -59,15 +61,23 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
     // Reset state when modal opens
     useEffect(() => {
         if (isOpen) {
-            setSelectedRoleId(initialRole?.id || '');
-            setGoldIncome(0);
-            setGoldExpense(0);
-            setNotes('');
+            if (initialData) {
+                setSelectedRoleId(initialData.roleId);
+                setGoldIncome(initialData.goldIncome);
+                setGoldExpense(initialData.goldExpense || 0);
+                setNotes(initialData.notes || '');
+                setRecordDate(formatDateForInput(initialData.date));
+            } else {
+                setSelectedRoleId(initialRole?.id || '');
+                setGoldIncome(0);
+                setGoldExpense(0);
+                setNotes('');
+                setRecordDate(formatDateForInput(new Date()));
+            }
             setError(null);
             setIsSubmitting(false);
-            setRecordDate(formatDateForInput(new Date()));
         }
-    }, [isOpen, initialRole]);
+    }, [isOpen, initialRole, initialData]);
 
     // Lock background scroll
     useEffect(() => {
@@ -117,7 +127,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
 
         try {
             const record: BaizhanRecord = {
-                id: generateUUID(),
+                id: initialData ? initialData.id : generateUUID(),
                 accountId: role.accountId,
                 roleId: role.id,
                 roleName: role.name,
@@ -131,11 +141,11 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
 
             await db.addBaizhanRecord(record);
             onSubmit(record);
-            toast.success('百战记录添加成功');
+            toast.success(initialData ? '百战记录修改成功' : '百战记录添加成功');
             onClose();
         } catch (err) {
             console.error(err);
-            setError('添加失败，请重试');
+            setError(initialData ? '修改失败，请重试' : '添加失败，请重试');
         } finally {
             setIsSubmitting(false);
         }
@@ -150,8 +160,8 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                 <div className="flex items-center justify-between px-6 py-4 border-b border-base bg-base/50">
                     <div className="flex items-center gap-6">
                         <div className="flex items-center gap-2">
-                            <div className="p-2 bg-purple-500/10 rounded-lg">
-                                <Swords className="w-5 h-5 text-purple-500" />
+                            <div className="p-2 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                                <Swords className="w-5 h-5 text-purple-500/80" />
                             </div>
                             <div>
                                 <h2 className="text-lg font-bold text-main">记录百战</h2>
@@ -164,7 +174,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                         </div>
 
                         {/* Role Selector in Header */}
-                        {!initialRole && (
+                        {!initialRole && !initialData && (
                             <>
                                 <div className="h-6 w-px bg-base mx-2"></div>
                                 <select
@@ -177,6 +187,14 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                         <option key={r.id} value={r.id}>{r.name} @ {r.server}</option>
                                     ))}
                                 </select>
+                            </>
+                        )}
+                        {initialData && !initialRole && (
+                            <>
+                                <div className="h-6 w-px bg-base mx-2"></div>
+                                <div className="text-sm font-medium text-main">
+                                    {initialData.roleName} @ {initialData.server}
+                                </div>
                             </>
                         )}
                     </div>
@@ -200,7 +218,10 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
 
                     {/* Date Picker */}
                     <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">记录日期</label>
+                        <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-primary"><rect width="18" height="18" x="3" y="4" rx="2" ry="2" /><line x1="16" x2="16" y1="2" y2="6" /><line x1="8" x2="8" y1="2" y2="6" /><line x1="3" x2="21" y1="10" y2="10" /></svg>
+                            记录日期
+                        </label>
                         <div className="relative w-full">
                             <DateTimePicker
                                 value={recordDate}
@@ -210,18 +231,17 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                     </div>
 
                     {/* Income & Expense */}
-                    <div className="bg-base/30 rounded-xl p-4 border border-base/50 space-y-4">
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-muted">收支记录</label>
+                    <div className="space-y-3">
 
                         <div className="grid grid-cols-2 gap-3">
                             {/* Income */}
                             <div>
-                                <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                                    <TrendingUp className="w-4 h-4 text-emerald-600" />
+                                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                                    <TrendingUp className="w-4 h-4 text-emerald-500/80" />
                                     金币收入
                                 </label>
                                 <div className="relative">
-                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />
+                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500/60" />
                                     <input
                                         type="number"
                                         min="0"
@@ -229,19 +249,19 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                         value={goldIncome || ''}
                                         onChange={e => setGoldIncome(parseInt(e.target.value) || 0)}
                                         placeholder="收入金额"
-                                        className="w-full pl-9 pr-3 py-2.5 bg-surface border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all font-mono text-[1rem]"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-main placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 transition-all font-mono text-[1rem]"
                                     />
                                 </div>
                             </div>
 
                             {/* Expense */}
                             <div>
-                                <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                                    <TrendingDown className="w-4 h-4 text-amber-600" />
+                                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                                    <TrendingDown className="w-4 h-4 text-amber-500/80" />
                                     金币支出
                                 </label>
                                 <div className="relative">
-                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500" />
+                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500/60" />
                                     <input
                                         type="number"
                                         min="0"
@@ -249,26 +269,30 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                         value={goldExpense || ''}
                                         onChange={e => setGoldExpense(parseInt(e.target.value) || 0)}
                                         placeholder="支出金额"
-                                        className="w-full pl-9 pr-3 py-2.5 bg-surface border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 transition-all font-mono text-[1rem]"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-main placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all font-mono text-[1rem]"
                                     />
                                 </div>
                             </div>
                         </div>
                     </div>
 
+
                     {/* Notes */}
                     <div>
-                        <label className="block text-xs font-medium text-muted mb-1.5">备注（可选）</label>
+                        <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-primary"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                            备注（可选）
+                        </label>
                         <textarea
                             value={notes}
                             onChange={e => setNotes(e.target.value)}
-                            className="w-full p-3 rounded-lg bg-base border border-base text-sm text-main focus:ring-2 focus:ring-purple-500/20 outline-none resize-none h-20"
+                            className="w-full p-3 rounded-lg bg-base border border-base text-sm text-main focus:ring-2 focus:ring-primary/30 outline-none resize-none h-20"
                             placeholder="记录一些细节..."
                         />
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-3 pt-2">
+                    <div className="flex gap-3 pt-4 border-t border-base mt-2">
                         <button
                             type="button"
                             onClick={onClose}
@@ -279,10 +303,13 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                         <button
                             type="submit"
                             disabled={isSubmitting || (goldIncome <= 0 && goldExpense <= 0)}
-                            className="flex-1 py-2.5 rounded-lg bg-purple-500 text-white font-bold shadow-lg shadow-purple-500/25 hover:bg-purple-600 hover:shadow-purple-500/40 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            className="flex-1 py-2.5 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/25 hover:bg-primary-hover hover:shadow-primary/40 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                             {isSubmitting ? (
-                                <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                <>
+                                    <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    保存中...
+                                </>
                             ) : (
                                 <>
                                     <Save className="w-4 h-4" />

@@ -16,7 +16,9 @@ export const sortAccounts = (accounts: Account[]): Account[] => {
         if (aDisabled !== bDisabled) {
             return (aDisabled ? 1 : 0) - (bDisabled ? 1 : 0);
         }
-        return 0;
+
+        // Secondary sort by accountName alphabetically to ensure stable ordering
+        return a.accountName.localeCompare(b.accountName, 'zh-CN');
     });
 
     // Sort roles within each account
@@ -66,10 +68,11 @@ export const sortRoles = (roles: Role[]): Role[] => {
         }
 
         // 3. Tie-breaker: Equipment Score (High to Low) if available
-        if (a.equipmentScore !== undefined && b.equipmentScore !== undefined) {
+        if (a.equipmentScore !== undefined && b.equipmentScore !== undefined && a.equipmentScore !== b.equipmentScore) {
             return b.equipmentScore - a.equipmentScore;
         }
 
-        return 0;
+        // 4. Final tie-breaker: Role name alphabetically
+        return a.name.localeCompare(b.name, 'zh-CN');
     });
 };
