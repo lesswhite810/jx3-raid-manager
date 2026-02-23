@@ -502,29 +502,64 @@ function App() {
 
 
       {/* Edit Record Modal */}
-      {editingRecord && (
-        <AddRecordModal
-          isOpen={true}
-          onClose={() => setEditingRecord(null)}
-          onSubmit={handleUpdateRecord}
-          initialData={editingRecord}
-          role={{
-            id: editingRecord.roleId,
-            name: editingRecord.roleName || '未知角色',
-            server: editingRecord.server?.split(' ')[1] || '未知服务器',
-            region: editingRecord.server?.split(' ')[0] || '未知大区',
-            sect: '未知', // Editing doesn't need sect strictly for logic
-            accountId: editingRecord.accountId,
-            accountName: '' // Not critical for edit display
-          }}
-          raid={{
-            name: '未知',
-            difficulty: '普通',
-            playerCount: 25,
-            isActive: true
-          }}
-        />
-      )}
+      {editingRecord && (() => {
+        // 从 raidName 解析副本信息，格式如 "25人英雄弓月城"
+        const raidName = editingRecord.raidName;
+        let playerCount: 10 | 25 = 25;
+        let difficulty: '普通' | '英雄' | '挑战' = '普通';
+        let name = '未知';
+
+        if (raidName.includes('10人')) {
+          playerCount = 10;
+        } else if (raidName.includes('25人')) {
+          playerCount = 25;
+        }
+
+        if (raidName.includes('英雄')) {
+          difficulty = '英雄';
+        } else if (raidName.includes('挑战')) {
+          difficulty = '挑战';
+        } else if (raidName.includes('普通')) {
+          difficulty = '普通';
+        }
+
+        // 提取副本名称：移除人数和难度前缀
+        name = raidName
+          .replace(/10人|25人/g, '')
+          .replace(/普通|英雄|挑战/g, '')
+          .trim() || '未知';
+
+        // 尝试从raids配置中找到匹配的副本获取boss信息
+        const matchedRaid = raids.find(r =>
+          r.name === name && r.difficulty === difficulty && r.playerCount === playerCount
+        );
+
+        const raidForEdit = matchedRaid || {
+          name,
+          difficulty,
+          playerCount,
+          isActive: true
+        };
+
+        return (
+          <AddRecordModal
+            isOpen={true}
+            onClose={() => setEditingRecord(null)}
+            onSubmit={handleUpdateRecord}
+            initialData={editingRecord}
+            role={{
+              id: editingRecord.roleId,
+              name: editingRecord.roleName || '未知角色',
+              server: editingRecord.server?.split(' ')[1] || '未知服务器',
+              region: editingRecord.server?.split(' ')[0] || '未知大区',
+              sect: '未知',
+              accountId: editingRecord.accountId,
+              accountName: ''
+            }}
+            raid={raidForEdit}
+          />
+        );
+      })()}
 
       {/* Edit Baizhan Record Modal */}
       {editingBaizhanRecord && (
