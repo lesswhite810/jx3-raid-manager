@@ -26,7 +26,7 @@ import { saveRaidCache } from './utils/raidUtils';
 import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts } from './utils/accountUtils';
 import { db } from './services/db';
-import { checkLocalStorageData, forceMigrate } from './services/migration';
+import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { syncEquipment } from './services/jx3BoxApi';
 
 function App() {
@@ -58,32 +58,37 @@ function App() {
         await db.init();
         console.log('数据库初始化完成');
 
-        console.log('正在检查本地存储数据...');
-        const localData = await checkLocalStorageData();
-        console.log('本地数据状态:', localData);
+        // 获取版本信息（用于调试）
+        const versionInfo = await db.getVersionInfo();
+        if (versionInfo) {
+          console.log(`数据库版本: V${versionInfo.schemaVersion}, 最新版本: V${versionInfo.currentVersion}`);
+          console.log(`localStorage 迁移状态: ${versionInfo.localStorageMigrated ? '已完成' : '未完成'}`);
+        }
 
+        // 检查是否需要执行 localStorage 迁移
+        const localData = await checkLocalStorageData();
         if (localData.totalItems > 0) {
-          console.log(`发现本地存储数据，开始迁移...`);
+          console.log(`发现 localStorage 数据，开始迁移...`);
           console.log(`  账号: ${localData.accountsCount}`);
           console.log(`  记录: ${localData.recordsCount}`);
           console.log(`  副本: ${localData.raidsCount}`);
 
-          const result = await forceMigrate();
+          const result = await migrateLocalStorageData();
 
           if (result.success) {
-            console.log('✓ 迁移成功！');
-            if (result.migrated.accounts > 0 || result.migrated.records > 0 || result.migrated.raids > 0) {
-              console.log(`  新增账号: +${result.migrated.accounts}`);
-              console.log(`  新增记录: +${result.migrated.records}`);
-              console.log(`  新增副本: +${result.migrated.raids}`);
-            } else {
-              console.log('  数据已是最新的，无需新增');
+            console.log('✓ localStorage 迁移成功！');
+            // 输出详细的迁移日志
+            if (result.details && result.details.length > 0) {
+              result.details.forEach((detail: string) => console.log(`  - ${detail}`));
             }
           } else {
-            console.error('✗ 迁移失败:', result.message);
+            console.error('✗ localStorage 迁移失败:', result.message);
+            if (result.details && result.details.length > 0) {
+              result.details.forEach((detail: string) => console.error(`  - ${detail}`));
+            }
           }
         } else {
-          console.log('无需迁移，本地无数据');
+          console.log('无需迁移 localStorage，无本地数据');
         }
 
         console.log('\n正在加载数据库数据...');
@@ -116,15 +121,13 @@ function App() {
         setRaids(raidsWithBosses);
 
         if (loadedConfig) {
+          // 数据库有配置，使用它
           const configData = typeof loadedConfig === 'string' ? JSON.parse(loadedConfig) : loadedConfig;
           setConfig(configData);
-        } else {
-          const localConfig = loadConfigFromStorage();
-          if (localConfig) {
-            setConfig(localConfig);
-            await db.saveConfig(localConfig);
-          }
+          console.log('使用数据库配置');
         }
+        // 如果数据库没有配置，保持使用 DEFAULT_CONFIG（不写入数据库）
+        // config 迁移已在 migrateLocalStorageData() 中完成
 
         if (parsedRecords.length > 0) {
           // Filter out any legacy trial records if they exist in standard records

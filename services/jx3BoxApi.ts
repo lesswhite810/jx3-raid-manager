@@ -52,6 +52,7 @@ export async function waitForSync(): Promise<void> {
 export async function syncEquipment(): Promise<void> {
     // 如果已经在同步中，等待现有同步完成
     if (syncPromise) {
+        console.log('[Equipment Sync] 同步已在进行中，等待完成...');
         return syncPromise;
     }
 
@@ -65,21 +66,33 @@ export async function syncEquipment(): Promise<void> {
             const isEmpty = !existingEquips || existingEquips.length === 0;
 
             if (!isEmpty && cache && (now - new Date(cache.updatedAt).getTime() < CACHE_DURATION)) {
-                console.log('Equipment cache is valid, skipping sync.');
+                console.log('[Equipment Sync] 缓存有效，跳过同步');
                 return;
             }
 
-            console.log('Starting equipment sync...');
+            if (isEmpty) {
+                console.log('[Equipment Sync] 数据库为空，开始首次同步...');
+            } else {
+                console.log('[Equipment Sync] 缓存已过期，开始更新同步...');
+            }
+
+            console.log('[Equipment Sync] 正在获取装备数据，请稍候...');
+            const startTime = Date.now();
             const allItems = await fetchAllEquipment('无修');
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
             if (allItems.length > 0) {
                 // Save to new table
+                console.log(`[Equipment Sync] 正在保存 ${allItems.length} 条装备数据到数据库...`);
                 await db.saveEquipments(allItems);
                 // Update cache timestamp marker (content is empty string now, just for time check)
                 await db.saveCache(CACHE_KEY, 'synced');
-                console.log(`Synced ${allItems.length} equipment items to database.`);
+                console.log(`[Equipment Sync] ✓ 同步完成！共同步 ${allItems.length} 件装备，耗时 ${duration}秒`);
+            } else {
+                console.log('[Equipment Sync] ⚠ 未获取到任何装备数据');
             }
         } catch (error) {
-            console.error('Failed to sync equipment:', error);
+            console.error('[Equipment Sync] ✗ 同步失败:', error);
         } finally {
             syncPromise = null;
         }
@@ -105,12 +118,13 @@ async function fetchAllEquipment(keyword: string): Promise<JX3Equip[]> {
         { auc_genre: 4, auc_sub_type_id: 3, name: '腰坠' },
     ];
 
+    console.log(`[Equipment Sync] 准备获取 ${equipCategories.length} 个装备类别的数据`);
+
     try {
         // 并发获取所有装备类别
         const fetchCategory = async (category: typeof equipCategories[0]): Promise<JX3Equip[]> => {
             const categoryItems: JX3Equip[] = [];
             let page = 1;
-            console.log(`[Equipment Sync] Fetching category: ${category.name} (genre=${category.auc_genre}, sub_type=${category.auc_sub_type_id})`);
 
             while (true) {
                 const url = new URL('https://node.jx3box.com/api/node/item/search');
@@ -129,7 +143,9 @@ async function fetchAllEquipment(keyword: string): Promise<JX3Equip[]> {
                 const list = data.data && data.data.data ? data.data.data : [];
 
                 // 调试日志：记录每页获取的数据
-                console.log(`[Equipment Sync] ${category.name} Page ${page}: API returned ${list.length} items`);
+                if (page === 1) {
+                    console.log(`[Equipment Sync] 获取 ${category.name}: 第${page}页 ${list.length} 件`);
+                }
 
                 if (!list || list.length === 0) break;
 
@@ -185,19 +201,20 @@ async function fetchAllEquipment(keyword: string): Promise<JX3Equip[]> {
                 uniqueItems.set(item.ID, item);
             } else {
                 duplicateCount++;
-                // 调试：打印重复项
-                console.log(`[Equipment Sync] Duplicate found: ${item.ID} - ${item.Name}`);
             }
         });
 
-        console.log(`[Equipment Sync] After dedup: ${uniqueItems.size} unique items, ${duplicateCount} duplicates removed`);
+        if (duplicateCount > 0) {
+            console.log(`[Equipment Sync] 去重完成: ${uniqueItems.size} 件唯一装备，移除 ${duplicateCount} 件重复`);
+        }
 
         // 注意：API 已经按关键词搜索，不再需要本地过滤
         // 移除 filterItem 调用，保留所有 API 返回的结果
+        console.log(`[Equipment Sync] ✓ 共获取 ${uniqueItems.size} 件装备`);
         return Array.from(uniqueItems.values());
 
     } catch (e) {
-        console.error('Error fetching all equipment:', e);
+        console.error('[Equipment Sync] ✗ 获取装备数据失败:', e);
         return allItems;
     }
 }

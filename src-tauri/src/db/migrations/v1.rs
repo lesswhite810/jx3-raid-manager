@@ -1,12 +1,23 @@
 use rusqlite::{params, Connection};
 use crate::db::migration::error_to_string;
 
-/// V1 Migration: Split accounts table into structured accounts and roles tables
-pub fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
+/// V1 迁移：将 JSON blob 格式的 accounts 数据迁移到结构化表
+///
+/// 前置条件：
+/// - 存在旧的 accounts 表（包含 id, data 列）
+///
+/// 迁移内容：
+/// - 创建 accounts 结构化表
+/// - 创建 roles 结构化表
+/// - 将 JSON 数据拆分并迁移到新表
+/// - 旧表重命名为 accounts_legacy 作为备份
+pub fn migrate(conn: &Connection) -> Result<(), String> {
     let timestamp = chrono::Utc::now().to_rfc3339();
 
-    // Step 1: Check if old accounts table exists
-    let old_accounts_exists: i64 = conn
+    log::info!("V1 迁移：开始执行账号数据迁移...");
+
+    // Step 1: 检查是否存在旧的 accounts 表（有 data 列）
+    let has_old_table: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='accounts'",
             [],
@@ -14,18 +25,56 @@ pub fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
         )
         .map_err(error_to_string)?;
 
-    if old_accounts_exists == 0 {
+    if has_old_table == 0 {
+        log::info!("V1 迁移：不存在旧 accounts 表，无需迁移");
         return Ok(());
     }
 
-    // Step 2: Create new structured tables
+    // 检查是否有 data 列（说明是旧格式）
+    let has_data_column: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name='data'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error_to_string)?;
+
+    if has_data_column == 0 {
+        log::info!("V1 迁移：accounts 表不是 JSON blob 格式，无需迁移");
+        return Ok(());
+    }
+
+    // Step 2: 读取旧数据
+    let mut stmt = conn
+        .prepare("SELECT id, data FROM accounts")
+        .map_err(error_to_string)?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(error_to_string)?;
+
+    let mut accounts_data: Vec<(String, String)> = Vec::new();
+    for row in rows {
+        let (id, data) = row.map_err(error_to_string)?;
+        accounts_data.push((id, data));
+    }
+    drop(stmt);
+
+    log::info!("V1 迁移：读取到 {} 条旧账号数据", accounts_data.len());
+
+    if accounts_data.is_empty() {
+        log::info!("V1 迁移：旧表中无数据，跳过迁移");
+        return Ok(());
+    }
+
+    // Step 3: 重命名旧表为 legacy
+    conn.execute("ALTER TABLE accounts RENAME TO accounts_legacy;", [])
+        .map_err(error_to_string)?;
+    log::info!("V1 迁移：已将旧 accounts 表重命名为 accounts_legacy");
+
+    // Step 4: 创建新的结构化表
     conn.execute_batch(
         r#"
-        -- Rename old accounts table
-        ALTER TABLE accounts RENAME TO accounts_legacy;
-
-        -- Create new accounts table (with password field)
-        CREATE TABLE accounts (
+        CREATE TABLE IF NOT EXISTS accounts (
             id TEXT PRIMARY KEY,
             account_name TEXT NOT NULL,
             account_type TEXT NOT NULL DEFAULT 'OWN',
@@ -37,8 +86,7 @@ pub fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
             updated_at TEXT
         );
 
-        -- Create new roles table
-        CREATE TABLE roles (
+        CREATE TABLE IF NOT EXISTS roles (
             id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
             name TEXT NOT NULL,
@@ -52,29 +100,25 @@ pub fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
         );
 
-        -- Create indexes for better query performance
         CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
         CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
     "#,
     )
     .map_err(error_to_string)?;
 
-    // Step 3: Migrate data from JSON to structured tables
-    let mut stmt = conn
-        .prepare("SELECT id, data FROM accounts_legacy")
-        .map_err(error_to_string)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(error_to_string)?;
+    // Step 5: 迁移数据
+    let mut migrated_accounts = 0;
+    let mut migrated_roles = 0;
 
-    for row in rows {
-        let (account_id, data_str): (String, String) = row.map_err(error_to_string)?;
-        let data: serde_json::Value =
-            serde_json::from_str(&data_str).map_err(|e| format!("JSON parse error: {}", e))?;
+    for (account_id, data_str) in accounts_data {
+        let data: serde_json::Value = match serde_json::from_str(&data_str) {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("V1 迁移：解析账号 {} JSON 失败: {}", account_id, e);
+                continue;
+            }
+        };
 
-        // Extract account fields (drop username, keep accountName and password)
         let account_name = data["accountName"]
             .as_str()
             .or(data["username"].as_str())
@@ -86,25 +130,18 @@ pub fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
         let hidden = data["hidden"].as_bool().unwrap_or(false) as i32;
         let disabled = data["disabled"].as_bool().unwrap_or(false) as i32;
 
-        // Insert into new accounts table
-        conn.execute(
-            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, created_at, updated_at)
+        match conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                account_id,
-                account_name,
-                account_type,
-                password,
-                notes,
-                hidden,
-                disabled,
-                timestamp,
-                timestamp
-            ],
-        )
-        .map_err(error_to_string)?;
+            params![account_id, account_name, account_type, password, notes, hidden, disabled, timestamp, timestamp],
+        ) {
+            Ok(_) => migrated_accounts += 1,
+            Err(e) => {
+                log::warn!("V1 迁移：插入账号 {} 失败: {}", account_id, e);
+                continue;
+            }
+        }
 
-        // Extract and insert roles
         if let Some(roles_array) = data["roles"].as_array() {
             for role_json in roles_array {
                 let role_id = role_json["id"]
@@ -119,33 +156,22 @@ pub fn apply_v1_migration(conn: &Connection) -> Result<(), String> {
                 let sect = role_json["sect"].as_str().map(|s| s.to_string());
                 let role_disabled = role_json["disabled"].as_bool().unwrap_or(false) as i32;
 
-                // equipmentScore might be string or number
                 let equipment_score = role_json["equipmentScore"]
                     .as_i64()
-                    .or(role_json["equipmentScore"]
-                        .as_str()
-                        .and_then(|s| s.parse().ok()));
+                    .or(role_json["equipmentScore"].as_str().and_then(|s| s.parse().ok()));
 
-                conn.execute(
-                    "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, created_at, updated_at)
+                match conn.execute(
+                    "INSERT OR IGNORE INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, created_at, updated_at)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    params![
-                        role_id,
-                        account_id,
-                        role_name,
-                        server,
-                        region,
-                        sect,
-                        equipment_score,
-                        role_disabled,
-                        timestamp,
-                        timestamp
-                    ],
-                )
-                .map_err(error_to_string)?;
+                    params![role_id, &account_id, role_name, server, region, sect, equipment_score, role_disabled, timestamp, timestamp],
+                ) {
+                    Ok(_) => migrated_roles += 1,
+                    Err(e) => log::warn!("V1 迁移：插入角色失败: {}", e),
+                }
             }
         }
     }
 
+    log::info!("V1 迁移完成：迁移 {} 个账号，{} 个角色", migrated_accounts, migrated_roles);
     Ok(())
 }
