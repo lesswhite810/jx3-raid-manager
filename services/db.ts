@@ -14,26 +14,47 @@ class DatabaseService {
     }
   }
 
-  // Version management
-  async getSchemaVersion(): Promise<number> {
+  // ========== 版本管理 ==========
+
+  /// 获取数据库版本信息
+  async getVersionInfo(): Promise<{
+    schemaVersion: number;
+    currentVersion: number;
+    isLatest: boolean;
+    localStorageMigrated: boolean;
+  } | null> {
     await this.init();
     try {
-      return await invoke<number>('db_get_schema_version');
+      return await invoke('db_get_version_info');
     } catch (error) {
-      console.error('Failed to get schema version:', error);
-      return 0;
+      console.error('Failed to get version info:', error);
+      return null;
     }
   }
 
-  async checkMigrationNeeded(): Promise<boolean> {
+  /// 检查 localStorage 迁移是否已完成
+  async isLocalStorageMigrated(): Promise<boolean> {
     await this.init();
     try {
-      return await invoke<boolean>('db_check_migration_needed');
+      return await invoke<boolean>('db_is_local_storage_migrated');
     } catch (error) {
-      console.error('Failed to check migration needed:', error);
+      console.error('Failed to check localStorage migrated:', error);
       return false;
     }
   }
+
+  /// 标记 localStorage 迁移已完成
+  async setLocalStorageMigrated(): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_set_local_storage_migrated');
+    } catch (error) {
+      console.error('Failed to set localStorage migrated:', error);
+      throw error;
+    }
+  }
+
+  // ========== 账号管理 ==========
 
   async getAccounts(): Promise<any[]> {
     await this.init();
@@ -182,35 +203,7 @@ class DatabaseService {
     }
   }
 
-  async getMigrationStatus(): Promise<string | null> {
-    await this.init();
-    try {
-      return await invoke<string | null>('db_get_migration_status');
-    } catch (error) {
-      console.error('Failed to get migration status:', error);
-      return null;
-    }
-  }
-
-  async checkMigrationCompleted(): Promise<boolean> {
-    await this.init();
-    try {
-      return await invoke<boolean>('db_check_migration_completed');
-    } catch (error) {
-      console.error('Failed to check migration status:', error);
-      return false;
-    }
-  }
-
-  async setMigrationStatus(status: string, errorMessage?: string): Promise<void> {
-    await this.init();
-    try {
-      await invoke('db_set_migration_status', { status, errorMessage: errorMessage || null });
-    } catch (error) {
-      console.error('Failed to set migration status:', error);
-      throw error;
-    }
-  }
+  // ========== 配置管理 ==========
 
   async getConfig(): Promise<any | null> {
     await this.init();

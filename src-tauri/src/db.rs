@@ -1,9 +1,16 @@
 use rusqlite::{params, Connection, Result};
 use std::path::PathBuf;
+use std::sync::Mutex;
 mod migration;
 pub mod migrations;
 
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
+
+/// 当前数据库 schema 版本
+pub const CURRENT_SCHEMA_VERSION: i32 = 2;
+
+/// 数据库连接单例
+static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
 
 pub fn get_app_dir() -> Result<PathBuf, String> {
     let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
@@ -22,35 +29,155 @@ pub fn get_db_path() -> Result<PathBuf, String> {
     Ok(app_dir.join(DATABASE_NAME))
 }
 
+/// 初始化数据库（单例模式，只初始化一次）
+///
+/// 流程：
+/// 1. 如果数据库不存在 → 新安装，创建最新版本结构
+/// 2. 如果数据库存在但版本较低 → 升级，执行增量迁移
+/// 3. 如果数据库存在且是最新版本 → 直接返回连接
 pub fn init_db() -> Result<Connection, String> {
+    // 检查是否已初始化
+    {
+        let initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
+        if *initialized {
+            // 已初始化，直接返回新连接（SQLite 支持多连接）
+            return Connection::open(get_db_path()?).map_err(|e| e.to_string());
+        }
+    }
+
+    // 执行初始化（首次）
     let path = get_db_path()?;
+    let db_exists = path.exists();
 
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
 
-    // Create base tables (accounts will be created/renamed by migration)
+    // 创建 schema_versions 表（用于记录版本）和 migration_flags 表
     conn.execute_batch(
         r#"
+        CREATE TABLE IF NOT EXISTS schema_versions (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL,
+            description TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS migration_flags (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        );
+    "#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 获取当前版本
+    let current_version = get_schema_version(&conn)?;
+
+    if !db_exists {
+        // ========== 全新安装场景 ==========
+        // 数据库文件不存在，创建最新版本结构
+        log::info!("数据库初始化：全新安装，创建最新版本结构 (V{})", CURRENT_SCHEMA_VERSION);
+
+        // 创建所有表（最新版本结构）
+        create_latest_schema(&conn)?;
+
+        // 记录版本号
+        set_schema_version(&conn, CURRENT_SCHEMA_VERSION, "初始安装")?;
+
+        // 初始化静态副本数据
+        migration::init_static_raids(&conn)?;
+
+    } else if current_version == 0 {
+        // ========== 从旧版本升级场景 ==========
+        // 数据库存在但没有版本记录，说明是旧版本
+        log::info!("数据库初始化：从旧版本升级，执行所有迁移脚本");
+
+        // 执行所有迁移（V1 到当前版本）
+        for version in 1..=CURRENT_SCHEMA_VERSION {
+            log::info!("执行迁移脚本：V{}", version);
+            migration::apply_migration(&conn, version)?;
+            set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
+            log::info!("迁移 V{} 完成", version);
+        }
+
+        // 初始化静态副本数据
+        migration::init_static_raids(&conn)?;
+
+    } else if current_version < CURRENT_SCHEMA_VERSION {
+        // ========== 从中间版本升级场景 ==========
+        log::info!("数据库初始化：从 V{} 升级到 V{}", current_version, CURRENT_SCHEMA_VERSION);
+
+        // 执行增量迁移
+        for version in (current_version + 1)..=CURRENT_SCHEMA_VERSION {
+            log::info!("执行迁移脚本：V{}", version);
+            migration::apply_migration(&conn, version)?;
+            set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
+            log::info!("迁移 V{} 完成", version);
+        }
+
+        // 初始化静态副本数据（可能会添加新的预设副本）
+        migration::init_static_raids(&conn)?;
+
+    } else {
+        // ========== 已是最新版本 ==========
+        log::info!("数据库初始化：已是最新版本 V{}", current_version);
+    }
+
+    // 标记已初始化
+    {
+        let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
+        *initialized = true;
+    }
+
+    Ok(conn)
+}
+
+/// 获取当前 schema 版本
+fn get_schema_version(conn: &Connection) -> Result<i32, String> {
+    let version: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_versions",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(version)
+}
+
+/// 设置 schema 版本
+fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Result<(), String> {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)",
+        params![version, timestamp, description],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 创建最新版本的数据库结构
+fn create_latest_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        -- ========== 基础记录表 ==========
         CREATE TABLE IF NOT EXISTS records (
             id TEXT PRIMARY KEY,
             data TEXT
         );
-        
-        CREATE TABLE IF NOT EXISTS raids (
-            id TEXT PRIMARY KEY,
-            data TEXT
-        );
-        
+
+        -- ========== 配置表 ==========
         CREATE TABLE IF NOT EXISTS config (
             id INTEGER PRIMARY KEY,
             value TEXT
         );
 
+        -- ========== 缓存表 ==========
         CREATE TABLE IF NOT EXISTS cache (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TEXT
         );
 
+        -- ========== 装备表 ==========
         CREATE TABLE IF NOT EXISTS equipments (
             id TEXT PRIMARY KEY,
             name TEXT,
@@ -68,8 +195,7 @@ pub fn init_db() -> Result<Connection, String> {
             updated_at TEXT
         );
 
-
-
+        -- ========== 试炼记录表 ==========
         CREATE TABLE IF NOT EXISTS trial_records (
             id TEXT PRIMARY KEY,
             account_id TEXT,
@@ -87,6 +213,7 @@ pub fn init_db() -> Result<Connection, String> {
             updated_at TEXT
         );
 
+        -- ========== 百战记录表 ==========
         CREATE TABLE IF NOT EXISTS baizhan_records (
             id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
@@ -100,18 +227,133 @@ pub fn init_db() -> Result<Connection, String> {
             record_type TEXT DEFAULT 'baizhan',
             updated_at TEXT
         );
+
+        -- ========== 账号表 (V1+ 结构化格式) ==========
+        CREATE TABLE IF NOT EXISTS accounts (
+            id TEXT PRIMARY KEY,
+            account_name TEXT NOT NULL,
+            account_type TEXT NOT NULL DEFAULT 'OWN',
+            password TEXT,
+            notes TEXT,
+            hidden INTEGER DEFAULT 0,
+            disabled INTEGER DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        );
+
+        -- ========== 角色表 (V1+ 结构化格式) ==========
+        CREATE TABLE IF NOT EXISTS roles (
+            id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            server TEXT,
+            region TEXT,
+            sect TEXT,
+            equipment_score INTEGER,
+            disabled INTEGER DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
+
+        -- ========== 副本表 (V2+ 结构化格式) ==========
+        CREATE TABLE IF NOT EXISTS raids (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            difficulty TEXT NOT NULL DEFAULT '普通',
+            player_count INTEGER NOT NULL DEFAULT 25,
+            version TEXT,
+            notes TEXT,
+            is_active INTEGER DEFAULT 1,
+            is_static INTEGER DEFAULT 0
+        );
+
+        -- ========== BOSS 表 (V2+) ==========
+        CREATE TABLE IF NOT EXISTS raid_bosses (
+            id TEXT PRIMARY KEY,
+            raid_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            boss_order INTEGER NOT NULL
+        );
+
+        -- ========== 副本版本表 (V2+) ==========
+        CREATE TABLE IF NOT EXISTS raid_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        );
     "#,
     )
     .map_err(|e| e.to_string())?;
 
-    // Initialize schema versions table and apply migrations
-    migration::init_schema_versions(&conn).map_err(|e| e.to_string())?;
-    migration::apply_migrations(&conn).map_err(|e| e.to_string())?;
+    log::info!("数据库结构创建完成");
+    Ok(())
+}
 
-    // 初始化预制副本数据
-    migration::init_static_raids(&conn).map_err(|e| e.to_string())?;
+/// 检查 localStorage 迁移是否已完成
+#[tauri::command]
+pub fn db_is_local_storage_migrated() -> Result<bool, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
 
-    Ok(conn)
+    let migrated: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM migration_flags WHERE key = 'local_storage_migrated' AND value = 'true'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    Ok(migrated > 0)
+}
+
+/// 标记 localStorage 迁移已完成
+#[tauri::command]
+pub fn db_set_local_storage_migrated() -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT OR REPLACE INTO migration_flags (key, value, updated_at) VALUES ('local_storage_migrated', 'true', ?)",
+        params![timestamp],
+    )
+    .map_err(|e| e.to_string())?;
+
+    log::info!("localStorage 迁移标记已设置");
+    Ok(())
+}
+
+/// 获取数据库版本信息（用于调试）
+#[tauri::command]
+pub fn db_get_version_info() -> Result<serde_json::Value, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    let version: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_versions",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let localStorageMigrated: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM migration_flags WHERE key = 'local_storage_migrated' AND value = 'true'",
+            [],
+            |row| {
+                let count: i64 = row.get(0)?;
+                Ok(count > 0)
+            },
+        )
+        .unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "schemaVersion": version,
+        "currentVersion": CURRENT_SCHEMA_VERSION,
+        "isLatest": version == CURRENT_SCHEMA_VERSION,
+        "localStorageMigrated": localStorageMigrated
+    }))
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -860,18 +1102,6 @@ pub fn db_delete_role_structured(role_id: String) -> Result<(), String> {
     conn.execute("DELETE FROM roles WHERE id = ?", params![role_id])
         .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[tauri::command]
-pub fn db_get_schema_version() -> Result<i32, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    migration::get_current_version(&conn)
-}
-
-#[tauri::command]
-pub fn db_check_migration_needed() -> Result<bool, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    migration::is_migration_needed(&conn)
 }
 
 #[tauri::command]

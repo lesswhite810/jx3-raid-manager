@@ -17,6 +17,230 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', message: string, data?: any) {
   }
 }
 
+/// 检查 localStorage 是否有旧数据
+export async function checkLocalStorageData(): Promise<{
+  hasAccounts: boolean;
+  hasRecords: boolean;
+  hasRaids: boolean;
+  hasConfig: boolean;
+  totalItems: number;
+  accountsCount: number;
+  recordsCount: number;
+  raidsCount: number;
+}> {
+  const accountsRaw = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
+  const recordsRaw = localStorage.getItem(STORAGE_KEYS.RECORDS);
+  const raidsRaw = localStorage.getItem(STORAGE_KEYS.RAIDS);
+  const configRaw = localStorage.getItem(STORAGE_KEYS.CONFIG);
+
+  let accountsCount = 0, recordsCount = 0, raidsCount = 0;
+
+  if (accountsRaw) {
+    try {
+      const accounts = JSON.parse(accountsRaw);
+      accountsCount = Array.isArray(accounts) ? accounts.length : 0;
+    } catch {
+      log('ERROR', '解析账号数据失败');
+    }
+  }
+
+  if (recordsRaw) {
+    try {
+      const records = JSON.parse(recordsRaw);
+      recordsCount = Array.isArray(records) ? records.length : 0;
+    } catch {
+      log('ERROR', '解析记录数据失败');
+    }
+  }
+
+  if (raidsRaw) {
+    try {
+      const raids = JSON.parse(raidsRaw);
+      raidsCount = Array.isArray(raids) ? raids.length : 0;
+    } catch {
+      log('ERROR', '解析副本数据失败');
+    }
+  }
+
+  return {
+    hasAccounts: accountsCount > 0,
+    hasRecords: recordsCount > 0,
+    hasRaids: raidsCount > 0,
+    hasConfig: !!configRaw,
+    totalItems: accountsCount + recordsCount + raidsCount + (configRaw ? 1 : 0),
+    accountsCount,
+    recordsCount,
+    raidsCount
+  };
+}
+
+/// 清除 localStorage 中的旧数据
+function clearLocalStorageData(): void {
+  log('INFO', '清除 localStorage 中的旧数据...');
+  try {
+    localStorage.removeItem(STORAGE_KEYS.ACCOUNTS);
+    localStorage.removeItem(STORAGE_KEYS.RECORDS);
+    localStorage.removeItem(STORAGE_KEYS.RAIDS);
+    localStorage.removeItem(STORAGE_KEYS.CONFIG);
+    log('INFO', '  ✓ localStorage 数据已清除');
+  } catch (error: any) {
+    log('ERROR', `清除 localStorage 失败: ${error.message}`);
+  }
+}
+
+/// 执行 localStorage 数据迁移
+/// 返回迁移结果
+export async function migrateLocalStorageData(): Promise<{
+  success: boolean;
+  message: string;
+  migrated: {
+    accounts: number;
+    records: number;
+    raids: number;
+    config: boolean;
+  };
+  details: string[];
+}> {
+  log('INFO', '=== 开始 localStorage 数据迁移 ===');
+
+  const result = { accounts: 0, records: 0, raids: 0, config: false };
+  const details: string[] = [];
+
+  try {
+    // 检查是否已完成迁移
+    const alreadyMigrated = await db.isLocalStorageMigrated();
+    if (alreadyMigrated) {
+      log('INFO', 'localStorage 迁移已完成，跳过');
+      return { success: true, message: '迁移已完成', migrated: result, details };
+    }
+
+    // 迁移账号数据
+    const accountsRaw = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
+    if (accountsRaw) {
+      try {
+        const accounts = JSON.parse(accountsRaw);
+        if (Array.isArray(accounts) && accounts.length > 0) {
+          await db.saveAccounts(accounts);
+          result.accounts = accounts.length;
+          details.push(`账号: 迁移 ${accounts.length} 个账号`);
+          log('INFO', `  ✓ 迁移 ${accounts.length} 个账号`);
+        } else {
+          details.push('账号: 无数据');
+        }
+      } catch (e: any) {
+        details.push(`账号: 迁移失败 - ${e.message}`);
+        log('ERROR', `  账号迁移失败: ${e.message}`);
+      }
+    } else {
+      details.push('账号: localStorage 中无数据');
+    }
+
+    // 迁移记录数据
+    const recordsRaw = localStorage.getItem(STORAGE_KEYS.RECORDS);
+    if (recordsRaw) {
+      try {
+        const records = JSON.parse(recordsRaw);
+        if (Array.isArray(records) && records.length > 0) {
+          await db.saveRecords(records);
+          result.records = records.length;
+          details.push(`记录: 迁移 ${records.length} 条记录`);
+          log('INFO', `  ✓ 迁移 ${records.length} 条记录`);
+        } else {
+          details.push('记录: 无数据');
+        }
+      } catch (e: any) {
+        details.push(`记录: 迁移失败 - ${e.message}`);
+        log('ERROR', `  记录迁移失败: ${e.message}`);
+      }
+    } else {
+      details.push('记录: localStorage 中无数据');
+    }
+
+    // 迁移副本数据（注意：V2+ 版本 raids 使用静态数据，不迁移）
+    const raidsRaw = localStorage.getItem(STORAGE_KEYS.RAIDS);
+    if (raidsRaw) {
+      try {
+        const raids = JSON.parse(raidsRaw);
+        if (Array.isArray(raids) && raids.length > 0) {
+          // V2+ 版本使用静态副本数据，不需要迁移用户的自定义副本
+          // 但保留数据用于参考
+          details.push(`副本: V2+ 使用静态数据，忽略 ${raids.length} 个用户自定义副本`);
+          log('INFO', `  ⊘ 忽略 ${raids.length} 个自定义副本（使用静态数据）`);
+          result.raids = 0; // 不实际迁移
+        } else {
+          details.push('副本: 无数据');
+        }
+      } catch (e: any) {
+        details.push(`副本: 解析失败 - ${e.message}`);
+        log('ERROR', `  副本解析失败: ${e.message}`);
+      }
+    } else {
+      details.push('副本: localStorage 中无数据');
+    }
+
+    // 迁移配置数据
+    const configRaw = localStorage.getItem(STORAGE_KEYS.CONFIG);
+    if (configRaw) {
+      try {
+        const config = JSON.parse(configRaw);
+        await db.saveConfig(config);
+        result.config = true;
+        details.push('配置: 迁移配置数据');
+        log('INFO', `  ✓ 迁移配置`);
+      } catch (e: any) {
+        details.push(`配置: 迁移失败 - ${e.message}`);
+        log('ERROR', `  配置迁移失败: ${e.message}`);
+      }
+    } else {
+      details.push('配置: localStorage 中无数据');
+    }
+
+    // 标记迁移完成
+    await db.setLocalStorageMigrated();
+    details.push('迁移状态: 已标记完成');
+
+    // 清除 localStorage 数据
+    clearLocalStorageData();
+    details.push('清理: 已清除 localStorage 数据');
+
+    const hasMigrated = result.accounts > 0 || result.records > 0 || result.config;
+    const summary = hasMigrated
+      ? `迁移完成: ${result.accounts} 账号, ${result.records} 记录, ${result.config ? '1 配置' : '0 配置'}`
+      : '无需迁移';
+
+    log('INFO', `=== localStorage 迁移完成 ===`);
+
+    return {
+      success: true,
+      message: summary,
+      migrated: result,
+      details
+    };
+  } catch (error: any) {
+    const errorMsg = `迁移过程出错: ${error.message}`;
+    details.push(`错误: ${error.message}`);
+    log('ERROR', errorMsg);
+    return {
+      success: false,
+      message: errorMsg,
+      migrated: result,
+      details
+    };
+  }
+}
+
+/// 获取数据库版本信息（用于调试）
+export async function getVersionInfo(): Promise<any> {
+  try {
+    return await db.getVersionInfo();
+  } catch (error: any) {
+    log('ERROR', `获取版本信息失败: ${error.message}`);
+    return null;
+  }
+}
+
+// ========== 以下是旧的诊断函数，保留用于调试 ==========
+
 export async function diagnoseMigration(): Promise<{
   localStorage: {
     hasData: boolean;
@@ -78,46 +302,35 @@ export async function diagnoseMigration(): Promise<{
       try {
         const accounts = JSON.parse(accountsRaw);
         result.localStorage.accountsCount = Array.isArray(accounts) ? accounts.length : 0;
-        log('INFO', `  账号: ${result.localStorage.accountsCount} 条 (${result.localStorage.dataSize.accounts} bytes)`);
+        log('INFO', `  账号: ${result.localStorage.accountsCount} 条`);
       } catch (e: any) {
         result.errors.push('解析账号数据失败: ' + e.message);
-        log('ERROR', `  账号数据解析失败: ${e.message}`);
       }
-    } else {
-      log('INFO', `  账号: 无数据`);
     }
 
     if (recordsRaw) {
       try {
         const records = JSON.parse(recordsRaw);
         result.localStorage.recordsCount = Array.isArray(records) ? records.length : 0;
-        log('INFO', `  记录: ${result.localStorage.recordsCount} 条 (${result.localStorage.dataSize.records} bytes)`);
+        log('INFO', `  记录: ${result.localStorage.recordsCount} 条`);
       } catch (e: any) {
         result.errors.push('解析记录数据失败: ' + e.message);
-        log('ERROR', `  记录数据解析失败: ${e.message}`);
       }
-    } else {
-      log('INFO', `  记录: 无数据`);
     }
 
     if (raidsRaw) {
       try {
         const raids = JSON.parse(raidsRaw);
         result.localStorage.raidsCount = Array.isArray(raids) ? raids.length : 0;
-        log('INFO', `  副本: ${result.localStorage.raidsCount} 条 (${result.localStorage.dataSize.raids} bytes)`);
+        log('INFO', `  副本: ${result.localStorage.raidsCount} 条`);
       } catch (e: any) {
         result.errors.push('解析副本数据失败: ' + e.message);
-        log('ERROR', `  副本数据解析失败: ${e.message}`);
       }
-    } else {
-      log('INFO', `  副本: 无数据`);
     }
 
     if (configRaw) {
       result.localStorage.hasConfig = true;
-      log('INFO', `  配置: 有 (${result.localStorage.dataSize.config} bytes)`);
-    } else {
-      log('INFO', `  配置: 无`);
+      log('INFO', `  配置: 有`);
     }
 
     result.localStorage.hasData =
@@ -128,115 +341,34 @@ export async function diagnoseMigration(): Promise<{
 
   } catch (error: any) {
     result.errors.push('检查 localStorage 失败: ' + error.message);
-    log('ERROR', `  检查 localStorage 失败: ${error.message}`);
   }
 
   try {
-    log('INFO', '[诊断 2/2] 检查 SQLite 数据库...');
+    log('INFO', '[诊断 2/2] 检查数据库...');
 
     await db.init();
     result.database.connectionOk = true;
-    log('INFO', '  数据库连接成功');
 
     const accounts = await db.getAccounts();
     result.database.accountsCount = accounts.length;
-    log('INFO', `  数据库账号: ${accounts.length} 条`);
-    if (accounts.length > 0 && typeof accounts[0] === 'string') {
-      log('INFO', `    账号数据预览: ${accounts[0].substring(0, 100)}...`);
-    }
 
     const records = await db.getRecords();
     result.database.recordsCount = records.length;
-    log('INFO', `  数据库记录: ${records.length} 条`);
-    if (records.length > 0) {
-      const recordStr = typeof records[0] === 'string' ? records[0] : JSON.stringify(records[0]);
-      log('INFO', `    记录数据预览: ${recordStr.substring(0, 100)}...`);
-    }
 
     const raids = await db.getRaids();
     result.database.raidsCount = raids.length;
-    log('INFO', `  数据库副本: ${raids.length} 条`);
-    if (raids.length > 0) {
-      const raidStr = typeof raids[0] === 'string' ? raids[0] : JSON.stringify(raids[0]);
-      log('INFO', `    副本数据预览: ${raidStr.substring(0, 100)}...`);
-    }
 
     const config = await db.getConfig();
     result.database.hasConfig = !!config;
-    log('INFO', `  数据库配置: ${config ? '有' : '无'}`);
-    if (config) {
-      const configStr = typeof config === 'string' ? config : JSON.stringify(config);
-      log('INFO', `    配置数据: ${configStr.substring(0, 100)}...`);
-    }
+
+    log('INFO', `  数据库: 账号 ${accounts.length}, 记录 ${records.length}, 副本 ${raids.length}`);
 
   } catch (error: any) {
     result.errors.push('检查数据库失败: ' + error.message);
-    log('ERROR', `  数据库检查失败: ${error.message}`);
-    log('ERROR', `  错误堆栈: ${error.stack || '无'}`);
   }
 
   log('INFO', '=== 诊断完成 ===');
   return result;
-}
-
-export async function deduplicateAccounts(): Promise<{
-  success: boolean;
-  message: string;
-  removed: number;
-  remaining: number;
-}> {
-  log('INFO', '=== 开始账号去重 (Rust) ===');
-
-  try {
-    const result = await db.deduplicateAccounts();
-    log('INFO', `  ${result}`);
-
-    // 解析结果
-    const match = result.match(/处理前: (\d+) 条.*删除: (\d+) 条.*保留: (\d+) 条/);
-    if (match) {
-      return {
-        success: true,
-        message: result,
-        removed: parseInt(match[2]),
-        remaining: parseInt(match[3])
-      };
-    }
-
-    return { success: true, message: result, removed: 0, remaining: 0 };
-  } catch (error: any) {
-    log('ERROR', `去重失败: ${error.message}`);
-    return { success: false, message: error.message, removed: 0, remaining: 0 };
-  }
-}
-
-export async function analyzeDuplicates(): Promise<string> {
-  log('INFO', '=== 分析重复数据 ===');
-  try {
-    return await db.analyzeDuplicates();
-  } catch (error: any) {
-    log('ERROR', `分析失败: ${error.message}`);
-    return '分析失败: ' + error.message;
-  }
-}
-
-export async function deduplicateRaids(): Promise<string> {
-  log('INFO', '=== 开始副本去重 (Rust) ===');
-  try {
-    return await db.deduplicateRaids();
-  } catch (error: any) {
-    log('ERROR', `去重失败: ${error.message}`);
-    return '去重失败: ' + error.message;
-  }
-}
-
-export async function addUniqueConstraint(): Promise<string> {
-  log('INFO', '=== 添加唯一性约束 ===');
-  try {
-    return await db.addUniqueConstraintRaids();
-  } catch (error: any) {
-    log('ERROR', `添加约束失败: ${error.message}`);
-    return '添加约束失败: ' + error.message;
-  }
 }
 
 export async function debugConfig(): Promise<string> {
@@ -259,6 +391,8 @@ export async function resetConfig(defaultConfig: string): Promise<string> {
   }
 }
 
+// ========== 以下函数已废弃，保留用于兼容 ==========
+
 export async function forceMigrate(): Promise<{
   success: boolean;
   message: string;
@@ -268,249 +402,16 @@ export async function forceMigrate(): Promise<{
     raids: number;
     config: boolean;
   };
-  details: {
-    dbBefore: { accounts: number; records: number; raids: number };
-    dbAfter: { accounts: number; records: number; raids: number };
-    skipped: { accounts: number; records: number; raids: number };
-  };
+  details: any;
 }> {
-  log('INFO', '=== 开始智能迁移 ===');
-
-  try {
-    log('INFO', '[1/6] 初始化数据库...');
-    await db.init();
-    log('INFO', '  数据库初始化成功');
-
-    log('INFO', '[2/6] 检查迁移状态...');
-    const migrationCompleted = await db.checkMigrationCompleted();
-    if (migrationCompleted) {
-      log('INFO', '  迁移已完成，跳过迁移步骤');
-      return {
-        success: true,
-        message: '迁移已完成',
-        migrated: { accounts: 0, records: 0, raids: 0, config: false },
-        details: {
-          dbBefore: { accounts: 0, records: 0, raids: 0 },
-          dbAfter: { accounts: 0, records: 0, raids: 0 },
-          skipped: { accounts: 0, records: 0, raids: 0 }
-        }
-      };
-    }
-    log('INFO', '  迁移未完成，继续执行迁移');
-
-    log('INFO', '[3/6] 获取数据库当前状态...');
-    const dbAccountsBefore = await db.getAccounts();
-    const dbRecordsBefore = await db.getRecords();
-    const dbRaidsBefore = await db.getRaids();
-    log('INFO', `  当前数据库: 账号 ${dbAccountsBefore.length}, 记录 ${dbRecordsBefore.length}, 副本 ${dbRaidsBefore.length}`);
-
-    const dbAccountIds = new Set(dbAccountsBefore.map((a: any) => (typeof a === 'string' ? JSON.parse(a).id : a.id)));
-    const dbRecordIds = new Set(dbRecordsBefore.map((r: any) => (typeof r === 'string' ? JSON.parse(r).id : r.id)));
-    const dbRaidIds = new Set(dbRaidsBefore.map((r: any) => (typeof r === 'string' ? JSON.parse(r).id : r.id)));
-
-    log('INFO', '[4/6] 迁移数据（去重）...');
-    const result = { accounts: 0, records: 0, raids: 0, config: false };
-    const skipped = { accounts: 0, records: 0, raids: 0 };
-
-    try {
-      const accountsRaw = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
-      if (accountsRaw) {
-        const accounts = JSON.parse(accountsRaw);
-        if (Array.isArray(accounts) && accounts.length > 0) {
-          const newAccounts = accounts.filter((a: any) => !dbAccountIds.has(a.id));
-          if (newAccounts.length > 0) {
-            log('INFO', `  发现 ${newAccounts.length} 个新账号（跳过 ${accounts.length - newAccounts.length} 个重复）`);
-            await db.saveAccounts(newAccounts);
-            result.accounts = newAccounts.length;
-            log('INFO', `  ✓ 迁移 ${newAccounts.length} 个新账号`);
-          } else {
-            skipped.accounts = accounts.length;
-            log('INFO', `  全部 ${accounts.length} 个账号已存在，跳过`);
-          }
-        }
-      }
-    } catch (error: any) {
-      log('ERROR', `  账号迁移失败: ${error.message}`);
-    }
-
-    try {
-      const recordsRaw = localStorage.getItem(STORAGE_KEYS.RECORDS);
-      if (recordsRaw) {
-        const records = JSON.parse(recordsRaw);
-        if (Array.isArray(records) && records.length > 0) {
-          const newRecords = records.filter((r: any) => !dbRecordIds.has(r.id));
-          if (newRecords.length > 0) {
-            log('INFO', `  发现 ${newRecords.length} 条新记录（跳过 ${records.length - newRecords.length} 条重复）`);
-            await db.saveRecords(newRecords);
-            result.records = newRecords.length;
-            log('INFO', `  ✓ 迁移 ${newRecords.length} 条新记录`);
-          } else {
-            skipped.records = records.length;
-            log('INFO', `  全部 ${records.length} 条记录已存在，跳过`);
-          }
-        }
-      }
-    } catch (error: any) {
-      log('ERROR', `  记录迁移失败: ${error.message}`);
-    }
-
-    try {
-      const raidsRaw = localStorage.getItem(STORAGE_KEYS.RAIDS);
-      if (raidsRaw) {
-        const raids = JSON.parse(raidsRaw);
-        if (Array.isArray(raids) && raids.length > 0) {
-          const newRaids = raids.filter((r: any) => !dbRaidIds.has(r.id));
-          if (newRaids.length > 0) {
-            log('INFO', `  发现 ${newRaids.length} 个新副本（跳过 ${raids.length - newRaids.length} 个重复）`);
-            await db.saveRaids(newRaids);
-            result.raids = newRaids.length;
-            log('INFO', `  ✓ 迁移 ${newRaids.length} 个新副本`);
-          } else {
-            skipped.raids = raids.length;
-            log('INFO', `  全部 ${raids.length} 个副本已存在，跳过`);
-          }
-        }
-      }
-    } catch (error: any) {
-      log('ERROR', `  副本迁移失败: ${error.message}`);
-    }
-
-    try {
-      const configRaw = localStorage.getItem(STORAGE_KEYS.CONFIG);
-      if (configRaw) {
-        await db.saveConfig(JSON.parse(configRaw));
-        result.config = true;
-        log('INFO', `  ✓ 配置已更新`);
-      }
-    } catch (error: any) {
-      log('ERROR', `  配置迁移失败: ${error.message}`);
-    }
-
-    log('INFO', '[5/6] 验证迁移结果...');
-    const dbAccountsAfter = await db.getAccounts();
-    const dbRecordsAfter = await db.getRecords();
-    const dbRaidsAfter = await db.getRaids();
-    const dbConfig = await db.getConfig();
-
-    const accountsAdded = dbAccountsAfter.length - dbAccountsBefore.length;
-    const recordsAdded = dbRecordsAfter.length - dbRecordsBefore.length;
-    const raidsAdded = dbRaidsAfter.length - dbRaidsBefore.length;
-
-    const accountsMatch = accountsAdded === result.accounts;
-    const recordsMatch = recordsAdded === result.records;
-    const raidsMatch = raidsAdded === result.raids;
-    const configMatch = result.config ? !!dbConfig : true;
-
-    log('INFO', `  账号: ${accountsMatch ? '✓' : '✗'} (新增:${dbAccountsAfter.length - dbAccountsBefore.length}, 期望:${result.accounts})`);
-    log('INFO', `  记录: ${recordsMatch ? '✓' : '✗'} (新增:${dbRecordsAfter.length - dbRecordsBefore.length}, 期望:${result.records})`);
-    log('INFO', `  副本: ${raidsMatch ? '✓' : '✗'} (新增:${dbRaidsAfter.length - dbRaidsBefore.length}, 期望:${result.raids})`);
-    log('INFO', `  配置: ${configMatch ? '✓' : '✗'}`);
-
-    const allMatch = accountsMatch && recordsMatch && raidsMatch && configMatch;
-    const hasNewData = result.accounts > 0 || result.records > 0 || result.raids > 0 || result.config;
-
-    log('INFO', '[6/6] 完成迁移状态记录...');
-
-    if (allMatch && hasNewData) {
-      log('INFO', '  ✓ 迁移成功！记录迁移状态');
-      await db.setMigrationStatus('completed');
-    } else if (!hasNewData) {
-      log('INFO', '  ✓ 数据已是最新的，记录迁移状态');
-      await db.setMigrationStatus('completed');
-    } else {
-      log('WARN', '  ⚠ 部分数据可能未正确迁移');
-      await db.setMigrationStatus('partial', '部分数据验证不匹配');
-    }
-
-    return {
-      success: allMatch || !hasNewData,
-      message: hasNewData
-        ? (allMatch ? '迁移成功' : '部分数据未完全匹配')
-        : '数据已是最新的',
-      migrated: result,
-      details: {
-        dbBefore: {
-          accounts: dbAccountsBefore.length,
-          records: dbRecordsBefore.length,
-          raids: dbRaidsBefore.length
-        },
-        dbAfter: {
-          accounts: dbAccountsAfter.length,
-          records: dbRecordsAfter.length,
-          raids: dbRaidsAfter.length
-        },
-        skipped
-      }
-    };
-  } catch (error: any) {
-    log('ERROR', `迁移过程出错: ${error.message}`);
-    await db.setMigrationStatus('failed', error.message);
-    return {
-      success: false,
-      message: '迁移失败: ' + error.message,
-      migrated: { accounts: 0, records: 0, raids: 0, config: false },
-      details: {
-        dbBefore: { accounts: 0, records: 0, raids: 0 },
-        dbAfter: { accounts: 0, records: 0, raids: 0 },
-        skipped: { accounts: 0, records: 0, raids: 0 }
-      }
-    };
-  }
-}
-
-export async function checkLocalStorageData(): Promise<{
-  hasAccounts: boolean;
-  hasRecords: boolean;
-  hasRaids: boolean;
-  hasConfig: boolean;
-  totalItems: number;
-  accountsCount: number;
-  recordsCount: number;
-  raidsCount: number;
-}> {
-  const accountsRaw = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
-  const recordsRaw = localStorage.getItem(STORAGE_KEYS.RECORDS);
-  const raidsRaw = localStorage.getItem(STORAGE_KEYS.RAIDS);
-  const configRaw = localStorage.getItem(STORAGE_KEYS.CONFIG);
-
-  let accountsCount = 0, recordsCount = 0, raidsCount = 0;
-
-  if (accountsRaw) {
-    try {
-      const accounts = JSON.parse(accountsRaw);
-      accountsCount = Array.isArray(accounts) ? accounts.length : 0;
-    } catch {
-      log('ERROR', '解析账号数据失败');
-    }
-  }
-
-  if (recordsRaw) {
-    try {
-      const records = JSON.parse(recordsRaw);
-      recordsCount = Array.isArray(records) ? records.length : 0;
-    } catch {
-      log('ERROR', '解析记录数据失败');
-    }
-  }
-
-  if (raidsRaw) {
-    try {
-      const raids = JSON.parse(raidsRaw);
-      raidsCount = Array.isArray(raids) ? raids.length : 0;
-    } catch {
-      log('ERROR', '解析副本数据失败');
-    }
-  }
-
+  const result = await migrateLocalStorageData();
   return {
-    hasAccounts: accountsCount > 0,
-    hasRecords: recordsCount > 0,
-    hasRaids: raidsCount > 0,
-    hasConfig: !!configRaw,
-    totalItems: accountsCount + recordsCount + raidsCount + (configRaw ? 1 : 0),
-    accountsCount,
-    recordsCount,
-    raidsCount
+    ...result,
+    details: {
+      dbBefore: { accounts: 0, records: 0, raids: 0 },
+      dbAfter: { accounts: result.migrated.accounts, records: result.migrated.records, raids: result.migrated.raids },
+      skipped: { accounts: 0, records: 0, raids: 0 }
+    }
   };
 }
 
@@ -518,15 +419,33 @@ export async function manualMigrate(): Promise<{
   success: boolean;
   message: string;
 }> {
-  log('INFO', '=== 手动触发迁移 ===');
+  const result = await migrateLocalStorageData();
+  return { success: result.success, message: result.message };
+}
 
-  const result = await forceMigrate();
+// ========== 以下函数已废弃，仅用于兼容 MigrationStatus 组件 ==========
 
-  if (result.success) {
-    log('INFO', '迁移成功！请重启应用。');
-    return { success: true, message: '迁移成功！请重启应用。' };
-  } else {
-    log('ERROR', `迁移失败: ${result.message}`);
-    return { success: false, message: `迁移失败: ${result.message}` };
-  }
+export async function deduplicateAccounts(): Promise<{
+  success: boolean;
+  message: string;
+  removed: number;
+  remaining: number;
+}> {
+  log('WARN', 'deduplicateAccounts 已废弃');
+  return { success: false, message: '此功能已废弃', removed: 0, remaining: 0 };
+}
+
+export async function analyzeDuplicates(): Promise<string> {
+  log('WARN', 'analyzeDuplicates 已废弃');
+  return '此功能已废弃';
+}
+
+export async function deduplicateRaids(): Promise<string> {
+  log('WARN', 'deduplicateRaids 已废弃');
+  return '此功能已废弃';
+}
+
+export async function addUniqueConstraint(): Promise<string> {
+  log('WARN', 'addUniqueConstraint 已废弃');
+  return '此功能已废弃';
 }
