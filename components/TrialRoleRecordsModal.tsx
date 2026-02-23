@@ -4,6 +4,7 @@ import { TrialPlaceRecord } from '../types';
 import { X, Calendar, Trophy, Search, CheckCircle, Trash2, AlertCircle, Loader2 } from 'lucide-react';
 import { db } from '../services/db';
 import { JX3Equip } from '../services/jx3BoxApi';
+import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 
 interface RoleDisplayData {
     id: string;
@@ -21,7 +22,7 @@ interface TrialRoleRecordsModalProps {
     onDeleteRecord?: (recordId: string) => void;
 }
 
-const formatDate = (dateString: string) => {
+const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('zh-CN', {
         month: '2-digit',
@@ -104,11 +105,31 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     };
 
     // Sort records specific to this role
+    const weekInfo = useMemo(() => {
+        const now = new Date();
+        const weekStart = getLastMonday(now);
+        const weekEnd = getNextMonday(now);
+        return { start: weekStart, end: weekEnd };
+    }, []);
+
     const roleRecords = useMemo(() => {
+        const weekStartTime = weekInfo.start.getTime();
+        const weekEndTime = weekInfo.end.getTime();
+
         return records
-            .filter(r => r.roleId === role.id)
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [records, role.id]);
+            .filter(r => {
+                const matchesRole = r.roleId === role.id;
+                // 兼容旧记录（ISO字符串）和新记录（时间戳）
+                const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+                const matchesTimeRange = recordTime >= weekStartTime && recordTime <= weekEndTime;
+                return matchesRole && matchesTimeRange;
+            })
+            .sort((a, b) => {
+                const timeA = typeof a.date === 'number' ? a.date : new Date(a.date).getTime();
+                const timeB = typeof b.date === 'number' ? b.date : new Date(b.date).getTime();
+                return timeB - timeA;
+            });
+    }, [records, role.id, weekInfo]);
 
 
     const handleDeleteClick = (record: TrialPlaceRecord) => {

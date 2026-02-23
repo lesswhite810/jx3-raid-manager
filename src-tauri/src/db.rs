@@ -337,7 +337,7 @@ pub fn db_get_version_info() -> Result<serde_json::Value, String> {
         )
         .unwrap_or(0);
 
-    let localStorageMigrated: bool = conn
+    let local_storage_migrated: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM migration_flags WHERE key = 'local_storage_migrated' AND value = 'true'",
             [],
@@ -352,7 +352,7 @@ pub fn db_get_version_info() -> Result<serde_json::Value, String> {
         "schemaVersion": version,
         "currentVersion": CURRENT_SCHEMA_VERSION,
         "isLatest": version == CURRENT_SCHEMA_VERSION,
-        "localStorageMigrated": localStorageMigrated
+        "localStorageMigrated": local_storage_migrated
     }))
 }
 
@@ -739,44 +739,6 @@ pub fn db_init() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn db_get_migration_status() -> Result<Option<String>, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT status, migrated_at, error_message FROM migration_log WHERE id = 1")
-        .map_err(|e| e.to_string())?;
-    let result: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
-    Ok(result)
-}
-
-#[tauri::command]
-pub fn db_check_migration_completed() -> Result<bool, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let status: Option<String> = conn
-        .query_row("SELECT status FROM migration_log WHERE id = 1", [], |row| {
-            row.get(0)
-        })
-        .ok();
-
-    Ok(status == Some("completed".to_string()))
-}
-
-#[tauri::command]
-pub fn db_set_migration_status(
-    status: String,
-    error_message: Option<String>,
-) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
-
-    conn.execute(
-        "INSERT OR REPLACE INTO migration_log (id, status, migrated_at, error_message) VALUES (1, ?, ?, ?)",
-        params![status, timestamp, error_message.unwrap_or_default()],
-    ).map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
 pub fn db_get_accounts() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
@@ -1128,14 +1090,14 @@ pub fn db_save_records(records: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 全量同步：先清空表，再插入
-    tx.execute("DELETE FROM records", [])
-        .map_err(|e| e.to_string())?;
-
+    // 增量同步：使用 INSERT OR REPLACE 更新记录，不删除历史数据
     for record in parsed {
         let id = record["id"].as_str().unwrap_or_default().to_string();
+        if id.is_empty() {
+            continue;
+        }
         tx.execute(
-            "INSERT INTO records (id, data) VALUES (?, ?)",
+            "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
             params![id, record.to_string()],
         )
         .map_err(|e| e.to_string())?;
@@ -1437,6 +1399,7 @@ pub fn db_get_records_by_raid(_raid_id: String) -> Result<Vec<String>, String> {
     Ok(records)
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_analyze_duplicates() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1554,6 +1517,7 @@ pub fn db_analyze_duplicates() -> Result<String, String> {
     Ok(result)
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_deduplicate_accounts() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1612,6 +1576,7 @@ pub fn db_deduplicate_accounts() -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_deduplicate_raids() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1682,6 +1647,7 @@ pub fn db_deduplicate_raids() -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_add_unique_constraint_raids() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;

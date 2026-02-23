@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { RaidRecord, Account, TrialPlaceRecord } from '../types';
 import { db } from '../services/db';
+import { getLastMonday } from '../utils/cooldownManager';
 
 interface CrystalDetailProps {
   records: RaidRecord[];
@@ -15,12 +16,13 @@ interface CrystalRoleStats {
   roleName: string;
   server: string;
   totalCount: number;
-  records: { id: string; date: string; raidName: string; notes?: string; type: string; equip?: any }[];
+  records: { id: string; date: string | number; raidName: string; notes?: string; type: string; equip?: any }[];
 }
 
 export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialRecords, accounts, onBack }) => {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
   const [equipments, setEquipments] = useState<any[]>([]);
+  const [statsPeriod, setStatsPeriod] = useState<'week' | 'month' | 'all'>('week');
 
   useEffect(() => {
     db.getEquipments().then((data: any[]) => {
@@ -82,10 +84,31 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
     return { roleName: '', server: '' };
   };
 
+  // 获取时间段筛选的开始时间
+  const getPeriodStartTime = (): number | null => {
+    if (statsPeriod === 'all') return null;
+    const now = new Date();
+    if (statsPeriod === 'week') {
+      return getLastMonday(now).getTime();
+    } else {
+      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    }
+  };
+
+  const periodStartTime = getPeriodStartTime();
+
   // 合并所有稀有掉落记录：副本玄晶 + 试炼可交易装备
   const allDropRecords = useMemo(() => {
+    const getRecordTime = (date: string | number): number => {
+      return typeof date === 'number' ? date : new Date(date).getTime();
+    };
+
     const raidDrops = safeRecords
-      .filter(r => r.hasXuanjing === true)
+      .filter(r => {
+        if (r.hasXuanjing !== true) return false;
+        if (periodStartTime === null) return true;
+        return getRecordTime(r.date) >= periodStartTime;
+      })
       .map(r => ({ id: r.id, date: r.date, raidName: r.raidName, notes: r.notes, type: '玄晶', roleId: r.roleId || r.accountId, accountId: r.accountId, roleName: r.roleName, server: r.server }));
 
     const trialDrops = safeTrialRecords
@@ -93,7 +116,9 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
         const equipId = (r as any)[`card${r.flippedIndex}`];
         if (!equipId) return false;
         const equip = findEquipmentById(equipId);
-        return equip && (equip.BindType === 1 || equip.BindType === 2); // 1 = 不绑定, 2 = 装绑
+        if (!equip || (equip.BindType !== 1 && equip.BindType !== 2)) return false;
+        if (periodStartTime === null) return true;
+        return getRecordTime(r.date) >= periodStartTime;
       })
       .map(r => {
         const equip = findEquipmentById((r as any)[`card${r.flippedIndex}`]);
@@ -112,7 +137,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
       });
 
     return [...raidDrops, ...trialDrops];
-  }, [safeRecords, safeTrialRecords, equipments]);
+  }, [safeRecords, safeTrialRecords, equipments, statsPeriod]);
 
   const roleStats = useMemo<CrystalRoleStats[]>(() => {
     const roleMap = new Map<string, CrystalRoleStats>();
@@ -157,11 +182,40 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
         >
           <ArrowLeft className="w-5 h-5 text-muted" />
         </button>
-        <div>
+        <div className="flex-1">
           <h2 className="text-2xl font-bold text-main">稀有掉落统计</h2>
           <p className="text-sm text-muted mt-1">
-            共获取 {totalDrops} 次稀有掉落，来自 {totalRoles} 个角色
+            {statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部'}共获取 {totalDrops} 次稀有掉落，来自 {totalRoles} 个角色
           </p>
+        </div>
+        <div className="flex gap-1 bg-base p-1 rounded-lg">
+          <button
+            onClick={() => setStatsPeriod('week')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
+              ? 'bg-primary text-white'
+              : 'text-muted hover:text-main'
+              }`}
+          >
+            本周
+          </button>
+          <button
+            onClick={() => setStatsPeriod('month')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
+              ? 'bg-primary text-white'
+              : 'text-muted hover:text-main'
+              }`}
+          >
+            本月
+          </button>
+          <button
+            onClick={() => setStatsPeriod('all')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'
+              ? 'bg-primary text-white'
+              : 'text-muted hover:text-main'
+              }`}
+          >
+            全部
+          </button>
         </div>
       </div>
 

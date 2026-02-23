@@ -4,9 +4,9 @@ import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Che
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
-import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
-import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
-
+import { formatGoldAmount } from '../utils/recordUtils';
+import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday, getNextMonday } from '../utils/cooldownManager';
+import { db } from '../services/db';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 
@@ -17,6 +17,7 @@ interface RaidDetailProps {
   onBack: () => void;
   setRecords?: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
   onEditRecord?: (record: RaidRecord) => void;
+  onRefreshRecords?: () => void;
 }
 
 interface RoleWithStatus {
@@ -34,7 +35,7 @@ interface RoleWithStatus {
   recordCount: number;
   maxRecords: number;
   cooldownInfo: CooldownInfo;
-  lastRunDate?: string;
+  lastRunDate?: string | number;
   lastRunGold?: number;
   lastRunIncome?: number;
   lastRunExpense?: number;
@@ -103,7 +104,7 @@ const RaidRefreshCountdown: React.FC<RaidRefreshCountdownProps> = ({ raid }) => 
   );
 };
 
-export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records, onBack, setRecords, onEditRecord }) => {
+export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records, onBack, setRecords, onEditRecord, onRefreshRecords }) => {
 
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [showRoleRecordsModal, setShowRoleRecordsModal] = useState(false);
@@ -169,18 +170,15 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     setShowRoleRecordsModal(true);
   };
 
-  const handleAddRecord = (recordData: Partial<RaidRecord>) => {
+  const handleAddRecord = async (recordData: Partial<RaidRecord>) => {
     console.log('[RaidDetail] handleAddRecord called with:', recordData);
-    if (setRecords && recordData) {
-      console.log('[RaidDetail] Setting records...');
-      setRecords(prev => {
-        const newRecords = [recordData as RaidRecord, ...prev];
-        const result = deduplicateRecords(newRecords);
-        console.log('[RaidDetail] Records updated, count:', result.length);
-        return result;
-      });
-    } else {
-      console.log('[RaidDetail] setRecords is undefined or recordData is null');
+    if (recordData) {
+      try {
+        await db.addRecord(recordData as RaidRecord);
+        onRefreshRecords?.();
+      } catch (error) {
+        console.error('保存记录失败:', error);
+      }
     }
     console.log('[RaidDetail] Calling showToast...');
     showToast('记录添加成功', 3000);
@@ -191,8 +189,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   const weekInfo = useMemo(() => {
     const now = new Date();
     // 25人本：周一 07:00 ~ 下周一 07:00
-    const weekStart = getLastMonday7AM(now);
-    const weekEnd = getNextMonday7AM(now);
+    const weekStart = getLastMonday(now);
+    const weekEnd = getNextMonday(now);
     return { start: weekStart, end: weekEnd };
   }, []);
 
@@ -401,7 +399,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   const availableCount = rolesWithStatus.filter(r => r.canRun).length;
   const unavailableCount = rolesWithStatus.filter(r => !r.canRun).length;
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('zh-CN', {
       month: '2-digit',
@@ -653,6 +651,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           setRecords={setRecords}
           isAdmin={true}
           onEditRecord={onEditRecord}
+          onRefreshRecords={onRefreshRecords}
         />
       )}
     </div>

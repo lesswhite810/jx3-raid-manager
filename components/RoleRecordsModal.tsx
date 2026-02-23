@@ -2,9 +2,10 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { RaidRecord, Raid } from '../types';
 import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
-import { getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
+import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
+import { db } from '../services/db';
 
 interface RoleWithStatus {
   id: string;
@@ -26,6 +27,7 @@ interface RoleRecordsModalProps {
   currentUserId?: string;
   isAdmin?: boolean;
   onEditRecord?: (record: RaidRecord) => void;
+  onRefreshRecords?: () => void;
 }
 
 export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
@@ -37,7 +39,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   setRecords,
   currentUserId,
   isAdmin = false,
-  onEditRecord
+  onEditRecord,
+  onRefreshRecords
 }) => {
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -51,9 +54,9 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
   const weekInfo = useMemo(() => {
     const now = new Date();
-    // 副本周期起点：周一 07:00，复用 cooldownManager 的统一函数
-    const weekStart = getLastMonday7AM(now);
-    const weekEnd = getNextMonday7AM(now);
+    // 统计周期起点：周一 00:00
+    const weekStart = getLastMonday(now);
+    const weekEnd = getNextMonday(now);
     return { start: weekStart, end: weekEnd };
   }, []);
 
@@ -116,7 +119,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     return false;
   }, [isAdmin, currentUserId]);
 
-  const formatDate = useCallback((dateString: string) => {
+  const formatDate = useCallback((dateString: string | number) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('zh-CN', {
       month: '2-digit',
@@ -149,7 +152,13 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     try {
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      setRecords(prev => prev.filter(r => r.id !== recordToDelete.id));
+      try {
+        await db.deleteRecord(recordToDelete.id);
+        onRefreshRecords?.();
+      } catch (error) {
+        console.error('删除记录失败:', error);
+        throw error;
+      }
 
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 2000);

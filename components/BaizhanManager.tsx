@@ -1,24 +1,24 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { BaizhanRecord, Account } from '../types';
 import { Swords, Check, Copy } from 'lucide-react';
 import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
-import { getLastMonday7AM } from '../utils/cooldownManager';
+import { getLastMonday } from '../utils/cooldownManager';
+import { db } from '../services/db';
+import { toast } from '../utils/toastManager';
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
     accounts: Account[];
-    onAddRecord: (record: BaizhanRecord) => void;
-    onDeleteRecord?: (recordId: string) => void;
     onEditRecord?: (record: BaizhanRecord) => void;
+    onRefreshRecords?: () => void;
 }
 
 export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     records,
     accounts,
-    onAddRecord,
-    onDeleteRecord,
-    onEditRecord
+    onEditRecord,
+    onRefreshRecords
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
@@ -44,20 +44,25 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     const roleStats = useMemo(() => {
         const stats = new Map<string, { weeklyCount: number, weeklyIncome: number, lastRunDate?: string }>();
 
-        // 副本 CD 每周一 07:00 刷新
+        // 统计本周数据，使用周一 7:00
         const now = new Date();
-        const startOfWeek = getLastMonday7AM(now);
+        const startOfWeek = getLastMonday(now);
+
+        // 辅助函数：兼容时间戳和ISO字符串
+        const getRecordTime = (date: string | number): number => {
+            return typeof date === 'number' ? date : new Date(date).getTime();
+        };
 
         allRoles.forEach(role => {
             const roleRecords = records.filter(r => r.roleId === role.id);
-            const thisWeekRecords = roleRecords.filter(r => new Date(r.date) >= startOfWeek);
+            const thisWeekRecords = roleRecords.filter(r => getRecordTime(r.date) >= startOfWeek.getTime());
 
             // 本周收入合计
             const weeklyIncome = thisWeekRecords.reduce((sum, r) => sum + (r.goldIncome || 0), 0);
 
             // 最后运行日期
-            const lastRunRecord = [...roleRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-            const lastRunDate = lastRunRecord ? lastRunRecord.date : undefined;
+            const lastRunRecord = [...roleRecords].sort((a, b) => getRecordTime(b.date) - getRecordTime(a.date))[0];
+            const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
 
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
@@ -106,6 +111,30 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     const handleOpenRecordsModal = (role: any) => {
         setViewRecordsRole(role);
     };
+
+    // 添加百战记录：调用数据库添加，然后重新查询
+    const handleAddBaizhanRecord = useCallback(async (record: BaizhanRecord) => {
+        try {
+            await db.addBaizhanRecord(record);
+            onRefreshRecords?.();
+            toast.success('添加百战记录成功');
+        } catch (error) {
+            console.error('添加百战记录失败:', error);
+            toast.error('添加百战记录失败');
+        }
+    }, [onRefreshRecords]);
+
+    // 删除百战记录：调用数据库删除，然后重新查询
+    const handleDeleteBaizhanRecord = useCallback(async (recordId: string) => {
+        try {
+            await db.deleteBaizhanRecord(recordId);
+            onRefreshRecords?.();
+            toast.success('删除百战记录成功');
+        } catch (error) {
+            console.error('删除百战记录失败:', error);
+            toast.error('删除百战记录失败');
+        }
+    }, [onRefreshRecords]);
 
     // State for copy feedback
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -280,7 +309,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
             <AddBaizhanRecordModal
                 isOpen={isAdding}
                 onClose={() => setIsAdding(false)}
-                onSubmit={onAddRecord}
+                onSubmit={handleAddBaizhanRecord}
                 accounts={accounts}
                 initialRole={selectedRole}
             />
@@ -292,7 +321,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                         onClose={() => setViewRecordsRole(null)}
                         role={viewRecordsRole}
                         records={records}
-                        onDeleteRecord={onDeleteRecord}
+                        onDeleteRecord={handleDeleteBaizhanRecord}
                         onEditRecord={onEditRecord}
                     />
                 )

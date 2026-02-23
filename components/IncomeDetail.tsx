@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown } from 'lucide-react';
 import { RaidRecord, Account, AccountType, Role, BaizhanRecord } from '../types';
 import { toast } from '../utils/toastManager';
+import { getLastMonday } from '../utils/cooldownManager';
 
 interface IncomeDetailProps {
   records: RaidRecord[];
@@ -19,7 +20,7 @@ interface EnhancedRecord {
   roleId: string;
   roleName?: string;
   server?: string;
-  date: string;
+  date: string | number;
   raidName: string;
   goldIncome: number;
   goldExpense?: number;
@@ -100,21 +101,21 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
   const filteredRecords = useMemo(() => {
     const now = new Date();
-    const startOfPeriod = new Date();
+    let startOfPeriod: Date;
 
     if (period === 'week') {
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      startOfPeriod.setDate(now.getDate() - diff);
+      startOfPeriod = getLastMonday(now);
     } else if (period === 'month') {
-      startOfPeriod.setDate(1);
+      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
     } else {
-      startOfPeriod.setFullYear(now.getFullYear() - 10);
+      startOfPeriod = new Date(now.getFullYear() - 10, 0, 1);
     }
 
-    startOfPeriod.setHours(0, 0, 0, 0);
-
-    return enhancedRecords.filter(r => new Date(r.date) >= startOfPeriod);
+    const startTime = startOfPeriod.getTime();
+    return enhancedRecords.filter(r => {
+      const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+      return recordTime >= startTime;
+    });
   }, [enhancedRecords, period]);
 
   const searchedRecords = useMemo(() => {
@@ -161,7 +162,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     };
   }, [filteredRecords, safeAccounts]);
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();

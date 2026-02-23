@@ -59,15 +59,14 @@ export const getServerStandardTime = (): Date => {
 
 /**
  * 获取基于当前时间的“上一个”周一 07:00
+ * 用于统计计算
  */
-export const getLastMonday7AM = (date: Date): Date => {
+export const getLastMonday = (date: Date): Date => {
   const d = new Date(date);
   const day = d.getDay(); // 0 (Sun) - 6 (Sat)
   const hour = d.getHours();
 
-  // 计算当前时间相对于本周一07:00的偏移量
-  // 如果今天是周一且还没到7点，或者今天是周日，都要往前推
-
+  // 计算偏移量：如果今天是周一且还没到7点，或者今天是周日，都要往前推
   let daysToSubtract = 0;
   if (day === 1 && hour < 7) {
     daysToSubtract = 7;
@@ -86,9 +85,10 @@ export const getLastMonday7AM = (date: Date): Date => {
 
 /**
  * 获取基于当前时间的“下一个”周一 07:00
+ * 用于统计计算
  */
-export const getNextMonday7AM = (date: Date): Date => {
-  const lastMonday = getLastMonday7AM(date);
+export const getNextMonday = (date: Date): Date => {
+  const lastMonday = getLastMonday(date);
   const nextMonday = new Date(lastMonday);
   nextMonday.setDate(nextMonday.getDate() + 7);
   return nextMonday;
@@ -101,7 +101,7 @@ export const getNextMonday7AM = (date: Date): Date => {
  */
 export const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
   const nowTime = date.getTime();
-  const lastMonday = getLastMonday7AM(date);
+  const lastMonday = getLastMonday(date);
   const thisFriday = new Date(lastMonday);
   thisFriday.setDate(lastMonday.getDate() + 4); // 周一 + 4天 = 周五
   thisFriday.setHours(7, 0, 0, 0);
@@ -115,7 +115,7 @@ export const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
     return { start: lastMonday, end: thisFriday };
   } else {
     // 处于下半周 (Fri 7:00 - Next Mon 7:00)
-    // 注意：如果当前是周一凌晨(比如3点)，getLastMonday7AM会返回上周一，
+    // 注意：如果当前是周一凌晨(比如3点)，getLastMonday会返回上周一，
     // 此时 thisFriday 是上周五。nowTime 肯定 > thisFriday。
     // 所以这里的逻辑是通用的。
     return { start: thisFriday, end: nextMonday };
@@ -124,7 +124,7 @@ export const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
 
 export const calculateCooldown = (
   raid: Raid,
-  records: { date: string; bossIds?: string[]; bossId?: string }[],
+  records: { date: string | number; bossIds?: string[]; bossId?: string }[],
   now: Date = getServerStandardTime()
 ): CooldownInfo => {
   const isTenPerson = raid.playerCount === 10;
@@ -139,8 +139,8 @@ export const calculateCooldown = (
     windowEnd = cycle.end;
   } else {
     // 25人本：周一到周一
-    windowStart = getLastMonday7AM(now);
-    windowEnd = getNextMonday7AM(now);
+    windowStart = getLastMonday(now);
+    windowEnd = getNextMonday(now);
   }
 
   // 2. 检查窗口内是否有记录
@@ -243,7 +243,7 @@ export const getRaidRefreshInfo = (raid: Raid, now: Date = new Date()): RaidRefr
     nextRefresh = cycle.end;
     scheduleStr = '周一/周五 7:00';
   } else {
-    nextRefresh = getNextMonday7AM(now);
+    nextRefresh = getNextMonday(now);
     scheduleStr = '每周一 7:00';
   }
 

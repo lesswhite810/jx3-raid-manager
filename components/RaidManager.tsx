@@ -17,10 +17,11 @@ interface RaidManagerProps {
   onEditRecord?: (record: RaidRecord) => void;
   onEditBaizhanRecord?: (record: BaizhanRecord) => void;
   trialRecords: TrialPlaceRecord[];
-  setTrialRecords: React.Dispatch<React.SetStateAction<TrialPlaceRecord[]>>;
   baizhanRecords: BaizhanRecord[];
-  setBaizhanRecords: React.Dispatch<React.SetStateAction<BaizhanRecord[]>>;
   accounts: Account[];
+  onRefreshRecords?: () => void;
+  onRefreshTrialRecords?: () => void;
+  onRefreshBaizhanRecords?: () => void;
 }
 
 interface MergedRaid {
@@ -54,10 +55,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   onEditRecord,
   onEditBaizhanRecord,
   trialRecords,
-  setTrialRecords,
   baizhanRecords,
-  setBaizhanRecords,
-  accounts
+  accounts,
+  onRefreshRecords,
+  onRefreshTrialRecords,
+  onRefreshBaizhanRecords
 }) => {
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
@@ -315,34 +317,14 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         <BaizhanManager
           records={baizhanRecords}
           accounts={accounts}
-          onAddRecord={(record) => setBaizhanRecords(prev => [...prev, record])}
-          onDeleteRecord={async (recordId) => {
-            try {
-              await db.deleteBaizhanRecord(recordId);
-              setBaizhanRecords(prev => prev.filter(r => r.id !== recordId));
-              toast.success('已删除百战记录');
-            } catch (error) {
-              console.error('删除失败:', error);
-              toast.error('删除百战记录失败');
-            }
-          }}
           onEditRecord={onEditBaizhanRecord}
+          onRefreshRecords={onRefreshBaizhanRecords}
         />
       ) : activeTab === 'trial' ? (
         <TrialPlaceManager
           records={trialRecords}
           accounts={accounts}
-          onAddRecord={(record) => setTrialRecords(prev => [...prev, record])}
-          onDeleteRecord={async (recordId) => {
-            try {
-              await db.deleteTrialRecord(recordId);
-              setTrialRecords(prev => prev.filter(r => r.id !== recordId));
-              toast.success('已删除试炼记录');
-            } catch (error) {
-              console.error('删除失败:', error);
-              toast.error('删除试炼记录失败');
-            }
-          }}
+          onRefreshRecords={onRefreshTrialRecords}
         />
       ) : selectedRaid ? (
         <RaidDetail
@@ -353,6 +335,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           onBack={() => setSelectedRaid(null)}
           setRecords={setRecords}
           onEditRecord={onEditRecord}
+          onRefreshRecords={onRefreshRecords}
         />
       ) : (
         <>

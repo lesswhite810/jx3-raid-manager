@@ -1,22 +1,22 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { TrialPlaceRecord, Account } from '../types';
 import { Trophy, Check, Copy, Target } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
-import { getLastMonday7AM } from '../utils/cooldownManager';
+import { getLastMonday } from '../utils/cooldownManager';
+import { db } from '../services/db';
+import { toast } from '../utils/toastManager';
 
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
     accounts: Account[];
-    onAddRecord: (record: TrialPlaceRecord) => void;
-    onDeleteRecord?: (recordId: string) => void;
+    onRefreshRecords?: () => void;
 }
 
 export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     records,
     accounts,
-    onAddRecord,
-    onDeleteRecord
+    onRefreshRecords
 }) => {
     // Filter and flat map roles
     const [isAdding, setIsAdding] = useState(false);
@@ -43,18 +43,23 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const roleStats = useMemo(() => {
         const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string }>();
 
-        // 副本 CD 每周一 07:00 刷新，复用 cooldownManager 的统一函数
+        // 统计本周数据，使用周一 7:00
         const now = new Date();
-        const startOfWeek = getLastMonday7AM(now);
+        const startOfWeek = getLastMonday(now);
+
+        // 辅助函数：兼容时间戳和ISO字符串
+        const getRecordTime = (date: string | number): number => {
+            return typeof date === 'number' ? date : new Date(date).getTime();
+        };
 
         allRoles.forEach(role => {
             const roleRecords = records.filter(r => r.roleId === role.id);
-            const thisWeekRecords = roleRecords.filter(r => new Date(r.date) >= startOfWeek);
+            const thisWeekRecords = roleRecords.filter(r => getRecordTime(r.date) >= startOfWeek.getTime());
             const maxLayer = roleRecords.length > 0 ? Math.max(...roleRecords.map(r => r.layer)) : 0;
 
             // Find last run date
-            const lastRunRecord = [...roleRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-            const lastRunDate = lastRunRecord ? lastRunRecord.date : undefined;
+            const lastRunRecord = [...roleRecords].sort((a, b) => getRecordTime(b.date) - getRecordTime(a.date))[0];
+            const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
 
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
@@ -103,6 +108,30 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const handleOpenRecordsModal = (role: any) => {
         setViewRecordsRole(role);
     };
+
+    // 添加试炼记录：调用数据库添加，然后重新查询
+    const handleAddTrialRecord = useCallback(async (record: TrialPlaceRecord) => {
+        try {
+            await db.addTrialRecord(record);
+            onRefreshRecords?.();
+            toast.success('添加试炼记录成功');
+        } catch (error) {
+            console.error('添加试炼记录失败:', error);
+            toast.error('添加试炼记录失败');
+        }
+    }, [onRefreshRecords]);
+
+    // 删除试炼记录：调用数据库删除，然后重新查询
+    const handleDeleteTrialRecord = useCallback(async (recordId: string) => {
+        try {
+            await db.deleteTrialRecord(recordId);
+            onRefreshRecords?.();
+            toast.success('删除试炼记录成功');
+        } catch (error) {
+            console.error('删除试炼记录失败:', error);
+            toast.error('删除试炼记录失败');
+        }
+    }, [onRefreshRecords]);
 
     // State for copy feedback
     const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -285,7 +314,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             <AddTrialRecordModal
                 isOpen={isAdding}
                 onClose={() => setIsAdding(false)}
-                onSubmit={onAddRecord}
+                onSubmit={handleAddTrialRecord}
                 accounts={accounts}
                 initialRole={selectedRole}
             />
@@ -297,7 +326,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                         onClose={() => setViewRecordsRole(null)}
                         role={viewRecordsRole}
                         records={records}
-                        onDeleteRecord={onDeleteRecord}
+                        onDeleteRecord={handleDeleteTrialRecord}
                     />
                 )
             }

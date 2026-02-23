@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LayoutDashboard, Users, Download, Shield, Settings, Sun, Moon } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { Dashboard } from './components/Dashboard';
@@ -50,6 +50,39 @@ function App() {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
   const [editingBaizhanRecord, setEditingBaizhanRecord] = useState<BaizhanRecord | null>(null);
+
+  // 重新从数据库加载记录
+  const reloadRecords = useCallback(async () => {
+    try {
+      const loadedRecords = await db.getRecords();
+      console.log(`重新加载记录: ${loadedRecords.length} 条`);
+      setRecords(loadedRecords);
+    } catch (error) {
+      console.error('重新加载记录失败:', error);
+    }
+  }, []);
+
+  // 重新从数据库加载试炼记录
+  const reloadTrialRecords = useCallback(async () => {
+    try {
+      const loadedTrialRecords = await db.getTrialRecords();
+      console.log(`重新加载试炼记录: ${loadedTrialRecords.length} 条`);
+      setTrialRecords(loadedTrialRecords);
+    } catch (error) {
+      console.error('重新加载试炼记录失败:', error);
+    }
+  }, []);
+
+  // 重新从数据库加载百战记录
+  const reloadBaizhanRecords = useCallback(async () => {
+    try {
+      const loadedBaizhanRecords = await db.getBaizhanRecords();
+      console.log(`重新加载百战记录: ${loadedBaizhanRecords.length} 条`);
+      setBaizhanRecords(loadedBaizhanRecords);
+    } catch (error) {
+      console.error('重新加载百战记录失败:', error);
+    }
+  }, []);
 
   useEffect(() => {
     const initApp = async () => {
@@ -322,19 +355,27 @@ function App() {
         console.error('删除百战记录失败:', error);
       }
     } else {
-      setRecords(prev => prev.filter(r => r.id !== recordId));
+      try {
+        await db.deleteRecord(recordId);
+        await reloadRecords();
+      } catch (error) {
+        console.error('删除副本记录失败:', error);
+      }
     }
   };
 
-  const handleUpdateRecord = (updatedRecord: Partial<RaidRecord>) => {
+  const handleUpdateRecord = async (updatedRecord: Partial<RaidRecord>) => {
     if (!editingRecord) return;
 
-    setRecords(prev => prev.map(r => {
-      if (r.id === editingRecord.id) {
-        return { ...r, ...updatedRecord } as RaidRecord;
-      }
-      return r;
-    }));
+    const mergedRecord = { ...editingRecord, ...updatedRecord } as RaidRecord;
+
+    try {
+      await db.addRecord(mergedRecord);
+      await reloadRecords();
+    } catch (error) {
+      console.error('更新副本记录失败:', error);
+    }
+
     setEditingRecord(null);
   };
 
@@ -436,10 +477,11 @@ function App() {
                 setRecords={setRecords}
                 onEditRecord={setEditingRecord}
                 trialRecords={trialRecords}
-                setTrialRecords={setTrialRecords}
                 baizhanRecords={baizhanRecords}
-                setBaizhanRecords={setBaizhanRecords}
                 accounts={accounts}
+                onRefreshRecords={reloadRecords}
+                onRefreshTrialRecords={reloadTrialRecords}
+                onRefreshBaizhanRecords={reloadBaizhanRecords}
               />
             )}
             {activeTab === 'config' && (

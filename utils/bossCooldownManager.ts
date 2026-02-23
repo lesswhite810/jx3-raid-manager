@@ -1,5 +1,5 @@
 import { Raid, BossCooldownInfo, BossRecord } from '../types';
-import { getTenPersonCycle, getLastMonday7AM, getNextMonday7AM } from './cooldownManager';
+import { getTenPersonCycle, getLastMonday, getNextMonday } from './cooldownManager';
 
 export const calculateBossCooldowns = (
   raid: Raid,
@@ -22,8 +22,8 @@ export const calculateBossCooldowns = (
     windowStart = cycle.start;
     windowEnd = cycle.end;
   } else {
-    windowStart = getLastMonday7AM(now);
-    windowEnd = getNextMonday7AM(now);
+    windowStart = getLastMonday(now);
+    windowEnd = getNextMonday(now);
   }
 
   const roleBossRecords = bossRecords.filter(record => {

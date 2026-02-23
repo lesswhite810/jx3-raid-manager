@@ -17,8 +17,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    getLastMonday7AM,
-    getNextMonday7AM,
+    getLastMonday,
+    getNextMonday,
     getTenPersonCycle,
     calculateCooldown,
 } from './cooldownManager';
@@ -72,11 +72,11 @@ function makeRecord(date: Date): { date: string } {
 // 周五 = 2026-02-20
 // 周日 = 2026-02-22
 
-// ─── getLastMonday7AM 测试 ────────────────────────────────────────────────────
-describe('getLastMonday7AM', () => {
+// ─── getLastMonday 测试 ────────────────────────────────────────────────────
+describe('getLastMonday', () => {
     it('周一 07:00 → 返回当天 07:00（刚好在刷新点上）', () => {
         const now = makeDate(1, 7, 0); // 周一 07:00
-        const result = getLastMonday7AM(now);
+        const result = getLastMonday(now);
         expect(result.getDay()).toBe(1);
         expect(result.getHours()).toBe(7);
         expect(result.getMinutes()).toBe(0);
@@ -85,7 +85,7 @@ describe('getLastMonday7AM', () => {
 
     it('周一 06:59 → 返回上周一 07:00（刷新点前一分钟，尚未刷新）', () => {
         const now = makeDate(1, 6, 59); // 周一 06:59
-        const result = getLastMonday7AM(now);
+        const result = getLastMonday(now);
         // 应该是上周一（7 天前）
         const expectedMonday = new Date(now);
         expectedMonday.setDate(now.getDate() - 7);
@@ -97,7 +97,7 @@ describe('getLastMonday7AM', () => {
 
     it('周一 07:01 → 返回当天 07:00（刷新点后一分钟）', () => {
         const now = makeDate(1, 7, 1);
-        const result = getLastMonday7AM(now);
+        const result = getLastMonday(now);
         expect(result.getDay()).toBe(1);
         expect(result.toDateString()).toBe(now.toDateString());
         expect(result.getHours()).toBe(7);
@@ -105,7 +105,7 @@ describe('getLastMonday7AM', () => {
 
     it('周三 12:00 → 返回本周一 07:00', () => {
         const now = makeDate(3, 12, 0);
-        const result = getLastMonday7AM(now);
+        const result = getLastMonday(now);
         expect(result.getDay()).toBe(1);
         expect(result.getHours()).toBe(7);
         // 比周三早 2 天
@@ -117,7 +117,7 @@ describe('getLastMonday7AM', () => {
 
     it('周五 06:59 → 返回本周一 07:00（10人本第二刷新点前）', () => {
         const now = makeDate(5, 6, 59);
-        const result = getLastMonday7AM(now);
+        const result = getLastMonday(now);
         expect(result.getDay()).toBe(1);
         const expectedMonday = new Date(now);
         expectedMonday.setDate(now.getDate() - 4);
@@ -127,7 +127,7 @@ describe('getLastMonday7AM', () => {
 
     it('周日 23:59 → 返回本周一 07:00', () => {
         const now = makeDate(0, 23, 59); // 周日
-        const result = getLastMonday7AM(now);
+        const result = getLastMonday(now);
         // 周日往前 6 天是上周一
         expect(result.getDay()).toBe(1);
         expect(result.getHours()).toBe(7);
@@ -201,7 +201,7 @@ describe('getTenPersonCycle（10人本双刷新点）', () => {
     it('下一周的周一 06:59 → 仍属于上周下半周（刷新点前）', () => {
         const now = makeDate(1, 6, 59); // 周一 06:59，刷新点前
         const cycle = getTenPersonCycle(now);
-        // getLastMonday7AM 会返回上周一，配合推算出上周五为 start
+        // getLastMonday 会返回上周一，配合推算出上周五为 start
         expect(cycle.start.getDay()).toBe(5); // 上周五
         expect(cycle.end.getDay()).toBe(1);   // 本周一 07:00
     });
@@ -237,7 +237,7 @@ describe('calculateCooldown - 25人本（每周一 07:00 刷新）', () => {
     });
 
     it('边界：周一 06:59 时上周有记录 → 上周期 CD 尚未解除，可添加视为新周期', () => {
-        // 周一 06:59 时，getLastMonday7AM 返回上周一，所以"本周期"是上周一07:00~本周一07:00
+        // 周一 06:59 时，getLastMonday 返回上周一，所以"本周期"是上周一07:00~本周一07:00
         // 若上周有记录，则 CD 中
         const now = makeDate(1, 6, 59);
         // 上周三打的记录
@@ -401,15 +401,15 @@ describe('calculateCooldown - 10人本（周一/周五 07:00 双刷新）', () =
     });
 });
 
-// ─── getNextMonday7AM 测试 ────────────────────────────────────────────────────
-describe('getNextMonday7AM', () => {
+// ─── getNextMonday 测试 ────────────────────────────────────────────────────
+describe('getNextMonday', () => {
     it('周三 → 返回本周日后的周一（即下周一 07:00）', () => {
         const now = makeDate(3, 12, 0);
-        const result = getNextMonday7AM(now);
+        const result = getNextMonday(now);
         expect(result.getDay()).toBe(1);
         expect(result.getHours()).toBe(7);
         // 下周一 = 本周一 + 7天
-        const lastMonday = getLastMonday7AM(now);
+        const lastMonday = getLastMonday(now);
         const expectedNext = new Date(lastMonday);
         expectedNext.setDate(lastMonday.getDate() + 7);
         expect(result.getTime()).toBe(expectedNext.getTime());
@@ -417,7 +417,7 @@ describe('getNextMonday7AM', () => {
 
     it('周一 06:59 → 返回本周一 07:00（上一个周期是上周，下一个就是今天 07:00）', () => {
         const now = makeDate(1, 6, 59);
-        const result = getNextMonday7AM(now);
+        const result = getNextMonday(now);
         expect(result.getDay()).toBe(1);
         expect(result.toDateString()).toBe(now.toDateString()); // 就是今天
         expect(result.getHours()).toBe(7);
@@ -425,7 +425,7 @@ describe('getNextMonday7AM', () => {
 
     it('周一 07:00 → 返回下周一 07:00', () => {
         const now = makeDate(1, 7, 0);
-        const result = getNextMonday7AM(now);
+        const result = getNextMonday(now);
         expect(result.getDay()).toBe(1);
         const expectedNext = new Date(now);
         expectedNext.setDate(now.getDate() + 7);
