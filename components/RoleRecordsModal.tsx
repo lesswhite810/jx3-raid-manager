@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
 import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
@@ -186,7 +187,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
       <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
         <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
@@ -431,6 +432,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
           {errorMessage}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

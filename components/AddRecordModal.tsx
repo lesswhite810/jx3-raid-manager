@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Raid, RaidRecord } from '../types';
 import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag, BookOpen } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
@@ -170,7 +171,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <>
       <div
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100]"
@@ -455,6 +456,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
           </form>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 };
