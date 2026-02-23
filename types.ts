@@ -52,6 +52,7 @@ export interface RaidRecord {
   hasMount?: boolean;
   hasAppearance?: boolean;
   hasTitle?: boolean;
+  hasSecretBook?: boolean; // 秘籍
   type?: 'raid' | 'trial';
   bossId?: string;
   bossName?: string;
