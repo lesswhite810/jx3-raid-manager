@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
 import { RaidRecord, Account, AccountType, Role, BaizhanRecord } from '../types';
 import { toast } from '../utils/toastManager';
 import { getLastMonday } from '../utils/cooldownManager';
@@ -32,6 +32,7 @@ interface EnhancedRecord {
   hasMount?: boolean;
   hasAppearance?: boolean;
   hasTitle?: boolean;
+  hasSecretBook?: boolean;
   displayRoleName: string;
   displayServer: string;
   isBaizhan?: boolean;
@@ -383,7 +384,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
                       {/* Center: Special Badges */}
                       <div className="flex-1 flex flex-wrap gap-1.5 items-center justify-start content-center min-h-[24px]">
-                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle) && (
+                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook) && (
                           <>
                             {record.hasXuanjing && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-xs font-medium rounded border border-amber-100 dark:border-amber-800 flex-shrink-0">
@@ -418,6 +419,11 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                             {record.hasTitle && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 text-xs font-medium rounded border border-yellow-100 dark:border-yellow-800 flex-shrink-0">
                                 <Crown className="w-3 h-3" /> 称号
+                              </span>
+                            )}
+                            {record.hasSecretBook && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-400 text-xs font-medium rounded border border-cyan-100 dark:border-cyan-800 flex-shrink-0">
+                                <BookOpen className="w-3 h-3" /> 秘籍
                               </span>
                             )}
                           </>

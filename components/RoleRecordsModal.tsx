@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
@@ -284,7 +284,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                       </div>
 
                       <div className="flex flex-col gap-2">
-                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle) && (
+                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook) && (
                           <div className="flex items-center gap-2 flex-wrap">
                             {record.hasXuanjing && (
                               <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded font-medium flex items-center gap-1">
@@ -319,6 +319,11 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                             {record.hasTitle && (
                               <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded font-medium flex items-center gap-1">
                                 <Crown className="w-3 h-3" />称号
+                              </span>
+                            )}
+                            {record.hasSecretBook && (
+                              <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 text-xs rounded font-medium flex items-center gap-1">
+                                <BookOpen className="w-3 h-3" />秘籍
                               </span>
                             )}
                           </div>
