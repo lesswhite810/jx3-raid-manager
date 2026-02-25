@@ -7,7 +7,7 @@ pub mod migrations;
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 2;
+pub const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -200,6 +200,8 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             id TEXT PRIMARY KEY,
             account_id TEXT,
             role_id TEXT,
+            role_name TEXT,
+            server TEXT,
             layer INTEGER,
             bosses TEXT,
             card_1 TEXT,
@@ -208,7 +210,8 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             card_4 TEXT,
             card_5 TEXT,
             flipped_index INTEGER,
-            date TEXT NOT NULL,
+            record_type TEXT DEFAULT 'trial',
+            date INTEGER NOT NULL,
             notes TEXT,
             updated_at TEXT
         );
@@ -220,7 +223,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             role_id TEXT NOT NULL,
             role_name TEXT,
             server TEXT,
-            date TEXT NOT NULL,
+            date INTEGER NOT NULL,
             gold_income INTEGER DEFAULT 0,
             gold_expense INTEGER DEFAULT 0,
             notes TEXT,
@@ -337,7 +340,7 @@ pub fn db_get_version_info() -> Result<serde_json::Value, String> {
         )
         .unwrap_or(0);
 
-    let localStorageMigrated: bool = conn
+    let local_storage_migrated: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM migration_flags WHERE key = 'local_storage_migrated' AND value = 'true'",
             [],
@@ -352,7 +355,7 @@ pub fn db_get_version_info() -> Result<serde_json::Value, String> {
         "schemaVersion": version,
         "currentVersion": CURRENT_SCHEMA_VERSION,
         "isLatest": version == CURRENT_SCHEMA_VERSION,
-        "localStorageMigrated": localStorageMigrated
+        "localStorageMigrated": local_storage_migrated
     }))
 }
 
@@ -487,6 +490,10 @@ pub struct TrialRecord {
     pub account_id: String,
     #[serde(rename = "roleId")]
     pub role_id: String,
+    #[serde(rename = "roleName", default)]
+    pub role_name: String,
+    #[serde(rename = "server", default)]
+    pub server: String,
     pub layer: i64,
     pub bosses: Vec<String>, // JSON array
     #[serde(rename = "card1")]
@@ -501,7 +508,9 @@ pub struct TrialRecord {
     pub card_5: String,
     #[serde(rename = "flippedIndex")]
     pub flipped_index: i64,
-    pub date: String,
+    #[serde(rename = "type", default)]
+    pub record_type: String,
+    pub date: i64,  // Changed from String to i64 (timestamp)
     pub notes: Option<String>,
 }
 
@@ -516,14 +525,16 @@ pub fn db_add_trial_record(record: String) -> Result<(), String> {
 
     conn.execute(
         "INSERT OR REPLACE INTO trial_records (
-            id, account_id, role_id, layer, bosses, 
-            card_1, card_2, card_3, card_4, card_5, flipped_index, date, notes, updated_at
+            id, account_id, role_id, role_name, server, layer, bosses, 
+            card_1, card_2, card_3, card_4, card_5, flipped_index, record_type, date, notes, updated_at
         ) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             item.id,
             item.account_id,
             item.role_id,
+            item.role_name,
+            item.server,
             item.layer,
             bosses_json,
             item.card_1,
@@ -532,6 +543,7 @@ pub fn db_add_trial_record(record: String) -> Result<(), String> {
             item.card_4,
             item.card_5,
             item.flipped_index,
+            item.record_type,
             item.date,
             item.notes,
             timestamp
@@ -548,8 +560,8 @@ pub fn db_get_trial_records() -> Result<String, String> {
     let mut stmt = conn
         .prepare(
             "
-        SELECT id, account_id, role_id, layer, bosses, 
-               card_1, card_2, card_3, card_4, card_5, flipped_index,
+        SELECT id, account_id, role_id, role_name, server, layer, bosses, 
+               card_1, card_2, card_3, card_4, card_5, flipped_index, record_type,
                date, notes, updated_at
         FROM trial_records 
         ORDER BY date DESC
@@ -559,22 +571,25 @@ pub fn db_get_trial_records() -> Result<String, String> {
 
     let rows = stmt
         .query_map([], |row| {
-            let bosses_str: String = row.get(4)?;
+            let bosses_str: String = row.get(6)?;
 
             Ok(TrialRecord {
                 id: row.get(0)?,
                 account_id: row.get(1)?,
                 role_id: row.get(2)?,
-                layer: row.get(3)?,
+                role_name: row.get(3)?,
+                server: row.get(4)?,
+                layer: row.get(5)?,
                 bosses: serde_json::from_str(&bosses_str).unwrap_or_default(),
-                card_1: row.get(5)?,
-                card_2: row.get(6)?,
-                card_3: row.get(7)?,
-                card_4: row.get(8)?,
-                card_5: row.get(9)?,
-                flipped_index: row.get(10)?,
-                date: row.get(11)?,
-                notes: row.get(12)?,
+                card_1: row.get(7)?,
+                card_2: row.get(8)?,
+                card_3: row.get(9)?,
+                card_4: row.get(10)?,
+                card_5: row.get(11)?,
+                flipped_index: row.get(12)?,
+                record_type: row.get(13)?,
+                date: row.get(14)?,
+                notes: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -610,7 +625,7 @@ pub struct BaizhanRecord {
     #[serde(rename = "roleName")]
     pub role_name: Option<String>,
     pub server: Option<String>,
-    pub date: String,
+    pub date: i64,  // Changed from String to i64 (timestamp)
     #[serde(rename = "goldIncome")]
     pub gold_income: i64,
     #[serde(rename = "goldExpense", default)]
@@ -735,44 +750,6 @@ pub fn db_update_baizhan_record(record: String) -> Result<(), String> {
 #[tauri::command]
 pub fn db_init() -> Result<(), String> {
     init_db()?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn db_get_migration_status() -> Result<Option<String>, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT status, migrated_at, error_message FROM migration_log WHERE id = 1")
-        .map_err(|e| e.to_string())?;
-    let result: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
-    Ok(result)
-}
-
-#[tauri::command]
-pub fn db_check_migration_completed() -> Result<bool, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let status: Option<String> = conn
-        .query_row("SELECT status FROM migration_log WHERE id = 1", [], |row| {
-            row.get(0)
-        })
-        .ok();
-
-    Ok(status == Some("completed".to_string()))
-}
-
-#[tauri::command]
-pub fn db_set_migration_status(
-    status: String,
-    error_message: Option<String>,
-) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
-
-    conn.execute(
-        "INSERT OR REPLACE INTO migration_log (id, status, migrated_at, error_message) VALUES (1, ?, ?, ?)",
-        params![status, timestamp, error_message.unwrap_or_default()],
-    ).map_err(|e| e.to_string())?;
-
     Ok(())
 }
 
@@ -1128,14 +1105,14 @@ pub fn db_save_records(records: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 全量同步：先清空表，再插入
-    tx.execute("DELETE FROM records", [])
-        .map_err(|e| e.to_string())?;
-
+    // 增量同步：使用 INSERT OR REPLACE 更新记录，不删除历史数据
     for record in parsed {
         let id = record["id"].as_str().unwrap_or_default().to_string();
+        if id.is_empty() {
+            continue;
+        }
         tx.execute(
-            "INSERT INTO records (id, data) VALUES (?, ?)",
+            "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
             params![id, record.to_string()],
         )
         .map_err(|e| e.to_string())?;
@@ -1437,6 +1414,7 @@ pub fn db_get_records_by_raid(_raid_id: String) -> Result<Vec<String>, String> {
     Ok(records)
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_analyze_duplicates() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1554,6 +1532,7 @@ pub fn db_analyze_duplicates() -> Result<String, String> {
     Ok(result)
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_deduplicate_accounts() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1612,6 +1591,7 @@ pub fn db_deduplicate_accounts() -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_deduplicate_raids() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1682,6 +1662,7 @@ pub fn db_deduplicate_raids() -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub fn db_add_unique_constraint_raids() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;

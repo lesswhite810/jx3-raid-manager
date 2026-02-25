@@ -1,24 +1,24 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { BaizhanRecord, Account } from '../types';
 import { Swords, Check, Copy } from 'lucide-react';
 import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
-import { getLastMonday7AM } from '../utils/cooldownManager';
+import { getLastMonday } from '../utils/cooldownManager';
+import { db } from '../services/db';
+import { toast } from '../utils/toastManager';
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
     accounts: Account[];
-    onAddRecord: (record: BaizhanRecord) => void;
-    onDeleteRecord?: (recordId: string) => void;
     onEditRecord?: (record: BaizhanRecord) => void;
+    onRefreshRecords?: () => void;
 }
 
 export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     records,
     accounts,
-    onAddRecord,
-    onDeleteRecord,
-    onEditRecord
+    onEditRecord,
+    onRefreshRecords
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
@@ -44,20 +44,25 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     const roleStats = useMemo(() => {
         const stats = new Map<string, { weeklyCount: number, weeklyIncome: number, lastRunDate?: string }>();
 
-        // 副本 CD 每周一 07:00 刷新
+        // 统计本周数据，使用周一 7:00
         const now = new Date();
-        const startOfWeek = getLastMonday7AM(now);
+        const startOfWeek = getLastMonday(now);
+
+        // 辅助函数：兼容时间戳和ISO字符串
+        const getRecordTime = (date: string | number): number => {
+            return typeof date === 'number' ? date : new Date(date).getTime();
+        };
 
         allRoles.forEach(role => {
             const roleRecords = records.filter(r => r.roleId === role.id);
-            const thisWeekRecords = roleRecords.filter(r => new Date(r.date) >= startOfWeek);
+            const thisWeekRecords = roleRecords.filter(r => getRecordTime(r.date) >= startOfWeek.getTime());
 
             // 本周收入合计
             const weeklyIncome = thisWeekRecords.reduce((sum, r) => sum + (r.goldIncome || 0), 0);
 
             // 最后运行日期
-            const lastRunRecord = [...roleRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-            const lastRunDate = lastRunRecord ? lastRunRecord.date : undefined;
+            const lastRunRecord = [...roleRecords].sort((a, b) => getRecordTime(b.date) - getRecordTime(a.date))[0];
+            const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
 
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
@@ -107,6 +112,30 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
         setViewRecordsRole(role);
     };
 
+    // 添加百战记录：调用数据库添加，然后重新查询
+    const handleAddBaizhanRecord = useCallback(async (record: BaizhanRecord) => {
+        try {
+            await db.addBaizhanRecord(record);
+            onRefreshRecords?.();
+            toast.success('添加百战记录成功');
+        } catch (error) {
+            console.error('添加百战记录失败:', error);
+            toast.error('添加百战记录失败');
+        }
+    }, [onRefreshRecords]);
+
+    // 删除百战记录：调用数据库删除，然后重新查询
+    const handleDeleteBaizhanRecord = useCallback(async (recordId: string) => {
+        try {
+            await db.deleteBaizhanRecord(recordId);
+            onRefreshRecords?.();
+            toast.success('删除百战记录成功');
+        } catch (error) {
+            console.error('删除百战记录失败:', error);
+            toast.error('删除百战记录失败');
+        }
+    }, [onRefreshRecords]);
+
     // State for copy feedback
     const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -144,37 +173,74 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {sortedRoles.map(role => {
                             const stats = roleStats.get(role.id) || { weeklyCount: 0, weeklyIncome: 0, lastRunDate: undefined };
-                            const canRun = stats.weeklyCount === 0;
+
+                            // 百战每周1次：未清(0) / 完全清(1+)
+                            const baizhanStatus: 'none' | 'complete' = stats.weeklyCount === 0 ? 'none' : 'complete';
+
+                            // 根据状态设置样式
+                            const getCardStyle = () => {
+                                if (baizhanStatus === 'complete') {
+                                    return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-md';
+                                } else {
+                                    return 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300';
+                                }
+                            };
+
+                            const getIconStyle = () => {
+                                if (baizhanStatus === 'complete') {
+                                    return (
+                                        <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                                            <Check className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                                        </div>
+                                    );
+                                } else {
+                                    return (
+                                        <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        </div>
+                                    );
+                                }
+                            };
+
+                            const getSectStyle = () => {
+                                if (baizhanStatus === 'complete') {
+                                    return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+                                } else {
+                                    return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+                                }
+                            };
+
+                            const getButtonAddStyle = () => {
+                                if (baizhanStatus === 'complete') {
+                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                } else {
+                                    return 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                }
+                            };
+
+                            const getButtonViewStyle = () => {
+                                if (baizhanStatus === 'complete') {
+                                    return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
+                                } else {
+                                    return 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300';
+                                }
+                            };
 
                             return (
                                 <div
                                     key={role.id}
-                                    className={`p-4 rounded-xl border-2 transition-all duration-300 ${canRun
-                                        ? 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300'
-                                        : 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-800 hover:shadow-lg hover:border-amber-300'
-                                        }`}
+                                    className={`p-4 rounded-xl border-2 transition-all duration-300 ${getCardStyle()}`}
                                 >
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2 flex-1 min-w-0">
                                             {/* Status Icon */}
-                                            {canRun ? (
-                                                <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-                                                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                                                </div>
-                                            ) : (
-                                                <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                                                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                                                </div>
-                                            )}
+                                            {getIconStyle()}
 
                                             <div className="min-w-0 flex-1">
                                                 <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
                                                     <span className="truncate" title={`${role.name}@${role.server}`}>{role.name}@{role.server}</span>
                                                     {role.sect && (
-                                                        <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${canRun
-                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                                            }`}>
+                                                        <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${getSectStyle()}`}>
                                                             {role.sect}
                                                         </span>
                                                     )}
@@ -253,19 +319,17 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                     <div className="mt-3 grid grid-cols-2 gap-2">
                                         <button
                                             onClick={() => handleOpenAddModal(role)}
-                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${canRun
-                                                ? 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5'
-                                                : 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5'
+                                            disabled={baizhanStatus === 'complete'}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${baizhanStatus === 'complete'
+                                                ? 'bg-base text-muted cursor-not-allowed border border-base'
+                                                : getButtonAddStyle()
                                                 }`}
                                         >
                                             添加记录
                                         </button>
                                         <button
                                             onClick={() => handleOpenRecordsModal(role)}
-                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${canRun
-                                                ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300'
-                                                : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300'
-                                                }`}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonViewStyle()}`}
                                         >
                                             查看详情
                                         </button>
@@ -280,7 +344,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
             <AddBaizhanRecordModal
                 isOpen={isAdding}
                 onClose={() => setIsAdding(false)}
-                onSubmit={onAddRecord}
+                onSubmit={handleAddBaizhanRecord}
                 accounts={accounts}
                 initialRole={selectedRole}
             />
@@ -292,7 +356,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                         onClose={() => setViewRecordsRole(null)}
                         role={viewRecordsRole}
                         records={records}
-                        onDeleteRecord={onDeleteRecord}
+                        onDeleteRecord={handleDeleteBaizhanRecord}
                         onEditRecord={onEditRecord}
                     />
                 )

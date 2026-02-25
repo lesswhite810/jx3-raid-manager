@@ -3,7 +3,67 @@
 mod db;
 mod gkp_parser;
 
-use tauri_plugin_log::{LogTarget, RotationStrategy,fern};
+use tauri_plugin_log::{LogTarget, RotationStrategy};
+
+#[cfg(target_os = "windows")]
+fn check_webview2() -> Result<String, String> {
+    use std::process::Command;
+
+    // 检查注册表中的 WebView2 版本
+    let output = Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "/v",
+            "pv",
+        ])
+        .output();
+
+    match output {
+        Ok(output) => {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // 解析版本号
+                let version = stdout.trim().split_whitespace().last().unwrap_or("unknown");
+                Ok(format!("WebView2 已安装，版本: {}", version))
+            } else {
+                // 尝试查询用户级安装
+                let output2 = Command::new("reg")
+                    .args([
+                        "query",
+                        r"HKCU\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+                        "/v",
+                        "pv",
+                    ])
+                    .output();
+
+                if let Ok(output2) = output2 {
+                    if output2.status.success() {
+                        let stdout = String::from_utf8_lossy(&output2.stdout);
+                        let version = stdout.trim().split_whitespace().last().unwrap_or("unknown");
+                        return Ok(format!("WebView2 已安装（用户级），版本: {}", version));
+                    }
+                }
+                Err("WebView2 未安装".to_string())
+            }
+        }
+        Err(e) => Err(format!("检查 WebView2 失败: {}", e)),
+    }
+}
+
+fn init_logging() -> tauri_plugin_log::Builder {
+    tauri_plugin_log::Builder::default()
+        .level_for("reqwest", log::LevelFilter::Info)
+        .level_for("h2", log::LevelFilter::Info)
+        .level_for("hyper", log::LevelFilter::Info)
+        .targets([
+            LogTarget::Stdout,
+            LogTarget::Webview,
+            LogTarget::Folder(db::get_app_dir().unwrap_or(std::path::PathBuf::from("."))),
+        ])
+        .rotation_strategy(RotationStrategy::KeepOne)
+        .max_file_size(10 * 1024 * 1024)
+}
 
 fn main() {
     // 设置 panic hook
@@ -11,23 +71,27 @@ fn main() {
         log::error!("Panic occurred: {:?}", info);
     }));
 
+    // 先初始化日志
+    let log_plugin = init_logging().build();
+
+    // 检查 WebView2 并记录日志
+    #[cfg(target_os = "windows")]
+    {
+        match check_webview2() {
+            Ok(msg) => {
+                log::info!("{}", msg);
+                log::info!("WebView2 检查通过，应用将正常启动");
+            }
+            Err(msg) => {
+                log::error!("{}", msg);
+                log::error!("请安装 WebView2 运行时后重新启动应用");
+                log::error!("下载链接: https://developer.microsoft.com/zh-cn/microsoft-edge/webview2/");
+            }
+        }
+    }
+
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::default()
-                // 过滤 reqwest 的 DEBUG 日志，只显示 INFO 及以上
-                .level_for("reqwest", log::LevelFilter::Info)
-                .level_for("h2", log::LevelFilter::Info)
-                .level_for("hyper", log::LevelFilter::Info)
-                .targets([
-                    LogTarget::Stdout,
-                    LogTarget::Webview,
-                    // Log to custom folder: ~/.jx3-raid-manager/logs/
-                    LogTarget::Folder(db::get_app_dir().unwrap_or(std::path::PathBuf::from("."))),
-                ])
-                .rotation_strategy(RotationStrategy::KeepOne)
-                .max_file_size(10 * 1024 * 1024) // 10MB
-                .build(),
-        )
+        .plugin(log_plugin)
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
             db::db_init,

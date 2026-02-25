@@ -37,7 +37,7 @@ export interface RaidRecord {
   accountId: string;
   roleId: string;
   raidName: string;
-  date: string;
+  date: string | number;
   goldIncome: number;
   goldExpense?: number;
   isCleared?: boolean;
@@ -52,6 +52,7 @@ export interface RaidRecord {
   hasMount?: boolean;
   hasAppearance?: boolean;
   hasTitle?: boolean;
+  hasSecretBook?: boolean; // 秘籍
   type?: 'raid' | 'trial';
   bossId?: string;
   bossName?: string;
@@ -65,7 +66,7 @@ export interface TrialPlaceRecord {
   roleId: string;
   roleName: string;
   server: string;
-  date: string;
+  date: string | number;
   layer: number; // 1-100
   bosses: [string, string, string]; // 3 bosses
   // Flat structure for cards (Equip IDs)
@@ -122,7 +123,7 @@ export interface BossRecord {
   raidRecordId: string; // 关联的副本记录 ID
   bossId: string;
   bossName: string;
-  date: string;
+  date: string | number;
   roleId: string;
   accountId: string;
   bossIds?: string[]; // 多选BOSS ID列表（25人本）
@@ -133,7 +134,7 @@ export interface BossCooldownInfo {
   bossId: string;
   bossName: string;
   hasRecord: boolean; // 本 CD 周期内是否有记录
-  lastRecordDate?: string;
+  lastRecordDate?: string | number;
   canAddRecord: boolean; // 是否可以添加记录
 }
 
@@ -181,7 +182,7 @@ export interface BaizhanRecord {
   roleId: string;
   roleName: string;
   server: string;
-  date: string;
+  date: string | number;
   goldIncome: number;   // 收入（金）
   goldExpense?: number; // 支出（金）
   notes?: string;

@@ -3,7 +3,7 @@ import { readDir } from '@tauri-apps/api/fs';
 export interface GkpFileInfo {
   filePath: string;
   fileName: string;
-  timestamp: string;
+  timestamp: number;
   playerCount: number;
   mapName: string;
   roleName?: string;
@@ -31,7 +31,7 @@ export function parseGkpFileName(fileName: string): Partial<GkpFileInfo> | null 
 
   const [, timestampStr, playerCountStr, mapName] = match;
   const [year, month, day, hour, minute, second] = timestampStr.split('-').map(Number);
-  const timestamp = new Date(year, month - 1, day, hour, minute, second).toISOString();
+  const timestamp = new Date(year, month - 1, day, hour, minute, second).getTime();
 
   return {
     fileName,

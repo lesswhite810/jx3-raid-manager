@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { BaizhanRecord } from '../types';
 import { X, Calendar, Swords, Trash2, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Pencil } from 'lucide-react';
+import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 
 // 格式化金币显示（对齐 RoleRecordsModal 风格）
 const formatGoldAmount = (amount: number): string => {
@@ -51,12 +52,32 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
         }
     }, [isOpen]);
 
-    // 角色记录列表（日期降序）
+    // 角色记录列表（本周记录，日期降序）
+    const weekInfo = useMemo(() => {
+        const now = new Date();
+        const weekStart = getLastMonday(now);
+        const weekEnd = getNextMonday(now);
+        return { start: weekStart, end: weekEnd };
+    }, []);
+
     const roleRecords = useMemo(() => {
+        const weekStartTime = weekInfo.start.getTime();
+        const weekEndTime = weekInfo.end.getTime();
+
         return records
-            .filter(r => r.roleId === role.id)
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [records, role.id]);
+            .filter(r => {
+                const matchesRole = r.roleId === role.id;
+                // 兼容旧记录（ISO字符串）和新记录（时间戳）
+                const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+                const matchesTimeRange = recordTime >= weekStartTime && recordTime <= weekEndTime;
+                return matchesRole && matchesTimeRange;
+            })
+            .sort((a, b) => {
+                const timeA = typeof a.date === 'number' ? a.date : new Date(a.date).getTime();
+                const timeB = typeof b.date === 'number' ? b.date : new Date(b.date).getTime();
+                return timeB - timeA;
+            });
+    }, [records, role.id, weekInfo]);
 
     // 汇总统计
     const stats = useMemo(() => {
@@ -66,7 +87,7 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
         return { totalRecords: roleRecords.length, totalIncome, totalExpense, netGold };
     }, [roleRecords]);
 
-    const formatDate = useCallback((dateString: string) => {
+    const formatDate = useCallback((dateString: string | number) => {
         const date = new Date(dateString);
         return date.toLocaleDateString('zh-CN', {
             month: '2-digit',

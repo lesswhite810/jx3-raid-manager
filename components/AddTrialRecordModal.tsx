@@ -255,8 +255,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [error, setError] = useState<string | null>(null);
     const [recordDate, setRecordDate] = useState<string>('');
 
-    const formatDateForInput = (date: Date | string): string => {
-        const d = typeof date === 'string' ? new Date(date) : date;
+    // 将日期转换为输入框显示用的字符串，支持时间戳和ISO字符串
+    const formatDateForInput = (date: Date | string | number): string => {
+        const d = new Date(date);
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
@@ -265,9 +266,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         return `${year}-${month}-${day}T${hours}:${minutes}`;
     };
 
-    const formatDateFromInput = (dateStr: string): string => {
-        if (!dateStr) return new Date().toISOString();
-        return new Date(dateStr).toISOString();
+    // 将日期字符串转换为时间戳存储
+    const formatDateFromInput = (dateStr: string): number => {
+        if (!dateStr) return Date.now();
+        return new Date(dateStr).getTime();
     };
 
     // Attribute filter state

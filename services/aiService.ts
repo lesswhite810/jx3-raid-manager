@@ -636,12 +636,15 @@ function prepareDataSummary(records: RaidRecord[]): any {
     avgGoldPerRun: raidCount > 0 ? Math.round(totalGold / raidCount) : 0,
     topRaids,
     xuanjingRaids,
-    recentLog: recentRecords.slice(0, 10).map(r => ({
-      raid: r.raidName,
-      gold: r.goldIncome,
-      xuanjing: r.hasXuanjing,
-      date: r.date.split('T')[0]
-    }))
+    recentLog: recentRecords.slice(0, 10).map(r => {
+      const dateStr = typeof r.date === 'number' ? new Date(r.date).toISOString() : r.date;
+      return {
+        raid: r.raidName,
+        gold: r.goldIncome,
+        xuanjing: r.hasXuanjing,
+        date: dateStr.split('T')[0]
+      };
+    })
   };
 }
 

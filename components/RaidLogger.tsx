@@ -4,6 +4,7 @@ import { Search, Filter, Trash2 } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
+import { db } from '../services/db';
 
 // 添加全局错误捕获
 window.onerror = function (message, source, lineno, colno, error) {
@@ -45,9 +46,10 @@ interface RaidLoggerProps {
   records: RaidRecord[];
   setRecords: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
   raids: Raid[];
+  onRefreshRecords?: () => void;
 }
 
-export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRecords, raids }) => {
+export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRecords, raids, onRefreshRecords }) => {
   // 确保所有传入的数组都是安全的
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
   const safeRecords = Array.isArray(records) ? records : [];
@@ -139,10 +141,20 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
   };
 
   // Handle batch delete confirmation - execute delete
-  const handleBatchDeleteConfirm = () => {
-    setRecords(prev => prev.filter(r => !selectedRecords.has(r.id)));
-    setSelectedRecords(new Set());
-    setShowBatchDeleteConfirm(false);
+  const handleBatchDeleteConfirm = async () => {
+    try {
+      // 逐个删除选中的记录
+      for (const recordId of selectedRecords) {
+        await db.deleteRecord(recordId);
+      }
+      onRefreshRecords?.();
+      setSelectedRecords(new Set());
+      setShowBatchDeleteConfirm(false);
+      toast.success(`成功删除 ${selectedRecords.size} 条记录`);
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      toast.error('批量删除失败');
+    }
   };
 
   // Handle batch delete cancellation - close dialog
@@ -151,10 +163,17 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
   };
 
   // Handle single delete confirmation - execute delete
-  const handleSingleDeleteConfirm = () => {
+  const handleSingleDeleteConfirm = async () => {
     if (recordToDelete) {
-      setRecords(prev => prev.filter(r => r.id !== recordToDelete));
-      setRecordToDelete(null);
+      try {
+        await db.deleteRecord(recordToDelete);
+        onRefreshRecords?.();
+        setRecordToDelete(null);
+        toast.success('删除成功');
+      } catch (error) {
+        console.error('删除失败:', error);
+        toast.error('删除失败');
+      }
     }
   };
 
@@ -194,7 +213,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
     return `${raid.playerCount}人${raid.difficulty}${raid.name}`;
   };
 
-  const handleAddRecord = (e: React.FormEvent) => {
+  const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();
 
     console.log('=== 提交记录调试信息 ===');
@@ -257,12 +276,19 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
               accountId: accountFromRoles.id,
               roleId: roleId,
               raidName: raidName,
-              date: new Date().toISOString(),
+              date: Date.now(),
               goldIncome: Number(goldIncome),
               hasXuanjing
             };
 
-            setRecords(prev => [record, ...prev]);
+            try {
+              await db.addRecord(record);
+              setRecords(prev => [record, ...prev]);
+              onRefreshRecords?.();
+            } catch (error) {
+              console.error('保存记录失败:', error);
+              toast.error('保存记录失败');
+            }
             setGoldIncome(0);
             setHasXuanjing(false);
 
@@ -291,14 +317,21 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
         accountId: accountId,
         roleId: roleId,
         raidName,
-        date: new Date().toISOString(),
+        date: Date.now(),
         goldIncome: Number(goldIncome),
         hasXuanjing,
         roleName, // 保存角色名称（不可变）
         server // 保存服务器信息（不可变）
       };
 
-      setRecords(prev => [record, ...prev]);
+      try {
+        await db.addRecord(record);
+        setRecords(prev => [record, ...prev]);
+        onRefreshRecords?.();
+      } catch (error) {
+        console.error('保存记录失败:', error);
+        toast.error('保存记录失败');
+      }
       setGoldIncome(0);
       setHasXuanjing(false);
 

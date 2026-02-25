@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
-import { getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
+import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
+import { db } from '../services/db';
 
 interface RoleWithStatus {
   id: string;
@@ -26,6 +28,7 @@ interface RoleRecordsModalProps {
   currentUserId?: string;
   isAdmin?: boolean;
   onEditRecord?: (record: RaidRecord) => void;
+  onRefreshRecords?: () => void;
 }
 
 export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
@@ -37,7 +40,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   setRecords,
   currentUserId,
   isAdmin = false,
-  onEditRecord
+  onEditRecord,
+  onRefreshRecords
 }) => {
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -51,9 +55,9 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
   const weekInfo = useMemo(() => {
     const now = new Date();
-    // 副本周期起点：周一 07:00，复用 cooldownManager 的统一函数
-    const weekStart = getLastMonday7AM(now);
-    const weekEnd = getNextMonday7AM(now);
+    // 统计周期起点：周一 00:00
+    const weekStart = getLastMonday(now);
+    const weekEnd = getNextMonday(now);
     return { start: weekStart, end: weekEnd };
   }, []);
 
@@ -116,7 +120,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     return false;
   }, [isAdmin, currentUserId]);
 
-  const formatDate = useCallback((dateString: string) => {
+  const formatDate = useCallback((dateString: string | number) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('zh-CN', {
       month: '2-digit',
@@ -149,7 +153,13 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     try {
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      setRecords(prev => prev.filter(r => r.id !== recordToDelete.id));
+      try {
+        await db.deleteRecord(recordToDelete.id);
+        onRefreshRecords?.();
+      } catch (error) {
+        console.error('删除记录失败:', error);
+        throw error;
+      }
 
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 2000);
@@ -177,7 +187,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
       <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
         <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
@@ -275,7 +285,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                       </div>
 
                       <div className="flex flex-col gap-2">
-                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle) && (
+                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook) && (
                           <div className="flex items-center gap-2 flex-wrap">
                             {record.hasXuanjing && (
                               <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded font-medium flex items-center gap-1">
@@ -310,6 +320,11 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                             {record.hasTitle && (
                               <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded font-medium flex items-center gap-1">
                                 <Crown className="w-3 h-3" />称号
+                              </span>
+                            )}
+                            {record.hasSecretBook && (
+                              <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 text-xs rounded font-medium flex items-center gap-1">
+                                <BookOpen className="w-3 h-3" />秘籍
                               </span>
                             )}
                           </div>
@@ -417,6 +432,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
           {errorMessage}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

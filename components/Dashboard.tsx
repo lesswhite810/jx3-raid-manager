@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialPlaceRecord } from '../types';
 import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
+import { getLastMonday } from '../utils/cooldownManager';
 
 interface DashboardProps {
   records: RaidRecord[];
@@ -33,57 +34,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
 
   const filteredRecords = useMemo(() => {
     const now = new Date();
-    const startOfPeriod = new Date();
+    let startOfPeriod: Date;
 
     if (statsPeriod === 'week') {
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      startOfPeriod.setDate(now.getDate() - diff);
+      startOfPeriod = getLastMonday(now);
     } else {
-      startOfPeriod.setDate(1);
+      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    startOfPeriod.setHours(0, 0, 0, 0);
-
-    return safeRecords.filter(r => new Date(r.date) >= startOfPeriod);
+    const startTime = startOfPeriod.getTime();
+    return safeRecords.filter(r => {
+      const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+      return recordTime >= startTime;
+    });
   }, [safeRecords, statsPeriod]);
 
   const safeBaizhanRecords = Array.isArray(baizhanRecords) ? baizhanRecords : [];
 
   const filteredBaizhanRecords = useMemo(() => {
     const now = new Date();
-    const startOfPeriod = new Date();
+    let startOfPeriod: Date;
 
     if (statsPeriod === 'week') {
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      startOfPeriod.setDate(now.getDate() - diff);
+      startOfPeriod = getLastMonday(now);
     } else {
-      startOfPeriod.setDate(1);
+      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    startOfPeriod.setHours(0, 0, 0, 0);
-
-    return safeBaizhanRecords.filter(r => new Date(r.date) >= startOfPeriod);
+    const startTime = startOfPeriod.getTime();
+    return safeBaizhanRecords.filter(r => {
+      const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+      return recordTime >= startTime;
+    });
   }, [safeBaizhanRecords, statsPeriod]);
 
   const safeTrialRecords = Array.isArray(trialRecords) ? trialRecords : [];
 
   const filteredTrialRecords = useMemo(() => {
     const now = new Date();
-    const startOfPeriod = new Date();
+    let startOfPeriod: Date;
 
     if (statsPeriod === 'week') {
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      startOfPeriod.setDate(now.getDate() - diff);
+      startOfPeriod = getLastMonday(now);
     } else {
-      startOfPeriod.setDate(1);
+      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    startOfPeriod.setHours(0, 0, 0, 0);
-
-    return safeTrialRecords.filter(r => new Date(r.date) >= startOfPeriod);
+    const startTime = startOfPeriod.getTime();
+    return safeTrialRecords.filter(r => {
+      const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+      return recordTime >= startTime;
+    });
   }, [safeTrialRecords, statsPeriod]);
 
   const stats: DashboardStats = useMemo(() => {

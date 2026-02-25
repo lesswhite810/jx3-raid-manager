@@ -4,9 +4,9 @@ import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Che
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
-import { deduplicateRecords, formatGoldAmount } from '../utils/recordUtils';
-import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday7AM, getNextMonday7AM } from '../utils/cooldownManager';
-
+import { formatGoldAmount } from '../utils/recordUtils';
+import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday, getNextMonday } from '../utils/cooldownManager';
+import { db } from '../services/db';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 
@@ -17,6 +17,7 @@ interface RaidDetailProps {
   onBack: () => void;
   setRecords?: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
   onEditRecord?: (record: RaidRecord) => void;
+  onRefreshRecords?: () => void;
 }
 
 interface RoleWithStatus {
@@ -34,7 +35,7 @@ interface RoleWithStatus {
   recordCount: number;
   maxRecords: number;
   cooldownInfo: CooldownInfo;
-  lastRunDate?: string;
+  lastRunDate?: string | number;
   lastRunGold?: number;
   lastRunIncome?: number;
   lastRunExpense?: number;
@@ -103,7 +104,7 @@ const RaidRefreshCountdown: React.FC<RaidRefreshCountdownProps> = ({ raid }) => 
   );
 };
 
-export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records, onBack, setRecords, onEditRecord }) => {
+export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records, onBack, setRecords, onEditRecord, onRefreshRecords }) => {
 
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [showRoleRecordsModal, setShowRoleRecordsModal] = useState(false);
@@ -169,18 +170,15 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     setShowRoleRecordsModal(true);
   };
 
-  const handleAddRecord = (recordData: Partial<RaidRecord>) => {
+  const handleAddRecord = async (recordData: Partial<RaidRecord>) => {
     console.log('[RaidDetail] handleAddRecord called with:', recordData);
-    if (setRecords && recordData) {
-      console.log('[RaidDetail] Setting records...');
-      setRecords(prev => {
-        const newRecords = [recordData as RaidRecord, ...prev];
-        const result = deduplicateRecords(newRecords);
-        console.log('[RaidDetail] Records updated, count:', result.length);
-        return result;
-      });
-    } else {
-      console.log('[RaidDetail] setRecords is undefined or recordData is null');
+    if (recordData) {
+      try {
+        await db.addRecord(recordData as RaidRecord);
+        onRefreshRecords?.();
+      } catch (error) {
+        console.error('保存记录失败:', error);
+      }
     }
     console.log('[RaidDetail] Calling showToast...');
     showToast('记录添加成功', 3000);
@@ -191,8 +189,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   const weekInfo = useMemo(() => {
     const now = new Date();
     // 25人本：周一 07:00 ~ 下周一 07:00
-    const weekStart = getLastMonday7AM(now);
-    const weekEnd = getNextMonday7AM(now);
+    const weekStart = getLastMonday(now);
+    const weekEnd = getNextMonday(now);
     return { start: weekStart, end: weekEnd };
   }, []);
 
@@ -373,10 +371,22 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     const sorted = [...rolesWithStatus];
 
     sorted.sort((a, b) => {
-      // 1. Availability first (canRun)
-      const aCanRun = a.canRun ? 0 : 1;
-      const bCanRun = b.canRun ? 0 : 1;
-      if (aCanRun !== bCanRun) return aCanRun - bCanRun;
+      // 1. BOSS 完成状态优先（未清 > 部分清完 > 完全清完）
+      const getBossStatus = (role: RoleWithStatus): number => {
+        if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
+          // 没有 BOSS CD 配置，使用旧的 canRun 逻辑
+          return role.canRun ? 0 : 2;
+        }
+        const completedCount = role.bossCooldowns.filter(b => b.hasRecord).length;
+        const totalCount = role.bossCooldowns.length;
+        if (completedCount === 0) return 0; // 未清
+        if (completedCount === totalCount) return 2; // 完全清完
+        return 1; // 部分清完
+      };
+
+      const aBossStatus = getBossStatus(a);
+      const bBossStatus = getBossStatus(b);
+      if (aBossStatus !== bBossStatus) return aBossStatus - bBossStatus;
 
       // 2. Equipment Score (Desc)
       const aScore = a.equipmentScore || 0;
@@ -389,7 +399,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       if (aDate !== bDate) return bDate - aDate;
 
       // 4. Server (Asc)
-      if (a.server !== b.server) return a.server.localeCompare(b.server); // Corrected property access
+      if (a.server !== b.server) return a.server.localeCompare(b.server);
 
       // 5. Name (Asc)
       return a.name.localeCompare(b.name);
@@ -398,10 +408,24 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     return sorted;
   }, [rolesWithStatus]);
 
-  const availableCount = rolesWithStatus.filter(r => r.canRun).length;
-  const unavailableCount = rolesWithStatus.filter(r => !r.canRun).length;
+  // 计算三态统计：未清、部分清、完全清
+  const noneClearedCount = rolesWithStatus.filter(r => {
+    if (!r.bossCooldowns || r.bossCooldowns.length === 0) return r.canRun;
+    return r.bossCooldowns.filter(b => b.hasRecord).length === 0;
+  }).length;
+  const partialClearedCount = rolesWithStatus.filter(r => {
+    if (!r.bossCooldowns || r.bossCooldowns.length === 0) return false;
+    const completedCount = r.bossCooldowns.filter(b => b.hasRecord).length;
+    const totalCount = r.bossCooldowns.length;
+    return completedCount > 0 && completedCount < totalCount;
+  }).length;
+  const completeClearedCount = rolesWithStatus.filter(r => {
+    if (!r.bossCooldowns || r.bossCooldowns.length === 0) return !r.canRun;
+    const completedCount = r.bossCooldowns.filter(b => b.hasRecord).length;
+    return completedCount === r.bossCooldowns.length;
+  }).length;
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('zh-CN', {
       month: '2-digit',
@@ -431,12 +455,16 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-bold text-emerald-600">{availableCount}</span>
-              <span className="text-muted text-xs">可打</span>
+              <span className="font-bold text-emerald-600">{noneClearedCount}</span>
+              <span className="text-muted text-xs">未清</span>
             </div>
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-bold text-amber-600">{unavailableCount}</span>
-              <span className="text-muted text-xs">已打</span>
+              <span className="font-bold text-amber-600">{partialClearedCount}</span>
+              <span className="text-muted text-xs">部分清</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className="font-bold text-slate-500">{completeClearedCount}</span>
+              <span className="text-muted text-xs">完全清</span>
             </div>
           </div>
         </div>
@@ -450,43 +478,99 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {sortedRoles.map((role) => {
-              const isAtLimit = !role.cooldownInfo.canAdd;
+              // 计算 BOSS 完成状态
+              const getBossClearStatus = (): 'none' | 'partial' | 'complete' => {
+                if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
+                  return role.canRun ? 'none' : 'complete';
+                }
+                const completedCount = role.bossCooldowns.filter(b => b.hasRecord).length;
+                const totalCount = role.bossCooldowns.length;
+                if (completedCount === 0) return 'none';
+                if (completedCount === totalCount) return 'complete';
+                return 'partial';
+              };
+
+              const bossStatus = getBossClearStatus();
+
+              // 根据状态设置样式
+              const getCardStyle = () => {
+                if (bossStatus === 'complete') {
+                  return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-md';
+                } else if (bossStatus === 'partial') {
+                  return 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-700 hover:shadow-lg hover:border-amber-300';
+                } else {
+                  return 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300';
+                }
+              };
+
+              const getIconStyle = () => {
+                if (bossStatus === 'complete') {
+                  return (
+                    <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                      <Check className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                    </div>
+                  );
+                } else if (bossStatus === 'partial') {
+                  return (
+                    <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                      <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    </div>
+                  );
+                } else {
+                  return (
+                    <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    </div>
+                  );
+                }
+              };
+
+              const getSectStyle = () => {
+                if (bossStatus === 'complete') {
+                  return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+                } else if (bossStatus === 'partial') {
+                  return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
+                } else {
+                  return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+                }
+              };
+
+              const getButtonAddStyle = () => {
+                if (!role.canAddMore) {
+                  return 'bg-base text-muted cursor-not-allowed border border-base';
+                }
+                if (bossStatus === 'complete') {
+                  return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
+                } else if (bossStatus === 'partial') {
+                  return 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5';
+                } else {
+                  return 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5';
+                }
+              };
+
+              const getButtonViewStyle = () => {
+                if (bossStatus === 'complete') {
+                  return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
+                } else if (bossStatus === 'partial') {
+                  return 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300';
+                } else {
+                  return 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300';
+                }
+              };
 
               return (
                 <div
                   key={role.id}
-                  className={`p-4 rounded-xl border-2 transition-all duration-300 ${role.canRun
-                    ? isAtLimit
-                      ? 'bg-gradient-to-br from-base to-base border-base hover:shadow-md'
-                      : 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300'
-                    : 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-800 hover:shadow-lg hover:border-amber-300'
-                    }`}
+                  className={`p-4 rounded-xl border-2 transition-all duration-300 ${getCardStyle()}`}
                 >
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                      {isAtLimit ? (
-                        <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
-                          <RefreshCw className="w-4 h-4 text-muted" />
-                        </div>
-                      ) : role.canRun ? (
-                        <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-                          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                        </div>
-                      ) : (
-                        <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                          <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                        </div>
-                      )}
+                      {getIconStyle()}
                       <div className="min-w-0 flex-1">
                         <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
                           <span className="truncate">{cleanRoleName(role.name)}@{role.server}</span>
                           {role.sect && role.sect !== '未知' && (
-                            <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${isAtLimit
-                              ? 'bg-base text-muted'
-                              : role.canRun
-                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                              }`}>{role.sect}</span>
+                            <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${getSectStyle()}`}>{role.sect}</span>
                           )}
                           {role.equipmentScore !== undefined && role.equipmentScore !== null && (
                             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
@@ -506,7 +590,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         {role.lastRunDate ? (
                           <>
                             <div className="flex items-center gap-1.5 text-muted overflow-hidden">
-                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-500' : 'text-amber-500'}`} />
+                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'partial' ? 'text-amber-500' : 'text-emerald-500'}`} />
                               <span className="text-[11px] whitespace-nowrap">{formatDate(role.lastRunDate)}</span>
                             </div>
                             {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
@@ -524,7 +608,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                           </>
                         ) : (
                           <div className="flex items-center gap-1.5 text-muted">
-                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${isAtLimit ? 'text-muted' : role.canRun ? 'text-emerald-400' : 'text-amber-400'}`} />
+                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'partial' ? 'text-amber-400' : 'text-emerald-400'}`} />
                             <span className="text-[11px] whitespace-nowrap">暂无记录</span>
                           </div>
                         )}
@@ -595,12 +679,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         handleAddRecordClick(role);
                       }}
                       disabled={!role.canAddMore}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${role.canAddMore
-                        ? role.canRun
-                          ? 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5'
-                          : 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5'
-                        : 'bg-base text-muted cursor-not-allowed border border-base'
-                        }`}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonAddStyle()}`}
                     >
                       添加记录
                     </button>
@@ -609,10 +688,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         e.stopPropagation();
                         handleViewRecordsClick(role);
                       }}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${role.canRun
-                        ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300'
-                        : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300'
-                        }`}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonViewStyle()}`}
                     >
                       查看详情
                     </button>
@@ -653,6 +729,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           setRecords={setRecords}
           isAdmin={true}
           onEditRecord={onEditRecord}
+          onRefreshRecords={onRefreshRecords}
         />
       )}
     </div>

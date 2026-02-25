@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Raid, RaidRecord } from '../types';
-import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag } from 'lucide-react';
+import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag, BookOpen } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
 import { DateTimePicker } from './DateTimePicker';
@@ -41,6 +42,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   const [hasMount, setHasMount] = useState(false);
   const [hasAppearance, setHasAppearance] = useState(false);
   const [hasTitle, setHasTitle] = useState(false);
+  const [hasSecretBook, setHasSecretBook] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -51,8 +53,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
     return raid.bosses || [];
   }, [raid]);
 
-  const formatDateForInput = (date: Date | string): string => {
-    const d = typeof date === 'string' ? new Date(date) : date;
+  // 将日期转换为输入框显示用的字符串，支持时间戳和ISO字符串
+  const formatDateForInput = (date: Date | string | number): string => {
+    const d = new Date(date);
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
@@ -61,9 +64,10 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
 
-  const formatDateFromInput = (dateStr: string): string => {
-    if (!dateStr) return new Date().toISOString();
-    return new Date(dateStr).toISOString();
+  // 将日期字符串转换为时间戳存储
+  const formatDateFromInput = (dateStr: string): number => {
+    if (!dateStr) return Date.now();
+    return new Date(dateStr).getTime();
   };
 
   useEffect(() => {
@@ -78,6 +82,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasMount(initialData.hasMount || false);
         setHasAppearance(initialData.hasAppearance || false);
         setHasTitle(initialData.hasTitle || false);
+        setHasSecretBook(initialData.hasSecretBook || false);
         setNotes(initialData.notes || '');
         setSelectedBossIds(initialData.bossIds || (initialData.bossId ? [initialData.bossId] : []));
         setRecordDate(formatDateForInput(initialData.date || new Date()));
@@ -91,6 +96,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasMount(false);
         setHasAppearance(false);
         setHasTitle(false);
+        setHasSecretBook(false);
         setNotes('');
         setSelectedBossIds(availableBosses.map(b => b.id));
         setRecordDate(formatDateForInput(new Date()));
@@ -134,6 +140,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         hasMount,
         hasAppearance,
         hasTitle,
+        hasSecretBook,
         notes: notes.trim() || undefined,
         roleName: role.name,
         server: `${role.region} ${role.server}`,
@@ -149,7 +156,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         constructRaidName(),
         true,
         undefined,
-        `收入: ${goldIncome}, 支出: ${goldExpense}, 玄晶: ${hasXuanjing}, 马具: ${hasMaJu}, 宠物: ${hasPet}, 挂件: ${hasPendant}, 坐骑: ${hasMount}, 外观: ${hasAppearance}, 称号: ${hasTitle}`
+        `收入: ${goldIncome}, 支出: ${goldExpense}, 玄晶: ${hasXuanjing}, 马具: ${hasMaJu}, 宠物: ${hasPet}, 挂件: ${hasPendant}, 坐骑: ${hasMount}, 外观: ${hasAppearance}, 称号: ${hasTitle}, 秘籍: ${hasSecretBook}`
       );
 
       onClose();
@@ -164,7 +171,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <>
       <div
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100]"
@@ -390,6 +397,20 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                   <span>称号</span>
                 </label>
               </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={hasSecretBook}
+                  onChange={e => setHasSecretBook(e.target.checked)}
+                  id="secretbook"
+                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
+                />
+                <label htmlFor="secretbook" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                  <BookOpen className="w-3.5 h-3.5 text-cyan-600" />
+                  <span>秘籍</span>
+                </label>
+              </div>
             </div>
 
             <div>
@@ -435,6 +456,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
           </form>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 };
