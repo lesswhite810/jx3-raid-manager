@@ -7,7 +7,7 @@ pub mod migrations;
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 2;
+pub const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -200,6 +200,8 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             id TEXT PRIMARY KEY,
             account_id TEXT,
             role_id TEXT,
+            role_name TEXT,
+            server TEXT,
             layer INTEGER,
             bosses TEXT,
             card_1 TEXT,
@@ -208,7 +210,8 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             card_4 TEXT,
             card_5 TEXT,
             flipped_index INTEGER,
-            date TEXT NOT NULL,
+            record_type TEXT DEFAULT 'trial',
+            date INTEGER NOT NULL,
             notes TEXT,
             updated_at TEXT
         );
@@ -220,7 +223,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             role_id TEXT NOT NULL,
             role_name TEXT,
             server TEXT,
-            date TEXT NOT NULL,
+            date INTEGER NOT NULL,
             gold_income INTEGER DEFAULT 0,
             gold_expense INTEGER DEFAULT 0,
             notes TEXT,
@@ -487,6 +490,10 @@ pub struct TrialRecord {
     pub account_id: String,
     #[serde(rename = "roleId")]
     pub role_id: String,
+    #[serde(rename = "roleName", default)]
+    pub role_name: String,
+    #[serde(rename = "server", default)]
+    pub server: String,
     pub layer: i64,
     pub bosses: Vec<String>, // JSON array
     #[serde(rename = "card1")]
@@ -501,7 +508,9 @@ pub struct TrialRecord {
     pub card_5: String,
     #[serde(rename = "flippedIndex")]
     pub flipped_index: i64,
-    pub date: String,
+    #[serde(rename = "type", default)]
+    pub record_type: String,
+    pub date: i64,  // Changed from String to i64 (timestamp)
     pub notes: Option<String>,
 }
 
@@ -516,14 +525,16 @@ pub fn db_add_trial_record(record: String) -> Result<(), String> {
 
     conn.execute(
         "INSERT OR REPLACE INTO trial_records (
-            id, account_id, role_id, layer, bosses, 
-            card_1, card_2, card_3, card_4, card_5, flipped_index, date, notes, updated_at
+            id, account_id, role_id, role_name, server, layer, bosses, 
+            card_1, card_2, card_3, card_4, card_5, flipped_index, record_type, date, notes, updated_at
         ) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             item.id,
             item.account_id,
             item.role_id,
+            item.role_name,
+            item.server,
             item.layer,
             bosses_json,
             item.card_1,
@@ -532,6 +543,7 @@ pub fn db_add_trial_record(record: String) -> Result<(), String> {
             item.card_4,
             item.card_5,
             item.flipped_index,
+            item.record_type,
             item.date,
             item.notes,
             timestamp
@@ -548,8 +560,8 @@ pub fn db_get_trial_records() -> Result<String, String> {
     let mut stmt = conn
         .prepare(
             "
-        SELECT id, account_id, role_id, layer, bosses, 
-               card_1, card_2, card_3, card_4, card_5, flipped_index,
+        SELECT id, account_id, role_id, role_name, server, layer, bosses, 
+               card_1, card_2, card_3, card_4, card_5, flipped_index, record_type,
                date, notes, updated_at
         FROM trial_records 
         ORDER BY date DESC
@@ -559,22 +571,25 @@ pub fn db_get_trial_records() -> Result<String, String> {
 
     let rows = stmt
         .query_map([], |row| {
-            let bosses_str: String = row.get(4)?;
+            let bosses_str: String = row.get(6)?;
 
             Ok(TrialRecord {
                 id: row.get(0)?,
                 account_id: row.get(1)?,
                 role_id: row.get(2)?,
-                layer: row.get(3)?,
+                role_name: row.get(3)?,
+                server: row.get(4)?,
+                layer: row.get(5)?,
                 bosses: serde_json::from_str(&bosses_str).unwrap_or_default(),
-                card_1: row.get(5)?,
-                card_2: row.get(6)?,
-                card_3: row.get(7)?,
-                card_4: row.get(8)?,
-                card_5: row.get(9)?,
-                flipped_index: row.get(10)?,
-                date: row.get(11)?,
-                notes: row.get(12)?,
+                card_1: row.get(7)?,
+                card_2: row.get(8)?,
+                card_3: row.get(9)?,
+                card_4: row.get(10)?,
+                card_5: row.get(11)?,
+                flipped_index: row.get(12)?,
+                record_type: row.get(13)?,
+                date: row.get(14)?,
+                notes: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -610,7 +625,7 @@ pub struct BaizhanRecord {
     #[serde(rename = "roleName")]
     pub role_name: Option<String>,
     pub server: Option<String>,
-    pub date: String,
+    pub date: i64,  // Changed from String to i64 (timestamp)
     #[serde(rename = "goldIncome")]
     pub gold_income: i64,
     #[serde(rename = "goldExpense", default)]

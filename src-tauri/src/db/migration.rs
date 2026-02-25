@@ -17,6 +17,7 @@ pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
     match version {
         1 => migrations::v1::migrate(conn),
         2 => migrations::v2::migrate(conn),
+        3 => migrations::v3::migrate(conn),
         _ => Err(format!("未知的迁移版本: {}", version)),
     }
 }
