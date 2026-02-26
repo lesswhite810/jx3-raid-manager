@@ -1,6 +1,6 @@
 [package]
 name = "jx3-raid-manager"
-version = "1.2.7"
+version = "1.2.8"
 description = "剑网三副本管家"
 authors = ["you"]
 license = ""
