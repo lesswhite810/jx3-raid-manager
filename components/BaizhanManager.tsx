@@ -112,12 +112,11 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
         setViewRecordsRole(role);
     };
 
-    // 添加百战记录：调用数据库添加，然后重新查询
+    // 添加百战记录：刷新记录列表（toast 已在 Modal 中显示）
     const handleAddBaizhanRecord = useCallback(async (record: BaizhanRecord) => {
         try {
             await db.addBaizhanRecord(record);
             onRefreshRecords?.();
-            toast.success('添加百战记录成功');
         } catch (error) {
             console.error('添加百战记录失败:', error);
             toast.error('添加百战记录失败');

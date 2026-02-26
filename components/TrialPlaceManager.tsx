@@ -114,12 +114,11 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         setViewRecordsRole(role);
     };
 
-    // 添加试炼记录：调用数据库添加，然后重新查询
+    // 添加试炼记录：刷新记录列表（toast 已在 Modal 中显示）
     const handleAddTrialRecord = useCallback(async (record: TrialPlaceRecord) => {
         try {
             await db.addTrialRecord(record);
             onRefreshRecords?.();
-            toast.success('添加试炼记录成功');
         } catch (error) {
             console.error('添加试炼记录失败:', error);
             toast.error('添加试炼记录失败');
