@@ -191,7 +191,27 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(error_to_string)?;
         log::info!("V3 迁移：baizhan_records 表创建完成");
     } else {
-        // 表存在，处理 date 字段：从 TEXT 转换为 INTEGER
+        // 表存在，先检查并添加缺失的字段
+
+        // 检查 record_type 字段是否存在
+        let record_type_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('baizhan_records') WHERE name='record_type'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(error_to_string)?;
+
+        if record_type_exists == 0 {
+            conn.execute(
+                "ALTER TABLE baizhan_records ADD COLUMN record_type TEXT DEFAULT 'baizhan'",
+                [],
+            )
+            .map_err(error_to_string)?;
+            log::info!("V3 迁移：已添加 baizhan_records.record_type 字段");
+        }
+
+        // 处理 date 字段：从 TEXT 转换为 INTEGER
         let bz_date_type: Result<String, _> = conn
             .query_row(
                 "SELECT type FROM pragma_table_info('baizhan_records') WHERE name='date'",

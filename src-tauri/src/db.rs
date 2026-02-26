@@ -91,6 +91,9 @@ pub fn init_db() -> Result<Connection, String> {
         // 数据库存在但没有版本记录，说明是旧版本
         log::info!("数据库初始化：从旧版本升级，执行所有迁移脚本");
 
+        // 确保基础表存在（升级路径不会调用 create_latest_schema）
+        ensure_base_tables(&conn)?;
+
         // 执行所有迁移（V1 到当前版本）
         for version in 1..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
@@ -105,6 +108,9 @@ pub fn init_db() -> Result<Connection, String> {
     } else if current_version < CURRENT_SCHEMA_VERSION {
         // ========== 从中间版本升级场景 ==========
         log::info!("数据库初始化：从 V{} 升级到 V{}", current_version, CURRENT_SCHEMA_VERSION);
+
+        // 确保基础表存在
+        ensure_base_tables(&conn)?;
 
         // 执行增量迁移
         for version in (current_version + 1)..=CURRENT_SCHEMA_VERSION {
@@ -154,30 +160,26 @@ fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Res
     Ok(())
 }
 
-/// 创建最新版本的数据库结构
-fn create_latest_schema(conn: &Connection) -> Result<(), String> {
+/// 创建基础表（升级路径中也需要确保这些表存在）
+fn ensure_base_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
-        -- ========== 基础记录表 ==========
         CREATE TABLE IF NOT EXISTS records (
             id TEXT PRIMARY KEY,
             data TEXT
         );
 
-        -- ========== 配置表 ==========
         CREATE TABLE IF NOT EXISTS config (
             id INTEGER PRIMARY KEY,
             value TEXT
         );
 
-        -- ========== 缓存表 ==========
         CREATE TABLE IF NOT EXISTS cache (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TEXT
         );
 
-        -- ========== 装备表 ==========
         CREATE TABLE IF NOT EXISTS equipments (
             id TEXT PRIMARY KEY,
             name TEXT,
@@ -194,7 +196,21 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             data TEXT,
             updated_at TEXT
         );
+    "#,
+    )
+    .map_err(|e| e.to_string())?;
 
+    log::info!("基础表检查完成");
+    Ok(())
+}
+
+/// 创建最新版本的数据库结构
+fn create_latest_schema(conn: &Connection) -> Result<(), String> {
+    // 先创建基础表
+    ensure_base_tables(conn)?;
+
+    conn.execute_batch(
+        r#"
         -- ========== 试炼记录表 ==========
         CREATE TABLE IF NOT EXISTS trial_records (
             id TEXT PRIMARY KEY,
