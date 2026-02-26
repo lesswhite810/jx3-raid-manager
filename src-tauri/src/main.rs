@@ -3,8 +3,6 @@
 mod db;
 mod gkp_parser;
 
-use tauri_plugin_log::{LogTarget, RotationStrategy};
-
 #[cfg(target_os = "windows")]
 fn check_webview2() -> Result<String, String> {
     use std::process::Command;
@@ -52,16 +50,23 @@ fn check_webview2() -> Result<String, String> {
 }
 
 fn init_logging() -> tauri_plugin_log::Builder {
-    tauri_plugin_log::Builder::default()
+    tauri_plugin_log::Builder::new()
         .level_for("reqwest", log::LevelFilter::Info)
         .level_for("h2", log::LevelFilter::Info)
         .level_for("hyper", log::LevelFilter::Info)
-        .targets([
-            LogTarget::Stdout,
-            LogTarget::Webview,
-            LogTarget::Folder(db::get_app_dir().unwrap_or(std::path::PathBuf::from("."))),
-        ])
-        .rotation_strategy(RotationStrategy::KeepOne)
+        .target(tauri_plugin_log::Target::new(
+            tauri_plugin_log::TargetKind::Stdout,
+        ))
+        .target(tauri_plugin_log::Target::new(
+            tauri_plugin_log::TargetKind::Webview,
+        ))
+        .target(tauri_plugin_log::Target::new(
+            tauri_plugin_log::TargetKind::Folder {
+                path: db::get_app_dir().unwrap_or(std::path::PathBuf::from(".")),
+                file_name: Some("jx3-raid-manager.log".into()),
+            },
+        ))
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
         .max_file_size(10 * 1024 * 1024)
 }
 
@@ -85,12 +90,19 @@ fn main() {
             Err(msg) => {
                 log::error!("{}", msg);
                 log::error!("请安装 WebView2 运行时后重新启动应用");
-                log::error!("下载链接: https://developer.microsoft.com/zh-cn/microsoft-edge/webview2/");
+                log::error!(
+                    "下载链接: https://developer.microsoft.com/zh-cn/microsoft-edge/webview2/"
+                );
             }
         }
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(log_plugin)
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,

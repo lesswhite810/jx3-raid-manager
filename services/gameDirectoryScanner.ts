@@ -1,4 +1,4 @@
-import { readDir } from '@tauri-apps/api/fs';
+import { readDir } from '@tauri-apps/plugin-fs';
 import { GkpFileInfo, parseGkpFileName } from './gkpDirectoryScanner';
 import { ParsedAccount } from './directoryParser';
 
@@ -93,7 +93,7 @@ async function scanUserdataDirectory(gameDirectory: string): Promise<{ success: 
     const entries = await readDir(userdataPath) as any[];
 
     for (const entry of entries) {
-      if (entry.children && entry.name) {
+      if (entry.isDirectory && entry.name) {
         const accountPath = `${userdataPath}\\${entry.name}`;
 
         const accountContext = {
@@ -127,7 +127,7 @@ async function parseAccountDirectory(accountPath: string, context: any): Promise
     const entries = await readDir(accountPath) as any[];
 
     for (const entry of entries) {
-      if (entry.children && entry.name) {
+      if (entry.isDirectory && entry.name) {
         const regionPath = `${accountPath}\\${entry.name}`;
         // entry.name is the Region Name (e.g., "电信区")
         await parseRegionDirectory(regionPath, context, entry.name);
@@ -143,7 +143,7 @@ async function parseRegionDirectory(regionPath: string, context: any, regionName
     const entries = await readDir(regionPath) as any[];
 
     for (const entry of entries) {
-      if (entry.children && entry.name) {
+      if (entry.isDirectory && entry.name) {
         const serverPath = `${regionPath}\\${entry.name}`;
         // entry.name is the Server Name (e.g., "梦江南")
         await parseServerDirectory(serverPath, context, regionName, entry.name);
@@ -159,7 +159,7 @@ async function parseServerDirectory(serverPath: string, context: any, regionName
     const entries = await readDir(serverPath) as any[];
 
     for (const entry of entries) {
-      if (entry.children && entry.name) {
+      if (entry.isDirectory && entry.name) {
         // entry.name is the Role Name (e.g., "少年白了发")
         context.roles.push({
           name: entry.name,
@@ -206,7 +206,7 @@ async function scanGkpFilesDirectory(gameDirectory: string, activeRoles?: Array<
                     const subEntries = await readDir(userDirPath);
 
                     for (const subEntry of subEntries) {
-                      if (subEntry.name && subEntry.children) {
+                      if (subEntry.name && subEntry.isDirectory) {
                         const matchedRole = activeRoles.find(role => role.name === subEntry.name);
                         if (matchedRole) {
                           matchedRoleName = matchedRole.name;

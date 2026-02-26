@@ -1,4 +1,4 @@
-import { readDir } from '@tauri-apps/api/fs';
+import { readDir } from '@tauri-apps/plugin-fs';
 
 export interface GkpFileInfo {
   filePath: string;
@@ -86,7 +86,7 @@ export async function scanGkpDirectory(options: ScanOptions): Promise<ScanResult
     try {
       const myDataEntries = await readDir(interfacePath);
       addLog('DEBUG', `my#data目录条目数: ${myDataEntries.length}`);
-      addLog('DEBUG', `myDataEntries: ${JSON.stringify(myDataEntries.map(e => ({ name: e.name, children: e.children })))}`);
+      addLog('DEBUG', `myDataEntries: ${JSON.stringify(myDataEntries.map(e => ({ name: e.name, isDirectory: e.isDirectory })))}`);
       
       // 如果没有提供角色列表，则扫描所有目录（保持向后兼容）
       if (activeRoles.length === 0) {
@@ -141,15 +141,15 @@ export async function scanGkpDirectory(options: ScanOptions): Promise<ScanResult
             // 遍历用户目录下的子目录（角色目录）
             const subEntries = await readDir(userDirectoryPath);
             addLog('DEBUG', `  子目录数量: ${subEntries.length}`);
-            addLog('DEBUG', `  子目录列表: ${JSON.stringify(subEntries.map(e => ({ name: e.name, children: e.children })))}`);
+            addLog('DEBUG', `  子目录列表: ${JSON.stringify(subEntries.map(e => ({ name: e.name, isDirectory: e.isDirectory })))}`);
             
             // 检查是否存在匹配的角色目录
             let matchedRoleName: string | null = null;
             
             for (const subEntry of subEntries) {
-              addLog('DEBUG', `    检查子目录: ${subEntry.name}, children: ${subEntry.children}`);
-              
-              if (subEntry.name && subEntry.children) {
+              addLog('DEBUG', `    检查子目录: ${subEntry.name}, isDirectory: ${subEntry.isDirectory}`);
+
+              if (subEntry.name && subEntry.isDirectory) {
                 // 检查子目录名称是否在角色列表中
                 const matchedRole = activeRoles.find(role => role.name === subEntry.name);
                 

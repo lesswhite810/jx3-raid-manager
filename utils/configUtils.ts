@@ -1,5 +1,5 @@
 import { Config } from '../types';
-import { readDir } from '@tauri-apps/api/fs';
+import { readDir } from '@tauri-apps/plugin-fs';
 
 export interface ConfigValidationResult {
   isValid: boolean;
@@ -225,7 +225,7 @@ export const isValidGamePath = async (path: string): Promise<GamePathValidationR
     if (seasunGameEntry) {
       logValidationStep('第一级校验', '在根目录下找到 SeasunGame 目录', {
         seasunGamePath: seasunGameEntry.name,
-        isDirectory: !!seasunGameEntry.children
+        isDirectory: !!seasunGameEntry.isDirectory
       });
       seasunGamePath = path.replace(/\\+$/, '') + '\\SeasunGame';
     } else {
@@ -304,7 +304,7 @@ export const isValidGamePath = async (path: string): Promise<GamePathValidationR
 
         logValidationStep(`校验目录 [${dirName}]`, `成功找到 ${dirName} 目录`, {
           dirPath: validatePath + '\\' + dirName,
-          isDirectory: !!targetEntry.children
+          isDirectory: !!targetEntry.isDirectory
         });
 
         validatePath = validatePath + '\\' + dirName;

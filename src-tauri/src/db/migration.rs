@@ -27,8 +27,8 @@ pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
 /// 使用 INSERT OR IGNORE，不会重复插入已有数据
 pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
     let static_json = include_str!("static_raids.json");
-    let static_raids: Vec<serde_json::Value> = serde_json::from_str(static_json)
-        .map_err(|e| format!("解析预制副本数据失败: {}", e))?;
+    let static_raids: Vec<serde_json::Value> =
+        serde_json::from_str(static_json).map_err(|e| format!("解析预制副本数据失败: {}", e))?;
 
     let mut inserted_count = 0;
     let mut boss_inserted_names: HashSet<String> = HashSet::new();

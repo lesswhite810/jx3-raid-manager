@@ -1,5 +1,5 @@
 import { db } from './db';
-import { fetch } from '@tauri-apps/api/http';
+import { fetch } from '@tauri-apps/plugin-http';
 
 export interface JX3Equip {
     ID: string; // 使用 API 原始的 id 字段（如 "8_41486"）
@@ -139,7 +139,7 @@ async function fetchAllEquipment(keyword: string): Promise<JX3Equip[]> {
                 const response = await fetch(url.toString(), { method: 'GET' });
                 if (!response.ok) break;
 
-                const data = response.data as any;
+                const data = await response.json() as any;
                 const list = data.data && data.data.data ? data.data.data : [];
 
                 // 调试日志：记录每页获取的数据
@@ -321,7 +321,7 @@ export async function getEquip(keyword: string | number): Promise<JX3Equip[]> {
             return [];
         }
 
-        const data = response.data as any;
+        const data = await response.json() as any;
         const list = data.data && data.data.data ? data.data.data : [];
 
         const result = list.map((item: any) => ({

@@ -75,7 +75,10 @@ pub fn init_db() -> Result<Connection, String> {
     if !db_exists {
         // ========== 全新安装场景 ==========
         // 数据库文件不存在，创建最新版本结构
-        log::info!("数据库初始化：全新安装，创建最新版本结构 (V{})", CURRENT_SCHEMA_VERSION);
+        log::info!(
+            "数据库初始化：全新安装，创建最新版本结构 (V{})",
+            CURRENT_SCHEMA_VERSION
+        );
 
         // 创建所有表（最新版本结构）
         create_latest_schema(&conn)?;
@@ -85,7 +88,6 @@ pub fn init_db() -> Result<Connection, String> {
 
         // 初始化静态副本数据
         migration::init_static_raids(&conn)?;
-
     } else if current_version == 0 {
         // ========== 从旧版本升级场景 ==========
         // 数据库存在但没有版本记录，说明是旧版本
@@ -104,10 +106,13 @@ pub fn init_db() -> Result<Connection, String> {
 
         // 初始化静态副本数据
         migration::init_static_raids(&conn)?;
-
     } else if current_version < CURRENT_SCHEMA_VERSION {
         // ========== 从中间版本升级场景 ==========
-        log::info!("数据库初始化：从 V{} 升级到 V{}", current_version, CURRENT_SCHEMA_VERSION);
+        log::info!(
+            "数据库初始化：从 V{} 升级到 V{}",
+            current_version,
+            CURRENT_SCHEMA_VERSION
+        );
 
         // 确保基础表存在
         ensure_base_tables(&conn)?;
@@ -122,7 +127,6 @@ pub fn init_db() -> Result<Connection, String> {
 
         // 初始化静态副本数据（可能会添加新的预设副本）
         migration::init_static_raids(&conn)?;
-
     } else {
         // ========== 已是最新版本 ==========
         log::info!("数据库初始化：已是最新版本 V{}", current_version);
@@ -533,7 +537,7 @@ pub struct TrialRecord {
     pub flipped_index: i64,
     #[serde(rename = "type", default)]
     pub record_type: String,
-    pub date: i64,  // Changed from String to i64 (timestamp)
+    pub date: i64, // Changed from String to i64 (timestamp)
     pub notes: Option<String>,
 }
 
@@ -635,7 +639,6 @@ pub fn db_delete_trial_record(id: String) -> Result<(), String> {
     Ok(())
 }
 
-
 // ========== 百战记录 CRUD ==========
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -648,7 +651,7 @@ pub struct BaizhanRecord {
     #[serde(rename = "roleName")]
     pub role_name: Option<String>,
     pub server: Option<String>,
-    pub date: i64,  // Changed from String to i64 (timestamp)
+    pub date: i64, // Changed from String to i64 (timestamp)
     #[serde(rename = "goldIncome")]
     pub gold_income: i64,
     #[serde(rename = "goldExpense", default)]
@@ -716,7 +719,9 @@ pub fn db_get_baizhan_records() -> Result<String, String> {
                 gold_income: row.get(6)?,
                 gold_expense: row.get(7)?,
                 notes: row.get(8)?,
-                record_type: row.get::<_, Option<String>>(9)?.unwrap_or_else(|| "baizhan".to_string()),
+                record_type: row
+                    .get::<_, Option<String>>(9)?
+                    .unwrap_or_else(|| "baizhan".to_string()),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -801,8 +806,10 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // 全量同步：先清空表，再插入（注意级联或手动清空对应关联表）
-    tx.execute("DELETE FROM roles", []).map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM accounts", []).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM roles", [])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM accounts", [])
+        .map_err(|e| e.to_string())?;
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -1199,7 +1206,9 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
         let mut boss_stmt = conn
             .prepare("SELECT id, name, boss_order FROM raid_bosses WHERE raid_name = ? ORDER BY boss_order")
             .map_err(|e| e.to_string())?;
-        let mut boss_rows = boss_stmt.query(params![raid_name]).map_err(|e| e.to_string())?;
+        let mut boss_rows = boss_stmt
+            .query(params![raid_name])
+            .map_err(|e| e.to_string())?;
         let mut bosses: Vec<serde_json::Value> = Vec::new();
 
         while let Some(boss_row) = boss_rows.next().map_err(|e| e.to_string())? {
@@ -1262,8 +1271,16 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
         let player_count = raid["playerCount"].as_i64().unwrap_or(25);
         let version = raid["version"].as_str().unwrap_or_default();
         let notes = raid["notes"].as_str().unwrap_or_default();
-        let is_active = if raid["isActive"].as_bool().unwrap_or(true) { 1 } else { 0 };
-        let is_static = if raid["static"].as_bool().unwrap_or(false) { 1 } else { 0 };
+        let is_active = if raid["isActive"].as_bool().unwrap_or(true) {
+            1
+        } else {
+            0
+        };
+        let is_static = if raid["static"].as_bool().unwrap_or(false) {
+            1
+        } else {
+            0
+        };
         let id = format!("{}人{}{}", player_count, difficulty, name);
 
         tx.execute(
@@ -1778,7 +1795,7 @@ pub fn db_get_favorite_raids() -> Result<Vec<String>, String> {
             LEFT JOIN raids r ON f.raid_name = r.name
             LEFT JOIN raid_versions rv ON r.version = rv.name
             ORDER BY COALESCE(rv.id, 0) DESC, r.rowid DESC
-            "#
+            "#,
         )
         .map_err(|e| e.to_string())?;
 

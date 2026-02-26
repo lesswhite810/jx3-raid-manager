@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use crate::db::migration::error_to_string;
+use rusqlite::Connection;
 
 /// V2 迁移：创建结构化的 raids 表并初始化静态数据
 ///

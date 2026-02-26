@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use crate::db::migration::error_to_string;
+use rusqlite::Connection;
 
 /// V4 迁移：创建副本收藏表
 ///
@@ -17,7 +17,7 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
             raid_name TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL
         );
-        "#
+        "#,
     )
     .map_err(error_to_string)?;
 
@@ -28,8 +28,8 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 
     // 从 static_raids.json 读取并插入数据
     let static_json = include_str!("../static_raids.json");
-    let static_raids: Vec<serde_json::Value> = serde_json::from_str(static_json)
-        .map_err(|e| format!("解析预制副本数据失败: {}", e))?;
+    let static_raids: Vec<serde_json::Value> =
+        serde_json::from_str(static_json).map_err(|e| format!("解析预制副本数据失败: {}", e))?;
 
     let mut inserted_count = 0;
     for raid in static_raids.iter() {
@@ -40,7 +40,11 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
             for config in configs {
                 let player_count = config["playerCount"].as_i64().unwrap_or(25);
                 let difficulty = config["difficulty"].as_str().unwrap_or("普通");
-                let is_active = if config["isActive"].as_bool().unwrap_or(true) { 1 } else { 0 };
+                let is_active = if config["isActive"].as_bool().unwrap_or(true) {
+                    1
+                } else {
+                    0
+                };
                 let id = format!("{}人{}{}", player_count, difficulty, name);
 
                 conn.execute(

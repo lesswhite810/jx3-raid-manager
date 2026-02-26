@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use crate::db::migration::error_to_string;
+use rusqlite::Connection;
 
 /// V3 迁移：更新试炼之地和百战记录的表结构
 ///
@@ -106,12 +106,11 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 
         // 处理 date 字段：从 TEXT 转换为 INTEGER
         // SQLite 不支持直接 ALTER TABLE 修改列类型，需要创建新表
-        let date_type: Result<String, _> = conn
-            .query_row(
-                "SELECT type FROM pragma_table_info('trial_records') WHERE name='date'",
-                [],
-                |row| row.get(0),
-            );
+        let date_type: Result<String, _> = conn.query_row(
+            "SELECT type FROM pragma_table_info('trial_records') WHERE name='date'",
+            [],
+            |row| row.get(0),
+        );
 
         if let Ok(dt) = date_type {
             if dt == "TEXT" {
@@ -212,12 +211,11 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         }
 
         // 处理 date 字段：从 TEXT 转换为 INTEGER
-        let bz_date_type: Result<String, _> = conn
-            .query_row(
-                "SELECT type FROM pragma_table_info('baizhan_records') WHERE name='date'",
-                [],
-                |row| row.get(0),
-            );
+        let bz_date_type: Result<String, _> = conn.query_row(
+            "SELECT type FROM pragma_table_info('baizhan_records') WHERE name='date'",
+            [],
+            |row| row.get(0),
+        );
 
         if let Ok(date_type) = bz_date_type {
             if date_type == "TEXT" {

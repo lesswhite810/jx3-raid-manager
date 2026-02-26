@@ -1,5 +1,5 @@
-use rusqlite::{params, Connection};
 use crate::db::migration::error_to_string;
+use rusqlite::{params, Connection};
 
 /// V1 迁移：将 JSON blob 格式的 accounts 数据迁移到结构化表
 ///
@@ -49,7 +49,9 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         .prepare("SELECT id, data FROM accounts")
         .map_err(error_to_string)?;
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(error_to_string)?;
 
     let mut accounts_data: Vec<(String, String)> = Vec::new();
@@ -158,7 +160,9 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 
                 let equipment_score = role_json["equipmentScore"]
                     .as_i64()
-                    .or(role_json["equipmentScore"].as_str().and_then(|s| s.parse().ok()));
+                    .or(role_json["equipmentScore"]
+                        .as_str()
+                        .and_then(|s| s.parse().ok()));
 
                 match conn.execute(
                     "INSERT OR IGNORE INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, created_at, updated_at)
@@ -172,6 +176,10 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         }
     }
 
-    log::info!("V1 迁移完成：迁移 {} 个账号，{} 个角色", migrated_accounts, migrated_roles);
+    log::info!(
+        "V1 迁移完成：迁移 {} 个账号，{} 个角色",
+        migrated_accounts,
+        migrated_roles
+    );
     Ok(())
 }
