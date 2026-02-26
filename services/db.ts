@@ -456,6 +456,48 @@ class DatabaseService {
       throw error;
     }
   }
+
+  // ========== 副本收藏 ==========
+
+  async getFavoriteRaids(): Promise<string[]> {
+    await this.init();
+    try {
+      return await invoke<string[]>('db_get_favorite_raids');
+    } catch (error) {
+      console.error('Failed to get favorite raids:', error);
+      return [];
+    }
+  }
+
+  async addFavoriteRaid(raidName: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_add_favorite_raid', { raidName });
+    } catch (error) {
+      console.error('Failed to add favorite raid:', error);
+      throw error;
+    }
+  }
+
+  async removeFavoriteRaid(raidName: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_remove_favorite_raid', { raidName });
+    } catch (error) {
+      console.error('Failed to remove favorite raid:', error);
+      throw error;
+    }
+  }
+
+  async isFavoriteRaid(raidName: string): Promise<boolean> {
+    await this.init();
+    try {
+      return await invoke<boolean>('db_is_favorite_raid', { raidName });
+    } catch (error) {
+      console.error('Failed to check favorite raid:', error);
+      return false;
+    }
+  }
 }
 
 export const db = new DatabaseService();

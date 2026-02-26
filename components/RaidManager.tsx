@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Raid } from '../types';
-import { Trash2, Shield, Filter, Power } from 'lucide-react';
+import { Trash2, Shield, Filter, Power, Star } from 'lucide-react';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
 import { TrialPlaceManager } from './TrialPlaceManager';
@@ -66,6 +66,48 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
   const [versionOrderMap, setVersionOrderMap] = useState<Record<string, number>>({});
   const [isOrderLoaded, setIsOrderLoaded] = useState(false);
+
+  // 收藏状态
+  const [favoriteRaids, setFavoriteRaids] = useState<Set<string>>(new Set());
+
+  // 加载收藏列表
+  useEffect(() => {
+    const loadFavorites = async () => {
+      try {
+        const favorites = await db.getFavoriteRaids();
+        setFavoriteRaids(new Set(favorites));
+      } catch (err) {
+        console.error('Failed to load favorite raids:', err);
+      }
+    };
+    loadFavorites();
+  }, []);
+
+  // 切换收藏状态
+  const toggleFavorite = async (raidName: string) => {
+    try {
+      if (favoriteRaids.has(raidName)) {
+        await db.removeFavoriteRaid(raidName);
+        setFavoriteRaids(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(raidName);
+          return newSet;
+        });
+        toast.success(`已取消收藏 ${raidName}`);
+      } else {
+        await db.addFavoriteRaid(raidName);
+        setFavoriteRaids(prev => {
+          const newSet = new Set(prev);
+          newSet.add(raidName);
+          return newSet;
+        });
+        toast.success(`已收藏 ${raidName}`);
+      }
+    } catch (err) {
+      console.error('Failed to toggle favorite:', err);
+      toast.error('操作失败，请重试');
+    }
+  };
 
   useEffect(() => {
     const fetchVersions = async () => {
@@ -148,6 +190,66 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const isStaticRaid = (raid: Raid) => {
     return !!raid.static;
   };
+
+  // 计算收藏的副本列表（只显示激活的难度）
+  // 顺序由后端按版本排序返回
+  const favoriteMergedRaids = useMemo(() => {
+    const favoriteList: MergedRaid[] = [];
+
+    // 按副本名称分组，保持 favoriteRaids 的顺序（后端已按版本排序）
+    const nameGroups = new Map<string, Raid[]>();
+    raids.forEach(raid => {
+      // 只处理收藏的副本
+      if (!favoriteRaids.has(raid.name)) return;
+      // 只显示激活的难度
+      if (!raid.isActive) return;
+
+      const key = raid.name;
+      if (!nameGroups.has(key)) {
+        nameGroups.set(key, []);
+      }
+      nameGroups.get(key)!.push(raid);
+    });
+
+    // 按照 favoriteRaids 的顺序（Set 保持插入顺序，后端已按版本排序）
+    favoriteRaids.forEach(raidName => {
+      const raidList = nameGroups.get(raidName);
+      if (!raidList || raidList.length === 0) return;
+
+      const difficultyLabels: { [key: string]: string } = {};
+      const hasMultiplePlayerCounts = new Set(raidList.map(r => r.playerCount)).size > 1;
+
+      raidList.forEach(raid => {
+        const key = getRaidKey(raid);
+        const difficultyLabel = DIFFICULTY_LABELS[raid.difficulty];
+        if (hasMultiplePlayerCounts) {
+          difficultyLabels[key] = `${raid.playerCount}人${difficultyLabel}`;
+        } else {
+          difficultyLabels[key] = difficultyLabel;
+        }
+      });
+
+      const sortedRaids = [...raidList].sort((a, b) => {
+        const playerCountOrder = { 10: 0, 25: 1 };
+        const difficultyOrder: Record<string, number> = { '普通': 0, '英雄': 1, '挑战': 2 };
+        if (playerCountOrder[a.playerCount] !== playerCountOrder[b.playerCount]) {
+          return playerCountOrder[a.playerCount] - playerCountOrder[b.playerCount];
+        }
+        return difficultyOrder[a.difficulty] - difficultyOrder[b.difficulty];
+      });
+
+      favoriteList.push({
+        name: raidName,
+        version: sortedRaids[0].version || '其他',
+        raids: sortedRaids,
+        isActive: true,
+        disabled: false,
+        difficultyLabels
+      });
+    });
+
+    return favoriteList;
+  }, [raids, favoriteRaids]);
 
   const filteredRaids = useMemo(() => {
     return raids.filter(raid => raid.version === selectedVersion);
@@ -363,6 +465,107 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             右键难度框可单独禁用/启用
           </div>
 
+          {/* 收藏副本区域 */}
+          {favoriteMergedRaids.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-px bg-amber-200 flex-1"></div>
+                <h3 className="text-sm font-bold text-amber-600 uppercase tracking-wider bg-amber-50 px-3 py-1 rounded-full border border-amber-200 flex items-center gap-1.5">
+                  <Star size={14} fill="currentColor" />
+                  收藏
+                </h3>
+                <div className="h-px bg-amber-200 flex-1"></div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                {favoriteMergedRaids.map(mergedRaid => {
+                  const isStatic = mergedRaid.raids.some(r => isStaticRaid(r));
+                  return (
+                    <div
+                      key={`favorite-${mergedRaid.name}`}
+                      className="p-4 rounded-xl border transition-all duration-200 relative group bg-amber-50/30 border-amber-200 hover:border-amber-400 hover:shadow-sm"
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 rounded-lg bg-amber-100 text-amber-600">
+                            <Shield size={16} />
+                          </span>
+                          <div>
+                            <h3 className="font-semibold text-sm text-main">{mergedRaid.name}</h3>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(mergedRaid.name);
+                            }}
+                            className="transition-all p-1 rounded-md text-amber-500 hover:text-amber-600 hover:bg-amber-100"
+                            title="取消收藏"
+                          >
+                            <Star size={16} fill="currentColor" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleRaidStatus(mergedRaid.name);
+                            }}
+                            className="transition-all p-1 rounded-md text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50"
+                            title="禁用此副本（所有难度）"
+                          >
+                            <Power size={16} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isStatic) {
+                                alert('预制副本不能删除，只能禁用');
+                                return;
+                              }
+                              if (confirm('确认删除此副本？')) {
+                                mergedRaid.raids.forEach(raid => {
+                                  const key = getRaidKey(raid);
+                                  setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
+                                });
+                              }
+                            }}
+                            className={`transition-colors p-1 rounded-md ${isStatic
+                              ? 'text-muted cursor-not-allowed opacity-50'
+                              : 'text-muted hover:text-red-500 hover:bg-red-50'
+                              }`}
+                            title={isStatic ? '预制副本不能删除' : '删除'}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 mb-3 flex-wrap justify-center sm:justify-start">
+                        {mergedRaid.raids.map(raid => {
+                          const label = mergedRaid.difficultyLabels[getRaidKey(raid)] || DIFFICULTY_LABELS[raid.difficulty];
+                          return (
+                            <div
+                              key={getRaidKey(raid)}
+                              onClick={() => setSelectedRaid(raid)}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                toggleRaidDifficultyStatus(getRaidKey(raid));
+                              }}
+                              className={`relative px-2 py-1 text-xs font-medium rounded border cursor-pointer transition-all hover:scale-105 min-w-[60px] text-center ${DIFFICULTY_COLORS[raid.difficulty]}`}
+                              title={`${label} - 点击进入详情，右键切换状态`}
+                            >
+                              {label}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {Object.keys(mergedGroupedRaids).length > 0 ? (
             versions.map(version => {
               const versionRaids = mergedGroupedRaids[version];
@@ -401,6 +604,20 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleFavorite(mergedRaid.name);
+                                }}
+                                className={`transition-all p-1 rounded-md ${
+                                  favoriteRaids.has(mergedRaid.name)
+                                    ? 'text-amber-500 hover:text-amber-600 hover:bg-amber-50'
+                                    : 'text-muted hover:text-amber-500 hover:bg-amber-50/50'
+                                }`}
+                                title={favoriteRaids.has(mergedRaid.name) ? '取消收藏' : '收藏此副本'}
+                              >
+                                <Star size={16} fill={favoriteRaids.has(mergedRaid.name) ? 'currentColor' : 'none'} />
+                              </button>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();

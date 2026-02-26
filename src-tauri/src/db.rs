@@ -7,7 +7,7 @@ pub mod migrations;
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 3;
+pub const CURRENT_SCHEMA_VERSION: i32 = 4;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -302,6 +302,13 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS raid_versions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL
+        );
+
+        -- ========== 副本收藏表 (V4+) ==========
+        CREATE TABLE IF NOT EXISTS favorite_raids (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raid_name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
         );
     "#,
     )
@@ -1752,4 +1759,79 @@ pub fn db_save_cache(key: String, value: String) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ========== 副本收藏相关命令 ==========
+
+/// 获取所有收藏的副本名称列表（按版本顺序排序，同一版本内按 level 倒序）
+#[tauri::command]
+pub fn db_get_favorite_raids() -> Result<Vec<String>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 使用 rowid 作为排序依据
+    // raid_versions.id 越大版本越新，rowid 越大副本越靠后（静态数据中）
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT DISTINCT f.raid_name, r.rowid
+            FROM favorite_raids f
+            LEFT JOIN raids r ON f.raid_name = r.name
+            LEFT JOIN raid_versions rv ON r.version = rv.name
+            ORDER BY COALESCE(rv.id, 0) DESC, r.rowid DESC
+            "#
+        )
+        .map_err(|e| e.to_string())?;
+
+    let names: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(names)
+}
+
+/// 添加收藏副本
+#[tauri::command]
+pub fn db_add_favorite_raid(raid_name: String) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let created_at = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT OR IGNORE INTO favorite_raids (raid_name, created_at) VALUES (?, ?)",
+        params![raid_name, created_at],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 移除收藏副本
+#[tauri::command]
+pub fn db_remove_favorite_raid(raid_name: String) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "DELETE FROM favorite_raids WHERE raid_name = ?",
+        params![raid_name],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 检查副本是否已收藏
+#[tauri::command]
+pub fn db_is_favorite_raid(raid_name: String) -> Result<bool, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM favorite_raids WHERE raid_name = ?",
+            params![raid_name],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(count > 0)
 }

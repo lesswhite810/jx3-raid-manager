@@ -18,6 +18,7 @@ pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
         1 => migrations::v1::migrate(conn),
         2 => migrations::v2::migrate(conn),
         3 => migrations::v3::migrate(conn),
+        4 => migrations::v4::migrate(conn),
         _ => Err(format!("未知的迁移版本: {}", version)),
     }
 }
@@ -33,7 +34,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
     let mut boss_inserted_names: HashSet<String> = HashSet::new();
     let mut version_inserted_names: HashSet<String> = HashSet::new();
 
-    for raid in static_raids {
+    for raid in static_raids.iter() {
         let name = raid["name"].as_str().unwrap_or_default();
         let version = raid["version"].as_str().unwrap_or_default();
 

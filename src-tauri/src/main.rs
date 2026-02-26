@@ -143,6 +143,11 @@ fn main() {
             // 备份恢复
             db::db_backup,
             db::db_restore,
+            // 副本收藏
+            db::db_get_favorite_raids,
+            db::db_add_favorite_raid,
+            db::db_remove_favorite_raid,
+            db::db_is_favorite_raid,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
