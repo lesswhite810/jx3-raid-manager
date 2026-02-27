@@ -33,9 +33,50 @@ npm run build   # 执行 tsc && vite build
 ```
 
 ### 测试
-- **当前状态**: 未配置测试框架
-- **建议方案**: 如需添加测试，使用 Vitest
+- **单元测试**: 使用 Vitest (`npm run test`)
+- **后台 API 测试**: 通过 MCP Bridge 连接运行中的应用进行测试
 - **手动验证**: 通过 `npm run tauri dev` 在真实环境中测试 Tauri IPC 调用
+
+#### 后台 API 测试方法
+
+启动应用后，通过 MCP Bridge (端口 9223) 执行测试脚本：
+
+```javascript
+(async () => {
+  try {
+    const result = await window.__TAURI__.core.invoke('db_get_accounts_structured');
+    return JSON.stringify({ success: true, data: JSON.parse(result) });
+  } catch (e) {
+    return JSON.stringify({ success: false, error: e.message });
+  }
+})()
+```
+
+#### API 测试用例清单
+
+| 类别 | API | 说明 | 状态 |
+|------|-----|------|------|
+| 版本管理 | `db_get_version_info` | 获取数据库版本 | ✅ |
+| 账号管理 | `db_get_accounts_structured` | 获取账号列表（不含角色） | ✅ |
+| 账号管理 | `db_get_accounts_with_roles` | 获取账号列表（含角色，LEFT JOIN 优化） | ✅ |
+| 角色管理 | `db_get_all_roles` | 获取所有角色 | ✅ |
+| 角色管理 | `db_get_roles_by_account` | 按账号获取角色 | ✅ |
+| 副本记录 | `db_get_records`, `db_add_record`, `db_delete_record` | 副本记录 CRUD | ✅ |
+| 配置管理 | `db_get_config`, `db_save_config` | 应用配置 | ✅ |
+| 试炼记录 | `db_get_trial_records`, `db_add_trial_record` | 试炼之地记录 | ✅ |
+| 百战记录 | `db_get_baizhan_records`, `db_add_baizhan_record` | 百战记录 | ✅ |
+| 收藏功能 | `db_get_favorite_raids`, `db_add_favorite_raid` | 副本收藏 | ✅ |
+
+#### 已知问题修复记录 (v2.0.0)
+
+1. **`db_get_accounts_structured` 字段索引错误**
+   - 问题：SELECT 字段顺序与 `row.get()` 索引不匹配
+   - 修复：正确映射 hidden/disabled/password/notes 字段索引
+
+2. **`db_get_accounts_with_roles` 查询优化**
+   - 优化：从 2 次独立查询改为 1 次 LEFT JOIN 查询
+
+详细测试文档见 `docs/TEST_CASES.md`
 
 ## 3. 架构与数据流
 

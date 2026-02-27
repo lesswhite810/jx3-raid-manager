@@ -9,7 +9,7 @@ JX3 Raid Manager (剑网三副本管家) - A localized raid data management desk
 | Layer | Stack |
 |-------|-------|
 | Frontend | React 18 + TypeScript + Vite + Tailwind CSS |
-| Backend | Rust (Tauri v1.5) |
+| Backend | Rust (Tauri v2) |
 | Database | SQLite (managed by Rust) |
 | Icons | Lucide React |
 
@@ -122,3 +122,43 @@ try {
 ## Release Process
 
 Releases are triggered by pushing version tags (e.g., `v1.2.0`) which runs `.github/workflows/release.yml` to build MSI and NSIS installers.
+
+## Testing
+
+### Backend API Testing (via MCP Bridge)
+
+Backend Tauri IPC commands can be tested through MCP Bridge. Start the app with `npm run tauri dev`, then connect to MCP Bridge at port 9223.
+
+**Test Template:**
+```javascript
+(async () => {
+  try {
+    const result = await window.__TAURI__.core.invoke('db_get_accounts_structured');
+    return JSON.stringify({ success: true, data: JSON.parse(result) });
+  } catch (e) {
+    return JSON.stringify({ success: false, error: e.message });
+  }
+})()
+```
+
+### API Test Cases
+
+| Category | API | Description |
+|----------|-----|-------------|
+| Version | `db_get_version_info` | Get database schema version |
+| Accounts | `db_get_accounts_structured` | Get accounts without roles |
+| Accounts | `db_get_accounts_with_roles` | Get accounts with nested roles (LEFT JOIN optimized) |
+| Roles | `db_get_all_roles`, `db_get_roles_by_account` | Get role data |
+| Records | `db_get_records`, `db_add_record`, `db_delete_record` | CRUD for raid records |
+| Config | `db_get_config`, `db_save_config` | App configuration |
+| Trial | `db_get_trial_records`, `db_add_trial_record` | Trial place records |
+| Baizhan | `db_get_baizhan_records`, `db_add_baizhan_record` | Baizhan records |
+| Favorites | `db_get_favorite_raids`, `db_add_favorite_raid` | Raid favorites |
+
+### Known Issues (Fixed in v2.0.0)
+
+1. **`db_get_accounts_structured` field index bug** - SELECT field order didn't match `row.get()` indices. Fixed by correcting index mapping for hidden/disabled/password/notes fields.
+
+2. **`db_get_accounts_with_roles` query optimization** - Reduced from 2 queries to 1 LEFT JOIN query for better performance.
+
+See `docs/TEST_CASES.md` for complete test documentation.
