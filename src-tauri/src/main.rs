@@ -97,13 +97,19 @@ fn main() {
         }
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(log_plugin)
+        .plugin(log_plugin);
+
+    // MCP Bridge 插件仅在 debug 模式下启用
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
             db::db_init,

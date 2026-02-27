@@ -1,6 +1,6 @@
 [package]
 name = "jx3-raid-manager"
-version = "1.2.8"
+version = "2.0.0"
 description = "剑网三副本管家"
 authors = ["you"]
 license = ""
@@ -25,6 +25,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
 tauri-plugin-http = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-mcp-bridge = "0.9"
 
 [features]
 default = ["custom-protocol"]

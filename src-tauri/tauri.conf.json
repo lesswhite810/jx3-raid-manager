@@ -25,11 +25,11 @@
   },
   "productName": "JX3RaidManager",
   "mainBinaryName": "JX3RaidManager",
-  "version": "1.2.8",
+  "version": "2.0.0",
   "identifier": "com.jx3.raidmanager",
   "plugins": {},
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "windows": [
       {
         "fullscreen": false,

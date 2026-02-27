@@ -868,16 +868,17 @@ pub fn db_get_accounts_structured() -> Result<String, String> {
         )
         .map_err(|e| e.to_string())?;
 
+    // SELECT 顺序: id, account_name, account_type, hidden, disabled, password, notes, created_at, updated_at
     let accounts: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
             Ok(serde_json::json!({
                 "id": row.get::<_, String>(0)?,
                 "accountName": row.get::<_, String>(1)?,
                 "type": row.get::<_, String>(2)?,
-                "password": row.get::<_, Option<String>>(3)?,
-                "notes": row.get::<_, Option<String>>(4)?,
-                "hidden": row.get::<_, i32>(5)? != 0,
-                "disabled": row.get::<_, i32>(6)? != 0,
+                "hidden": row.get::<_, i32>(3)? != 0,
+                "disabled": row.get::<_, i32>(4)? != 0,
+                "password": row.get::<_, Option<String>>(5)?,
+                "notes": row.get::<_, Option<String>>(6)?,
                 "createdAt": row.get::<_, Option<String>>(7)?,
                 "updatedAt": row.get::<_, Option<String>>(8)?,
             }))
@@ -932,83 +933,123 @@ pub fn db_get_all_roles() -> Result<String, String> {
 pub fn db_get_accounts_with_roles() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
-    // Get all accounts
-    let mut account_stmt = conn
+    // 单次 LEFT JOIN 查询获取账号和角色
+    // Account 字段: 0-8, Role 字段: 9-17 (可能为 NULL)
+    let mut stmt = conn
         .prepare(
             "
-        SELECT id, account_name, account_type, password, notes, hidden, disabled, created_at, updated_at 
-        FROM accounts ORDER BY account_name
+        SELECT
+            a.id, a.account_name, a.account_type, a.password, a.notes,
+            a.hidden, a.disabled, a.created_at, a.updated_at,
+            r.id, r.account_id, r.name, r.server, r.region,
+            r.sect, r.equipment_score, r.disabled, r.created_at, r.updated_at
+        FROM accounts a
+        LEFT JOIN roles r ON a.id = r.account_id
+        ORDER BY a.account_name, r.name
     ",
         )
         .map_err(|e| e.to_string())?;
 
-    let account_rows = account_stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                serde_json::json!({
-                    "id": row.get::<_, String>(0)?,
-                    "accountName": row.get::<_, String>(1)?,
-                    "type": row.get::<_, String>(2)?,
-                    "password": row.get::<_, Option<String>>(3)?,
-                    "notes": row.get::<_, Option<String>>(4)?,
-                    "hidden": row.get::<_, i32>(5)? != 0,
-                    "disabled": row.get::<_, i32>(6)? != 0,
-                    "createdAt": row.get::<_, Option<String>>(7)?,
-                    "updatedAt": row.get::<_, Option<String>>(8)?,
-                    "roles": Vec::<serde_json::Value>::new(),
-                }),
-            ))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect::<Vec<(String, serde_json::Value)>>();
-
-    // Build account map
     let mut account_map: std::collections::HashMap<String, serde_json::Value> =
-        account_rows.into_iter().collect();
+        std::collections::HashMap::new();
 
-    // Get all roles
-    let mut role_stmt = conn
-        .prepare(
-            "
-        SELECT r.id, r.account_id, r.name, r.server, r.region, r.sect, 
-               r.equipment_score, r.disabled, r.created_at, r.updated_at
-        FROM roles r ORDER BY r.name
-    ",
-        )
+    // 定义一个结构体来保存每行的所有数据
+    struct RowData {
+        account_id: String,
+        account_name: String,
+        account_type: String,
+        password: Option<String>,
+        notes: Option<String>,
+        hidden: bool,
+        disabled: bool,
+        created_at: Option<String>,
+        updated_at: Option<String>,
+        role_id: Option<String>,
+        role_account_id: Option<String>,
+        role_name: Option<String>,
+        role_server: Option<String>,
+        role_region: Option<String>,
+        role_sect: Option<String>,
+        role_equipment_score: Option<i64>,
+        role_disabled: Option<bool>,
+    }
+
+    let rows = stmt
+        .query_map([], |row| {
+            let role_id: Option<String> = row.get(9)?;
+            Ok(RowData {
+                account_id: row.get(0)?,
+                account_name: row.get(1)?,
+                account_type: row.get(2)?,
+                password: row.get(3)?,
+                notes: row.get(4)?,
+                hidden: row.get::<_, i32>(5)? != 0,
+                disabled: row.get::<_, i32>(6)? != 0,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                role_id: role_id.clone(),
+                role_account_id: row.get(10)?,
+                role_name: row.get(11)?,
+                role_server: row.get(12)?,
+                role_region: row.get(13)?,
+                role_sect: row.get(14)?,
+                role_equipment_score: row.get(15)?,
+                role_disabled: Some(row.get::<_, i32>(16)? != 0),
+            })
+        })
         .map_err(|e| e.to_string())?;
 
-    let role_rows = role_stmt
-        .query_map([], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
-                "account_id": row.get::<_, String>(1)?,
-                "name": row.get::<_, String>(2)?,
-                "server": row.get::<_, Option<String>>(3)?,
-                "region": row.get::<_, Option<String>>(4)?,
-                "sect": row.get::<_, Option<String>>(5)?,
-                "equipmentScore": row.get::<_, Option<i64>>(6)?,
-                "disabled": row.get::<_, i32>(7)? != 0,
-            }))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect::<Vec<serde_json::Value>>();
+    for row_result in rows {
+        let row = row_result.map_err(|e| e.to_string())?;
 
-    // Assign roles to accounts
-    for role in role_rows {
-        let account_id = role["account_id"].as_str();
-        if let Some(acc_id) = account_id {
-            if let Some(account) = account_map.get_mut(acc_id) {
+        let account_id = row.account_id;
+
+        // 如果账号尚未在 map 中，创建它
+        if !account_map.contains_key(&account_id) {
+            let account = serde_json::json!({
+                "id": &account_id,
+                "accountName": row.account_name,
+                "type": row.account_type,
+                "password": row.password,
+                "notes": row.notes,
+                "hidden": row.hidden,
+                "disabled": row.disabled,
+                "createdAt": row.created_at,
+                "updatedAt": row.updated_at,
+                "roles": Vec::<serde_json::Value>::new(),
+            });
+            account_map.insert(account_id.clone(), account);
+        }
+
+        // 如果有角色，添加到账号的 roles 数组中
+        if row.role_id.is_some() {
+            let role = serde_json::json!({
+                "id": row.role_id,
+                "account_id": row.role_account_id,
+                "name": row.role_name,
+                "server": row.role_server,
+                "region": row.role_region,
+                "sect": row.role_sect,
+                "equipmentScore": row.role_equipment_score,
+                "disabled": row.role_disabled,
+            });
+            if let Some(account) = account_map.get_mut(&account_id) {
                 let roles = account["roles"].as_array_mut().unwrap();
                 roles.push(role);
             }
         }
     }
 
-    // Return accounts as array
-    let accounts: Vec<serde_json::Value> = account_map.into_values().collect();
+    // 返回账号数组
+    let mut accounts: Vec<serde_json::Value> = account_map.into_values().collect();
+    // 按 accountName 排序
+    accounts.sort_by(|a, b| {
+        a["accountName"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["accountName"].as_str().unwrap_or(""))
+    });
+
     serde_json::to_string(&accounts).map_err(|e| e.to_string())
 }
 
