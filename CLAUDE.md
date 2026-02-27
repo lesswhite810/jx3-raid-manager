@@ -105,6 +105,7 @@ Use semantic color names, not raw values:
 2. **Safe refactoring**: When modifying `db.ts`, ensure the Rust command exists
 3. **No fabrication**: Never invent non-existent Tauri commands
 4. **Type safety**: Strict TypeScript, no type suppression
+5. **Documentation sync**: When adding features, fixing bugs, or updating versions, always update the changelog in `README.md`
 
 ## Error Handling
 
