@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Account, AccountType, Role, Config } from '../types';
+import { Account, AccountType, Role, Config, InstanceType } from '../types';
 import { SECTS } from '../constants';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key } from 'lucide-react';
 import { convertToSystemAccounts } from '../services/directoryParser';
@@ -9,15 +9,17 @@ import { scanGameDirectory, ScanProgress } from '../services/gameDirectoryScanne
 import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
+import { db } from '../services/db';
 
 
 interface AccountManagerProps {
   accounts: Account[];
   setAccounts: React.Dispatch<React.SetStateAction<Account[]>>;
   config?: Config;
+  instanceTypes: InstanceType[];
 }
 
-export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, config }) => {
+export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, config, instanceTypes }) => {
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
@@ -275,6 +277,54 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
     setEditRoleModal(prev => prev ? { ...prev, equipmentScore: numValue } : null);
   };
+
+  // 切换角色可见性
+  const handleToggleVisibility = async (roleId: string, instanceType: string, currentVisible: boolean) => {
+    const newVisible = !currentVisible;
+
+    // 乐观更新 UI
+    setAccounts(prev => prev.map(account => ({
+      ...account,
+      roles: account.roles.map(role => {
+        if (role.id === roleId) {
+          return {
+            ...role,
+            visibility: {
+              ...role.visibility,
+              [instanceType]: newVisible
+            }
+          };
+        }
+        return role;
+      })
+    })));
+
+    // 保存到数据库
+    try {
+      await db.saveRoleVisibility(roleId, instanceType, newVisible);
+    } catch (error) {
+      console.error('保存可见性失败:', error);
+      toast.error('保存失败');
+      // 回滚 UI
+      setAccounts(prev => prev.map(account => ({
+        ...account,
+        roles: account.roles.map(role => {
+          if (role.id === roleId) {
+            return {
+              ...role,
+              visibility: {
+                ...role.visibility,
+                [instanceType]: currentVisible
+              }
+            };
+          }
+          return role;
+        })
+      })));
+    }
+  };
+
+
 
   // 使用配置目录解析功能
   const handleUseConfigDirectory = async () => {
@@ -875,26 +925,20 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           {account.roles.map(role => (
                             <div key={role.id} className={`bg-surface border border-base p-3 rounded-lg hover:border-primary/50 transition-colors ${role.disabled ? 'opacity-60' : ''}`}>
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                                    <h5 className={`font-medium text-main ${role.disabled ? 'line-through text-muted' : ''}`}>{role.name}</h5>
-                                    {role.sect ? (
-                                      <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md font-medium">{role.sect}</span>
-                                    ) : (
-                                      <span className="text-xs text-muted italic">未设置门派</span>
-                                    )}
-                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && (
-                                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium">
-                                        {role.equipmentScore.toLocaleString()}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-xs text-muted">{role.region}</span>
-                                    <span className="text-xs text-muted">·</span>
-                                    <span className="text-xs text-muted">{role.server}</span>
-                                  </div>
+                              {/* 第一行：角色名@服务器 门派 装分 + 操作按钮 */}
+                              <div className="flex justify-between items-center">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`font-medium text-main ${role.disabled ? 'line-through text-muted' : ''}`}>
+                                    {role.name}@{role.server}
+                                  </span>
+                                  {role.sect && (
+                                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium">{role.sect}</span>
+                                  )}
+                                  {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium">
+                                      {role.equipmentScore.toLocaleString()}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex gap-1">
                                   <button
@@ -934,6 +978,32 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                     <Trash2 size={16} />
                                   </button>
                                 </div>
+                              </div>
+                              {/* 第二行：可见性标签 */}
+                              <div className="flex flex-wrap items-center gap-2 mt-2">
+                                <span className="text-xs text-muted flex-shrink-0 mr-1">
+                                  参与玩法:
+                                </span>
+                                {instanceTypes.map(type => {
+                                  const isVisible = role.visibility?.[type.type] !== false;
+                                  const displayName = type.name === '团队副本' ? '副本' : type.name === '试炼之地' ? '试炼' : type.name;
+                                  return (
+                                    <button
+                                      key={type.id}
+                                      onClick={() => !role.disabled && handleToggleVisibility(role.id, type.type, isVisible)}
+                                      disabled={role.disabled}
+                                      className={`relative px-2 py-1 text-xs font-medium rounded border cursor-pointer transition-all hover:scale-105 min-w-[60px] text-center ${role.disabled
+                                        ? 'bg-base text-muted border-base opacity-40 cursor-not-allowed'
+                                        : isVisible
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800'
+                                          : 'bg-base text-muted border-base hover:bg-base/80 opacity-60'
+                                        }`}
+                                      title={isVisible ? `在${type.name}中显示 (点击隐藏)` : `在${type.name}中隐藏 (点击显示)`}
+                                    >
+                                      {displayName}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </div>
                           ))}

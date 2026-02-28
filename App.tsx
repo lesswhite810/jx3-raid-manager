@@ -14,7 +14,7 @@ import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
 import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
-import { Account, RaidRecord, Raid, Config, TrialPlaceRecord, BaizhanRecord } from './types';
+import { Account, RaidRecord, Raid, Config, TrialPlaceRecord, BaizhanRecord, InstanceType, RoleInstanceVisibility } from './types';
 import {
   DEFAULT_CONFIG,
   loadConfigFromStorage,
@@ -50,6 +50,7 @@ function App() {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
   const [editingBaizhanRecord, setEditingBaizhanRecord] = useState<BaizhanRecord | null>(null);
+  const [instanceTypes, setInstanceTypes] = useState<InstanceType[]>([]);
 
   // 重新从数据库加载记录
   const reloadRecords = useCallback(async () => {
@@ -125,23 +126,36 @@ function App() {
         }
 
         console.log('\n正在加载数据库数据...');
-        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords] = await Promise.all([
+        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords, loadedInstanceTypes, loadedRoleVisibility] = await Promise.all([
           db.getAccounts(),
           db.getRecords(),
           db.getRaids(),
           db.getConfig(),
           db.getTrialRecords(),
-          db.getBaizhanRecords()
+          db.getBaizhanRecords(),
+          db.getInstanceTypes(),
+          db.getAllRoleVisibility()
         ]);
 
         console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}, 百战 ${loadedBaizhanRecords.length}`);
+
+        // 保存副本类型
+        setInstanceTypes(loadedInstanceTypes);
 
         const parsedAccounts = loadedAccounts;
         const parsedRecords = loadedRecords;
         const parsedRaids = loadedRaids;
 
         if (parsedAccounts.length > 0) {
-          const sortedAccounts = sortAccounts(parsedAccounts);
+          // 合并可见性数据到角色
+          const accountsWithVisibility = parsedAccounts.map(acc => ({
+            ...acc,
+            roles: acc.roles.map((role: any) => ({
+              ...role,
+              visibility: buildVisibilityMap(role.id, loadedRoleVisibility, loadedInstanceTypes)
+            }))
+          }));
+          const sortedAccounts = sortAccounts(accountsWithVisibility);
           setAccounts(sortedAccounts);
           console.log(`设置账号: ${sortedAccounts.length} 个`);
         } else {
@@ -466,7 +480,7 @@ function App() {
               )
             )}
             {activeTab === 'accounts' && (
-              <AccountManager key={`accounts-${contentKey}`} accounts={accounts} setAccounts={setAccounts} config={config} />
+              <AccountManager key={`accounts-${contentKey}`} accounts={accounts} setAccounts={setAccounts} config={config} instanceTypes={instanceTypes} />
             )}
             {activeTab === 'raidManager' && (
               <RaidManager
@@ -607,5 +621,28 @@ const MobileNavButton = ({ active, onClick, icon, label }: { active: boolean, on
     <span className="text-[10px] font-medium">{label}</span>
   </button>
 );
+
+// 构建角色可见性映射
+function buildVisibilityMap(
+  roleId: string,
+  allVisibility: RoleInstanceVisibility[],
+  types: InstanceType[]
+): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
+
+  // 默认全部可见
+  types.forEach(type => {
+    map[type.type] = true;
+  });
+
+  // 覆盖有记录的配置
+  allVisibility
+    .filter(v => v.roleId === roleId)
+    .forEach(v => {
+      map[v.instanceType] = v.visible;
+    });
+
+  return map;
+}
 
 export default App;

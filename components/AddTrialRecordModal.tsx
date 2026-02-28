@@ -471,8 +471,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setError('请选择角色');
             return;
         }
-        if (layer < 1 || layer > 100) {
-            setError('层数必须在 1-100 之间');
+        if (layer < 1 || layer > 120) {
+            setError('层数必须在 1-120 之间');
             return;
         }
         if (!boss1 || !boss2 || !boss3) {
@@ -611,8 +611,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <Layers className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
                                 <input
                                     type="number"
-                                    min="1"
-                                    max="120"
                                     value={layer}
                                     onChange={e => setLayer(parseInt(e.target.value) || 0)}
                                     className="w-full pl-9 pr-2 py-2 rounded-lg bg-surface border border-base font-bold text-lg text-main focus:ring-2 focus:ring-primary/20 outline-none text-center"

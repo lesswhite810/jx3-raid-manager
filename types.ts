@@ -17,7 +17,33 @@ export interface Role {
   isClient?: boolean; // @deprecated 使用 Account.type 判断代清账号
   disabled?: boolean; // 是否禁用该角色
   equipmentScore?: number; // 装备分数（装分）
+  visibility?: Record<string, boolean>; // 可见性配置 { raid: true, baizhan: false, trial: true }
 }
+
+// 副本类型
+export interface InstanceType {
+  id: number;
+  type: string;         // 'raid' | 'baizhan' | 'trial'
+  name: string;         // '团队副本' | '百战' | '试炼之地'
+}
+
+// 角色副本可见性
+export interface RoleInstanceVisibility {
+  id: string;
+  roleId: string;
+  instanceTypeId: number;
+  instanceType: string;
+  visible: boolean;
+}
+
+// 副本类型常量
+export const INSTANCE_TYPES = {
+  RAID: 'raid',
+  BAIZHAN: 'baizhan',
+  TRIAL: 'trial'
+} as const;
+
+export type InstanceTypeCode = typeof INSTANCE_TYPES[keyof typeof INSTANCE_TYPES];
 
 export interface Account {
   id: string;

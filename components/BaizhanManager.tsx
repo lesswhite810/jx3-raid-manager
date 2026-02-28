@@ -27,7 +27,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
         return accounts
             .filter(acc => !acc.disabled)
             .flatMap(acc => acc.roles
-                .filter(role => !role.disabled && !role.isClient)
+                .filter(role => !role.disabled && !role.isClient && role.visibility?.baizhan !== false)
                 .map(role => ({
                     ...role,
                     accountId: acc.id,
@@ -179,9 +179,9 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                             // 根据状态设置样式
                             const getCardStyle = () => {
                                 if (baizhanStatus === 'complete') {
-                                    return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-md';
+                                    return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
                                 } else {
-                                    return 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300';
+                                    return 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800 hover:border-emerald-300';
                                 }
                             };
 

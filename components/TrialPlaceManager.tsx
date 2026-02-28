@@ -26,7 +26,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         return accounts
             .filter(acc => !acc.disabled)
             .flatMap(acc => acc.roles
-                .filter(role => !role.disabled && !role.isClient)
+                .filter(role => !role.disabled && !role.isClient && role.visibility?.trial !== false)
                 .map(role => ({
                     ...role,
                     accountId: acc.id,
@@ -186,11 +186,11 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                             // 根据状态设置样式
                             const getCardStyle = () => {
                                 if (trialStatus === 'complete') {
-                                    return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-md';
+                                    return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-700 hover:shadow-lg hover:border-amber-300';
+                                    return 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700 hover:border-amber-300';
                                 } else {
-                                    return 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300';
+                                    return 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800 hover:border-emerald-300';
                                 }
                             };
 

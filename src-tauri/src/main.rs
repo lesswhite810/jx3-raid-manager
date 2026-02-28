@@ -6,6 +6,8 @@ mod gkp_parser;
 #[cfg(target_os = "windows")]
 fn check_webview2() -> Result<String, String> {
     use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     // 检查注册表中的 WebView2 版本
     let output = Command::new("reg")
@@ -15,6 +17,7 @@ fn check_webview2() -> Result<String, String> {
             "/v",
             "pv",
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
 
     match output {
@@ -33,6 +36,7 @@ fn check_webview2() -> Result<String, String> {
                         "/v",
                         "pv",
                     ])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output();
 
                 if let Ok(output2) = output2 {
@@ -166,6 +170,10 @@ fn main() {
             db::db_add_favorite_raid,
             db::db_remove_favorite_raid,
             db::db_is_favorite_raid,
+            // 角色可见性配置 (V5+)
+            db::db_get_instance_types,
+            db::db_get_all_role_visibility,
+            db::db_save_role_visibility,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

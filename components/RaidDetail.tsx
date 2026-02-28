@@ -236,6 +236,10 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           isClientAccount = account.type === 'CLIENT';
           const role = account.roles?.find(r => r.id === record.roleId);
           if (role) {
+            // 可见性过滤：raid 为 false 时跳过
+            if (role.visibility?.raid === false) {
+              return;
+            }
             roleName = role.name;
             sect = role.sect || '';
             region = role.region || '';
@@ -332,6 +336,11 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         if (processedRoleIds.has(role.id)) return;
 
         if (!shouldShowClientRoles && account.type === 'CLIENT') {
+          return;
+        }
+
+        // 可见性过滤：raid 为 false 时跳过
+        if (role.visibility?.raid === false) {
           return;
         }
 

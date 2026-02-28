@@ -7,7 +7,7 @@ pub mod migrations;
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 4;
+pub const CURRENT_SCHEMA_VERSION: i32 = 5;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -314,9 +314,41 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             raid_name TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL
         );
+
+        -- ========== 副本类型表 (V5+) ==========
+        CREATE TABLE IF NOT EXISTS instance_types (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL
+        );
+
+        -- ========== 角色副本可见性表 (V5+) ==========
+        CREATE TABLE IF NOT EXISTS role_instance_visibility (
+            id TEXT PRIMARY KEY,
+            role_id TEXT NOT NULL,
+            instance_type_id INTEGER NOT NULL,
+            visible INTEGER DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            FOREIGN KEY (instance_type_id) REFERENCES instance_types(id) ON DELETE CASCADE,
+            UNIQUE(role_id, instance_type_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_riv_role_id ON role_instance_visibility(role_id);
+        CREATE INDEX IF NOT EXISTS idx_riv_instance_type_id ON role_instance_visibility(instance_type_id);
     "#,
     )
     .map_err(|e| e.to_string())?;
+
+    // ==== 插入默认的 instance_types 数据 ====
+    conn.execute_batch(
+        r#"
+        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
+        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (2, 'baizhan', '百战异闻录');
+        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (3, 'trial', '试炼之地');
+        "#
+    ).map_err(|e| e.to_string())?;
 
     log::info!("数据库结构创建完成");
     Ok(())
@@ -805,7 +837,27 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 全量同步：先清空表，再插入（注意级联或手动清空对应关联表）
+    // 1. 先保存现有的可见性配置
+    let mut existing_visibility: Vec<(String, i32, i32)> = Vec::new();
+    {
+        let mut stmt = tx
+            .prepare("SELECT role_id, instance_type_id, visible FROM role_instance_visibility")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i32>(1)?,
+                row.get::<_, i32>(2)?,
+            ))
+        }).map_err(|e| e.to_string())?;
+        for row in rows {
+            if let Ok(v) = row {
+                existing_visibility.push(v);
+            }
+        }
+    }
+
+    // 2. 清空表（会级联删除 role_instance_visibility）
     tx.execute("DELETE FROM roles", [])
         .map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM accounts", [])
@@ -813,6 +865,7 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
+    // 3. 插入账号和角色
     for account in parsed {
         let id = account["id"].as_str().unwrap_or_default().to_string();
         let account_name = account["accountName"].as_str().unwrap_or("").to_string();
@@ -846,6 +899,28 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
                 )
                 .map_err(|e| e.to_string())?;
             }
+        }
+    }
+
+    // 4. 恢复可见性配置（只恢复仍然存在的角色）
+    for (role_id, instance_type_id, visible) in existing_visibility {
+        // 检查角色是否仍然存在
+        let role_exists: bool = tx
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM roles WHERE id = ?",
+                params![role_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if role_exists {
+            let vis_id = uuid::Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO role_instance_visibility (id, role_id, instance_type_id, visible, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![vis_id, role_id, instance_type_id, visible, &timestamp, &timestamp],
+            )
+            .ok(); // 忽略错误（可能是重复记录）
         }
     }
 
@@ -932,6 +1007,42 @@ pub fn db_get_all_roles() -> Result<String, String> {
 #[tauri::command]
 pub fn db_get_accounts_with_roles() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
+
+    // ==== 获取所有角色的可见性配置 ====
+    // 1. 获取所有支持的副本类型列表并作为默认值
+    let mut default_vis_map = serde_json::Map::new();
+    if let Ok(mut type_stmt) = conn.prepare("SELECT type FROM instance_types") {
+        if let Ok(types_iter) = type_stmt.query_map([], |row| row.get::<_, String>(0)) {
+            for t_res in types_iter {
+                if let Ok(t_str) = t_res {
+                    default_vis_map.insert(t_str, serde_json::json!(true));
+                }
+            }
+        }
+    }
+
+    // 2. 获取角色的个性化配置
+    let mut vis_stmt = conn.prepare("
+        SELECT riv.role_id, it.type, riv.visible
+        FROM role_instance_visibility riv
+        JOIN instance_types it ON riv.instance_type_id = it.id
+    ").map_err(|e| e.to_string())?;
+
+    let mut vis_map: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> = std::collections::HashMap::new();
+    let vis_rows = vis_stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i32>(2)? == 1
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for row_res in vis_rows {
+        if let Ok((role_id, type_str, visible)) = row_res {
+            let role_vis = vis_map.entry(role_id).or_insert_with(|| default_vis_map.clone());
+            role_vis.insert(type_str, serde_json::json!(visible));
+        }
+    }
 
     // 单次 LEFT JOIN 查询获取账号和角色
     // Account 字段: 0-8, Role 字段: 9-17 (可能为 NULL)
@@ -1022,9 +1133,10 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
         }
 
         // 如果有角色，添加到账号的 roles 数组中
-        if row.role_id.is_some() {
+        if let Some(r_id) = &row.role_id {
+            let visibility = vis_map.get(r_id).cloned().unwrap_or_else(|| default_vis_map.clone());
             let role = serde_json::json!({
-                "id": row.role_id,
+                "id": r_id,
                 "account_id": row.role_account_id,
                 "name": row.role_name,
                 "server": row.role_server,
@@ -1032,6 +1144,7 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
                 "sect": row.role_sect,
                 "equipmentScore": row.role_equipment_score,
                 "disabled": row.role_disabled,
+                "visibility": visibility,
             });
             if let Some(account) = account_map.get_mut(&account_id) {
                 let roles = account["roles"].as_array_mut().unwrap();
@@ -1057,6 +1170,42 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
 pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
+    // 1. 获取所有支持的副本类型列表并作为默认值
+    let mut default_vis_map = serde_json::Map::new();
+    if let Ok(mut type_stmt) = conn.prepare("SELECT type FROM instance_types") {
+        if let Ok(types_iter) = type_stmt.query_map([], |row| row.get::<_, String>(0)) {
+            for t_res in types_iter {
+                if let Ok(t_str) = t_res {
+                    default_vis_map.insert(t_str, serde_json::json!(true));
+                }
+            }
+        }
+    }
+
+    // 2. 获取角色的个性化配置
+    let mut vis_stmt = conn.prepare("
+        SELECT riv.role_id, it.type, riv.visible
+        FROM role_instance_visibility riv
+        JOIN instance_types it ON riv.instance_type_id = it.id
+        WHERE riv.role_id IN (SELECT id FROM roles WHERE account_id = ?)
+    ").map_err(|e| e.to_string())?;
+
+    let mut vis_map: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> = std::collections::HashMap::new();
+    let vis_rows = vis_stmt.query_map(params![account_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i32>(2)? == 1
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for row_res in vis_rows {
+        if let Ok((role_id, type_str, visible)) = row_res {
+            let role_vis = vis_map.entry(role_id).or_insert_with(|| default_vis_map.clone());
+            role_vis.insert(type_str, serde_json::json!(visible));
+        }
+    }
+
     let mut stmt = conn
         .prepare(
             "
@@ -1068,8 +1217,11 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
 
     let roles: Vec<serde_json::Value> = stmt
         .query_map(params![account_id], |row| {
+            let role_id: String = row.get(0)?;
+            let visibility = vis_map.get(&role_id).cloned().unwrap_or_else(|| default_vis_map.clone());
+
             Ok(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
+                "id": role_id,
                 "name": row.get::<_, String>(1)?,
                 "server": row.get::<_, Option<String>>(2)?,
                 "region": row.get::<_, Option<String>>(3)?,
@@ -1078,6 +1230,7 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
                 "disabled": row.get::<_, i32>(6)? != 0,
                 "createdAt": row.get::<_, Option<String>>(7)?,
                 "updatedAt": row.get::<_, Option<String>>(8)?,
+                "visibility": visibility,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -1127,12 +1280,62 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
     let disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
     let equipment_score = role["equipmentScore"].as_i64();
 
+    // 检查是否为新建角色
+    let is_new_role: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM roles WHERE id = ?",
+            params![id],
+            |row| {
+                let count: i32 = row.get(0)?;
+                Ok(count == 0)
+            },
+        )
+        .unwrap_or(true);
+
     conn.execute(
         "INSERT OR REPLACE INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![id, account_id, name, server, region, sect, equipment_score, disabled, timestamp],
     ).map_err(|e| e.to_string())?;
 
+    // 如果是新建角色，自动创建可见性记录
+    if is_new_role {
+        create_default_visibility(&conn, &id)?;
+    }
+
+    Ok(())
+}
+
+/// 为新建角色创建默认可见性记录（全部可见）
+fn create_default_visibility(conn: &Connection, role_id: &str) -> Result<(), String> {
+    // 获取所有副本类型 ID
+    let type_ids: Vec<i32> = conn
+        .prepare("SELECT id FROM instance_types")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if type_ids.is_empty() {
+        log::warn!("无副本类型数据，跳过创建默认可见性");
+        return Ok(());
+    }
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let count = type_ids.len();
+
+    for type_id in type_ids {
+        let id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO role_instance_visibility (id, role_id, instance_type_id, visible, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 1, ?4, ?4)",
+            params![id, role_id, type_id, &timestamp],
+        )
+        .map_err(|e| format!("创建默认可见性失败: {}", e))?;
+    }
+
+    log::info!("已为角色 {} 创建 {} 条默认可见性记录", role_id, count);
     Ok(())
 }
 
@@ -1892,4 +2095,85 @@ pub fn db_is_favorite_raid(raid_name: String) -> Result<bool, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(count > 0)
+}
+
+// ========== 角色可见性配置相关命令 (V5+) ==========
+
+/// 获取所有副本类型
+#[tauri::command]
+pub fn db_get_instance_types() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    let types: Vec<serde_json::Value> = conn
+        .prepare("SELECT id, type, name FROM instance_types ORDER BY id")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i32>(0)?,
+                "type": row.get::<_, String>(1)?,
+                "name": row.get::<_, String>(2)?
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    serde_json::to_string(&types).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// 获取所有角色的可见性配置
+#[tauri::command]
+pub fn db_get_all_role_visibility() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    let visibility: Vec<serde_json::Value> = conn
+        .prepare(
+            "SELECT riv.id, riv.role_id, riv.instance_type_id, it.type, riv.visible
+             FROM role_instance_visibility riv
+             JOIN instance_types it ON riv.instance_type_id = it.id",
+        )
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "roleId": row.get::<_, String>(1)?,
+                "instanceTypeId": row.get::<_, i32>(2)?,
+                "instanceType": row.get::<_, String>(3)?,
+                "visible": row.get::<_, i32>(4)? == 1
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    serde_json::to_string(&visibility).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// 保存单个角色的可见性配置
+#[tauri::command]
+pub fn db_save_role_visibility(role_id: String, instance_type: String, visible: bool) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 获取 instance_type_id
+    let instance_type_id: i32 = conn
+        .query_row(
+            "SELECT id FROM instance_types WHERE type = ?1",
+            params![instance_type],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("未找到副本类型: {}", e))?;
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    conn.execute(
+        "INSERT INTO role_instance_visibility (id, role_id, instance_type_id, visible, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+         ON CONFLICT(role_id, instance_type_id)
+         DO UPDATE SET visible = ?4, updated_at = ?5",
+        params![id, role_id, instance_type_id, visible as i32, &timestamp],
+    )
+    .map_err(|e| format!("保存可见性失败: {}", e))?;
+
+    Ok(())
 }

@@ -498,6 +498,43 @@ class DatabaseService {
       return false;
     }
   }
+
+  // ========== 角色可见性配置 (V5+) ==========
+
+  /// 获取所有副本类型
+  async getInstanceTypes(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_instance_types');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get instance types:', error);
+      return [];
+    }
+  }
+
+  /// 获取所有角色的可见性配置
+  async getAllRoleVisibility(): Promise<any[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_all_role_visibility');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get all role visibility:', error);
+      return [];
+    }
+  }
+
+  /// 保存单个角色的可见性配置
+  async saveRoleVisibility(roleId: string, instanceType: string, visible: boolean): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_save_role_visibility', { roleId, instanceType, visible });
+    } catch (error) {
+      console.error('Failed to save role visibility:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();
