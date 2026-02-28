@@ -2,44 +2,35 @@
 
 本文档为 AI 编码代理提供 JX3 Raid Manager 代码库的开发指南。
 
-## 1. 项目概述
+## 1. 核心指令 & 开发向导
 
-JX3 Raid Manager (剑网三副本管家) 是一个本地化副本数据管理桌面应用。
+> **⚠️ 业务与架构全景指引**
+> 本应用的核心业务逻辑、深层目录结构拆解已被分离至专用上下文文件中。
+> 如需寻找“JX3 Raid Manager 的详细模块作用”、“架构技术栈数据流”，请**必须查阅**：
+> 👉 `contexts/context.md`
 
-| 层级 | 技术栈 |
-|------|--------|
-| 前端 | React 18 + TypeScript + Vite + Tailwind CSS |
-| 后端 | Rust (Tauri) |
-| 数据库 | SQLite (由 Rust 管理) |
-| 图标 | Lucide React |
-
-## 2. 构建与开发命令
+### 1.1 构建与开发命令
 
 ```bash
-# 安装依赖
-npm install
-
 # 开发模式 (前端 + Tauri)
 npm run tauri dev
-
-# 仅前端开发 (浏览器预览)
-npm run dev
 
 # 生产构建
 npm run tauri build
 
-# 类型检查
-npm run build   # 执行 tsc && vite build
+# 类型检查 (跑通即可确认 TypeScript 无错误)
+npm run build
 ```
 
-### 测试
-- **单元测试**: 使用 Vitest (`npm run test`)
-- **后台 API 测试**: 通过 MCP Bridge 连接运行中的应用进行测试
-- **手动验证**: 通过 `npm run tauri dev` 在真实环境中测试 Tauri IPC 调用
+## 2. API 测试与后台通信规范
 
-#### 后台 API 测试方法
+### 2.1 前后端通信约定
+- **模式**: 通过 Tauri `invoke` 进行请求/响应通信
+- **端侧封装**: 位于 `services/db.ts`，前端统一使用 `camelCase` (如 `getAccounts`) 以隐藏系统实现
+- **Rust 后端**: 命令皆为 `snake_case` (如 `db_get_accounts`)
 
-启动应用后，通过 MCP Bridge (端口 9223) 执行测试脚本：
+### 2.2 测试与运行预留
+- **后台 API 测试方法**: 若开发功能遭遇 Tauri 无法调用，在启动应用后可通过 MCP Bridge (端口 9223) 执行下面格式的联调脚本进行测试：
 
 ```javascript
 (async () => {
@@ -52,51 +43,7 @@ npm run build   # 执行 tsc && vite build
 })()
 ```
 
-#### API 测试用例清单
-
-| 类别 | API | 说明 | 状态 |
-|------|-----|------|------|
-| 版本管理 | `db_get_version_info` | 获取数据库版本 | ✅ |
-| 账号管理 | `db_get_accounts_structured` | 获取账号列表（不含角色） | ✅ |
-| 账号管理 | `db_get_accounts_with_roles` | 获取账号列表（含角色，LEFT JOIN 优化） | ✅ |
-| 角色管理 | `db_get_all_roles` | 获取所有角色 | ✅ |
-| 角色管理 | `db_get_roles_by_account` | 按账号获取角色 | ✅ |
-| 副本记录 | `db_get_records`, `db_add_record`, `db_delete_record` | 副本记录 CRUD | ✅ |
-| 配置管理 | `db_get_config`, `db_save_config` | 应用配置 | ✅ |
-| 试炼记录 | `db_get_trial_records`, `db_add_trial_record` | 试炼之地记录 | ✅ |
-| 百战记录 | `db_get_baizhan_records`, `db_add_baizhan_record` | 百战记录 | ✅ |
-| 收藏功能 | `db_get_favorite_raids`, `db_add_favorite_raid` | 副本收藏 | ✅ |
-
-#### 已知问题修复记录 (v2.0.0)
-
-1. **`db_get_accounts_structured` 字段索引错误**
-   - 问题：SELECT 字段顺序与 `row.get()` 索引不匹配
-   - 修复：正确映射 hidden/disabled/password/notes 字段索引
-
-2. **`db_get_accounts_with_roles` 查询优化**
-   - 优化：从 2 次独立查询改为 1 次 LEFT JOIN 查询
-
-详细测试文档见 `docs/TEST_CASES.md`
-
-## 3. 架构与数据流
-
-### 前后端通信
-- **模式**: 通过 Tauri `invoke` 进行请求/响应通信
-- **前端封装**: `services/db.ts` 封装所有 Rust 命令
-- **命名约定**:
-  - 前端方法: `camelCase` (如 `getAccounts`)
-  - Rust 命令: `snake_case` (如 `db_get_accounts`)
-
-### 数据持久化
-- **主数据源**: 本地 SQLite 数据库 (Rust 管理)
-- **前端状态**:
-  - `services/db.ts`: 数据访问层
-  - `contexts/ThemeContext.tsx`: 全局状态
-  - 组件内部: `useState` 管理临时 UI 状态
-
-### 文件系统访问
-- 使用 `@tauri-apps/api/fs` 扫描游戏目录
-- `services/gameDirectoryScanner.ts`: 解析 `userdata` 和 `interface` 目录
+*(附注：完整的 API 返回与用例细节记录于 `docs/TEST_CASES.md`)*
 
 ## 4. 代码风格指南
 
@@ -194,17 +141,14 @@ export { useCountdown, CountdownDisplay } from './useCountdown';
 
 ## 5. 样式规范 (Tailwind CSS)
 
-### 颜色语义化
-使用语义化颜色名称，而非原始颜色值：
+> **⚠️ 核心 UI 规约指引**
+> 本项目已采用全面扁平化、极简风格的 UI 规范，关于 Tailwind 语义色 (`emerald`, `amber` 等)、容器阴影、组件交互状态的具体使用准则，请**必须查阅**并在编写前遵循：
+> 👉 `specs/design-tokens.md`
 
-```tsx
-// ✅ 推荐
-<div className="bg-base text-main border-base">
-<div className="bg-surface text-muted">
-
-// ❌ 避免
-<div className="bg-white text-slate-900">
-```
+### 基础原则（摘要）
+- **语义化命名**：严格使用语义色 (`bg-surface`, `text-muted` 等)，避免原始色值 (`bg-white` 等)。
+- **一致性**：各类状态标签激活色系跨功能统一为交互绿（详见规范表）。
+- **去冗余**：克制使用图标，杜绝复杂的线性渐变与深邃的卡片悬浮阴影。
 
 ### CSS 变量系统
 ```css
