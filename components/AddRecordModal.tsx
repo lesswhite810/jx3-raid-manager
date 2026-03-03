@@ -114,9 +114,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
     e.preventDefault();
     setErrorMessage(null);
 
-    if (goldIncome <= 0 && goldExpense <= 0) {
-      logOperation(role.id, role.name, constructRaidName(), false, '未输入金额');
-      setErrorMessage('请输入收入或支出金额');
+    if (goldIncome < 0 || goldExpense < 0) {
+      logOperation(role.id, role.name, constructRaidName(), false, '金额不能小于0');
+      setErrorMessage('收入和支出不能小于0');
       return;
     }
 
@@ -437,7 +437,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting || (goldIncome <= 0 && goldExpense <= 0)}
+                disabled={isSubmitting || (goldIncome < 0 && goldExpense < 0)}
                 className="flex-1 px-4 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
               >
                 {isSubmitting ? (

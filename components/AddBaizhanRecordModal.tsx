@@ -113,8 +113,8 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
             setError('请选择角色');
             return;
         }
-        if (goldIncome <= 0 && goldExpense <= 0) {
-            setError('请填写收入或支出');
+        if (goldIncome < 0 || goldExpense < 0) {
+            setError('收入和支出不能小于0');
             return;
         }
 
@@ -304,7 +304,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                         </button>
                         <button
                             type="submit"
-                            disabled={isSubmitting || (goldIncome <= 0 && goldExpense <= 0)}
+                            disabled={isSubmitting || (goldIncome < 0 && goldExpense < 0)}
                             className="flex-1 py-2.5 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/25 hover:bg-primary-hover hover:shadow-primary/40 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                             {isSubmitting ? (
