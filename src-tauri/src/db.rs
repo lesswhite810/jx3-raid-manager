@@ -7,7 +7,7 @@ pub mod migrations;
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 5;
+pub const CURRENT_SCHEMA_VERSION: i32 = 6;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);

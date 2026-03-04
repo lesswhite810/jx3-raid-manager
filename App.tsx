@@ -517,7 +517,7 @@ function App() {
 
       {/* Edit Record Modal */}
       {editingRecord && (() => {
-        // 从 raidName 解析副本信息，格式如 "25人英雄弓月城"
+        // 从 raidName 解析副本信息，格式如 "25人英雄会战弓月城"
         const raidName = editingRecord.raidName;
         let playerCount: 10 | 25 = 25;
         let difficulty: '普通' | '英雄' | '挑战' = '普通';

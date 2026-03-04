@@ -1,6 +1,6 @@
 import { Raid } from '../types';
 
-// ID 格式：{playerCount}人{difficulty}{name}，例如 "25人普通弓月城"
+// ID 格式：{playerCount}人{difficulty}{name}，例如 "25人普通会战弓月城"
 export const getRaidKey = (raid: Raid): string => {
   return `${raid.playerCount}人${raid.difficulty}${raid.name}`;
 };

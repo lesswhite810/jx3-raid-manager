@@ -2,7 +2,7 @@ import { Boss, Raid } from '../types';
 
 // 默认 BOSS 配置（按副本名称索引，所有难度共享）
 const DEFAULT_BOSSES: Record<string, Boss[]> = {
-  '弓月城': [
+  '会战弓月城': [
     { id: 'gongyuecheng_1', name: '巴图仁钦', order: 1 },
     { id: 'gongyuecheng_2', name: '竭勒', order: 2 },
     { id: 'gongyuecheng_3', name: '图南子', order: 3 },

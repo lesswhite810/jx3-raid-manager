@@ -661,7 +661,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                           <div className="flex items-center gap-2 mb-3 flex-wrap justify-center sm:justify-start">
                             {mergedRaid.raids.map(raid => {
                               const label = mergedRaid.difficultyLabels[getRaidKey(raid)] || DIFFICULTY_LABELS[raid.difficulty];
-                              const isSpecialRaid = raid.name === '弓月城' || raid.name === '缚罪之渊';
+                              const isSpecialRaid = raid.name === '会战弓月城' || raid.name === '缚罪之渊';
                               return (
                                 <div
                                   key={getRaidKey(raid)}

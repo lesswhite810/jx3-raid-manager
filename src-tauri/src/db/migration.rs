@@ -20,6 +20,7 @@ pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
         3 => migrations::v3::migrate(conn),
         4 => migrations::v4::migrate(conn),
         5 => migrations::v5::migrate(conn),
+        6 => migrations::v6::migrate(conn),
         _ => Err(format!("未知的迁移版本: {}", version)),
     }
 }
