@@ -214,3 +214,147 @@ export interface BaizhanRecord {
   notes?: string;
   type: 'baizhan';
 }
+
+// ============================================================================
+// 自动分析相关类型（对应 Rust 后端）
+// ============================================================================
+
+/** 时间范围 */
+export interface TimeRange {
+  start: number; // 毫秒时间戳
+  end: number;   // 毫秒时间戳
+}
+
+/** 时间范围类型（字符串形式） */
+export type TimeRangeType = 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'week' | 'month' | 'all' | 'custom';
+
+/** 分析进度 */
+export interface AnalysisProgress {
+  percent: number;
+  currentFile: string;
+}
+
+/** 掉落标记 */
+export interface DropFlags {
+  hasXuanjing: boolean;
+  hasMaJu: boolean;
+  hasPet: boolean;
+  hasPendant: boolean;
+  hasMount: boolean;
+  hasAppearance: boolean;
+  hasTitle: boolean;
+  hasSecretBook: boolean;
+}
+
+/** 特殊物品 */
+export interface SpecialItem {
+  name: string;
+  buyer: string;
+  price: number;
+  isWorkerBought: boolean;
+}
+
+/** 支出明细 */
+export interface ExpenseDetail {
+  scattered: number;
+  iron: number;
+  special: number;
+  other: number;
+}
+
+/** 收支信息（后端返回的原始格式） */
+export interface IncomeInfoRaw {
+  income: number;
+  expense: number;
+  expense_detail: ExpenseDetail;
+  net_income: number;
+  drop_flags: DropFlagsRaw;
+  special_items: SpecialItemRaw[];
+}
+
+/** 掉落标记（后端返回的原始格式） */
+export interface DropFlagsRaw {
+  has_xuanjing: boolean;
+  has_maju: boolean;
+  has_pet: boolean;
+  has_pendant: boolean;
+  has_mount: boolean;
+  has_appearance: boolean;
+  has_title: boolean;
+  has_secret_book: boolean;
+}
+
+/** 特殊物品（后端返回的原始格式） */
+export interface SpecialItemRaw {
+  name: string;
+  buyer: string;
+  price: number;
+  is_worker_bought: boolean;
+}
+
+/** 单条副本记录（后端返回的原始格式） */
+export interface AnalyzeRecordRaw {
+  dungeon_name: string;
+  difficulty: string;
+  player_count: number;
+  start_time: number;
+  end_time: number;
+  leader_name: string;
+  income: IncomeInfoRaw;
+  notes: string;
+}
+
+/** 单个角色的分析结果（后端返回的原始格式） */
+export interface RoleAnalyzeResultRaw {
+  role_id: string;
+  role_name: string;
+  records: AnalyzeRecordRaw[];
+}
+
+/** 分析响应（后端返回的原始格式） */
+export interface AnalyzeResponse {
+  roles: RoleAnalyzeResultRaw[];
+}
+
+/** 前端转换后的分析结果 */
+export interface AnalysisResult {
+  uid: string;
+  startTime: number;
+  endTime: number;
+  dungeonName: string;
+  dungeonType: 'raid' | 'baizhan' | 'trial';
+  playerCount?: number;  // 人数 (10/25)
+  difficulty?: string;  // 难度 (普通/英雄/挑战)
+  leaderName: string;
+  workerName: string;
+  workerAccountId: string;
+  workerRoleId: string;
+  workerServer: string;
+  personalIncome: number;
+  teamIncome: number;
+  scatteredConsumption: number;
+  ironConsumption: number;
+  specialConsumption: number;
+  otherConsumption: number;
+  totalConsumption: number;
+  fine: number;
+  subsidy: number;
+  netIncome: number;
+  specialItems: SpecialItem[];
+  dropFlags: DropFlags;
+  notes: string;
+  isFilled: boolean;
+  isLyingFlat?: boolean; // 躺拍标记
+  sourceDbFile: string;
+  sourceGkpFile: string;
+}
+
+/** 分组后的分析结果 */
+export interface GroupedAnalysisResults {
+  roleId: string;
+  roleName: string;
+  results: AnalysisResult[];
+  selectedCount: number;
+  raidCount: number;
+  baizhanCount: number;
+}

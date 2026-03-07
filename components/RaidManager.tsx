@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Raid } from '../types';
-import { Trash2, Shield, Filter, Power, Star } from 'lucide-react';
+import { Raid, Config } from '../types';
+import { Trash2, Shield, Filter, Power, Star, Zap } from 'lucide-react';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
 import { TrialPlaceManager } from './TrialPlaceManager';
@@ -8,6 +8,7 @@ import { BaizhanManager } from './BaizhanManager';
 import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
 import { RaidDetail } from './RaidDetail';
+import { AutoAnalyzer } from './AutoAnalyzer';
 
 interface RaidManagerProps {
   raids: Raid[];
@@ -19,6 +20,7 @@ interface RaidManagerProps {
   trialRecords: TrialPlaceRecord[];
   baizhanRecords: BaizhanRecord[];
   accounts: Account[];
+  config?: Config;
   onRefreshRecords?: () => void;
   onRefreshTrialRecords?: () => void;
   onRefreshBaizhanRecords?: () => void;
@@ -57,12 +59,14 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   trialRecords,
   baizhanRecords,
   accounts,
+  config,
   onRefreshRecords,
   onRefreshTrialRecords,
   onRefreshBaizhanRecords
 }) => {
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
+  const [showAnalyzer, setShowAnalyzer] = useState(false);
 
   const [versionOrderMap, setVersionOrderMap] = useState<Record<string, number>>({});
   const [isOrderLoaded, setIsOrderLoaded] = useState(false);
@@ -444,6 +448,13 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <h2 className="text-xl font-bold text-main">副本管理</h2>
             <div className="flex gap-2">
+              <button
+                onClick={() => setShowAnalyzer(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors shadow-sm"
+              >
+                <Zap className="w-4 h-4" />
+                自动分析
+              </button>
               {versions.length > 0 && (
                 <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-lg border border-base shadow-sm">
                   <Filter className="w-4 h-4 text-muted" />
@@ -696,6 +707,40 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             </div>
           )}
         </>
+      )}
+
+      {/* 自动分析弹窗 */}
+      {showAnalyzer && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-surface rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            {/* 弹窗头部 */}
+            <div className="flex items-center justify-between p-4 border-b border-base">
+              <h2 className="text-lg font-semibold text-main flex items-center gap-2">
+                <Zap className="w-5 h-5 text-primary" />
+                自动分析
+              </h2>
+              <button
+                onClick={() => setShowAnalyzer(false)}
+                className="p-1 text-muted hover:text-main transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            {/* 弹窗内容 */}
+            <div className="flex-1 overflow-auto p-4">
+              <AutoAnalyzer
+                config={config}
+                accounts={accounts}
+                onRecordAdded={() => {
+                  onRefreshRecords?.();
+                }}
+                onBaizhanRecordAdded={() => {
+                  onRefreshBaizhanRecords?.();
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

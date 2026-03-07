@@ -493,6 +493,7 @@ function App() {
                 trialRecords={trialRecords}
                 baizhanRecords={baizhanRecords}
                 accounts={accounts}
+                config={config}
                 onRefreshRecords={reloadRecords}
                 onRefreshTrialRecords={reloadTrialRecords}
                 onRefreshBaizhanRecords={reloadBaizhanRecords}
@@ -505,7 +506,6 @@ function App() {
         )}
       </main>
 
-      {/* Mobile Bottom Nav */}
       {/* Mobile Bottom Nav */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-surface border-t border-base h-16 flex items-center justify-around z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] pb-safe app-region-no-drag">
         <MobileNavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={20} />} label="概览" />

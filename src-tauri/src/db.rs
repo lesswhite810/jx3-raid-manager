@@ -1004,6 +1004,119 @@ pub fn db_get_all_roles() -> Result<String, String> {
     serde_json::to_string(&roles).map_err(|e| e.to_string())
 }
 
+/// 根据角色 UUID 列表批量获取角色名称
+#[tauri::command]
+pub fn db_get_role_names_by_ids(role_ids: Vec<String>) -> Result<Vec<String>, String> {
+    if role_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 构建查询参数
+    let placeholders: Vec<String> = role_ids.iter().map(|_| "?".to_string()).collect();
+    let query = format!(
+        "SELECT name FROM roles WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+
+    let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+
+    let params: Vec<&dyn rusqlite::ToSql> = role_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+    let names: Vec<String> = stmt
+        .query_map(params.as_slice(), |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(names)
+}
+
+/// 角色信息结构体
+#[derive(Debug, Clone)]
+pub struct RoleInfo {
+    pub id: String,
+    pub name: String,
+    pub server: String,
+}
+
+/// 根据角色 UUID 列表批量获取角色信息
+pub fn db_get_role_infos_by_ids(role_ids: &[String]) -> Result<Vec<RoleInfo>, String> {
+    if role_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 构建查询参数
+    let placeholders: Vec<String> = role_ids.iter().map(|_| "?".to_string()).collect();
+    let query = format!(
+        "SELECT id, name, server FROM roles WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+
+    let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+
+    let params: Vec<&dyn rusqlite::ToSql> = role_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+    let roles: Vec<RoleInfo> = stmt
+        .query_map(params.as_slice(), |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let server: Option<String> = row.get(2)?;
+            Ok(RoleInfo {
+                id,
+                name,
+                server: server.unwrap_or_default(),
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(roles)
+}
+
+/// 根据角色 UUID 获取角色名称（包含区服）
+#[allow(dead_code)]
+pub fn db_get_role_name_by_id(role_id: &str) -> Result<String, String> {
+    if role_id.is_empty() {
+        return Ok(String::new());
+    }
+
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 查询 name 和 server，拼接成 "角色名·区服" 格式
+    // 注意：roles 表的 id 字段就是 GUID
+    let mut stmt = conn.prepare("SELECT name, server FROM roles WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+
+    log::info!("查询角色名称 | role_id: {} | SQL: SELECT name, server FROM roles WHERE id = ?1", role_id);
+
+    let result: Result<String, _> = stmt.query_row([role_id], |row| {
+        let name: String = row.get(0)?;
+        let server: Option<String> = row.get(1)?;
+        // 拼接成 "角色名·区服" 格式
+        if let Some(s) = server {
+            Ok(format!("{}·{}", name, s))
+        } else {
+            Ok(name)
+        }
+    });
+
+    match result {
+        Ok(name) => {
+            log::info!("查询到角色名称: {}", name);
+            Ok(name)
+        },
+        Err(e) => {
+            log::warn!("查询角色名称失败: {} | role_id: {}", e, role_id);
+            Ok(String::new()) // 查询失败时返回空字符串
+        }
+    }
+}
+
 #[tauri::command]
 pub fn db_get_accounts_with_roles() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -1474,6 +1587,31 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
     // 序列化为 JSON 字符串数组（兼容前端解析方式）
     let result: Vec<String> = raids.iter().map(|r| r.to_string()).collect();
     Ok(result)
+}
+
+/// 获取数据库中活跃的副本名称列表（用于 GKP 文件过滤）
+/// 返回去重的副本名称向量
+#[allow(dead_code)]
+pub fn db_get_raid_names() -> Result<Vec<String>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    // 只查询 is_active = 1 的副本名称，去重返回
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT name FROM raids WHERE is_active = 1 ORDER BY name")
+        .map_err(|e| e.to_string())?;
+
+    let name_iter = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let mut names: Vec<String> = Vec::new();
+    for name_result in name_iter {
+        if let Ok(name) = name_result {
+            names.push(name);
+        }
+    }
+
+    Ok(names)
 }
 
 #[tauri::command]

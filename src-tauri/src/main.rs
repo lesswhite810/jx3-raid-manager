@@ -2,6 +2,7 @@
 
 mod db;
 mod gkp_parser;
+mod analyzer;
 
 #[cfg(target_os = "windows")]
 fn check_webview2() -> Result<String, String> {
@@ -116,6 +117,12 @@ fn main() {
     builder
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
+            // 分析器命令
+            analyzer::analyzer_scan_files,
+            analyzer::analyzer_get_gkp_files,
+            analyzer::analyzer_get_chat_log_files,
+            analyzer::analyzer_read_chat_log,
+            analyzer::analyzer_analyze,
             db::db_init,
             // 新的版本管理命令
             db::db_get_version_info,
@@ -128,6 +135,7 @@ fn main() {
             db::db_get_accounts_with_roles,
             db::db_get_roles_by_account,
             db::db_get_all_roles,
+            db::db_get_role_names_by_ids,
             db::db_save_account_structured,
             db::db_save_role_structured,
             db::db_delete_account_structured,
