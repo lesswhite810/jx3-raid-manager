@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, Raid, RaidRecord, BossCooldownInfo } from '../types';
-import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check } from 'lucide-react';
+import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check, Ban, Power } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
@@ -114,6 +114,51 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
+  // 角色启用/禁用切换状态
+  const [showDisabled, setShowDisabled] = useState(false);
+  const [roleVisibilityMap, setRoleVisibilityMap] = useState<Record<string, boolean>>({});
+
+  // 生成副本实例的唯一键（与 raids 表的 id 格式一致）
+  const getRaidInstanceKey = (raidInfo: Raid): string => {
+    return `${raidInfo.playerCount}人${raidInfo.difficulty}${raidInfo.name}`;
+  };
+
+  // 当前副本的唯一键
+  const currentRaidKey = useMemo(() => getRaidInstanceKey(raid), [raid]);
+
+  // 加载角色可见性配置（使用专用的团队副本可见性表）
+  useEffect(() => {
+    const loadVisibility = async () => {
+      try {
+        const visibility = await db.getRaidRoleVisibility(currentRaidKey);
+        const map: Record<string, boolean> = {};
+        visibility.forEach((v: { roleId: string; visible: boolean }) => {
+          map[v.roleId] = v.visible;
+        });
+        setRoleVisibilityMap(map);
+      } catch (error) {
+        console.error('Failed to load role visibility:', error);
+      }
+    };
+    loadVisibility();
+  }, [currentRaidKey]);
+
+  // 切换角色在当前副本的启用/禁用状态
+  const handleToggleRoleStatus = async (roleId: string, currentlyDisabled: boolean) => {
+    try {
+      const newVisible = currentlyDisabled; // 如果当前禁用，则启用；如果当前启用，则禁用
+      await db.saveRaidRoleVisibility(roleId, currentRaidKey, newVisible);
+      setRoleVisibilityMap(prev => ({
+        ...prev,
+        [roleId]: newVisible
+      }));
+      showToast(newVisible ? '角色已启用' : '角色已禁用', 2000);
+    } catch (error) {
+      console.error('[RaidDetail] Failed to toggle role status:', error);
+      showToast('操作失败: ' + String(error), 3000);
+    }
+  };
+
   const cleanRoleName = (name: string) => {
     const parts = name.trim().split(/\s+/);
     if (parts.length > 1 && parts[0] === parts[1]) {
@@ -125,8 +170,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
 
   const showToast = (message: string, duration: number = 3000) => {
-    console.log('[Toast] showToast called with message:', message);
-
     if (toastTimerRef.current !== null) {
       toastTimerRef.current = null;
     }
@@ -134,15 +177,9 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     setSuccessToast({ visible: true, message });
 
     toastTimerRef.current = window.setTimeout(() => {
-      console.log('[Toast] setTimeout callback executing');
-      setSuccessToast(prev => {
-        console.log('[Toast] Setting visible to false, current state:', prev);
-        return { ...prev, visible: false };
-      });
+      setSuccessToast(prev => ({ ...prev, visible: false }));
       toastTimerRef.current = null;
     }, duration);
-
-    console.log('[Toast] Timer set with duration:', duration);
   };
 
   const copyToClipboard = async (text: string, fieldId: string) => {
@@ -171,7 +208,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   };
 
   const handleAddRecord = async (recordData: Partial<RaidRecord>) => {
-    console.log('[RaidDetail] handleAddRecord called with:', recordData);
     if (recordData) {
       try {
         await db.addRecord(recordData as RaidRecord);
@@ -180,9 +216,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         console.error('保存记录失败:', error);
       }
     }
-    console.log('[RaidDetail] Calling showToast...');
     showToast('记录添加成功', 3000);
-    console.log('[RaidDetail] Closing modal...');
     setShowAddRecordModal(false);
   };
 
@@ -417,6 +451,24 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     return sorted;
   }, [rolesWithStatus]);
 
+  // 根据启用/禁用状态过滤角色
+  const filteredRoles = useMemo(() => {
+    return sortedRoles.filter(role => {
+      const isDisabled = roleVisibilityMap[role.id] === false;
+      // showDisabled 为 false 时显示启用的角色，为 true 时显示禁用的角色
+      return showDisabled ? isDisabled : !isDisabled;
+    });
+  }, [sortedRoles, roleVisibilityMap, showDisabled]);
+
+  // 统计启用和禁用的角色数量
+  const enabledCount = useMemo(() => {
+    return sortedRoles.filter(role => roleVisibilityMap[role.id] !== false).length;
+  }, [sortedRoles, roleVisibilityMap]);
+
+  const disabledCount = useMemo(() => {
+    return sortedRoles.filter(role => roleVisibilityMap[role.id] === false).length;
+  }, [sortedRoles, roleVisibilityMap]);
+
   // 计算三态统计：未清、部分清、完全清
   const noneClearedCount = rolesWithStatus.filter(r => {
     if (!r.bossCooldowns || r.bossCooldowns.length === 0) return r.canRun;
@@ -463,6 +515,38 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           </div>
 
           <div className="flex items-center gap-4">
+            {/* 启用/禁用角色切换按钮 */}
+            <div className="flex items-center gap-1 bg-base rounded-lg p-1">
+              <button
+                onClick={() => setShowDisabled(false)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 ${
+                  !showDisabled
+                    ? 'bg-emerald-50 text-emerald-700 shadow-sm'
+                    : 'text-muted hover:text-main'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Power className="w-3.5 h-3.5" />
+                  启用 ({enabledCount})
+                </span>
+              </button>
+              <button
+                onClick={() => setShowDisabled(true)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 ${
+                  showDisabled
+                    ? 'bg-amber-50 text-amber-700 shadow-sm'
+                    : 'text-muted hover:text-main'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Ban className="w-3.5 h-3.5" />
+                  禁用 ({disabledCount})
+                </span>
+              </button>
+            </div>
+
+            <div className="h-4 w-px bg-base" />
+
             <div className="flex items-center gap-1.5 text-sm">
               <span className="font-bold text-emerald-600">{noneClearedCount}</span>
               <span className="text-muted text-xs">未清</span>
@@ -480,13 +564,17 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
 
         {/* Role Cards */}
-        {sortedRoles.length === 0 ? (
+        {filteredRoles.length === 0 ? (
           <div className="text-center py-8 text-muted bg-surface rounded-xl border border-base border-dashed">
-            没有找到符合条件的角色，请先在账号管理中添加并启用角色
+            {showDisabled
+              ? '没有禁用的角色'
+              : sortedRoles.length === 0
+                ? '没有找到符合条件的角色，请先在账号管理中添加并启用角色'
+                : '所有角色已被禁用，点击上方"禁用"查看'}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {sortedRoles.map((role) => {
+            {filteredRoles.map((role) => {
               // 计算 BOSS 完成状态
               const getBossClearStatus = (): 'none' | 'partial' | 'complete' => {
                 if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
@@ -681,14 +769,14 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="mt-3 grid grid-cols-3 gap-2">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleAddRecordClick(role);
                       }}
                       disabled={!role.canAddMore}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonAddStyle()}`}
+                      className={`px-2 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonAddStyle()}`}
                     >
                       添加记录
                     </button>
@@ -697,9 +785,34 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         e.stopPropagation();
                         handleViewRecordsClick(role);
                       }}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonViewStyle()}`}
+                      className={`px-2 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${getButtonViewStyle()}`}
                     >
                       查看详情
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const isDisabled = roleVisibilityMap[role.id] === false;
+                        handleToggleRoleStatus(role.id, isDisabled);
+                      }}
+                      className={`px-2 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
+                        roleVisibilityMap[role.id] === false
+                          ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400'
+                          : 'bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400'
+                      }`}
+                      title={roleVisibilityMap[role.id] === false ? '点击启用该角色' : '点击禁用该角色'}
+                    >
+                      {roleVisibilityMap[role.id] === false ? (
+                        <span className="flex items-center justify-center gap-1">
+                          <Power className="w-3 h-3" />
+                          启用
+                        </span>
+                      ) : (
+                        <span className="flex items-center justify-center gap-1">
+                          <Ban className="w-3 h-3" />
+                          禁用
+                        </span>
+                      )}
                     </button>
                   </div>
                 </div>

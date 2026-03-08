@@ -174,6 +174,9 @@ fn main() {
             db::db_get_instance_types,
             db::db_get_all_role_visibility,
             db::db_save_role_visibility,
+            // 团队副本角色可见性配置 (V6+)
+            db::db_get_raid_role_visibility,
+            db::db_save_raid_role_visibility,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

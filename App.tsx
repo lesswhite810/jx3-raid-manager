@@ -40,6 +40,14 @@ function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const previousTabRef = useRef<string>('dashboard');
 
+  // 用于跟踪是否是初始加载，避免首次加载数据时触发保存
+  const initialSaveSkipped = useRef({
+    accounts: true,
+    records: true,
+    raids: true,
+    config: true,
+  });
+
   const { theme, toggleTheme } = useTheme();
 
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -210,6 +218,12 @@ function App() {
   useEffect(() => {
     if (!isInitialized) return;
 
+    // 跳过初始加载时的保存，避免不必要的数据操作
+    if (initialSaveSkipped.current.accounts) {
+      initialSaveSkipped.current.accounts = false;
+      return;
+    }
+
     const saveData = async () => {
       try {
         await db.saveAccounts(accounts);
@@ -222,6 +236,12 @@ function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
+
+    // 跳过初始加载时的保存
+    if (initialSaveSkipped.current.records) {
+      initialSaveSkipped.current.records = false;
+      return;
+    }
 
     const saveData = async () => {
       try {
@@ -238,6 +258,12 @@ function App() {
   useEffect(() => {
     if (!isInitialized) return;
 
+    // 跳过初始加载时的保存
+    if (initialSaveSkipped.current.raids) {
+      initialSaveSkipped.current.raids = false;
+      return;
+    }
+
     const saveData = async () => {
       try {
         await db.saveRaids(raids);
@@ -251,6 +277,12 @@ function App() {
 
   useEffect(() => {
     if (!isInitialized) return;
+
+    // 跳过初始加载时的保存
+    if (initialSaveSkipped.current.config) {
+      initialSaveSkipped.current.config = false;
+      return;
+    }
 
     const saveData = async () => {
       try {

@@ -535,6 +535,31 @@ class DatabaseService {
       throw error;
     }
   }
+
+  // ========== 团队副本角色可见性配置 (V6+) ==========
+
+  /// 获取指定副本的所有角色可见性配置
+  async getRaidRoleVisibility(raidKey: string): Promise<{ roleId: string; visible: boolean }[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_raid_role_visibility', { raidKey });
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get raid role visibility:', error);
+      return [];
+    }
+  }
+
+  /// 保存团队副本中单个角色的可见性配置
+  async saveRaidRoleVisibility(roleId: string, raidKey: string, visible: boolean): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_save_raid_role_visibility', { roleId, raidKey, visible });
+    } catch (error) {
+      console.error('Failed to save raid role visibility:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();

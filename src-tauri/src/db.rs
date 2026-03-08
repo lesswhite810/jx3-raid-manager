@@ -12,6 +12,11 @@ pub const CURRENT_SCHEMA_VERSION: i32 = 6;
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
 
+/// 获取当前本地时间的 RFC3339 格式字符串
+fn get_local_timestamp() -> String {
+    chrono::Local::now().to_rfc3339()
+}
+
 pub fn get_app_dir() -> Result<PathBuf, String> {
     let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
 
@@ -50,6 +55,10 @@ pub fn init_db() -> Result<Connection, String> {
     let db_exists = path.exists();
 
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+
+    // 配置数据库为安全模式，确保数据真正写入磁盘
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE;")
+        .ok();
 
     // 创建 schema_versions 表（用于记录版本）和 migration_flags 表
     conn.execute_batch(
@@ -155,9 +164,10 @@ fn get_schema_version(conn: &Connection) -> Result<i32, String> {
 
 /// 设置 schema 版本
 fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Result<(), String> {
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
     conn.execute(
-        "INSERT OR REPLACE INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)",
+        "INSERT INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)
+         ON CONFLICT(version) DO UPDATE SET applied_at = excluded.applied_at, description = excluded.description",
         params![version, timestamp, description],
     )
     .map_err(|e| e.to_string())?;
@@ -337,6 +347,22 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_riv_role_id ON role_instance_visibility(role_id);
         CREATE INDEX IF NOT EXISTS idx_riv_instance_type_id ON role_instance_visibility(instance_type_id);
+
+        -- ========== 团队副本角色可见性表 (V6+) ==========
+        -- 专门用于存储团队副本级别的角色禁用/启用配置，与 instance_types 分离
+        CREATE TABLE IF NOT EXISTS raid_role_visibility (
+            id TEXT PRIMARY KEY,
+            role_id TEXT NOT NULL,
+            raid_key TEXT NOT NULL,
+            visible INTEGER DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            UNIQUE(role_id, raid_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rrv_role_id ON raid_role_visibility(role_id);
+        CREATE INDEX IF NOT EXISTS idx_rrv_raid_key ON raid_role_visibility(raid_key);
     "#,
     )
     .map_err(|e| e.to_string())?;
@@ -374,10 +400,11 @@ pub fn db_is_local_storage_migrated() -> Result<bool, String> {
 #[tauri::command]
 pub fn db_set_local_storage_migrated() -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     conn.execute(
-        "INSERT OR REPLACE INTO migration_flags (key, value, updated_at) VALUES ('local_storage_migrated', 'true', ?)",
+        "INSERT INTO migration_flags (key, value, updated_at) VALUES ('local_storage_migrated', 'true', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         params![timestamp],
     )
     .map_err(|e| e.to_string())?;
@@ -455,7 +482,7 @@ pub struct Equipment {
 pub fn db_save_equipments(equipments: String) -> Result<(), String> {
     let items: Vec<Equipment> = serde_json::from_str(&equipments).map_err(|e| e.to_string())?;
     let mut conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -470,12 +497,26 @@ pub fn db_save_equipments(equipments: String) -> Result<(), String> {
 
         let mut stmt = tx
             .prepare(
-                "INSERT OR REPLACE INTO equipments (
+                "INSERT INTO equipments (
                 id, name, ui_id, icon_id, level, quality, bind_type, type_label,
-                attribute_types, attributes, recommend, diamonds, 
+                attribute_types, attributes, recommend, diamonds,
                 data, updated_at
-            ) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                ui_id = excluded.ui_id,
+                icon_id = excluded.icon_id,
+                level = excluded.level,
+                quality = excluded.quality,
+                bind_type = excluded.bind_type,
+                type_label = excluded.type_label,
+                attribute_types = excluded.attribute_types,
+                attributes = excluded.attributes,
+                recommend = excluded.recommend,
+                diamonds = excluded.diamonds,
+                data = excluded.data,
+                updated_at = excluded.updated_at",
             )
             .map_err(|e| e.to_string())?;
 
@@ -577,17 +618,34 @@ pub struct TrialRecord {
 pub fn db_add_trial_record(record: String) -> Result<(), String> {
     let item: TrialRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
     let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     // Ensure bosses are serialized
     let bosses_json = serde_json::to_string(&item.bosses).unwrap_or_default();
 
     conn.execute(
-        "INSERT OR REPLACE INTO trial_records (
-            id, account_id, role_id, role_name, server, layer, bosses, 
+        "INSERT INTO trial_records (
+            id, account_id, role_id, role_name, server, layer, bosses,
             card_1, card_2, card_3, card_4, card_5, flipped_index, record_type, date, notes, updated_at
-        ) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            account_id = excluded.account_id,
+            role_id = excluded.role_id,
+            role_name = excluded.role_name,
+            server = excluded.server,
+            layer = excluded.layer,
+            bosses = excluded.bosses,
+            card_1 = excluded.card_1,
+            card_2 = excluded.card_2,
+            card_3 = excluded.card_3,
+            card_4 = excluded.card_4,
+            card_5 = excluded.card_5,
+            flipped_index = excluded.flipped_index,
+            record_type = excluded.record_type,
+            date = excluded.date,
+            notes = excluded.notes,
+            updated_at = excluded.updated_at",
         params![
             item.id,
             item.account_id,
@@ -701,13 +759,24 @@ fn default_baizhan_type() -> String {
 pub fn db_add_baizhan_record(record: String) -> Result<(), String> {
     let item: BaizhanRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
     let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     conn.execute(
-        "INSERT OR REPLACE INTO baizhan_records (
+        "INSERT INTO baizhan_records (
             id, account_id, role_id, role_name, server,
             date, gold_income, gold_expense, notes, record_type, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            account_id = excluded.account_id,
+            role_id = excluded.role_id,
+            role_name = excluded.role_name,
+            server = excluded.server,
+            date = excluded.date,
+            gold_income = excluded.gold_income,
+            gold_expense = excluded.gold_expense,
+            notes = excluded.notes,
+            record_type = excluded.record_type,
+            updated_at = excluded.updated_at",
         params![
             item.id,
             item.account_id,
@@ -780,7 +849,7 @@ pub fn db_delete_baizhan_record(id: String) -> Result<(), String> {
 pub fn db_update_baizhan_record(record: String) -> Result<(), String> {
     let item: BaizhanRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
     let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     conn.execute(
         "UPDATE baizhan_records SET
@@ -837,35 +906,59 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 1. 先保存现有的可见性配置
-    let mut existing_visibility: Vec<(String, i32, i32)> = Vec::new();
-    {
+    let timestamp = get_local_timestamp();
+
+    // 1. 获取现有的账号 ID 列表
+    let existing_account_ids: Vec<String> = {
         let mut stmt = tx
-            .prepare("SELECT role_id, instance_type_id, visible FROM role_instance_visibility")
+            .prepare("SELECT id FROM accounts")
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i32>(1)?,
-                row.get::<_, i32>(2)?,
-            ))
-        }).map_err(|e| e.to_string())?;
-        for row in rows {
-            if let Ok(v) = row {
-                existing_visibility.push(v);
+        let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // 2. 获取现有的角色 ID 列表
+    let existing_role_ids: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT id FROM roles")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // 3. 收集传入数据中的账号和角色 ID
+    let mut incoming_account_ids: Vec<String> = Vec::new();
+    let mut incoming_role_ids: Vec<String> = Vec::new();
+    for account in &parsed {
+        if let Some(id) = account["id"].as_str() {
+            incoming_account_ids.push(id.to_string());
+        }
+        if let Some(roles) = account["roles"].as_array() {
+            for role in roles {
+                if let Some(role_id) = role["id"].as_str() {
+                    incoming_role_ids.push(role_id.to_string());
+                }
             }
         }
     }
 
-    // 2. 清空表（会级联删除 role_instance_visibility）
-    tx.execute("DELETE FROM roles", [])
-        .map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM accounts", [])
-        .map_err(|e| e.to_string())?;
+    // 4. 删除不在传入数据中的账号（会级联删除角色和可见性配置）
+    for account_id in &existing_account_ids {
+        if !incoming_account_ids.contains(account_id) {
+            tx.execute("DELETE FROM accounts WHERE id = ?", params![account_id])
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    // 5. 删除不在传入数据中的角色（会级联删除可见性配置）
+    for role_id in &existing_role_ids {
+        if !incoming_role_ids.contains(role_id) {
+            tx.execute("DELETE FROM roles WHERE id = ?", params![role_id])
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
-    // 3. 插入账号和角色
+    // 6. 插入或更新账号和角色
     for account in parsed {
         let id = account["id"].as_str().unwrap_or_default().to_string();
         let account_name = account["accountName"].as_str().unwrap_or("").to_string();
@@ -875,9 +968,19 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
         let hidden = account["hidden"].as_bool().unwrap_or(false) as i32;
         let disabled = account["disabled"].as_bool().unwrap_or(false) as i32;
 
+        // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
+        // 注意：INSERT OR REPLACE 会先 DELETE 再 INSERT，会触发外键级联删除！
         tx.execute(
             "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                account_name = excluded.account_name,
+                account_type = excluded.account_type,
+                password = excluded.password,
+                notes = excluded.notes,
+                hidden = excluded.hidden,
+                disabled = excluded.disabled,
+                updated_at = excluded.updated_at",
             params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
         )
         .map_err(|e| e.to_string())?;
@@ -892,35 +995,23 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
                 let r_disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
                 let equipment_score = role["equipmentScore"].as_i64();
 
+                // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
                 tx.execute(
                     "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(id) DO UPDATE SET
+                        account_id = excluded.account_id,
+                        name = excluded.name,
+                        server = excluded.server,
+                        region = excluded.region,
+                        sect = excluded.sect,
+                        equipment_score = excluded.equipment_score,
+                        disabled = excluded.disabled,
+                        updated_at = excluded.updated_at",
                     params![role_id, id, name, server, region, sect, equipment_score, r_disabled, timestamp],
                 )
                 .map_err(|e| e.to_string())?;
             }
-        }
-    }
-
-    // 4. 恢复可见性配置（只恢复仍然存在的角色）
-    for (role_id, instance_type_id, visible) in existing_visibility {
-        // 检查角色是否仍然存在
-        let role_exists: bool = tx
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM roles WHERE id = ?",
-                params![role_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if role_exists {
-            let vis_id = uuid::Uuid::new_v4().to_string();
-            tx.execute(
-                "INSERT INTO role_instance_visibility (id, role_id, instance_type_id, visible, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![vis_id, role_id, instance_type_id, visible, &timestamp, &timestamp],
-            )
-            .ok(); // 忽略错误（可能是重复记录）
         }
     }
 
@@ -1245,7 +1336,7 @@ pub fn db_save_account_structured(account_json: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let account: serde_json::Value =
         serde_json::from_str(&account_json).map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     let id = account["id"].as_str().unwrap_or_default().to_string();
     let account_name = account["accountName"].as_str().unwrap_or("").to_string();
@@ -1256,9 +1347,18 @@ pub fn db_save_account_structured(account_json: String) -> Result<(), String> {
     let disabled = account["disabled"].as_bool().unwrap_or(false) as i32;
 
     // Use Option<String> directly with rusqlite params
+    // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
     conn.execute(
-        "INSERT OR REPLACE INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            account_name = excluded.account_name,
+            account_type = excluded.account_type,
+            password = excluded.password,
+            notes = excluded.notes,
+            hidden = excluded.hidden,
+            disabled = excluded.disabled,
+            updated_at = excluded.updated_at",
         params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
     ).map_err(|e| e.to_string())?;
 
@@ -1269,7 +1369,7 @@ pub fn db_save_account_structured(account_json: String) -> Result<(), String> {
 pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let role: serde_json::Value = serde_json::from_str(&role_json).map_err(|e| e.to_string())?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
 
     let id = role["id"].as_str().unwrap_or_default().to_string();
     let account_id = role["accountId"].as_str().unwrap_or("").to_string();
@@ -1293,8 +1393,17 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
         .unwrap_or(true);
 
     conn.execute(
-        "INSERT OR REPLACE INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            account_id = excluded.account_id,
+            name = excluded.name,
+            server = excluded.server,
+            region = excluded.region,
+            sect = excluded.sect,
+            equipment_score = excluded.equipment_score,
+            disabled = excluded.disabled,
+            updated_at = excluded.updated_at",
         params![id, account_id, name, server, region, sect, equipment_score, disabled, timestamp],
     ).map_err(|e| e.to_string())?;
 
@@ -1322,7 +1431,7 @@ fn create_default_visibility(conn: &Connection, role_id: &str) -> Result<(), Str
         return Ok(());
     }
 
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
     let count = type_ids.len();
 
     for type_id in type_ids {
@@ -1379,14 +1488,15 @@ pub fn db_save_records(records: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 增量同步：使用 INSERT OR REPLACE 更新记录，不删除历史数据
+    // 增量同步：使用 INSERT ... ON CONFLICT DO UPDATE 更新记录
     for record in parsed {
         let id = record["id"].as_str().unwrap_or_default().to_string();
         if id.is_empty() {
             continue;
         }
         tx.execute(
-            "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
+            "INSERT INTO records (id, data) VALUES (?, ?)
+             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
             params![id, record.to_string()],
         )
         .map_err(|e| e.to_string())?;
@@ -1502,12 +1612,32 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // 全量同步：先清空表，再插入
-    tx.execute("DELETE FROM raid_bosses", [])
-        .map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM raids", [])
-        .map_err(|e| e.to_string())?;
+    // 1. 获取现有的 raids ID 列表
+    let existing_raid_ids: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT id FROM raids")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
 
+    // 2. 收集传入数据中的 raid ID
+    let mut incoming_raid_ids: Vec<String> = Vec::new();
+    for raid in &parsed {
+        if let Some(id) = raid["id"].as_str() {
+            incoming_raid_ids.push(id.to_string());
+        }
+    }
+
+    // 3. 删除不在传入数据中的 raids（会级联删除 raid_bosses）
+    for raid_id in &existing_raid_ids {
+        if !incoming_raid_ids.contains(raid_id) {
+            tx.execute("DELETE FROM raids WHERE id = ?", params![raid_id])
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // 4. 插入或更新 raids
     let mut boss_saved_names = std::collections::HashSet::new();
     for raid in &parsed {
         let name = raid["name"].as_str().unwrap_or_default();
@@ -1527,24 +1657,40 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
         };
         let id = format!("{}人{}{}", player_count, difficulty, name);
 
+        // 使用 INSERT ... ON CONFLICT DO UPDATE 处理新增和更新
         tx.execute(
-            "INSERT OR REPLACE INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                difficulty = excluded.difficulty,
+                player_count = excluded.player_count,
+                version = excluded.version,
+                notes = excluded.notes,
+                is_active = excluded.is_active,
+                is_static = excluded.is_static",
             params![id, name, difficulty, player_count, version, notes, is_active, is_static],
         ).map_err(|e| e.to_string())?;
 
-        // 插入 raid_bosses（按副本名称去重，只写一次）
-        if !boss_saved_names.contains(name) {
-            if let Some(bosses) = raid["bosses"].as_array() {
-                for boss in bosses {
-                    let boss_id = boss["id"].as_str().unwrap_or_default();
-                    let boss_name = boss["name"].as_str().unwrap_or_default();
-                    let boss_order = boss["order"].as_i64().unwrap_or(0);
+        // 处理 raid_bosses
+        if let Some(bosses) = raid["bosses"].as_array() {
+            for boss in bosses {
+                let boss_id = boss["id"].as_str().unwrap_or_default();
+                let boss_name = boss["name"].as_str().unwrap_or_default();
+                let boss_order = boss["order"].as_i64().unwrap_or(0);
+                // 只保留不重复的 boss
+                if !boss_saved_names.contains(boss_id) {
+                    boss_saved_names.insert(boss_id);
                     tx.execute(
-                        "INSERT OR REPLACE INTO raid_bosses (id, raid_name, name, boss_order) VALUES (?, ?, ?, ?)",
-                        params![boss_id, name, boss_name, boss_order],
+                        "INSERT INTO raid_bosses (id, raid_name, name, boss_order)
+                         VALUES (?, ?, ?, ?)
+                         ON CONFLICT(id) DO UPDATE SET
+                            raid_name = excluded.raid_name,
+                            name = excluded.name,
+                            boss_order = excluded.boss_order",
+                        params![boss_id, id, boss_name, boss_order],
                     ).map_err(|e| e.to_string())?;
                 }
-                boss_saved_names.insert(name.to_string());
             }
         }
     }
@@ -1651,7 +1797,8 @@ pub fn db_reset_config(default_config: String) -> Result<String, String> {
 pub fn db_save_config(config: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT OR REPLACE INTO config (id, value) VALUES (1, ?)",
+        "INSERT INTO config (id, value) VALUES (1, ?)
+         ON CONFLICT(id) DO UPDATE SET value = excluded.value",
         params![config],
     )
     .map_err(|e| e.to_string())?;
@@ -1666,7 +1813,8 @@ pub fn db_add_record(record: String) -> Result<(), String> {
     let id = parsed["id"].as_str().unwrap_or_default().to_string();
 
     conn.execute(
-        "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
+        "INSERT INTO records (id, data) VALUES (?, ?)
+         ON CONFLICT(id) DO UPDATE SET data = excluded.data",
         params![id, record],
     )
     .map_err(|e| e.to_string())?;
@@ -2013,9 +2161,10 @@ pub fn db_get_cache(key: String) -> Result<Option<(String, String)>, String> {
 #[tauri::command]
 pub fn db_save_cache(key: String, value: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
-    let updated_at = chrono::Utc::now().to_rfc3339();
+    let updated_at = get_local_timestamp();
     conn.execute(
-        "INSERT OR REPLACE INTO cache (key, value, updated_at) VALUES (?, ?, ?)",
+        "INSERT INTO cache (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         params![key, value, updated_at],
     )
     .map_err(|e| e.to_string())?;
@@ -2056,7 +2205,7 @@ pub fn db_get_favorite_raids() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn db_add_favorite_raid(raid_name: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
-    let created_at = chrono::Utc::now().to_rfc3339();
+    let created_at = get_local_timestamp();
 
     conn.execute(
         "INSERT OR IGNORE INTO favorite_raids (raid_name, created_at) VALUES (?, ?)",
@@ -2149,12 +2298,12 @@ pub fn db_get_all_role_visibility() -> Result<String, String> {
     serde_json::to_string(&visibility).map_err(|e| format!("序列化失败: {}", e))
 }
 
-/// 保存单个角色的可见性配置
+/// 保存单个角色的可见性配置（用于账号管理中的大类配置：raid/baizhan/trial）
 #[tauri::command]
 pub fn db_save_role_visibility(role_id: String, instance_type: String, visible: bool) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
-    // 获取 instance_type_id
+    // 获取 instance_type_id（只允许预定义的类型）
     let instance_type_id: i32 = conn
         .query_row(
             "SELECT id FROM instance_types WHERE type = ?1",
@@ -2163,7 +2312,7 @@ pub fn db_save_role_visibility(role_id: String, instance_type: String, visible: 
         )
         .map_err(|e| format!("未找到副本类型: {}", e))?;
 
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = get_local_timestamp();
     let id = uuid::Uuid::new_v4().to_string();
 
     conn.execute(
@@ -2174,6 +2323,53 @@ pub fn db_save_role_visibility(role_id: String, instance_type: String, visible: 
         params![id, role_id, instance_type_id, visible as i32, &timestamp],
     )
     .map_err(|e| format!("保存可见性失败: {}", e))?;
+
+    Ok(())
+}
+
+// ========== 团队副本角色可见性配置 (V6+) ==========
+
+/// 获取指定副本的所有角色可见性配置
+#[allow(non_snake_case)]
+#[tauri::command]
+pub fn db_get_raid_role_visibility(raid_key: String) -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    let visibility: Vec<serde_json::Value> = conn
+        .prepare(
+            "SELECT role_id, visible FROM raid_role_visibility WHERE raid_key = ?1",
+        )
+        .map_err(|e| e.to_string())?
+        .query_map(params![raid_key], |row| {
+            Ok(serde_json::json!({
+                "roleId": row.get::<_, String>(0)?,
+                "visible": row.get::<_, i32>(1)? == 1
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    serde_json::to_string(&visibility).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// 保存团队副本中单个角色的可见性配置
+#[allow(non_snake_case)]
+#[tauri::command]
+pub fn db_save_raid_role_visibility(roleId: String, raidKey: String, visible: bool) -> Result<(), String> {
+    let conn = init_db().map_err(|e| format!("初始化数据库失败: {}", e))?;
+
+    let timestamp = get_local_timestamp();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    conn.execute(
+        "INSERT INTO raid_role_visibility (id, role_id, raid_key, visible, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+         ON CONFLICT(role_id, raid_key)
+         DO UPDATE SET visible = ?4, updated_at = ?5",
+        params![&id, &roleId, &raidKey, visible as i32, &timestamp],
+    )
+    .map_err(|e| format!("保存团队副本角色可见性失败: {}", e))?;
 
     Ok(())
 }
