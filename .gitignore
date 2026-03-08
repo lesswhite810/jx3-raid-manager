@@ -44,3 +44,13 @@ cline/
 # Test screenshots and outputs
 test-screenshots/
 
+# Temporary files
+*.tmp
+*.bak
+*.orig
+temp*.json
+debug_*.js
+
+# Design system outputs
+design_system_output.txt
+
