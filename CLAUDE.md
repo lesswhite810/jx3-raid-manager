@@ -42,5 +42,7 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
 
    ---
 
-   **完整更新日志**: https://github.com/lesswhite810/jx3-raid-manager/compare/v旧版本...v新版本
+   **完整更新日志**: https://github.com/lesswhite810/jx3-raid-manager/compare/{上一个版本}...{当前版本}
    ```
+
+   示例：`compare/v2.1.2...v2.1.3`
