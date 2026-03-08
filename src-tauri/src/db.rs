@@ -108,8 +108,15 @@ pub fn init_db() -> Result<Connection, String> {
         // 执行所有迁移（V1 到当前版本）
         for version in 1..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
-            migration::apply_migration(&conn, version)?;
+            // 使用事务包装迁移，大幅提升性能
+            conn.execute("BEGIN TRANSACTION", []).map_err(|e| e.to_string())?;
+            let result = migration::apply_migration(&conn, version);
+            if let Err(e) = result {
+                conn.execute("ROLLBACK", []).ok();
+                return Err(e);
+            }
             set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
+            conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
             log::info!("迁移 V{} 完成", version);
         }
 
@@ -129,8 +136,15 @@ pub fn init_db() -> Result<Connection, String> {
         // 执行增量迁移
         for version in (current_version + 1)..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
-            migration::apply_migration(&conn, version)?;
+            // 使用事务包装迁移，大幅提升性能
+            conn.execute("BEGIN TRANSACTION", []).map_err(|e| e.to_string())?;
+            let result = migration::apply_migration(&conn, version);
+            if let Err(e) = result {
+                conn.execute("ROLLBACK", []).ok();
+                return Err(e);
+            }
             set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
+            conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
             log::info!("迁移 V{} 完成", version);
         }
 
