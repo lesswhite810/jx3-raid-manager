@@ -85,19 +85,13 @@ fn migrate_raids_table(conn: &Connection) -> Result<(), String> {
 
     for (old_id, name) in raids {
         if name == "弓月城" {
+            let new_id = old_id.replace("弓月城", "会战弓月城");
+            let new_name = name.replace("弓月城", "会战弓月城");
             conn.execute(
-                "UPDATE raids SET name = '会战弓月城' WHERE id = ?1",
-                params![&old_id],
+                "UPDATE raids SET id = ?1, name = ?3 WHERE id = ?2",
+                params![&new_id, &old_id, &new_name],
             ).map_err(error_to_string)?;
             name_updated += 1;
-        }
-
-        if old_id.contains("弓月城") {
-            let new_id = old_id.replace("弓月城", "会战弓月城");
-            conn.execute(
-                "UPDATE raids SET id = ?1 WHERE id = ?2",
-                params![&new_id, &old_id],
-            ).map_err(error_to_string)?;
             id_updated += 1;
         }
     }

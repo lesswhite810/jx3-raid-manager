@@ -1109,8 +1109,79 @@ pub fn db_get_all_roles() -> Result<String, String> {
     serde_json::to_string(&roles).map_err(|e| e.to_string())
 }
 
+struct RoleJoinRow {
+    role_id: String,
+    account_id: Option<String>,
+    name: Option<String>,
+    server: Option<String>,
+    region: Option<String>,
+    sect: Option<String>,
+    equipment_score: Option<i64>,
+    disabled: bool,
+}
+
+struct AccountJoinRow {
+    account_id: String,
+    account_name: String,
+    account_type: String,
+    password: Option<String>,
+    notes: Option<String>,
+    hidden: bool,
+    disabled: bool,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    role: Option<RoleJoinRow>,
+}
+
+fn upsert_account_from_join_row(
+    account_map: &mut std::collections::HashMap<String, serde_json::Value>,
+    row: AccountJoinRow,
+    vis_map: &std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    default_vis_map: &serde_json::Map<String, serde_json::Value>,
+) {
+    let account_id = row.account_id.clone();
+
+    if !account_map.contains_key(&account_id) {
+        let account = serde_json::json!({
+            "id": &account_id,
+            "accountName": row.account_name,
+            "type": row.account_type,
+            "password": row.password,
+            "notes": row.notes,
+            "hidden": row.hidden,
+            "disabled": row.disabled,
+            "createdAt": row.created_at,
+            "updatedAt": row.updated_at,
+            "roles": Vec::<serde_json::Value>::new(),
+        });
+        account_map.insert(account_id.clone(), account);
+    }
+
+    if let Some(role) = row.role {
+        let visibility = vis_map
+            .get(&role.role_id)
+            .cloned()
+            .unwrap_or_else(|| default_vis_map.clone());
+        let role_json = serde_json::json!({
+            "id": role.role_id,
+            "account_id": role.account_id,
+            "name": role.name,
+            "server": role.server,
+            "region": role.region,
+            "sect": role.sect,
+            "equipmentScore": role.equipment_score,
+            "disabled": role.disabled,
+            "visibility": visibility,
+        });
+        if let Some(account) = account_map.get_mut(&account_id) {
+            let roles = account["roles"].as_array_mut().unwrap();
+            roles.push(role_json);
+        }
+    }
+}
 #[tauri::command]
 pub fn db_get_accounts_with_roles() -> Result<String, String> {
+    log::info!("[db_get_accounts_with_roles] 开始查询账号...");
     let conn = init_db().map_err(|e| e.to_string())?;
 
     // ==== 获取所有角色的可见性配置 ====
@@ -1169,31 +1240,25 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
     let mut account_map: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
 
-    // 定义一个结构体来保存每行的所有数据
-    struct RowData {
-        account_id: String,
-        account_name: String,
-        account_type: String,
-        password: Option<String>,
-        notes: Option<String>,
-        hidden: bool,
-        disabled: bool,
-        created_at: Option<String>,
-        updated_at: Option<String>,
-        role_id: Option<String>,
-        role_account_id: Option<String>,
-        role_name: Option<String>,
-        role_server: Option<String>,
-        role_region: Option<String>,
-        role_sect: Option<String>,
-        role_equipment_score: Option<i64>,
-        role_disabled: Option<bool>,
-    }
-
     let rows = stmt
         .query_map([], |row| {
             let role_id: Option<String> = row.get(9)?;
-            Ok(RowData {
+            let role = if let Some(role_id) = role_id {
+                Some(RoleJoinRow {
+                    role_id,
+                    account_id: row.get(10)?,
+                    name: row.get(11)?,
+                    server: row.get(12)?,
+                    region: row.get(13)?,
+                    sect: row.get(14)?,
+                    equipment_score: row.get(15)?,
+                    disabled: row.get::<_, i32>(16)? != 0,
+                })
+            } else {
+                None
+            };
+
+            Ok(AccountJoinRow {
                 account_id: row.get(0)?,
                 account_name: row.get(1)?,
                 account_type: row.get(2)?,
@@ -1203,61 +1268,15 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
                 disabled: row.get::<_, i32>(6)? != 0,
                 created_at: row.get(7)?,
                 updated_at: row.get(8)?,
-                role_id: role_id.clone(),
-                role_account_id: row.get(10)?,
-                role_name: row.get(11)?,
-                role_server: row.get(12)?,
-                role_region: row.get(13)?,
-                role_sect: row.get(14)?,
-                role_equipment_score: row.get(15)?,
-                role_disabled: Some(row.get::<_, i32>(16)? != 0),
+                role,
             })
         })
         .map_err(|e| e.to_string())?;
 
     for row_result in rows {
         let row = row_result.map_err(|e| e.to_string())?;
-
-        let account_id = row.account_id;
-
-        // 如果账号尚未在 map 中，创建它
-        if !account_map.contains_key(&account_id) {
-            let account = serde_json::json!({
-                "id": &account_id,
-                "accountName": row.account_name,
-                "type": row.account_type,
-                "password": row.password,
-                "notes": row.notes,
-                "hidden": row.hidden,
-                "disabled": row.disabled,
-                "createdAt": row.created_at,
-                "updatedAt": row.updated_at,
-                "roles": Vec::<serde_json::Value>::new(),
-            });
-            account_map.insert(account_id.clone(), account);
-        }
-
-        // 如果有角色，添加到账号的 roles 数组中
-        if let Some(r_id) = &row.role_id {
-            let visibility = vis_map.get(r_id).cloned().unwrap_or_else(|| default_vis_map.clone());
-            let role = serde_json::json!({
-                "id": r_id,
-                "account_id": row.role_account_id,
-                "name": row.role_name,
-                "server": row.role_server,
-                "region": row.role_region,
-                "sect": row.role_sect,
-                "equipmentScore": row.role_equipment_score,
-                "disabled": row.role_disabled,
-                "visibility": visibility,
-            });
-            if let Some(account) = account_map.get_mut(&account_id) {
-                let roles = account["roles"].as_array_mut().unwrap();
-                roles.push(role);
-            }
-        }
+        upsert_account_from_join_row(&mut account_map, row, &vis_map, &default_vis_map);
     }
-
     // 返回账号数组
     let mut accounts: Vec<serde_json::Value> = account_map.into_values().collect();
     // 按 accountName 排序
@@ -1268,6 +1287,7 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
             .cmp(b["accountName"].as_str().unwrap_or(""))
     });
 
+    log::info!("[db_get_accounts_with_roles] 查询完成，返回 {} 个账号", accounts.len());
     serde_json::to_string(&accounts).map_err(|e| e.to_string())
 }
 
@@ -1360,25 +1380,52 @@ pub fn db_save_account_structured(account_json: String) -> Result<(), String> {
     let hidden = account["hidden"].as_bool().unwrap_or(false) as i32;
     let disabled = account["disabled"].as_bool().unwrap_or(false) as i32;
 
-    // Use Option<String> directly with rusqlite params
+    // 检查是否为新建账号
+    let is_new_account: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE id = ?",
+            params![id],
+            |row| {
+                let count: i32 = row.get(0)?;
+                Ok(count == 0)
+            },
+        )
+        .unwrap_or(true);
+
     // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
-    conn.execute(
-        "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-            account_name = excluded.account_name,
-            account_type = excluded.account_type,
-            password = excluded.password,
-            notes = excluded.notes,
-            hidden = excluded.hidden,
-            disabled = excluded.disabled,
-            updated_at = excluded.updated_at",
-        params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
-    ).map_err(|e| e.to_string())?;
+    // 新建账号时设置 created_at，更新时只更新 updated_at
+    if is_new_account {
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                account_name = excluded.account_name,
+                account_type = excluded.account_type,
+                password = excluded.password,
+                notes = excluded.notes,
+                hidden = excluded.hidden,
+                disabled = excluded.disabled,
+                updated_at = excluded.updated_at",
+            params![id, account_name, account_type, password, notes, hidden, disabled, timestamp, timestamp],
+        ).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                account_name = excluded.account_name,
+                account_type = excluded.account_type,
+                password = excluded.password,
+                notes = excluded.notes,
+                hidden = excluded.hidden,
+                disabled = excluded.disabled,
+                updated_at = excluded.updated_at",
+            params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
+        ).map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }
-
 #[tauri::command]
 pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
@@ -2386,4 +2433,82 @@ pub fn db_save_raid_role_visibility(roleId: String, raidKey: String, visible: bo
     .map_err(|e| format!("保存团队副本角色可见性失败: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_account_without_roles_as_empty_roles_array() {
+        let default_visibility = serde_json::Map::new();
+        let mut account_map = std::collections::HashMap::new();
+
+        upsert_account_from_join_row(
+            &mut account_map,
+            AccountJoinRow {
+                account_id: "account-1".to_string(),
+                account_name: "测试账号".to_string(),
+                account_type: "OWN".to_string(),
+                password: Some("secret".to_string()),
+                notes: Some("notes".to_string()),
+                hidden: false,
+                disabled: false,
+                created_at: None,
+                updated_at: None,
+                role: None,
+            },
+            &std::collections::HashMap::new(),
+            &default_visibility,
+        );
+
+        let account = account_map.get("account-1").expect("account should exist");
+        assert_eq!(account["id"], "account-1");
+        assert_eq!(account["accountName"], "测试账号");
+        assert_eq!(account["roles"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn appends_role_when_join_row_contains_role_data() {
+        let mut default_visibility = serde_json::Map::new();
+        default_visibility.insert("raid".to_string(), serde_json::json!(true));
+
+        let mut visibility = std::collections::HashMap::new();
+        let mut role_visibility = serde_json::Map::new();
+        role_visibility.insert("raid".to_string(), serde_json::json!(false));
+        visibility.insert("role-1".to_string(), role_visibility);
+
+        let mut account_map = std::collections::HashMap::new();
+        upsert_account_from_join_row(
+            &mut account_map,
+            AccountJoinRow {
+                account_id: "account-1".to_string(),
+                account_name: "测试账号".to_string(),
+                account_type: "OWN".to_string(),
+                password: None,
+                notes: None,
+                hidden: false,
+                disabled: false,
+                created_at: None,
+                updated_at: None,
+                role: Some(RoleJoinRow {
+                    role_id: "role-1".to_string(),
+                    account_id: Some("account-1".to_string()),
+                    name: Some("角色A".to_string()),
+                    server: Some("电一".to_string()),
+                    region: Some("梦江南".to_string()),
+                    sect: Some("太虚".to_string()),
+                    equipment_score: Some(123456),
+                    disabled: false,
+                }),
+            },
+            &visibility,
+            &default_visibility,
+        );
+
+        let account = account_map.get("account-1").expect("account should exist");
+        assert_eq!(account["roles"].as_array().map(|roles| roles.len()), Some(1));
+        assert_eq!(account["roles"][0]["id"], "role-1");
+        assert_eq!(account["roles"][0]["visibility"]["raid"], false);
+    }
 }
