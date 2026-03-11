@@ -1,4 +1,4 @@
-name: Release
+﻿name: Release
 
 on:
   push:
@@ -20,6 +20,27 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+
+      - name: Validate release versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          tauri_version="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
+          cargo_version="$(node -e "const fs=require('fs'); const text=fs.readFileSync('src-tauri/Cargo.toml','utf8'); const match=text.match(/^version\\s*=\\s*\"([^\"]+)\"/m); if(!match){throw new Error('Unable to read version from src-tauri/Cargo.toml')} process.stdout.write(match[1])")"
+
+          echo "Release version map:"
+          echo "  tag: ${tag_version}"
+          echo "  package.json: ${package_version}"
+          echo "  tauri.conf.json: ${tauri_version}"
+          echo "  Cargo.toml: ${cargo_version}"
+
+          if [[ "${tag_version}" != "${package_version}" || "${tag_version}" != "${tauri_version}" || "${tag_version}" != "${cargo_version}" ]]; then
+            echo "Release version mismatch. Sync the tag, package.json, src-tauri/tauri.conf.json, and src-tauri/Cargo.toml before publishing." >&2
+            exit 1
+          fi
 
       - name: Install dependencies
         working-directory: .
