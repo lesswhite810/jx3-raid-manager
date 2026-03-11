@@ -166,24 +166,56 @@ export interface GamePathValidationResult {
   };
 }
 
-const logValidationStep = (step: string, message: string, details?: any) => {
+const GAME_RUNTIME_SUFFIX = ['Game', 'JX3', 'bin', 'zhcn_hd'] as const;
+const GAME_RUNTIME_SUFFIX_PATH = 'Game\\JX3\\bin\\zhcn_hd';
+
+const trimTrailingPathSeparators = (targetPath: string): string =>
+  targetPath.replace(/[\\/]+$/gu, '');
+
+const splitWindowsPath = (targetPath: string): string[] =>
+  trimTrailingPathSeparators(targetPath).split(/[\\/]+/u).filter(Boolean);
+
+const buildWindowsPath = (segments: string[]): string => segments.join('\\');
+
+export const resolveGameRuntimeDirectory = (path: string): string => {
+  if (!path || typeof path !== 'string') {
+    return '';
+  }
+
+  const trimmedPath = trimTrailingPathSeparators(path.trim());
+  if (!trimmedPath) {
+    return '';
+  }
+
+  const pathSegments = splitWindowsPath(trimmedPath);
+  const seasunGameIndex = pathSegments.findIndex(segment => segment.toLowerCase() === 'seasungame');
+
+  if (seasunGameIndex === -1) {
+    return trimmedPath;
+  }
+
+  const baseSegments = pathSegments.slice(0, seasunGameIndex + 1);
+  return buildWindowsPath([...baseSegments, ...GAME_RUNTIME_SUFFIX]);
+};
+
+const logValidationStep = (step: string, message: string, details?: unknown) => {
   const timestamp = new Date().toISOString();
-  console.log(`[游戏目录校验][${timestamp}] ${step}: ${message}`, details ? JSON.stringify(details) : '');
+  console.log('[游戏目录校验][' + timestamp + '] ' + step + ': ' + message, details ? JSON.stringify(details) : '');
 };
 
 export const isValidGamePath = async (path: string): Promise<GamePathValidationResult> => {
   const checkTime = new Date().toISOString();
+  const runtimePath = resolveGameRuntimeDirectory(path);
 
-  logValidationStep('开始校验', '游戏目录校验流程启动', { path, checkTime });
+  logValidationStep('开始校验', '游戏目录校验流程启动', { path, runtimePath, checkTime });
 
-  if (!path || typeof path !== 'string') {
-    logValidationStep('基础校验', '路径为空或非字符串', { path });
+  if (!runtimePath) {
     return {
       isValid: false,
       message: '非剑网三目录',
       details: {
         checkedPath: path || '',
-        expectedStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
+        expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
         currentStructure: path || '',
         missingDirectories: ['SeasunGame'],
         checkTime
@@ -192,174 +224,54 @@ export const isValidGamePath = async (path: string): Promise<GamePathValidationR
   }
 
   const windowsPathRegex = /^[a-zA-Z]:\\|^\\\\|^\//;
-  const pathValid = windowsPathRegex.test(path);
-
-  logValidationStep('路径格式校验', pathValid ? '路径格式正确' : '路径格式无效', { path, regexMatch: pathValid });
-
-  if (!pathValid) {
+  if (!windowsPathRegex.test(runtimePath)) {
     return {
       isValid: false,
       message: '非剑网三目录',
       details: {
-        checkedPath: path,
-        expectedStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
-        currentStructure: path,
+        checkedPath: runtimePath,
+        expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
+        currentStructure: runtimePath,
         missingDirectories: ['SeasunGame'],
         checkTime
       }
     };
   }
 
-  logValidationStep('准备读取目录', '开始读取根目录内容', { path });
-
   try {
-    const entries = await readDir(path);
-    logValidationStep('读取目录成功', `成功读取目录，共 ${entries.length} 个条目`, { entryCount: entries.length });
+    const entries = await readDir(runtimePath);
+    const existingEntries = new Set(entries.map(entry => entry.name?.toLowerCase()).filter(Boolean));
+    const requiredEntries = ['userdata', 'interface'];
+    const missingDirectories = requiredEntries.filter(entry => !existingEntries.has(entry));
 
-    const seasunGameEntry = entries.find(entry =>
-      entry.name && entry.name.toLowerCase() === 'seasungame'
-    );
-
-    let seasunGamePath: string;
-
-    if (seasunGameEntry) {
-      logValidationStep('第一级校验', '在根目录下找到 SeasunGame 目录', {
-        seasunGamePath: seasunGameEntry.name,
-        isDirectory: !!seasunGameEntry.isDirectory
-      });
-      seasunGamePath = path.replace(/\\+$/, '') + '\\SeasunGame';
-    } else {
-      const pathParts = path.split('\\').filter(p => p);
-      const seasunGameIndex = pathParts.findIndex(p => p.toLowerCase() === 'seasungame');
-
-      if (seasunGameIndex === -1) {
-        logValidationStep('第一级校验', '路径中未找到 SeasunGame 目录', {
-          path,
-          pathParts: pathParts.slice(-5),
-          availableEntries: entries.map(e => e.name).slice(0, 10)
-        });
-
-        return {
-          isValid: false,
-          message: '非剑网三目录',
-          details: {
-            checkedPath: path,
-            expectedStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
-            currentStructure: path,
-            missingDirectories: ['SeasunGame'],
-            checkTime
-          }
-        };
-      }
-
-      const seasunGamePart = pathParts[seasunGameIndex];
-      seasunGamePath = pathParts.slice(0, seasunGameIndex + 1).join('\\');
-
-      logValidationStep('第一级校验', `在路径中找到 SeasunGame 目录`, {
-        seasunGamePath: seasunGamePart,
-        seasunGameFullPath: seasunGamePath,
-        index: seasunGameIndex
-      });
-    }
-
-    const expectedSuffix = '\\Game\\JX3\\bin\\zhcn_hd';
-    const fullPath = seasunGamePath + expectedSuffix;
-
-    logValidationStep('路径解析', '构造完整路径进行校验', {
-      seasunGamePath: seasunGamePath,
-      expectedSuffix: expectedSuffix,
-      fullPathToVerify: fullPath
-    });
-
-    const requiredDirs = ['Game', 'JX3', 'bin', 'zhcn_hd'];
-    const missingDirs: string[] = [];
-
-    logValidationStep('开始目录链校验', '验证目录链结构', {
-      startPath: seasunGamePath,
-      requiredDirs
-    });
-
-    let validatePath = seasunGamePath;
-
-    for (const dirName of requiredDirs) {
-      logValidationStep(`校验目录 [${dirName}]`, `正在验证 ${dirName} 目录是否存在`, {
-        parentPath: validatePath,
-        targetDir: dirName
-      });
-
-      try {
-        const currentEntries = await readDir(validatePath);
-        const targetEntry = currentEntries.find(entry =>
-          entry.name && entry.name.toLowerCase() === dirName.toLowerCase()
-        );
-
-        if (!targetEntry) {
-          missingDirs.push(dirName);
-          logValidationStep(`校验目录 [${dirName}]`, `未找到 ${dirName} 目录`, {
-            parentPath: validatePath,
-            availableEntries: currentEntries.map(e => e.name).slice(0, 10)
-          });
-          break;
-        }
-
-        logValidationStep(`校验目录 [${dirName}]`, `成功找到 ${dirName} 目录`, {
-          dirPath: validatePath + '\\' + dirName,
-          isDirectory: !!targetEntry.isDirectory
-        });
-
-        validatePath = validatePath + '\\' + dirName;
-      } catch (error) {
-        logValidationStep(`校验目录 [${dirName}]`, `读取目录失败`, {
-          parentPath: validatePath,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        missingDirs.push(dirName);
-        break;
-      }
-    }
-
-    if (missingDirs.length > 0) {
-      const expectedStructure = 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd';
-      const errorMessage = `目录结构不完整，请确保目录结构为 ${expectedStructure}`;
-
-      logValidationStep('校验失败', `目录结构缺失`, {
-        missingDirs,
-        expectedStructure,
-        fullExpectedPath: seasunGamePath + expectedSuffix
-      });
-
+    if (missingDirectories.length > 0) {
       return {
         isValid: false,
-        message: errorMessage,
+        message: '目录结构不完整，请确认目录可自动补全到 SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
         details: {
           checkedPath: path,
-          expectedStructure,
-          currentStructure: validatePath.replace(seasunGamePath + '\\', 'SeasunGame\\'),
-          missingDirectories: missingDirs,
+          expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
+          currentStructure: runtimePath,
+          missingDirectories,
           checkTime
         }
       };
     }
-
-    logValidationStep('校验成功', '所有目录结构验证通过', {
-      finalPath: validatePath,
-      structure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd'
-    });
 
     return {
       isValid: true,
       message: '游戏目录验证成功',
       details: {
         checkedPath: path,
-        expectedStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
-        currentStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
+        expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
+        currentStructure: runtimePath,
         missingDirectories: [],
         checkTime
       }
     };
   } catch (error) {
-    logValidationStep('读取目录异常', '读取根目录时发生错误', {
-      path,
+    logValidationStep('读取目录异常', '读取运行时目录时发生错误', {
+      runtimePath,
       error: error instanceof Error ? error.message : String(error)
     });
 
@@ -368,15 +280,14 @@ export const isValidGamePath = async (path: string): Promise<GamePathValidationR
       message: '非剑网三目录',
       details: {
         checkedPath: path,
-        expectedStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
-        currentStructure: path,
-        missingDirectories: ['SeasunGame'],
+        expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
+        currentStructure: runtimePath,
+        missingDirectories: ['userdata', 'interface'],
         checkTime
       }
     };
   }
 };
-
 export const isValidApiKey = (apiKey: string): boolean => {
   if (!apiKey || typeof apiKey !== 'string') {
     return false;

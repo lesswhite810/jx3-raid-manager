@@ -1,4 +1,5 @@
 import { readDir } from '@tauri-apps/plugin-fs';
+import { resolveGameRuntimeDirectory } from '../utils/configUtils';
 import { GkpFileInfo, parseGkpFileName } from './gkpDirectoryScanner';
 import { ParsedAccount } from './directoryParser';
 
@@ -27,6 +28,7 @@ const USERDATA_BASE_PATH = 'userdata';
 export async function scanGameDirectory(options: ScanOptions): Promise<GameDirectoryScanResult> {
   try {
     const { gameDirectory, onProgress, activeRoles } = options;
+    const runtimeGameDirectory = resolveGameRuntimeDirectory(gameDirectory);
 
     const accounts: ParsedAccount[] = [];
     const gkpFiles: GkpFileInfo[] = [];
@@ -36,7 +38,7 @@ export async function scanGameDirectory(options: ScanOptions): Promise<GameDirec
       onProgress({ current: 0, total: 2, message: '正在扫描账号信息...' });
     }
 
-    const accountsResult = await scanUserdataDirectory(gameDirectory);
+    const accountsResult = await scanUserdataDirectory(runtimeGameDirectory);
     if (accountsResult.success) {
       accounts.push(...accountsResult.accounts);
     } else {
@@ -48,7 +50,7 @@ export async function scanGameDirectory(options: ScanOptions): Promise<GameDirec
       onProgress({ current: 1, total: 2, message: '正在扫描GKP文件...' });
     }
 
-    const gkpResult = await scanGkpFilesDirectory(gameDirectory, activeRoles);
+    const gkpResult = await scanGkpFilesDirectory(runtimeGameDirectory, activeRoles);
     if (gkpResult.success) {
       gkpFiles.push(...gkpResult.files);
     } else {
@@ -252,17 +254,19 @@ async function scanGkpFilesDirectory(gameDirectory: string, activeRoles?: Array<
 }
 
 export async function validateGameDirectory(gameDirectory: string): Promise<boolean> {
-  if (!gameDirectory || typeof gameDirectory !== 'string') {
+  const runtimeGameDirectory = resolveGameRuntimeDirectory(gameDirectory);
+
+  if (!runtimeGameDirectory || typeof runtimeGameDirectory !== 'string') {
     return false;
   }
 
   const windowsPathRegex = /^[a-zA-Z]:\\|^\\\\|^\//;
-  if (!windowsPathRegex.test(gameDirectory)) {
+  if (!windowsPathRegex.test(runtimeGameDirectory)) {
     return false;
   }
 
   try {
-    const entries = await readDir(gameDirectory) as any[];
+    const entries = await readDir(runtimeGameDirectory) as any[];
 
     const hasValidStructure = entries.some((entry: any) => {
       const name = entry.name?.toLowerCase();

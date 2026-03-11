@@ -390,8 +390,9 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
                 value={config.game.gameDirectory}
                 onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
                 className="w-full px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
-                placeholder="输入剑网三游戏安装目录"
+                placeholder="输入剑网三安装目录，例如 E:\\Game\\SeasunGame"
               />
+              <p className="text-xs text-muted mt-2">支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd。</p>
               {pathValid === false && (
                 <div className="flex items-center gap-1.5 text-xs text-red-500 mt-2">
                   <AlertTriangle className="w-3.5 h-3.5" />

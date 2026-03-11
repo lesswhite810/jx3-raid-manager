@@ -1,4 +1,5 @@
 import { readDir } from '@tauri-apps/plugin-fs';
+import { resolveGameRuntimeDirectory } from '../utils/configUtils';
 
 export interface GkpFileInfo {
   filePath: string;
@@ -44,6 +45,7 @@ export function parseGkpFileName(fileName: string): Partial<GkpFileInfo> | null 
 export async function scanGkpDirectory(options: ScanOptions): Promise<ScanResult> {
   try {
     const { gameDirectory, activeRoles = [] } = options;
+    const runtimeGameDirectory = resolveGameRuntimeDirectory(gameDirectory);
     
     const logs: string[] = [];
     
@@ -73,14 +75,15 @@ export async function scanGkpDirectory(options: ScanOptions): Promise<ScanResult
     };
     
     addLog('INFO', '=== GKP扫描开始 ===');
-    addLog('DEBUG', `游戏目录: ${gameDirectory}`);
+    addLog('DEBUG', `配置目录: ${gameDirectory}`);
+    addLog('DEBUG', `运行时目录: ${runtimeGameDirectory}`);
     addLog('DEBUG', `角色列表 (activeRoles): ${JSON.stringify(activeRoles)}`);
     addLog('INFO', `角色数量: ${activeRoles.length}`);
     
     const files: GkpFileInfo[] = [];
     const errors: string[] = [];
 
-    const interfacePath = `${gameDirectory}\\interface\\my#data`;
+    const interfacePath = `${runtimeGameDirectory}\interface\my#data`;
     addLog('DEBUG', `扫描路径: ${interfacePath}`);
     
     try {

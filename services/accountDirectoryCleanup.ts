@@ -1,4 +1,5 @@
 import { Role } from '../types';
+import { resolveGameRuntimeDirectory } from '../utils/configUtils';
 import { db } from './db';
 
 export interface DeleteDirectoryResult {
@@ -27,7 +28,7 @@ const deleteLoggedDirectory = (path: string, targetType: string): Promise<Delete
 };
 
 export const buildAccountDirectoryPath = (gameDirectory: string, accountName: string): string => {
-  return joinWindowsPath(trimTrailingSeparators(gameDirectory), USERDATA_DIRECTORY, accountName);
+  return joinWindowsPath(trimTrailingSeparators(resolveGameRuntimeDirectory(gameDirectory)), USERDATA_DIRECTORY, accountName);
 };
 
 export const buildRoleDirectoryPath = (
@@ -36,7 +37,7 @@ export const buildRoleDirectoryPath = (
   role: RoleDirectoryTarget
 ): string => {
   return joinWindowsPath(
-    trimTrailingSeparators(gameDirectory),
+    trimTrailingSeparators(resolveGameRuntimeDirectory(gameDirectory)),
     USERDATA_DIRECTORY,
     accountName,
     role.region,
