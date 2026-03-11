@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { LayoutDashboard, Users, Download, Shield, Settings, Sun, Moon } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { Dashboard } from './components/Dashboard';
@@ -10,7 +10,6 @@ import { CrystalDetail } from './components/CrystalDetail';
 
 
 import { ToastContainer } from './components/ToastContainer';
-import { ConfigManager } from './components/ConfigManager';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
 import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
@@ -28,6 +27,8 @@ import { sortAccounts } from './utils/accountUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { syncEquipment } from './services/jx3BoxApi';
+
+const ConfigManager = lazy(async () => import('./components/ConfigManager').then(module => ({ default: module.ConfigManager })));
 
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
@@ -531,7 +532,9 @@ function App() {
               />
             )}
             {activeTab === 'config' && (
-              <ConfigManager key={`config-${contentKey}`} config={config} setConfig={setConfig} />
+              <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置模块..." />}>
+                <ConfigManager key={`config-${contentKey}`} config={config} setConfig={setConfig} />
+              </Suspense>
             )}
           </>
         )}

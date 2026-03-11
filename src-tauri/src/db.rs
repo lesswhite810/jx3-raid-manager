@@ -1,5 +1,5 @@
 use rusqlite::{params, Connection, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 mod migration;
 pub mod migrations;
@@ -32,6 +32,53 @@ pub fn get_app_dir() -> Result<PathBuf, String> {
 pub fn get_db_path() -> Result<PathBuf, String> {
     let app_dir = get_app_dir()?;
     Ok(app_dir.join(DATABASE_NAME))
+}
+
+#[derive(serde::Serialize)]
+pub struct DirectoryDeleteResult {
+    pub deleted: bool,
+    pub path: String,
+}
+
+fn format_directory_delete_message(target_type: &str, display_path: &str, deleted: bool) -> String {
+    if deleted {
+        format!("已删除{target_type}目录: {display_path}")
+    } else {
+        format!("未找到{target_type}目录，跳过删除: {display_path}")
+    }
+}
+
+#[tauri::command]
+pub fn db_delete_directory(path: String, target_type: String) -> Result<DirectoryDeleteResult, String> {
+    let target_path = PathBuf::from(path.trim());
+    let display_path = target_path.display().to_string();
+
+    if !target_path.exists() {
+        log::debug!("{}", format_directory_delete_message(&target_type, &display_path, false));
+        return Ok(DirectoryDeleteResult {
+            deleted: false,
+            path: display_path,
+        });
+    }
+
+    if !Path::new(&target_path).is_dir() {
+        let error_message = format!("目标路径不是目录: {display_path}");
+        log::error!("{}", error_message);
+        return Err(error_message);
+    }
+
+    std::fs::remove_dir_all(&target_path).map_err(|error| {
+        let error_message = format!("删除{target_type}目录失败: {display_path} ({error})");
+        log::error!("{}", error_message);
+        error_message
+    })?;
+
+    log::info!("{}", format_directory_delete_message(&target_type, &display_path, true));
+
+    Ok(DirectoryDeleteResult {
+        deleted: true,
+        path: display_path,
+    })
 }
 
 /// 初始化数据库（单例模式，只初始化一次）

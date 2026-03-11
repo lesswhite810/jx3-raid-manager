@@ -151,6 +151,15 @@ class DatabaseService {
     }
   }
 
+  async deleteDirectory(path: string, targetType: string): Promise<{ deleted: boolean; path: string }> {
+    try {
+      return await invoke<{ deleted: boolean; path: string }>('db_delete_directory', { path, targetType });
+    } catch (error) {
+      console.error('Failed to delete directory:', error);
+      throw error;
+    }
+  }
+
   async getRecords(): Promise<any[]> {
     await this.init();
     try {

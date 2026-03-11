@@ -10,6 +10,7 @@ import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
 import { db } from '../services/db';
+import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
 
 
 interface AccountManagerProps {
@@ -54,6 +55,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
   const [confirmDeleteRole, setConfirmDeleteRole] = useState<{ accountId: string; roleId: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [batchDeleteDirectoryChecked, setBatchDeleteDirectoryChecked] = useState(true);
+  const [accountDeleteDirectoryChecked, setAccountDeleteDirectoryChecked] = useState(true);
+  const [roleDeleteDirectoryChecked, setRoleDeleteDirectoryChecked] = useState(true);
 
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,9 +96,37 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setSearchTerm('');
   };
 
+  const pendingDeleteAccount = useMemo(() => {
+    if (!confirmDeleteAccountId) return null;
+    return safeAccounts.find(account => account.id === confirmDeleteAccountId) || null;
+  }, [confirmDeleteAccountId, safeAccounts]);
 
+  const pendingDeleteRole = useMemo(() => {
+    if (!confirmDeleteRole) return null;
 
-  // 打开修改角色信息弹窗
+    const account = safeAccounts.find(item => item.id === confirmDeleteRole.accountId);
+    if (!account) return null;
+
+    const role = account.roles.find(item => item.id === confirmDeleteRole.roleId);
+    if (!role) return null;
+
+    return { account, role };
+  }, [confirmDeleteRole, safeAccounts]);
+
+  const getConfiguredGameDirectory = (): string | null => {
+    const gameDirectory = config?.game?.gameDirectory?.trim();
+    if (!gameDirectory) {
+      toast.error('\u8bf7\u5148\u914d\u7f6e\u6e38\u620f\u76ee\u5f55');
+      return null;
+    }
+    return gameDirectory;
+  };
+
+  const getErrorMessage = (error: unknown): string => {
+    return error instanceof Error ? error.message : String(error);
+  };
+
+  // 编辑角色信息弹窗
   const [editRoleModal, setEditRoleModal] = useState<{
     open: boolean;
     accountId: string;
@@ -108,7 +141,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     equipmentScore?: string;
   }>({});
 
-  // 当accounts变化时，检查并清理重复账户
   React.useEffect(() => {
     if (safeAccounts.length > 0) {
       // 使用Map进行去重，保留第一个出现的账户
@@ -168,28 +200,54 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   // 批量删除功能 - 显示确认对话框
   const handleBatchDeleteClick = () => {
     if (selectedAccounts.size === 0) return;
+    setBatchDeleteDirectoryChecked(true);
     setShowBatchDeleteConfirm(true);
   };
 
-  // 批量删除确认 - 执行删除
-  const handleBatchDeleteConfirm = () => {
-    // 删除选中的账户
-    setAccounts(prev => prev.filter(account => !selectedAccounts.has(account.id)));
-    // 清空选中状态
-    setSelectedAccounts(new Set());
-    setIsAllSelected(false);
+  const handleBatchDeleteConfirm = async () => {
+    if (selectedAccounts.size === 0 || isDeleting) return;
 
-    // 显示成功消息
-    toast.success(`成功删除了 ${selectedAccounts.size} 个账号`);
-    setShowBatchDeleteConfirm(false);
+    const gameDirectory = batchDeleteDirectoryChecked ? getConfiguredGameDirectory() : null;
+    if (batchDeleteDirectoryChecked && !gameDirectory) return;
+
+    const selectedAccountIds = new Set(selectedAccounts);
+    const accountsToDelete = safeAccounts.filter(account => selectedAccountIds.has(account.id));
+    if (accountsToDelete.length === 0) {
+      setShowBatchDeleteConfirm(false);
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      if (gameDirectory) {
+        for (const account of accountsToDelete) {
+          await deleteAccountDirectory(gameDirectory, account.accountName);
+        }
+      }
+
+      setAccounts(prev => prev.filter(account => !selectedAccountIds.has(account.id)));
+      setSelectedAccounts(new Set());
+      setExpandedAccountIds(new Set());
+      setIsAllSelected(false);
+      setShowBatchDeleteConfirm(false);
+      toast.success(
+        batchDeleteDirectoryChecked
+          ? `\u6210\u529f\u5220\u9664 ${accountsToDelete.length} \u4e2a\u8d26\u53f7\u53ca\u5bf9\u5e94\u76ee\u5f55`
+          : `\u6210\u529f\u5220\u9664 ${accountsToDelete.length} \u4e2a\u8d26\u53f7`
+      );
+    } catch (error) {
+      console.error('Failed to delete account directory:', error);
+      toast.error(`\u76ee\u5f55\u5220\u9664\u5931\u8d25\uff0c\u672a\u5220\u9664\u8d26\u53f7: ${getErrorMessage(error)}`);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
-  // 批量删除取消 - 关闭对话框
   const handleBatchDeleteCancel = () => {
     setShowBatchDeleteConfirm(false);
+    setBatchDeleteDirectoryChecked(true);
   };
 
-  // 打开修改角色信息弹窗
   const handleOpenEditRoleModal = (accountId: string, role: Role) => {
     setEditRoleModal({
       open: true,
@@ -495,21 +553,47 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 显示删除账号确认对话框
   const handleDeleteAccountClick = (id: string) => {
+    setAccountDeleteDirectoryChecked(true);
     setConfirmDeleteAccountId(id);
   };
 
-  // 执行删除账号
-  const handleDeleteAccountConfirm = () => {
-    if (confirmDeleteAccountId) {
-      setAccounts(prev => prev.filter(a => a.id !== confirmDeleteAccountId));
+  const handleDeleteAccountConfirm = async () => {
+    if (!pendingDeleteAccount || isDeleting) return;
+
+    const gameDirectory = accountDeleteDirectoryChecked ? getConfiguredGameDirectory() : null;
+    if (accountDeleteDirectoryChecked && !gameDirectory) return;
+
+    setIsDeleting(true);
+    try {
+      if (gameDirectory) {
+        await deleteAccountDirectory(gameDirectory, pendingDeleteAccount.accountName);
+      }
+
+      setAccounts(prev => prev.filter(account => account.id !== pendingDeleteAccount.id));
+      setSelectedAccounts(prev => {
+        const next = new Set(prev);
+        next.delete(pendingDeleteAccount.id);
+        return next;
+      });
+      setExpandedAccountIds(prev => {
+        const next = new Set(prev);
+        next.delete(pendingDeleteAccount.id);
+        return next;
+      });
+      setIsAllSelected(false);
       setConfirmDeleteAccountId(null);
-      toast.success('成功删除账号');
+      toast.success(accountDeleteDirectoryChecked ? '\u6210\u529f\u5220\u9664\u8d26\u53f7\u53ca\u5bf9\u5e94\u76ee\u5f55' : '\u6210\u529f\u5220\u9664\u8d26\u53f7');
+    } catch (error) {
+      console.error('Failed to delete account directory:', error);
+      toast.error(`\u76ee\u5f55\u5220\u9664\u5931\u8d25\uff0c\u672a\u5220\u9664\u8d26\u53f7: ${getErrorMessage(error)}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  // 取消删除账号
   const handleDeleteAccountCancel = () => {
     setConfirmDeleteAccountId(null);
+    setAccountDeleteDirectoryChecked(true);
   };
 
   const togglePasswordVisibility = (id: string) => {
@@ -543,31 +627,45 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       });
   };
 
-  // 显示删除角色确认对话框
   const handleDeleteRoleClick = (accountId: string, roleId: string) => {
+    setRoleDeleteDirectoryChecked(true);
     setConfirmDeleteRole({ accountId, roleId });
   };
 
-  // 执行删除角色
-  const handleDeleteRoleConfirm = () => {
-    if (confirmDeleteRole) {
+  const handleDeleteRoleConfirm = async () => {
+    if (!pendingDeleteRole || isDeleting) return;
+
+    const gameDirectory = roleDeleteDirectoryChecked ? getConfiguredGameDirectory() : null;
+    if (roleDeleteDirectoryChecked && !gameDirectory) return;
+
+    setIsDeleting(true);
+    try {
+      if (gameDirectory) {
+        await deleteRoleDirectory(gameDirectory, pendingDeleteRole.account.accountName, pendingDeleteRole.role);
+      }
+
       setAccounts(prev => prev.map(account => {
-        if (account.id === confirmDeleteRole.accountId) {
+        if (account.id === pendingDeleteRole.account.id) {
           return {
             ...account,
-            roles: account.roles.filter(role => role.id !== confirmDeleteRole.roleId)
+            roles: account.roles.filter(role => role.id !== pendingDeleteRole.role.id)
           };
         }
         return account;
       }));
       setConfirmDeleteRole(null);
-      toast.success('成功删除角色');
+      toast.success(roleDeleteDirectoryChecked ? '\u6210\u529f\u5220\u9664\u89d2\u8272\u53ca\u5bf9\u5e94\u76ee\u5f55' : '\u6210\u529f\u5220\u9664\u89d2\u8272');
+    } catch (error) {
+      console.error('Failed to delete role directory:', error);
+      toast.error(`\u76ee\u5f55\u5220\u9664\u5931\u8d25\uff0c\u672a\u5220\u9664\u89d2\u8272: ${getErrorMessage(error)}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  // 取消删除角色
   const handleDeleteRoleCancel = () => {
     setConfirmDeleteRole(null);
+    setRoleDeleteDirectoryChecked(true);
   };
 
   return (
@@ -1023,20 +1121,33 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         showBatchDeleteConfirm && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
-              <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
-              <p className="text-slate-600 mb-6">确认删除选中的 {selectedAccounts.size} 个账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
+              <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
+              <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u9009\u4e2d\u7684 '}{selectedAccounts.size}{' \u4e2a\u8d26\u53f7\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
+              <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
+                <input
+                  type="checkbox"
+                  checked={batchDeleteDirectoryChecked}
+                  onChange={(event) => setBatchDeleteDirectoryChecked(event.target.checked)}
+                  disabled={isDeleting}
+                  className="mt-0.5 h-4 w-4 rounded border-base text-primary focus:ring-primary disabled:cursor-not-allowed"
+                />
+                <span>{'\u540c\u65f6\u5220\u9664\u5bf9\u5e94\u8d26\u53f7\u76ee\u5f55'}</span>
+              </label>
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleBatchDeleteCancel}
-                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  取消
+                  {'\u53d6\u6d88'}
                 </button>
                 <button
                   onClick={handleBatchDeleteConfirm}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  确定
+                  {isDeleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isDeleting ? '\u5220\u9664\u4e2d...' : '\u786e\u5b9a'}
                 </button>
               </div>
             </div>
@@ -1044,27 +1155,38 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         )
       }
 
-
-
       {/* Single Account Delete Confirmation Dialog */}
       {
-        confirmDeleteAccountId && (
+        pendingDeleteAccount && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
-              <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
-              <p className="text-slate-600 mb-6">确认删除此账号？关联的角色和副本记录不会被删除，但账号列表将不再显示。</p>
+              <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
+              <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u8d26\u53f7\u201c'}{pendingDeleteAccount.accountName}{'\u201d\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
+              <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
+                <input
+                  type="checkbox"
+                  checked={accountDeleteDirectoryChecked}
+                  onChange={(event) => setAccountDeleteDirectoryChecked(event.target.checked)}
+                  disabled={isDeleting}
+                  className="mt-0.5 h-4 w-4 rounded border-base text-primary focus:ring-primary disabled:cursor-not-allowed"
+                />
+                <span>{'\u540c\u65f6\u5220\u9664\u5bf9\u5e94\u8d26\u53f7\u76ee\u5f55'}</span>
+              </label>
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleDeleteAccountCancel}
-                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  取消
+                  {'\u53d6\u6d88'}
                 </button>
                 <button
                   onClick={handleDeleteAccountConfirm}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  确定
+                  {isDeleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isDeleting ? '\u5220\u9664\u4e2d...' : '\u786e\u5b9a'}
                 </button>
               </div>
             </div>
@@ -1074,23 +1196,36 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       {/* Single Role Delete Confirmation Dialog */}
       {
-        confirmDeleteRole && (
+        pendingDeleteRole && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
-              <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
-              <p className="text-slate-600 mb-6">确认删除此角色？</p>
+              <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
+              <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u89d2\u8272\u201c'}{pendingDeleteRole.role.name}{'\u201d\uff1f\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u526f\u672c\u8bb0\u5f55\u3002'}</p>
+              <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
+                <input
+                  type="checkbox"
+                  checked={roleDeleteDirectoryChecked}
+                  onChange={(event) => setRoleDeleteDirectoryChecked(event.target.checked)}
+                  disabled={isDeleting}
+                  className="mt-0.5 h-4 w-4 rounded border-base text-primary focus:ring-primary disabled:cursor-not-allowed"
+                />
+                <span>{'\u540c\u65f6\u5220\u9664\u5bf9\u5e94\u89d2\u8272\u76ee\u5f55'}</span>
+              </label>
               <div className="flex justify-end gap-3">
                 <button
                   onClick={handleDeleteRoleCancel}
-                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  取消
+                  {'\u53d6\u6d88'}
                 </button>
                 <button
                   onClick={handleDeleteRoleConfirm}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+                  disabled={isDeleting}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  确定
+                  {isDeleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isDeleting ? '\u5220\u9664\u4e2d...' : '\u786e\u5b9a'}
                 </button>
               </div>
             </div>

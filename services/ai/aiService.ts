@@ -6,7 +6,6 @@
 import { AIResponse, AIRequestParams, AIConnectionTestResult, AIServiceConfig } from './types';
 import { modelManager } from './modelManager';
 import { configManager } from './configManager';
-import { connectionTester } from './connectionTester';
 import { requestHandler } from './requestHandler';
 
 /**
@@ -102,6 +101,7 @@ export class AIService {
    * 测试当前模型的连通性
    */
   public async testConnection(): Promise<AIConnectionTestResult> {
+    const { connectionTester } = await import('./connectionTester');
     return connectionTester.testCurrentModel();
   }
 
