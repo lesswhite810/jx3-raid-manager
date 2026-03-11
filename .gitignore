@@ -53,4 +53,4 @@ debug_*.js
 
 # Design system outputs
 design_system_output.txt
-
+tmp/
