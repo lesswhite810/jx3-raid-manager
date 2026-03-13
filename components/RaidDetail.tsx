@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Account, Raid, RaidRecord, BossCooldownInfo } from '../types';
-import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check, Ban, Power } from 'lucide-react';
+import { Account, Raid, RaidRecord, BossCooldownInfo, AccountType } from '../types';
+import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check, Ban, Power, Search, X, FileText } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
@@ -9,6 +9,7 @@ import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, g
 import { db } from '../services/db';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
+import { filterRaidRoles, getClientAccountNote } from '../utils/raidRoleUtils';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -29,6 +30,8 @@ interface RoleWithStatus {
   equipmentScore?: number;
   accountId: string;
   accountName: string;
+  accountType: AccountType;
+  accountNote?: string;
   password?: string;
   canRun: boolean;
   canAddMore: boolean;
@@ -113,6 +116,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [roleSearchTerm, setRoleSearchTerm] = useState('');
 
   // 角色启用/禁用切换状态
   const [showDisabled, setShowDisabled] = useState(false);
@@ -259,6 +263,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       let region = '';
       let server = record.server || '未知服务器';
       let accountName = record.accountId || '未知账号';
+      let accountType = AccountType.OWN;
+      let accountNote: string | undefined;
       let password: string | undefined;
       let isClientAccount = false;
       let equipmentScore: number | undefined = undefined;
@@ -266,8 +272,10 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       safeAccounts.forEach(account => {
         if (account.id === record.accountId) {
           accountName = account.accountName;
+          accountType = account.type;
+          accountNote = getClientAccountNote(account.type, account.notes);
           password = account.password;
-          isClientAccount = account.type === 'CLIENT';
+          isClientAccount = account.type === AccountType.CLIENT;
           const role = account.roles?.find(r => r.id === record.roleId);
           if (role) {
             // 可见性过滤：raid 为 false 时跳过
@@ -320,6 +328,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         equipmentScore,
         accountId: record.accountId,
         accountName,
+        accountType,
+        accountNote,
         password,
         canRun: !cooldownInfo.hasRecordInCurrentCycle,
         canAddMore: cooldownInfo.canAdd,
@@ -369,7 +379,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         if (role.disabled) return;
         if (processedRoleIds.has(role.id)) return;
 
-        if (!shouldShowClientRoles && account.type === 'CLIENT') {
+        if (!shouldShowClientRoles && account.type === AccountType.CLIENT) {
           return;
         }
 
@@ -391,6 +401,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           equipmentScore: role.equipmentScore,
           accountId: account.id,
           accountName: account.accountName,
+          accountType: account.type,
+          accountNote: getClientAccountNote(account.type, account.notes),
           password: account.password,
           canRun: !cooldownInfo.hasRecordInCurrentCycle,
           canAddMore: cooldownInfo.canAdd,
@@ -453,12 +465,13 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
   // 根据启用/禁用状态过滤角色
   const filteredRoles = useMemo(() => {
-    return sortedRoles.filter(role => {
+    const searchedRoles = filterRaidRoles(sortedRoles, roleSearchTerm);
+
+    return searchedRoles.filter(role => {
       const isDisabled = roleVisibilityMap[role.id] === false;
-      // showDisabled 为 false 时显示启用的角色，为 true 时显示禁用的角色
       return showDisabled ? isDisabled : !isDisabled;
     });
-  }, [sortedRoles, roleVisibilityMap, showDisabled]);
+  }, [sortedRoles, roleVisibilityMap, showDisabled, roleSearchTerm]);
 
   // 统计启用和禁用的角色数量
   const enabledCount = useMemo(() => {
@@ -562,11 +575,34 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           </div>
         </div>
 
+        <div className="relative max-w-md">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            type="text"
+            value={roleSearchTerm}
+            onChange={(event) => setRoleSearchTerm(event.target.value)}
+            placeholder="搜索角色、区服、账号或代清备注"
+            className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-base bg-surface text-main text-sm focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
+          />
+          {roleSearchTerm && (
+            <button
+              type="button"
+              onClick={() => setRoleSearchTerm('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted hover:text-main hover:bg-base transition-colors"
+              title="清空搜索"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
 
         {/* Role Cards */}
         {filteredRoles.length === 0 ? (
           <div className="text-center py-8 text-muted bg-surface rounded-xl border border-base border-dashed">
-            {showDisabled
+            {roleSearchTerm
+              ? `没有找到与“${roleSearchTerm}”匹配的角色`
+              : showDisabled
               ? '没有禁用的角色'
               : sortedRoles.length === 0
                 ? '没有找到符合条件的角色，请先在账号管理中添加并启用角色'
@@ -739,6 +775,16 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         </button>
                       </div>
                     </div>
+
+                    {role.accountNote && (
+                      <div className="flex items-start gap-2">
+                        <div className="text-xs text-muted flex-shrink-0 pt-1">备注</div>
+                        <div className="flex items-start gap-1.5 flex-1 min-w-0 bg-emerald-50 border border-emerald-100 rounded px-2 py-1.5">
+                          <FileText className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                          <span className="text-xs text-emerald-800 break-all">{role.accountNote}</span>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex items-center gap-2">
                       <div className="text-xs text-muted flex-shrink-0">密码</div>

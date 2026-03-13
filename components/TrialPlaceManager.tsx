@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { TrialPlaceRecord, Account } from '../types';
-import { Trophy, Check, Copy, Target } from 'lucide-react';
+import { Trophy, Check, Copy, Target, Search, X } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
 import { getLastMonday } from '../utils/cooldownManager';
 import { db } from '../services/db';
 import { toast } from '../utils/toastManager';
+import { filterRaidRoles } from '../utils/raidRoleUtils';
 
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
@@ -21,6 +22,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     // Filter and flat map roles
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
+    const [roleSearchTerm, setRoleSearchTerm] = useState('');
 
     const allRoles = useMemo(() => {
         return accounts
@@ -105,6 +107,10 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         return sorted;
     }, [allRoles, roleStats]);
 
+    const filteredRoles = useMemo(() => {
+        return filterRaidRoles(sortedRoles, roleSearchTerm);
+    }, [sortedRoles, roleSearchTerm]);
+
     const handleOpenAddModal = (role?: any) => {
         setSelectedRole(role || null);
         setIsAdding(true);
@@ -166,13 +172,36 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     </h2>
                 </div>
 
-                {sortedRoles.length === 0 ? (
+                <div className="relative max-w-md">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                    <input
+                        type="text"
+                        value={roleSearchTerm}
+                        onChange={(event) => setRoleSearchTerm(event.target.value)}
+                        placeholder="搜索角色、区服或账号"
+                        className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-base bg-surface text-main text-sm focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
+                    />
+                    {roleSearchTerm && (
+                        <button
+                            type="button"
+                            onClick={() => setRoleSearchTerm('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted hover:text-main hover:bg-base transition-colors"
+                            title="清空搜索"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+
+                {filteredRoles.length === 0 ? (
                     <div className="text-center py-8 text-muted bg-surface rounded-xl border border-base border-dashed">
-                        请先在账号管理中添加并启用角色
+                        {roleSearchTerm
+                            ? `没有找到与“${roleSearchTerm}”匹配的角色`
+                            : '请先在账号管理中添加并启用角色'}
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {sortedRoles.map(role => {
+                        {filteredRoles.map(role => {
                             const stats = roleStats.get(role.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
 
                             // 三态：未清(0) / 部分清(1-2) / 完全清(3)
