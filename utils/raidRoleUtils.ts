@@ -10,6 +10,20 @@ export interface SearchableRaidRole {
   accountNote?: string;
 }
 
+export interface RaidClearStatsRole {
+  id: string;
+  canRun: boolean;
+  bossCooldowns?: Array<{
+    hasRecord: boolean;
+  }>;
+}
+
+export interface RaidClearStats {
+  noneClearedCount: number;
+  partialClearedCount: number;
+  completeClearedCount: number;
+}
+
 export const getClientAccountNote = (
   accountType: AccountType | string | undefined,
   note?: string
@@ -38,4 +52,42 @@ export const filterRaidRoles = <T extends SearchableRaidRole>(roles: T[], search
       role.accountNote
     ].some(field => field?.toLowerCase().includes(normalizedSearch));
   });
+};
+
+export const getRaidClearStats = <T extends RaidClearStatsRole>(
+  roles: T[],
+  roleVisibilityMap: Record<string, boolean>
+): RaidClearStats => {
+  const enabledRoles = roles.filter(role => roleVisibilityMap[role.id] !== false);
+
+  const noneClearedCount = enabledRoles.filter(role => {
+    if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
+      return role.canRun;
+    }
+
+    return role.bossCooldowns.filter(boss => boss.hasRecord).length === 0;
+  }).length;
+
+  const partialClearedCount = enabledRoles.filter(role => {
+    if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
+      return false;
+    }
+
+    const completedCount = role.bossCooldowns.filter(boss => boss.hasRecord).length;
+    return completedCount > 0 && completedCount < role.bossCooldowns.length;
+  }).length;
+
+  const completeClearedCount = enabledRoles.filter(role => {
+    if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
+      return !role.canRun;
+    }
+
+    return role.bossCooldowns.filter(boss => boss.hasRecord).length === role.bossCooldowns.length;
+  }).length;
+
+  return {
+    noneClearedCount,
+    partialClearedCount,
+    completeClearedCount
+  };
 };

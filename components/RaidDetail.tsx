@@ -9,7 +9,7 @@ import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, g
 import { db } from '../services/db';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
-import { filterRaidRoles, getClientAccountNote } from '../utils/raidRoleUtils';
+import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from '../utils/raidRoleUtils';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -483,21 +483,11 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   }, [sortedRoles, roleVisibilityMap]);
 
   // 计算三态统计：未清、部分清、完全清
-  const noneClearedCount = rolesWithStatus.filter(r => {
-    if (!r.bossCooldowns || r.bossCooldowns.length === 0) return r.canRun;
-    return r.bossCooldowns.filter(b => b.hasRecord).length === 0;
-  }).length;
-  const partialClearedCount = rolesWithStatus.filter(r => {
-    if (!r.bossCooldowns || r.bossCooldowns.length === 0) return false;
-    const completedCount = r.bossCooldowns.filter(b => b.hasRecord).length;
-    const totalCount = r.bossCooldowns.length;
-    return completedCount > 0 && completedCount < totalCount;
-  }).length;
-  const completeClearedCount = rolesWithStatus.filter(r => {
-    if (!r.bossCooldowns || r.bossCooldowns.length === 0) return !r.canRun;
-    const completedCount = r.bossCooldowns.filter(b => b.hasRecord).length;
-    return completedCount === r.bossCooldowns.length;
-  }).length;
+  const {
+    noneClearedCount,
+    partialClearedCount,
+    completeClearedCount
+  } = useMemo(() => getRaidClearStats(rolesWithStatus, roleVisibilityMap), [rolesWithStatus, roleVisibilityMap]);
 
   const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);

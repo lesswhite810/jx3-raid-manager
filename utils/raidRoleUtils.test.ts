@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AccountType } from '../types';
-import { filterRaidRoles, getClientAccountNote } from './raidRoleUtils';
+import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from './raidRoleUtils';
 
 describe('getClientAccountNote', () => {
   it('returns trimmed note for client accounts', () => {
@@ -53,5 +53,52 @@ describe('filterRaidRoles', () => {
   it('matches account name and sect case-insensitively', () => {
     expect(filterRaidRoles(roles, 'OWN-ACCOUNT')).toEqual([roles[1]]);
     expect(filterRaidRoles(roles, '花间')).toEqual([roles[1]]);
+  });
+});
+
+describe('getRaidClearStats', () => {
+  const roles = [
+    {
+      id: 'enabled-none',
+      canRun: true
+    },
+    {
+      id: 'enabled-partial',
+      canRun: true,
+      bossCooldowns: [
+        { hasRecord: true },
+        { hasRecord: false }
+      ]
+    },
+    {
+      id: 'enabled-complete',
+      canRun: false
+    },
+    {
+      id: 'disabled-complete',
+      canRun: false,
+      bossCooldowns: [
+        { hasRecord: true },
+        { hasRecord: true }
+      ]
+    }
+  ];
+
+  it('excludes disabled raid roles from clear-state counts', () => {
+    expect(getRaidClearStats(roles, {
+      'disabled-complete': false
+    })).toEqual({
+      noneClearedCount: 1,
+      partialClearedCount: 1,
+      completeClearedCount: 1
+    });
+  });
+
+  it('counts disabled roles again when they are enabled', () => {
+    expect(getRaidClearStats(roles, {})).toEqual({
+      noneClearedCount: 1,
+      partialClearedCount: 1,
+      completeClearedCount: 2
+    });
   });
 });
