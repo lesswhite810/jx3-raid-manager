@@ -31,6 +31,7 @@ import { syncEquipment } from './services/jx3BoxApi';
 const ConfigManager = lazy(async () => import('./components/ConfigManager').then(module => ({ default: module.ConfigManager })));
 
 function App() {
+  const [dashboardStatsPeriod, setDashboardStatsPeriod] = useState<'week' | 'month' | 'all'>('week');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
   const [showIncomeDetail, setShowIncomeDetail] = useState(false);
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);
@@ -487,6 +488,8 @@ function App() {
                   records={records}
                   baizhanRecords={baizhanRecords}
                   accounts={accounts}
+                  initialPeriod={dashboardStatsPeriod}
+                  onPeriodChange={setDashboardStatsPeriod}
                   onBack={() => setShowIncomeDetail(false)}
                   onDeleteRecord={handleDeleteRecord}
                   onEditRecord={setEditingRecord}
@@ -498,6 +501,8 @@ function App() {
                   records={records}
                   trialRecords={trialRecords}
                   accounts={accounts}
+                  initialPeriod={dashboardStatsPeriod}
+                  onPeriodChange={setDashboardStatsPeriod}
                   onBack={() => setShowCrystalDetail(false)}
                 />
               ) : (
@@ -507,6 +512,8 @@ function App() {
                   accounts={accounts}
                   baizhanRecords={baizhanRecords}
                   trialRecords={trialRecords}
+                  statsPeriod={dashboardStatsPeriod}
+                  onStatsPeriodChange={setDashboardStatsPeriod}
                   onShowIncomeDetail={() => setShowIncomeDetail(true)}
                   onShowCrystalDetail={() => setShowCrystalDetail(true)}
                 />

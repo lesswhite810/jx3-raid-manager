@@ -8,6 +8,8 @@ interface CrystalDetailProps {
   records: RaidRecord[];
   trialRecords: TrialPlaceRecord[];
   accounts: Account[];
+  initialPeriod: 'week' | 'month' | 'all';
+  onPeriodChange: (period: 'week' | 'month' | 'all') => void;
   onBack: () => void;
 }
 
@@ -19,16 +21,25 @@ interface CrystalRoleStats {
   records: { id: string; date: string | number; raidName: string; notes?: string; type: string; equip?: any }[];
 }
 
-export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialRecords, accounts, onBack }) => {
+export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialRecords, accounts, initialPeriod, onPeriodChange, onBack }) => {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
   const [equipments, setEquipments] = useState<any[]>([]);
-  const [statsPeriod, setStatsPeriod] = useState<'week' | 'month' | 'all'>('week');
+  const [statsPeriod, setStatsPeriod] = useState<'week' | 'month' | 'all'>(initialPeriod);
 
   useEffect(() => {
     db.getEquipments().then((data: any[]) => {
       setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d));
     }).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    setStatsPeriod(initialPeriod);
+  }, [initialPeriod]);
+
+  const handleStatsPeriodChange = (nextPeriod: 'week' | 'month' | 'all') => {
+    setStatsPeriod(nextPeriod);
+    onPeriodChange(nextPeriod);
+  };
 
   const findEquipmentById = (id: string | undefined) => {
     if (!id || !id.trim()) return null;
@@ -174,44 +185,46 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
   const totalRoles = roleStats.length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <button
-          onClick={onBack}
-          className="p-2 hover:bg-base rounded-lg transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5 text-muted" />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-2xl font-bold text-main">稀有掉落统计</h2>
-          <p className="text-sm text-muted mt-1">
-            {statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部'}共获取 {totalDrops} 次稀有掉落，来自 {totalRoles} 个角色
-          </p>
-        </div>
-        <div className="flex gap-1 bg-base p-1 rounded-lg">
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
           <button
-            onClick={() => setStatsPeriod('week')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
-              ? 'bg-primary text-white'
-              : 'text-muted hover:text-main'
+            onClick={onBack}
+            className="p-2 hover:bg-base rounded-lg transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-muted" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-main">稀有掉落统计</h2>
+            <p className="text-sm text-muted mt-1">
+              {statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部'}共获取 {totalDrops} 次稀有掉落，来自 {totalRoles} 个角色
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base w-fit">
+          <button
+            onClick={() => handleStatsPeriodChange('week')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
               }`}
           >
             本周
           </button>
           <button
-            onClick={() => setStatsPeriod('month')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
-              ? 'bg-primary text-white'
-              : 'text-muted hover:text-main'
+            onClick={() => handleStatsPeriodChange('month')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
               }`}
           >
             本月
           </button>
           <button
-            onClick={() => setStatsPeriod('all')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'
-              ? 'bg-primary text-white'
-              : 'text-muted hover:text-main'
+            onClick={() => handleStatsPeriodChange('all')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
               }`}
           >
             全部
@@ -220,17 +233,17 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gradient-to-br from-violet-50/50 to-amber-50/50 dark:from-violet-900/10 dark:to-amber-900/10 rounded-xl p-5 shadow-sm border border-violet-100/50 dark:border-violet-800/20">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <span className="text-violet-700 dark:text-violet-300 font-medium text-sm">玄晶总数</span>
+            <span className="text-muted font-medium text-sm">玄晶总数</span>
           </div>
-          <p className="text-3xl font-bold text-violet-900 dark:text-violet-100">{xuanjingTotal}</p>
+          <p className="text-3xl font-bold text-main">{xuanjingTotal}</p>
         </div>
-        <div className="bg-gradient-to-br from-emerald-50/50 to-teal-50/50 dark:from-emerald-900/10 dark:to-teal-900/10 rounded-xl p-5 shadow-sm border border-emerald-100/50 dark:border-emerald-800/20">
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <span className="text-emerald-700 dark:text-emerald-300 font-medium text-sm">试炼可交易装备数</span>
+            <span className="text-muted font-medium text-sm">可交易装备数</span>
           </div>
-          <p className="text-3xl font-bold text-emerald-900 dark:text-emerald-100">{equipTotal}</p>
+          <p className="text-3xl font-bold text-main">{equipTotal}</p>
         </div>
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">

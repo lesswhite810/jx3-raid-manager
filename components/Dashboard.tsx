@@ -10,12 +10,13 @@ interface DashboardProps {
   accounts: Account[];
   baizhanRecords: BaizhanRecord[];
   trialRecords: TrialPlaceRecord[];
+  statsPeriod: 'week' | 'month' | 'all';
+  onStatsPeriodChange: (period: 'week' | 'month' | 'all') => void;
   onShowIncomeDetail: () => void;
   onShowCrystalDetail: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhanRecords, trialRecords, onShowIncomeDetail, onShowCrystalDetail }) => {
-  const [statsPeriod, setStatsPeriod] = useState<'week' | 'month'>('week');
+export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhanRecords, trialRecords, statsPeriod, onStatsPeriodChange, onShowIncomeDetail, onShowCrystalDetail }) => {
   const [equipments, setEquipments] = useState<any[]>([]);
 
   React.useEffect(() => {
@@ -26,66 +27,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
 
   const findEquipmentById = React.useCallback((id: string | undefined) => {
     if (!id || !id.trim()) return null;
-    return equipments.find(e => e.ID?.toString() === id) || null;
+    return equipments.find((e: any) => e.ID?.toString() === id) || null;
   }, [equipments]);
 
   const safeRecords = Array.isArray(records) ? records : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
-  const filteredRecords = useMemo(() => {
-    const now = new Date();
-    let startOfPeriod: Date;
+  const getPeriodStartTime = React.useCallback((period: 'week' | 'month' | 'all') => {
+    if (period === 'all') return null;
 
-    if (statsPeriod === 'week') {
-      startOfPeriod = getLastMonday(now);
-    } else {
-      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
+    const now = new Date();
+    if (period === 'week') {
+      return getLastMonday(now).getTime();
     }
 
-    const startTime = startOfPeriod.getTime();
+    return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  }, []);
+
+  const periodStartTime = getPeriodStartTime(statsPeriod);
+  const periodLabel = statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部';
+
+  const filteredRecords = useMemo(() => {
     return safeRecords.filter(r => {
       const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
-      return recordTime >= startTime;
+      return periodStartTime === null ? true : recordTime >= periodStartTime;
     });
-  }, [safeRecords, statsPeriod]);
+  }, [safeRecords, periodStartTime]);
 
   const safeBaizhanRecords = Array.isArray(baizhanRecords) ? baizhanRecords : [];
 
   const filteredBaizhanRecords = useMemo(() => {
-    const now = new Date();
-    let startOfPeriod: Date;
-
-    if (statsPeriod === 'week') {
-      startOfPeriod = getLastMonday(now);
-    } else {
-      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
-
-    const startTime = startOfPeriod.getTime();
     return safeBaizhanRecords.filter(r => {
       const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
-      return recordTime >= startTime;
+      return periodStartTime === null ? true : recordTime >= periodStartTime;
     });
-  }, [safeBaizhanRecords, statsPeriod]);
+  }, [safeBaizhanRecords, periodStartTime]);
 
   const safeTrialRecords = Array.isArray(trialRecords) ? trialRecords : [];
 
   const filteredTrialRecords = useMemo(() => {
-    const now = new Date();
-    let startOfPeriod: Date;
-
-    if (statsPeriod === 'week') {
-      startOfPeriod = getLastMonday(now);
-    } else {
-      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
-
-    const startTime = startOfPeriod.getTime();
     return safeTrialRecords.filter(r => {
       const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
-      return recordTime >= startTime;
+      return periodStartTime === null ? true : recordTime >= periodStartTime;
     });
-  }, [safeTrialRecords, statsPeriod]);
+  }, [safeTrialRecords, periodStartTime]);
 
   const stats: DashboardStats = useMemo(() => {
     const totalRaidGold = filteredRecords.reduce((acc, r) => acc + r.goldIncome, 0);
@@ -237,7 +222,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
         <h2 className="text-2xl font-bold text-main">数据概览</h2>
         <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base">
           <button
-            onClick={() => setStatsPeriod('week')}
+            onClick={() => onStatsPeriodChange('week')}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
               ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
               : 'text-muted hover:text-main'
@@ -246,13 +231,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
             本周
           </button>
           <button
-            onClick={() => setStatsPeriod('month')}
+            onClick={() => onStatsPeriodChange('month')}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
               ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
               : 'text-muted hover:text-main'
               }`}
           >
             本月
+          </button>
+          <button
+            onClick={() => onStatsPeriodChange('all')}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
+              }`}
+          >
+            全部
           </button>
         </div>
       </div>
@@ -327,7 +321,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-main">收益概览</span>
             <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200 dark:border-slate-700/50">
-              <span className="text-xs">{statsPeriod === 'week' ? '本周' : '本月'}</span>
+              <span className="text-xs">{periodLabel}</span>
               <ArrowRight className="w-3 h-3 text-muted" />
             </div>
           </div>
@@ -374,7 +368,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-main">稀有掉落统计</span>
             <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200 dark:border-slate-700/50">
-              <span className="text-xs">详情</span>
+              <span className="text-xs">{periodLabel}</span>
               <ArrowRight className="w-3 h-3 text-muted" />
             </div>
           </div>
@@ -416,7 +410,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
       <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-main">副本收益分布</h3>
-          <span className="text-sm text-muted">{statsPeriod === 'week' ? '本周' : '本月'}数据</span>
+          <span className="text-sm text-muted">{periodLabel}数据</span>
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">

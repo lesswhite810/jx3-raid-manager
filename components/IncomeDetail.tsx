@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
 import { RaidRecord, Account, AccountType, Role, BaizhanRecord } from '../types';
 import { toast } from '../utils/toastManager';
@@ -8,6 +8,8 @@ interface IncomeDetailProps {
   records: RaidRecord[];
   baizhanRecords: BaizhanRecord[];
   accounts: Account[];
+  initialPeriod: 'week' | 'month' | 'all';
+  onPeriodChange: (period: 'week' | 'month' | 'all') => void;
   onBack: () => void;
   onDeleteRecord: (recordId: string, isBaizhan?: boolean, isTrial?: boolean) => void;
   onEditRecord: (record: RaidRecord) => void;
@@ -39,12 +41,21 @@ interface EnhancedRecord {
   isTrial?: boolean;
 }
 
-export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanRecords, accounts, onBack, onDeleteRecord, onEditRecord, onEditBaizhanRecord }) => {
-  const [period, setPeriod] = useState<'week' | 'month' | 'all'>('week');
+export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanRecords, accounts, initialPeriod, onPeriodChange, onBack, onDeleteRecord, onEditRecord, onEditBaizhanRecord }) => {
+  const [period, setPeriod] = useState<'week' | 'month' | 'all'>(initialPeriod);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'income' | 'expense'>('all');
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPeriod(initialPeriod);
+  }, [initialPeriod]);
+
+  const handlePeriodChange = (nextPeriod: 'week' | 'month' | 'all') => {
+    setPeriod(nextPeriod);
+    onPeriodChange(nextPeriod);
+  };
 
   const safeRecords = Array.isArray(records) ? records : [];
   const safeBaizhanRecords = Array.isArray(baizhanRecords) ? baizhanRecords : [];
@@ -206,44 +217,51 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-4">
-        <button
-          onClick={onBack}
-          className="p-2 hover:bg-base rounded-lg transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5 text-muted" />
-        </button>
-        <h2 className="text-2xl font-bold text-main">收支明细</h2>
-      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="p-2 hover:bg-base rounded-lg transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-muted" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-main">收益概览</h2>
+            <p className="text-sm text-muted mt-1">
+              {period === 'week' ? '本周' : period === 'month' ? '本月' : '全部'}共记录 {filteredRecords.length} 条收益与支出数据
+            </p>
+          </div>
+        </div>
 
-      <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base w-fit">
-        <button
-          onClick={() => setPeriod('week')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'week'
-            ? 'bg-primary text-white shadow-sm'
-            : 'text-muted hover:text-main hover:bg-base'
-            }`}
-        >
-          本周
-        </button>
-        <button
-          onClick={() => setPeriod('month')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'month'
-            ? 'bg-primary text-white shadow-sm'
-            : 'text-muted hover:text-main hover:bg-base'
-            }`}
-        >
-          本月
-        </button>
-        <button
-          onClick={() => setPeriod('all')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'all'
-            ? 'bg-primary text-white shadow-sm'
-            : 'text-muted hover:text-main hover:bg-base'
-            }`}
-        >
-          全部
-        </button>
+        <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base w-fit">
+          <button
+            onClick={() => handlePeriodChange('week')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'week'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
+              }`}
+          >
+            本周
+          </button>
+          <button
+            onClick={() => handlePeriodChange('month')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'month'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
+              }`}
+          >
+            本月
+          </button>
+          <button
+            onClick={() => handlePeriodChange('all')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'all'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-base'
+              }`}
+          >
+            全部
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -291,7 +309,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                 <Coins className="w-5 h-5 text-muted" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-main">收支记录</h3>
+                <h3 className="text-lg font-semibold text-main">收益记录</h3>
                 <p className="text-sm text-muted">{tabFilteredRecords.length} 条记录</p>
               </div>
             </div>
