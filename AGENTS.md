@@ -142,7 +142,7 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 
 - 正式 Release Notes 存放在 `release-notes/`。
 - Release Notes 必须站在用户角度书写，不要只写内部实现。
-- 至少包含：本次更新、修复的问题、安装包说明、必要时的额外说明。
+- Release Notes 只写两类信息：`新增需求`、`修复 bug`。没有对应内容的栏目不要写。
 - 错误发版必须明确告知用户“不要下载使用，请改用哪个版本”。
 
 ### 9.3 发布资产
@@ -167,5 +167,4 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 3. 发现乱码时，先区分“文件本体损坏”和“终端显示编码问题”。
 4. 涉及发布流程、Release Notes 、资产更新的操作，以 `docs/release-process.md` 为准。
 5. 如果修改了发布相关脚本或流程，同步更新 `AGENTS.md` 与 `docs/release-process.md`。
-
 
