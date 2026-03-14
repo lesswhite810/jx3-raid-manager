@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { TrialPlaceRecord } from '../types';
-import { X, Calendar, Trophy, Search, CheckCircle, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Calendar, Trophy, Search, CheckCircle, Circle, Trash2, AlertCircle, Loader2 } from 'lucide-react';
 import { db } from '../services/db';
 import { JX3Equip } from '../services/jx3BoxApi';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
+import { getTrialRecordEquipmentEntries } from '../utils/trialRecordUtils';
 
 interface RoleDisplayData {
     id: string;
@@ -37,6 +38,14 @@ const getFormattedAttributes = (item: JX3Equip) => {
     const attrs: { label: string; color?: string }[] = [];
     if (item.attributes && Array.isArray(item.attributes)) {
         item.attributes.forEach((attr: any) => {
+            if (attr.type === 'atSkillEventHandler') {
+                attrs.push({
+                    label: '特效',
+                    color: '#ffcc00'
+                });
+                return;
+            }
+
             let name = item.AttributeTypes?.[attr.type];
             if (!name && attr.label) {
                 name = attr.label.replace(/提高.*$/, '').replace(/[0-9]+$/, '');
@@ -227,48 +236,82 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                             <div className="text-xs">
                                                 {/* Dropped Equipment */}
                                                 {(() => {
-                                                    const equipId = (record as any)[`card${record.flippedIndex}`];
-                                                    const equip = findEquipmentById(equipId);
-                                                    if (!equip) return (
+                                                    const equipmentsToDisplay = getTrialRecordEquipmentEntries(record)
+                                                        .map(entry => ({
+                                                            ...entry,
+                                                            equip: findEquipmentById(entry.equipId)
+                                                        }))
+                                                        .filter((entry): entry is {
+                                                            cardIndex: number;
+                                                            equipId: string;
+                                                            isFlipped: boolean;
+                                                            equip: JX3Equip;
+                                                        } => Boolean(entry.equip));
+
+                                                    if (equipmentsToDisplay.length === 0) return (
                                                         <div className="flex items-center gap-2 text-muted px-3 py-2 bg-base/30 rounded-lg border border-base/50 italic">
                                                             未获得有效装备/物品
                                                         </div>
                                                     );
 
-                                                    const attrs = getFormattedAttributes(equip);
-                                                    const iconUrl = equip.IconID ? `https://icon.jx3box.com/icon/${equip.IconID}.png` : null;
-                                                    const bindLabel = getBindTypeLabel(equip.BindType);
-
                                                     return (
-                                                        <div className="w-full flex items-center gap-3 px-3 py-2 bg-base/50 rounded-lg border border-base/50">
-                                                            <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                                                            {iconUrl && (
-                                                                <div className="w-8 h-8 rounded border border-gray-600 bg-[#1a1a2e] overflow-hidden flex-shrink-0">
-                                                                    <img src={iconUrl} alt="" className="w-full h-full object-cover" />
-                                                                </div>
-                                                            )}
-                                                            <div className="flex flex-col min-w-0 flex-1">
-                                                                <span className="font-medium text-emerald-700 dark:text-emerald-400 truncate text-sm">
-                                                                    {equip.Name}
-                                                                </span>
-                                                                <div className="flex items-center gap-1.5 text-xs text-muted mb-0.5">
-                                                                    {bindLabel && <span className="text-amber-600">{bindLabel}</span>}
-                                                                    <span>品级 {equip.Level}</span>
-                                                                </div>
-                                                                {attrs.length > 0 && (
-                                                                    <div className="flex flex-wrap gap-1">
-                                                                        {attrs.slice(0, 4).map((a, i) => (
-                                                                            <span
-                                                                                key={i}
-                                                                                className="px-1.5 py-0.5 rounded bg-white/50 dark:bg-black/20 text-[10px] border border-black/5 dark:border-white/5"
-                                                                                style={a.color ? { color: a.color } : undefined}
-                                                                            >
-                                                                                {a.label}
-                                                                            </span>
-                                                                        ))}
+                                                        <div className="space-y-2">
+                                                            {equipmentsToDisplay.map(({ equip, cardIndex, isFlipped }, index) => {
+                                                                const attrs = getFormattedAttributes(equip);
+                                                                const iconUrl = equip.IconID ? `https://icon.jx3box.com/icon/${equip.IconID}.png` : null;
+                                                                const bindLabel = getBindTypeLabel(equip.BindType);
+
+                                                                return (
+                                                                    <div key={`${record.id}-${equip.ID || index}`} className="w-full flex items-center gap-3 px-3 py-2 bg-base/50 rounded-lg border border-base/50">
+                                                                        <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                                                                            {isFlipped ? (
+                                                                                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                                                            ) : (
+                                                                                <Circle className="w-4 h-4 text-slate-400" />
+                                                                            )}
+                                                                            <span className="text-[10px] text-muted whitespace-nowrap">卡{cardIndex}</span>
+                                                                        </div>
+                                                                        {iconUrl && (
+                                                                            <div className="w-8 h-8 rounded border border-gray-600 bg-[#1a1a2e] overflow-hidden flex-shrink-0">
+                                                                                <img src={iconUrl} alt="" className="w-full h-full object-cover" />
+                                                                            </div>
+                                                                        )}
+                                                                        <div className="flex flex-col min-w-0 flex-1">
+                                                                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                                                                <span className={`font-medium truncate text-sm ${isFlipped
+                                                                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                                                                    : 'text-main'
+                                                                                    }`}>
+                                                                                    {equip.Name}
+                                                                                </span>
+                                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] border ${isFlipped
+                                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800'
+                                                                                    : 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-700'
+                                                                                    }`}>
+                                                                                    {isFlipped ? '已翻到' : '未翻到'}
+                                                                                </span>
+                                                                            </div>
+                                                                            <div className="flex items-center gap-1.5 text-xs text-muted mb-0.5 flex-wrap">
+                                                                                {bindLabel && <span className="text-amber-600">{bindLabel}</span>}
+                                                                                <span>品级 {equip.Level}</span>
+                                                                            </div>
+                                                                            {attrs.length > 0 && (
+                                                                                <div className="flex flex-wrap gap-1">
+                                                                                    {attrs.map((a, i) => (
+                                                                                        <span
+                                                                                            key={i}
+                                                                                            className="px-1.5 py-0.5 rounded bg-white/50 dark:bg-black/20 text-[10px] border border-black/5 dark:border-white/5"
+                                                                                            style={a.color ? { color: a.color } : undefined}
+                                                                                        >
+                                                                                            {a.label}
+                                                                                        </span>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
-                                                                )}
-                                                            </div>
+                                                                );
+                                                            })}
                                                         </div>
                                                     );
                                                 })()}
