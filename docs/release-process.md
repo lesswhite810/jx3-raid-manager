@@ -41,6 +41,7 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - 安装版资产命名保持稳定，避免更新清单指向错误资源
 - 仓库 Secrets 同时配置了 `TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`
 - `latest.json` 中的下载地址、版本号、签名与本次 release 资产一致
+- Release 页面中，`latest.json` 标签应显示为“自动更新元数据”，`.sig` 标签应显示为“自动更新签名文件”
 
 ## Release Notes 存放位置
 

@@ -97,3 +97,18 @@ jobs:
             src-tauri/target/release/bundle/latest*.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update asset labels
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release upload "${GITHUB_REF_NAME}" \
+            "src-tauri/target/release/bundle/nsis/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe.sig#自动更新签名文件" \
+            --clobber
+
+          gh release upload "${GITHUB_REF_NAME}" \
+            "src-tauri/target/release/bundle/latest.json#自动更新元数据" \
+            --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
