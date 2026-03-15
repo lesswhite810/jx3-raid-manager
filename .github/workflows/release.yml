@@ -57,12 +57,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" || -z "${TAURI_PUBLIC_KEY:-}" ]]; then
-            echo "Missing TAURI_SIGNING_PRIVATE_KEY or TAURI_PUBLIC_KEY repository secret." >&2
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" || -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" || -z "${TAURI_PUBLIC_KEY:-}" ]]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, or TAURI_PUBLIC_KEY repository secret." >&2
             exit 1
           fi
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
           TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
 
       - name: Install Rust
@@ -75,6 +76,7 @@ jobs:
         run: npm run tauri build -- --config tmp/tauri.release.conf.json
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
           TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
 
       - name: Rename exe file

@@ -150,6 +150,7 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 - 推荐安装版资产使用 `JX3RaidManager_<version>_x64-setup.exe`。
 - 便携版资产使用 `JX3RaidManager_v<version>.exe`。
 - 发现历史 release 资产挂错时，先移除错资产，再在 notes 中给用户明确说明。
+- 自动更新发布依赖仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
 
 ## 10. 中文防乱码规则
 
@@ -167,4 +168,3 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 3. 发现乱码时，先区分“文件本体损坏”和“终端显示编码问题”。
 4. 涉及发布流程、Release Notes 、资产更新的操作，以 `docs/release-process.md` 为准。
 5. 如果修改了发布相关脚本或流程，同步更新 `AGENTS.md` 与 `docs/release-process.md`。
-
