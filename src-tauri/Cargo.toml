@@ -20,12 +20,14 @@ chrono = { version = "0.4", features = ["std"] }
 log = "0.4"
 tauri-plugin-log = { version = "2" }
 uuid = { version = "1", features = ["v4"] }
+url = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
 tauri-plugin-http = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-mcp-bridge = "0.9"
+tauri-plugin-updater = "2"
 
 [features]
 default = ["custom-protocol"]

@@ -2,11 +2,12 @@
 
 mod db;
 mod gkp_parser;
+mod updater;
 
 #[cfg(target_os = "windows")]
 fn check_webview2() -> Result<String, String> {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     // 检查注册表中的 WebView2 版本
@@ -107,6 +108,7 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(log_plugin);
 
     // MCP Bridge 插件仅在 debug 模式下启用
@@ -178,6 +180,9 @@ fn main() {
             // 团队副本角色可见性配置 (V6+)
             db::db_get_raid_role_visibility,
             db::db_save_raid_role_visibility,
+            updater::updater_get_runtime_info,
+            updater::updater_check,
+            updater::updater_download_and_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

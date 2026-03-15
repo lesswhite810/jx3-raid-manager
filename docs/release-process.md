@@ -34,6 +34,12 @@ node -e "console.log(require('fs').readFileSync('release-notes/v2.1.6.md', 'utf8
 
 GitHub Actions 已经会在发布前自动校验这 4 个版本。
 
+自动更新相关发布还要额外检查：
+
+- GitHub Actions 生成了 updater 产物
+- Release 中包含 `latest.json` 和对应签名文件
+- 安装版资产命名保持稳定，避免更新清单指向错误资源
+
 ## Release Notes 存放位置
 
 正式发布说明存放在仓库内：
@@ -91,6 +97,7 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 
 1. 先完成版本号同步。
 2. 本地执行 `npm run build` 或 `npm run tauri build`。
-3. 在 `release-notes/` 新增或更新对应版本说明。
-4. 用 `npm run release:notes -- <tag> <notes-file>` 更新 GitHub Release Notes。
-5. 最后用 GitHub API 或网页再次确认正文没有乱码。
+3. GitHub Actions 发版时会额外生成 updater 产物，本地 `tauri build` 不依赖这一步。
+4. 在 `release-notes/` 新增或更新对应版本说明。
+5. 用 `npm run release:notes -- <tag> <notes-file>` 更新 GitHub Release Notes。
+6. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 release 里已上传安装包、便携版、`latest.json` 与签名文件。

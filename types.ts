@@ -201,6 +201,46 @@ export interface ToastOptions {
   dismissible?: boolean;
 }
 
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'installing'
+  | 'upToDate'
+  | 'error'
+  | 'portableManualOnly';
+
+export interface UpdateRuntimeInfo {
+  currentVersion: string;
+  executablePath: string;
+  isPortable: boolean;
+  willInstallInPlace: boolean;
+  hasUninstallExecutable: boolean;
+  updaterConfigured: boolean;
+  releaseUrl: string;
+}
+
+export interface UpdateCheckResult {
+  currentVersion: string;
+  available: boolean;
+  version?: string;
+  body?: string;
+  pubDate?: string;
+  isPortable: boolean;
+  willInstallInPlace: boolean;
+  updaterConfigured: boolean;
+  releaseUrl: string;
+}
+
+export interface UpdateProgressPayload {
+  event: 'started' | 'progress' | 'finished';
+  contentLength?: number;
+  chunkLength?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+}
+
 // 百战记录类型
 export interface BaizhanRecord {
   id: string;

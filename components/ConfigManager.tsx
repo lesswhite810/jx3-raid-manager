@@ -4,8 +4,8 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Config } from '../types';
-import { Check, AlertTriangle, Save, FolderOpen, Settings, Network, Zap } from 'lucide-react';
+import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus } from '../types';
+import { Check, AlertTriangle, Save, FolderOpen, Settings, Network, Zap, Download, RefreshCw } from 'lucide-react';
 import {
   validateConfig,
   saveConfigToStorage,
@@ -16,9 +16,20 @@ import { aiService } from '../services/ai';
 interface ConfigManagerProps {
   config: Config;
   setConfig: React.Dispatch<React.SetStateAction<Config>>;
+  updateRuntimeInfo: UpdateRuntimeInfo | null;
+  updateStatus: UpdateStatus;
+  updateCheckResult: UpdateCheckResult | null;
+  onCheckForUpdates: () => Promise<void>;
 }
 
-export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig }) => {
+export const ConfigManager: React.FC<ConfigManagerProps> = ({
+  config,
+  setConfig,
+  updateRuntimeInfo,
+  updateStatus,
+  updateCheckResult,
+  onCheckForUpdates
+}) => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [pathValid, setPathValid] = useState<boolean | null>(null);
@@ -172,6 +183,27 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
 
   const selectedModel = getCurrentModel();
 
+  const getUpdateStatusText = () => {
+    switch (updateStatus) {
+      case 'checking':
+        return '正在检查更新';
+      case 'available':
+        return '发现新版本';
+      case 'downloading':
+        return '正在下载更新';
+      case 'installing':
+        return '正在安装更新';
+      case 'upToDate':
+        return '当前已是最新版本';
+      case 'portableManualOnly':
+        return '便携版需手动下载更新';
+      case 'error':
+        return '检查更新失败';
+      default:
+        return updateRuntimeInfo?.updaterConfigured ? '尚未检查更新' : '当前构建未启用自动更新';
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -198,6 +230,68 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({ config, setConfig 
           <p className="text-sm text-emerald-700 dark:text-emerald-300">配置保存成功！</p>
         </div>
       )}
+
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+              <Download className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-main">版本与更新</h3>
+              <p className="text-xs text-muted">安装版支持应用内更新，便携版仅提供下载提示</p>
+            </div>
+          </div>
+          <button
+            onClick={onCheckForUpdates}
+            disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
+            className="btn btn-secondary flex items-center gap-2 text-sm"
+          >
+            <RefreshCw className={`w-4 h-4 ${updateStatus === 'checking' ? 'animate-spin' : ''}`} />
+            {updateStatus === 'checking' ? '检查中...' : '检查更新'}
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            <label className="text-sm font-medium text-muted">当前版本</label>
+            <div className="col-span-2 text-sm text-main font-medium">
+              v{updateRuntimeInfo?.currentVersion ?? updateCheckResult?.currentVersion ?? '未知'}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            <label className="text-sm font-medium text-muted">运行形态</label>
+            <div className="col-span-2 text-sm text-main">
+              {updateRuntimeInfo?.isPortable ? '便携版' : '安装版'}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            <label className="text-sm font-medium text-muted">更新状态</label>
+            <div className="col-span-2 text-sm text-main">
+              {getUpdateStatusText()}
+            </div>
+          </div>
+
+          {updateCheckResult?.available && updateCheckResult.version && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+              <label className="text-sm font-medium text-muted pt-0.5">最新版本</label>
+              <div className="col-span-2">
+                <div className="text-sm font-medium text-main">v{updateCheckResult.version}</div>
+                {updateCheckResult.pubDate && (
+                  <p className="text-xs text-muted mt-1">发布时间：{new Date(updateCheckResult.pubDate).toLocaleString('zh-CN')}</p>
+                )}
+                <p className="text-xs text-muted mt-1">
+                  {updateCheckResult.isPortable
+                    ? '当前为便携版，检测到新版本后会跳转到 GitHub Release 下载页面。'
+                    : '确认更新后将下载安装包，并按当前安装路径执行升级。'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center gap-3 mb-6">

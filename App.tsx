@@ -7,13 +7,27 @@ import { AccountManager } from './components/AccountManager';
 import { RaidManager } from './components/RaidManager';
 
 import { CrystalDetail } from './components/CrystalDetail';
+import { UpdateDialog } from './components/UpdateDialog';
 
 
 import { ToastContainer } from './components/ToastContainer';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
 import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
-import { Account, RaidRecord, Raid, Config, TrialPlaceRecord, BaizhanRecord, InstanceType, RoleInstanceVisibility } from './types';
+import {
+  Account,
+  RaidRecord,
+  Raid,
+  Config,
+  TrialPlaceRecord,
+  BaizhanRecord,
+  InstanceType,
+  RoleInstanceVisibility,
+  UpdateCheckResult,
+  UpdateProgressPayload,
+  UpdateRuntimeInfo,
+  UpdateStatus
+} from './types';
 import {
   DEFAULT_CONFIG,
   loadConfigFromStorage,
@@ -27,6 +41,8 @@ import { sortAccounts } from './utils/accountUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { syncEquipment } from './services/jx3BoxApi';
+import { updaterService } from './services/updater';
+import { toast } from './utils/toastManager';
 
 const ConfigManager = lazy(async () => import('./components/ConfigManager').then(module => ({ default: module.ConfigManager })));
 
@@ -41,6 +57,7 @@ function App() {
   const [contentKey, setContentKey] = useState(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const previousTabRef = useRef<string>('dashboard');
+  const updaterInitializedRef = useRef(false);
 
   // 用于跟踪是否是初始加载，避免首次加载数据时触发保存
   const initialSaveSkipped = useRef({
@@ -61,6 +78,11 @@ function App() {
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
   const [editingBaizhanRecord, setEditingBaizhanRecord] = useState<BaizhanRecord | null>(null);
   const [instanceTypes, setInstanceTypes] = useState<InstanceType[]>([]);
+  const [updateRuntimeInfo, setUpdateRuntimeInfo] = useState<UpdateRuntimeInfo | null>(null);
+  const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResult | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgressPayload | null>(null);
 
   // 重新从数据库加载记录
   const reloadRecords = useCallback(async () => {
@@ -94,6 +116,85 @@ function App() {
       console.error('重新加载百战记录失败:', error);
     }
   }, []);
+
+  const applyUpdateCheckResult = useCallback((result: UpdateCheckResult, silent = false) => {
+    setUpdateCheckResult(result);
+    setUpdateProgress(null);
+
+    if (!result.updaterConfigured) {
+      setShowUpdateDialog(false);
+      setUpdateStatus('idle');
+      if (!silent) {
+        toast.warning('当前构建未启用自动更新');
+      }
+      return;
+    }
+
+    if (!result.available) {
+      setShowUpdateDialog(false);
+      setUpdateStatus('upToDate');
+      if (!silent) {
+        toast.success('当前已是最新版本');
+      }
+      return;
+    }
+
+    setUpdateStatus(result.isPortable ? 'portableManualOnly' : 'available');
+    setShowUpdateDialog(true);
+  }, []);
+
+  const handleCheckForUpdates = useCallback(async (silent = false) => {
+    try {
+      const runtimeInfo = await updaterService.getRuntimeInfo();
+      setUpdateRuntimeInfo(runtimeInfo);
+
+      if (!runtimeInfo.updaterConfigured) {
+        setUpdateStatus('idle');
+        if (!silent) {
+          toast.warning('当前构建未启用自动更新');
+        }
+        return;
+      }
+
+      setUpdateStatus('checking');
+      const result = await updaterService.check();
+      applyUpdateCheckResult(result, silent);
+    } catch (error) {
+      console.error('检查更新失败:', error);
+      setUpdateStatus('error');
+      if (!silent) {
+        toast.error('检查更新失败，请稍后重试');
+      }
+    }
+  }, [applyUpdateCheckResult]);
+
+  const handleStartUpdate = useCallback(async () => {
+    if (!updateCheckResult) {
+      return;
+    }
+
+    if (updateCheckResult.isPortable) {
+      await updaterService.openReleasePage(updateCheckResult.releaseUrl);
+      toast.info('已打开 GitHub Release 下载页');
+      setShowUpdateDialog(false);
+      return;
+    }
+
+    try {
+      setUpdateStatus('downloading');
+      setUpdateProgress(null);
+      await updaterService.downloadAndInstall(payload => {
+        setUpdateProgress(payload);
+        if (payload.event === 'finished') {
+          setUpdateStatus('installing');
+        }
+      });
+    } catch (error) {
+      console.error('下载安装更新失败:', error);
+      setUpdateStatus('error');
+      toast.error(error instanceof Error ? error.message : '下载安装更新失败');
+    }
+  }, [updateCheckResult]);
 
   useEffect(() => {
     const initApp = async () => {
@@ -216,6 +317,15 @@ function App() {
 
     initApp();
   }, []);
+
+  useEffect(() => {
+    if (!isInitialized || updaterInitializedRef.current) return;
+
+    updaterInitializedRef.current = true;
+    handleCheckForUpdates(true).catch(error => {
+      console.error('启动时检查更新失败:', error);
+    });
+  }, [isInitialized, handleCheckForUpdates]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -540,7 +650,15 @@ function App() {
             )}
             {activeTab === 'config' && (
               <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置模块..." />}>
-                <ConfigManager key={`config-${contentKey}`} config={config} setConfig={setConfig} />
+                <ConfigManager
+                  key={`config-${contentKey}`}
+                  config={config}
+                  setConfig={setConfig}
+                  updateRuntimeInfo={updateRuntimeInfo}
+                  updateStatus={updateStatus}
+                  updateCheckResult={updateCheckResult}
+                  onCheckForUpdates={() => handleCheckForUpdates(false)}
+                />
               </Suspense>
             )}
           </>
@@ -636,6 +754,21 @@ function App() {
           initialData={editingBaizhanRecord}
         />
       )}
+
+      <UpdateDialog
+        isOpen={showUpdateDialog}
+        updateInfo={updateCheckResult}
+        updateStatus={updateStatus}
+        downloadedBytes={updateProgress?.downloadedBytes ?? 0}
+        totalBytes={updateProgress?.totalBytes}
+        onClose={() => {
+          if (updateStatus === 'downloading' || updateStatus === 'installing') {
+            return;
+          }
+          setShowUpdateDialog(false);
+        }}
+        onConfirm={handleStartUpdate}
+      />
 
       {/* Toast Container */}
       <ToastContainer />
