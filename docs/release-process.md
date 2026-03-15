@@ -40,6 +40,7 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - Release 中包含 `latest.json` 和对应签名文件
 - 安装版资产命名保持稳定，避免更新清单指向错误资源
 - 仓库 Secrets 同时配置了 `TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`
+- `latest.json` 中的下载地址、版本号、签名与本次 release 资产一致
 
 ## Release Notes 存放位置
 
@@ -102,4 +103,5 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 4. 在 `release-notes/` 新增或更新对应版本说明。
 5. 用 `npm run release:notes -- <tag> <notes-file>` 更新 GitHub Release Notes。
 6. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
-7. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 release 里已上传安装包、便携版、`latest.json` 与签名文件。
+7. 确认 `scripts/build-updater-manifest.mjs` 生成的 `latest.json` 已上传到 release。
+8. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 release 里已上传安装包、便携版、`latest.json` 与签名文件。

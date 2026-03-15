@@ -151,6 +151,7 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 - 便携版资产使用 `JX3RaidManager_v<version>.exe`。
 - 发现历史 release 资产挂错时，先移除错资产，再在 notes 中给用户明确说明。
 - 自动更新发布依赖仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
+- 自动更新发布后要确认 release 中包含 `latest.json`，不要只检查安装包和 `.sig`。
 
 ## 10. 中文防乱码规则
 
