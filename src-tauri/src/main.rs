@@ -108,8 +108,17 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(log_plugin);
+
+    let builder = if option_env!("TAURI_PUBLIC_KEY")
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    };
 
     // MCP Bridge 插件仅在 debug 模式下启用
     #[cfg(debug_assertions)]
