@@ -592,7 +592,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                     )}
 
                     {/* Date Picker */}
-                    <div>
+                    <div className="relative z-50">
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">记录日期</label>
                         <div className="relative w-full">
                             <DateTimePicker

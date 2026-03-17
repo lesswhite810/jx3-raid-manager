@@ -1,5 +1,21 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { mockInvoke } from './mockInvoke';
 
+// 环境检测：如果没有注入 __TAURI_INTERNALS__ ，说明是在纯浏览器环境运行
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: any;
+  }
+}
+const isBrowserEnv = !window.__TAURI_INTERNALS__ && typeof window !== 'undefined';
+
+// 包装一个通用的 invoke 函数
+const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+  if (isBrowserEnv) {
+    return mockInvoke<T>(cmd, args);
+  }
+  return tauriInvoke<T>(cmd, args);
+};
 class DatabaseService {
   private initialized = false;
 
