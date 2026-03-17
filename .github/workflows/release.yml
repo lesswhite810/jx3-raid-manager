@@ -120,8 +120,8 @@ jobs:
           git remote remove gitee 2>/dev/null || true
           git remote add gitee "${GITEE_PUSH_URL}"
           git fetch origin master --tags
-          git push gitee refs/remotes/origin/master:refs/heads/master
-          git push gitee --tags
+          git push gitee refs/remotes/origin/master:refs/heads/master --force
+          git push gitee --tags --force
         env:
           GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}
 
