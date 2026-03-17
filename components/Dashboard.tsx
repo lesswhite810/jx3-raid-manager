@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+
 import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialPlaceRecord } from '../types';
 import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
 import { getLastMonday } from '../utils/cooldownManager';
+import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 
 interface DashboardProps {
   records: RaidRecord[];
@@ -14,9 +15,20 @@ interface DashboardProps {
   onStatsPeriodChange: (period: 'week' | 'month' | 'all') => void;
   onShowIncomeDetail: () => void;
   onShowCrystalDetail: () => void;
+  onShowTrialFlipDetail: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhanRecords, trialRecords, statsPeriod, onStatsPeriodChange, onShowIncomeDetail, onShowCrystalDetail }) => {
+export const Dashboard: React.FC<DashboardProps> = ({
+  records,
+  accounts,
+  baizhanRecords,
+  trialRecords,
+  statsPeriod,
+  onStatsPeriodChange,
+  onShowIncomeDetail,
+  onShowCrystalDetail,
+  onShowTrialFlipDetail
+}) => {
   const [equipments, setEquipments] = useState<any[]>([]);
 
   React.useEffect(() => {
@@ -64,6 +76,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
   }, [safeBaizhanRecords, periodStartTime]);
 
   const safeTrialRecords = Array.isArray(trialRecords) ? trialRecords : [];
+  const totalTrialFlipStats = useMemo(() => calculateTrialFlipStats(safeTrialRecords), [safeTrialRecords]);
+  const totalTradableEquipCount = useMemo(() => {
+    let count = 0;
+    safeTrialRecords.forEach(record => {
+      const equipId = (record as any)[`card${record.flippedIndex}`];
+      if (!equipId) {
+        return;
+      }
+      const equip = findEquipmentById(equipId);
+      if (equip && (equip.BindType === 1 || equip.BindType === 2)) {
+        count += 1;
+      }
+    });
+    return count;
+  }, [safeTrialRecords, findEquipmentById]);
 
   const filteredTrialRecords = useMemo(() => {
     return safeTrialRecords.filter(r => {
@@ -71,6 +98,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
       return periodStartTime === null ? true : recordTime >= periodStartTime;
     });
   }, [safeTrialRecords, periodStartTime]);
+
+  // 稀有掉落分类统计（基于筛选后的记录）
+  const rareDropStats = useMemo(() => {
+    const drops = {
+      xuanjing: 0,   // 玄晶
+      maju: 0,       // 马具
+      pet: 0,        // 宠物
+      pendant: 0,    // 挂件
+      mount: 0,      // 坐骑
+      appearance: 0, // 外观
+      title: 0,      // 称号
+      secretBook: 0, // 秘籍
+    };
+    filteredRecords.forEach(r => {
+      if (r.hasXuanjing) drops.xuanjing++;
+      if (r.hasMaJu) drops.maju++;
+      if (r.hasPet) drops.pet++;
+      if (r.hasPendant) drops.pendant++;
+      if (r.hasMount) drops.mount++;
+      if (r.hasAppearance) drops.appearance++;
+      if (r.hasTitle) drops.title++;
+      if (r.hasSecretBook) drops.secretBook++;
+    });
+    const total = drops.xuanjing + drops.maju + drops.pet + drops.pendant + drops.mount + drops.appearance + drops.title + drops.secretBook;
+    return { ...drops, total };
+  }, [filteredRecords]);
 
   const stats: DashboardStats = useMemo(() => {
     const totalRaidGold = filteredRecords.reduce((acc, r) => acc + r.goldIncome, 0);
@@ -112,16 +165,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
     };
   }, [filteredRecords, filteredBaizhanRecords, filteredTrialRecords, safeAccounts, findEquipmentById]);
 
-  const chartData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    filteredRecords.forEach(r => {
-      grouped[r.raidName] = (grouped[r.raidName] || 0) + r.goldIncome;
-    });
-    filteredBaizhanRecords.forEach(r => {
-      grouped['百战异闻录'] = (grouped['百战异闻录'] || 0) + r.goldIncome;
-    });
-    return Object.keys(grouped).map(k => ({ name: k, value: grouped[k] }));
-  }, [filteredRecords, filteredBaizhanRecords, filteredTrialRecords]);
+  const incomeBreakdown = useMemo(() => {
+    const raidGold = filteredRecords.reduce((acc, r) => acc + r.goldIncome, 0);
+    const baizhanGold = filteredBaizhanRecords.reduce((acc, r) => acc + r.goldIncome, 0);
+    return {
+      raidGold,
+      baizhanGold,
+      raidCount: filteredRecords.length,
+      baizhanCount: filteredBaizhanRecords.length
+    };
+  }, [filteredRecords, filteredBaizhanRecords]);
+
+
 
   const luckyRole = useMemo(() => {
     const roleMap = new Map<string, { roleName: string; server: string; totalGold: number; xuanjingCount: number }>();
@@ -313,148 +368,167 @@ export const Dashboard: React.FC<DashboardProps> = ({ records, accounts, baizhan
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div
-          onClick={onShowIncomeDetail}
-          className="bg-surface rounded-xl shadow-sm border border-base p-4 cursor-pointer transition-all hover:shadow-md"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-bold text-main">收益概览</span>
-            <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200 dark:border-slate-700/50">
-              <span className="text-xs">{periodLabel}</span>
-              <ArrowRight className="w-3 h-3 text-muted" />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {/* 总收益区块 - 柔和琥珀色 */}
-            <div className="flex-1 bg-gradient-to-br from-amber-50/50 to-orange-50/50 dark:from-amber-900/10 dark:to-orange-900/10 rounded-lg p-3 border border-amber-100/50 dark:border-amber-800/20">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-xs font-medium text-amber-700 dark:text-amber-300">本期总收入</span>
-              </div>
-              <p className="text-2xl font-bold text-amber-900 dark:text-amber-100">
-                {stats.totalGold.toLocaleString()}
-                <span className="text-xs font-normal text-amber-600/70 dark:text-amber-400/70 ml-1">金</span>
-              </p>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-[10px] text-amber-600/60 dark:text-amber-400/60">代清所得</span>
-                <span className="text-[10px] font-medium text-amber-700/80 dark:text-amber-300/80">{stats.clientIncome.toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* 通关统计区块 - 柔和靛蓝色 */}
-            <div className="flex-1 bg-gradient-to-br from-indigo-50/50 to-blue-50/50 dark:from-indigo-900/10 dark:to-blue-900/10 rounded-lg p-3 border border-indigo-100/50 dark:border-indigo-800/20">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">通关统计</span>
-              </div>
-              <p className="text-2xl font-bold text-indigo-900 dark:text-indigo-100">
-                {stats.totalRaids}
-                <span className="text-xs font-normal text-indigo-600/70 dark:text-indigo-400/70 ml-1">次</span>
-              </p>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60">活跃度</span>
-                <span className="text-[10px] font-medium text-indigo-700/80 dark:text-indigo-300/80">
-                  {stats.totalRaids >= 10 ? '活跃' : '普通'}
-                </span>
-              </div>
-            </div>
+      {/* 第一行：收益概览（全宽） */}
+      <div
+        onClick={onShowIncomeDetail}
+        className="cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-emerald-300 dark:hover:border-emerald-700"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm font-bold text-main">收益概览</span>
+          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-slate-600 dark:border-slate-700/50 dark:bg-slate-800 dark:text-slate-300">
+            <span className="text-xs">{periodLabel}</span>
+            <ArrowRight className="w-3 h-3 text-muted" />
           </div>
         </div>
 
-        <div
-          onClick={onShowCrystalDetail}
-          className="bg-surface rounded-xl shadow-sm border border-base p-4 cursor-pointer transition-all hover:shadow-md"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-bold text-main">稀有掉落统计</span>
-            <div className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200 dark:border-slate-700/50">
-              <span className="text-xs">{periodLabel}</span>
-              <ArrowRight className="w-3 h-3 text-muted" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {/* 总收入 */}
+          <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 p-3 dark:border-emerald-800/30 dark:bg-emerald-900/10">
+            <div className="text-xs font-medium text-emerald-700 dark:text-emerald-300">本期总收入</div>
+            <div className="mt-1.5 text-2xl font-bold text-emerald-700 dark:text-emerald-300">
+              {stats.totalGold.toLocaleString()}
+              <span className="ml-1 text-xs font-normal text-emerald-600/70 dark:text-emerald-400/70">金</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* 玄晶掉落区块 - 柔和紫金色 */}
-            <div className="flex-1 bg-gradient-to-br from-violet-50/50 to-amber-50/50 dark:from-violet-900/10 dark:to-amber-900/10 rounded-lg p-3 border border-violet-100/50 dark:border-violet-800/20">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-xs font-medium text-violet-700 dark:text-violet-300">玄晶获取</span>
-              </div>
-              <p className="text-2xl font-bold text-violet-900 dark:text-violet-100">
-                {stats.xuanjingCount}
-                <span className="text-xs font-normal text-violet-600/70 dark:text-violet-400/70 ml-1">次</span>
-              </p>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-[10px] text-violet-600/60 dark:text-violet-400/60">掉率</span>
-                <span className="text-[10px] font-medium text-violet-700/80 dark:text-violet-300/80">{stats.dropRate.toFixed(2)}%</span>
-              </div>
+          {/* 通关次数 */}
+          <div className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30">
+            <div className="text-xs font-medium text-muted">通关次数</div>
+            <div className="mt-1.5 text-2xl font-bold text-main">
+              {stats.totalRaids}
+              <span className="ml-1 text-xs font-normal text-muted">次</span>
             </div>
+          </div>
 
-            {/* 装备掉落区块 - 柔和翠绿色 */}
-            <div className="flex-1 bg-gradient-to-br from-emerald-50/50 to-teal-50/50 dark:from-emerald-900/10 dark:to-teal-900/10 rounded-lg p-3 border border-emerald-100/50 dark:border-emerald-800/20">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">可交易装备</span>
-              </div>
-              <p className="text-2xl font-bold text-emerald-900 dark:text-emerald-100">
-                {stats.equipCount}
-                <span className="text-xs font-normal text-emerald-600/70 dark:text-emerald-400/70 ml-1">件</span>
-              </p>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-[10px] text-emerald-600/60 dark:text-emerald-400/60">总计</span>
-                <span className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-300/80">试炼之地</span>
-              </div>
-            </div>
+          {/* 团队副本 / 百战收益明细 */}
+          <div className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30">
+            <div className="text-xs font-medium text-muted">团队副本</div>
+            <div className="mt-1.5 text-lg font-bold text-main">{incomeBreakdown.raidGold.toLocaleString()}<span className="ml-1 text-xs font-normal text-muted">金</span></div>
+            <div className="mt-1 text-xs text-muted">{incomeBreakdown.raidCount} 次通关</div>
+          </div>
+
+          <div className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30">
+            <div className="text-xs font-medium text-muted">百战异闻录</div>
+            <div className="mt-1.5 text-lg font-bold text-main">{incomeBreakdown.baizhanGold.toLocaleString()}<span className="ml-1 text-xs font-normal text-muted">金</span></div>
+            <div className="mt-1 text-xs text-muted">{incomeBreakdown.baizhanCount} 次通关</div>
           </div>
         </div>
       </div>
 
-      <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-main">副本收益分布</h3>
-          <span className="text-sm text-muted">{periodLabel}数据</span>
+      {/* 第二行：稀有掉落 + 试炼翻牌（并排等宽） */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* 稀有掉落统计 */}
+        <div
+          onClick={onShowCrystalDetail}
+          className="flex flex-col justify-between cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-violet-300 dark:hover:border-violet-700"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-bold text-main">稀有掉落统计</span>
+            <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-slate-600 dark:border-slate-700/50 dark:bg-slate-800 dark:text-slate-300">
+              <span className="text-xs">{periodLabel}</span>
+              <ArrowRight className="w-3 h-3 text-muted" />
+            </div>
+          </div>
+
+          {/* 主指标行 */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg border border-violet-200/60 bg-violet-50/60 px-2.5 py-2.5 dark:border-violet-800/30 dark:bg-violet-900/10">
+              <div className="text-[10px] text-violet-700 dark:text-violet-300">掉落总数</div>
+              <div className="mt-1.5 text-lg font-bold text-violet-700 dark:text-violet-300">{rareDropStats.total}</div>
+            </div>
+            <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
+              <div className="text-[10px] text-muted">玄晶</div>
+              <div className="mt-1.5 text-lg font-bold text-main">{rareDropStats.xuanjing}</div>
+            </div>
+            <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
+              <div className="text-[10px] text-muted">玄晶掉率</div>
+              <div className="mt-1.5 text-lg font-bold text-main">{stats.dropRate.toFixed(1)}%</div>
+            </div>
+          </div>
+
+          {/* 其他稀有掉落标签 */}
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {[
+              { label: '马具', count: rareDropStats.maju },
+              { label: '宠物', count: rareDropStats.pet },
+              { label: '挂件', count: rareDropStats.pendant },
+              { label: '坐骑', count: rareDropStats.mount },
+              { label: '外观', count: rareDropStats.appearance },
+              { label: '称号', count: rareDropStats.title },
+              { label: '秘籍', count: rareDropStats.secretBook },
+            ].map(item => (
+              <span
+                key={item.label}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] border ${
+                  item.count > 0
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30'
+                    : 'bg-slate-50 text-muted border-base dark:bg-slate-800/30'
+                }`}
+              >
+                {item.label}
+                <span className="font-semibold">{item.count}</span>
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
-              <XAxis
-                dataKey="name"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: 'rgb(var(--text-muted))' }}
-                interval={0}
-                angle={-20}
-                textAnchor="end"
-                height={50}
-              />
-              <YAxis
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: 'rgb(var(--text-muted))' }}
-                tickFormatter={(val) => val >= 10000 ? `${(val / 10000).toFixed(1)}w` : val}
-              />
-              <Tooltip
-                cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
-                contentStyle={{
-                  backgroundColor: 'rgb(var(--bg-surface))',
-                  borderColor: 'rgb(var(--border-base))',
-                  borderRadius: '0.5rem',
-                  boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                  color: 'rgb(var(--text-main))'
-                }}
-                itemStyle={{ color: 'rgb(var(--text-main))' }}
-                formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
-              />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
-                {chartData.map((_entry, index) => (
-                  <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${0.7 - index * 0.05})`} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+
+        {/* 试炼之地翻牌统计 */}
+        <div
+          onClick={onShowTrialFlipDetail}
+          className="flex flex-col justify-between cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-emerald-300 dark:hover:border-emerald-700"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-bold text-main">试炼之地翻牌</span>
+            <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-slate-600 dark:border-slate-700/50 dark:bg-slate-800 dark:text-slate-300">
+              <span className="text-xs">全部历史</span>
+              <ArrowRight className="w-3 h-3 text-muted" />
+            </div>
+          </div>
+
+          {/* 主指标行 */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
+              <div className="text-[10px] text-muted">总记录数</div>
+              <div className="mt-1.5 text-lg font-bold text-main">{totalTrialFlipStats.totalRecords}</div>
+            </div>
+            <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 px-2.5 py-2.5 dark:border-emerald-800/30 dark:bg-emerald-900/10">
+              <div className="text-[10px] text-emerald-700 dark:text-emerald-300">可交易装备</div>
+              <div className="mt-1.5 text-lg font-bold text-emerald-700 dark:text-emerald-300">{totalTradableEquipCount}</div>
+            </div>
+          </div>
+
+          {/* 翻牌分析 */}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
+              <div className="text-[10px] text-muted">装备率最高位</div>
+              <div className="mt-1 text-sm font-semibold text-main">
+                {totalTrialFlipStats.bestFlipPosition
+                  ? `${totalTrialFlipStats.bestFlipPosition.position}号位`
+                  : '-'}
+              </div>
+              <div className="mt-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                {totalTrialFlipStats.bestFlipPosition
+                  ? `${(totalTrialFlipStats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
+                  : '0%'}
+              </div>
+            </div>
+            <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
+              <div className="text-[10px] text-muted">出现率最高位</div>
+              <div className="mt-1 text-sm font-semibold text-main">
+                {totalTrialFlipStats.bestAppearancePosition
+                  ? `${totalTrialFlipStats.bestAppearancePosition.position}号位`
+                  : '-'}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted">
+                {totalTrialFlipStats.bestAppearancePosition
+                  ? `${(totalTrialFlipStats.bestAppearancePosition.appearanceRate * 100).toFixed(1)}%`
+                  : '0%'}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 };
+

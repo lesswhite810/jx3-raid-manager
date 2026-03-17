@@ -1,12 +1,10 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { RaidRecord, Account, TrialPlaceRecord } from '../types';
-import { db } from '../services/db';
+import { RaidRecord, Account } from '../types';
 import { getLastMonday } from '../utils/cooldownManager';
 
 interface CrystalDetailProps {
   records: RaidRecord[];
-  trialRecords: TrialPlaceRecord[];
   accounts: Account[];
   initialPeriod: 'week' | 'month' | 'all';
   onPeriodChange: (period: 'week' | 'month' | 'all') => void;
@@ -21,18 +19,10 @@ interface CrystalRoleStats {
   records: { id: string; date: string | number; raidName: string; notes?: string; type: string; equip?: any }[];
 }
 
-export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialRecords, accounts, initialPeriod, onPeriodChange, onBack }) => {
+export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts, initialPeriod, onPeriodChange, onBack }) => {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
-  const [equipments, setEquipments] = useState<any[]>([]);
   const [statsPeriod, setStatsPeriod] = useState<'week' | 'month' | 'all'>(initialPeriod);
-
-  useEffect(() => {
-    db.getEquipments().then((data: any[]) => {
-      setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d));
-    }).catch(console.error);
-  }, []);
-
-  useEffect(() => {
+  React.useEffect(() => {
     setStatsPeriod(initialPeriod);
   }, [initialPeriod]);
 
@@ -41,42 +31,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
     onPeriodChange(nextPeriod);
   };
 
-  const findEquipmentById = (id: string | undefined) => {
-    if (!id || !id.trim()) return null;
-    return equipments.find(e => e.ID?.toString() === id) || null;
-  };
-
-  const getFormattedAttributes = (equip: any) => {
-    const attrs: { label: string; color?: string }[] = [];
-    if (equip.attributes && Array.isArray(equip.attributes)) {
-      equip.attributes.forEach((attr: any) => {
-        if (attr.type === 'atSkillEventHandler') {
-          attrs.push({ label: '特效', color: '#ffcc00' });
-          return;
-        }
-
-        let name = equip.AttributeTypes?.[attr.type];
-        if (!name && attr.label) {
-          const match = attr.label.match(/^([^\s0-9]+)/);
-          if (match) name = match[1];
-        }
-        if (name) {
-          name = name.replace(/等级$|值$/, '').replace(/^外功|^内功/, '');
-          if (name === '会心效果') name = '会效';
-          if (name === '治疗成效') name = '治疗';
-          attrs.push({
-            label: name,
-            color: (attr.color && attr.color.toLowerCase() !== '#ffffff' && attr.color.toLowerCase() !== 'white')
-              ? attr.color : '#00bcd4'
-          });
-        }
-      });
-    }
-    return attrs.slice(0, 4);
-  };
-
   const safeRecords = Array.isArray(records) ? records : [];
-  const safeTrialRecords = Array.isArray(trialRecords) ? trialRecords : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
   const findRoleInfo = (accountId: string, roleId: string): { roleName: string; server: string } => {
@@ -108,47 +63,20 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
 
   const periodStartTime = getPeriodStartTime();
 
-  // 合并所有稀有掉落记录：副本玄晶 + 试炼可交易装备
+  // 仅统计团队副本中的稀有特殊掉落
   const allDropRecords = useMemo(() => {
     const getRecordTime = (date: string | number): number => {
       return typeof date === 'number' ? date : new Date(date).getTime();
     };
 
-    const raidDrops = safeRecords
+    return safeRecords
       .filter(r => {
         if (r.hasXuanjing !== true) return false;
         if (periodStartTime === null) return true;
         return getRecordTime(r.date) >= periodStartTime;
       })
       .map(r => ({ id: r.id, date: r.date, raidName: r.raidName, notes: r.notes, type: '玄晶', roleId: r.roleId || r.accountId, accountId: r.accountId, roleName: r.roleName, server: r.server }));
-
-    const trialDrops = safeTrialRecords
-      .filter(r => {
-        const equipId = (r as any)[`card${r.flippedIndex}`];
-        if (!equipId) return false;
-        const equip = findEquipmentById(equipId);
-        if (!equip || (equip.BindType !== 1 && equip.BindType !== 2)) return false;
-        if (periodStartTime === null) return true;
-        return getRecordTime(r.date) >= periodStartTime;
-      })
-      .map(r => {
-        const equip = findEquipmentById((r as any)[`card${r.flippedIndex}`]);
-        return {
-          id: r.id,
-          date: r.date,
-          raidName: `试炼之地 - 第 ${r.layer} 层`,
-          notes: r.notes,
-          equip: equip,
-          type: equip ? (equip.BindType === 1 ? '不绑定' : '装绑') : '装备',
-          roleId: r.roleId || r.accountId,
-          accountId: r.accountId,
-          roleName: r.roleName,
-          server: r.server
-        };
-      });
-
-    return [...raidDrops, ...trialDrops];
-  }, [safeRecords, safeTrialRecords, equipments, statsPeriod]);
+  }, [safeRecords, periodStartTime]);
 
   const roleStats = useMemo<CrystalRoleStats[]>(() => {
     const roleMap = new Map<string, CrystalRoleStats>();
@@ -181,7 +109,6 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
 
   const totalDrops = allDropRecords.length;
   const xuanjingTotal = allDropRecords.filter(r => r.type === '玄晶').length;
-  const equipTotal = allDropRecords.filter(r => r.type !== '玄晶').length;
   const totalRoles = roleStats.length;
 
   return (
@@ -197,7 +124,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
           <div>
             <h2 className="text-2xl font-bold text-main">稀有掉落统计</h2>
             <p className="text-sm text-muted mt-1">
-              {statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部'}共获取 {totalDrops} 次稀有掉落，来自 {totalRoles} 个角色
+              {statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部'}共获取 {totalDrops} 次特殊掉落，来自 {totalRoles} 个角色
             </p>
           </div>
         </div>
@@ -232,18 +159,12 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
             <span className="text-muted font-medium text-sm">玄晶总数</span>
           </div>
           <p className="text-3xl font-bold text-main">{xuanjingTotal}</p>
-        </div>
-        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
-          <div className="flex items-center gap-3 mb-3">
-            <span className="text-muted font-medium text-sm">可交易装备数</span>
-          </div>
-          <p className="text-3xl font-bold text-main">{equipTotal}</p>
         </div>
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
@@ -260,9 +181,9 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
               <span className="text-slate-400 dark:text-slate-500 text-xl font-bold">0</span>
             </div>
             <p className="text-muted">暂无稀有掉落记录</p>
-            <p className="text-sm text-muted/70 mt-1">通关副本有玄晶奖励或试炼翻牌出可交易装备后会自动记录</p>
+            <p className="text-sm text-muted/70 mt-1">团队副本掉落玄晶后会自动记录在这里</p>
             {allDropRecords.length === 0 && safeRecords.length > 0 && (
-              <p className="text-xs text-muted/50 mt-2">共有 {safeRecords.length} 条副本记录，暂无稀有掉落</p>
+              <p className="text-xs text-muted/50 mt-2">共有 {safeRecords.length} 条副本记录，暂无特殊掉落</p>
             )}
           </div>
         ) : (
@@ -318,21 +239,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
                             </div>
                             <div className="flex-1">
                               <p className="font-medium text-main">{record.raidName}</p>
-                              {record.equip ? (
-                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5 text-xs">
-                                  <span className="text-muted">{record.equip.Level}品</span>
-                                  <span className="font-bold text-[#fe2dfe]" style={{ textShadow: '0 0 1px rgba(254, 45, 254, 0.2)' }}>
-                                    {record.equip.Name}
-                                  </span>
-                                  <div className="flex items-center gap-x-1.5 ml-1">
-                                    {getFormattedAttributes(record.equip).map((attr, idx) => (
-                                      <span key={idx} style={{ color: attr.color }}>{attr.label}</span>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <p className="text-xs text-muted">{record.notes || ''}</p>
-                              )}
+                              <p className="text-xs text-muted">{record.notes || '稀有特殊掉落'}</p>
                             </div>
                             <div className={`flex-shrink-0 px-2 py-0.5 rounded text-[11px] font-medium border ${record.type === '玄晶'
                               ? 'bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800/30'
@@ -351,6 +258,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, trialReco
           </div>
         )}
       </div>
+
     </div>
   );
 };

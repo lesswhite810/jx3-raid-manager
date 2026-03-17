@@ -7,6 +7,7 @@ import { AccountManager } from './components/AccountManager';
 import { RaidManager } from './components/RaidManager';
 
 import { CrystalDetail } from './components/CrystalDetail';
+import { TrialFlipDetail } from './components/TrialFlipDetail';
 import { UpdateDialog } from './components/UpdateDialog';
 
 
@@ -51,6 +52,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
   const [showIncomeDetail, setShowIncomeDetail] = useState(false);
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);
+  const [showTrialFlipDetail, setShowTrialFlipDetail] = useState(false);
 
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -464,6 +466,7 @@ function App() {
     setActiveTab(tab);
     setShowIncomeDetail(false);
     setShowCrystalDetail(false);
+    setShowTrialFlipDetail(false);
 
     setContentKey(prev => prev + 1);
 
@@ -609,11 +612,16 @@ function App() {
                 <CrystalDetail
                   key={`crystalDetail-${contentKey}`}
                   records={records}
-                  trialRecords={trialRecords}
                   accounts={accounts}
                   initialPeriod={dashboardStatsPeriod}
                   onPeriodChange={setDashboardStatsPeriod}
                   onBack={() => setShowCrystalDetail(false)}
+                />
+              ) : showTrialFlipDetail ? (
+                <TrialFlipDetail
+                  key={`trialFlipDetail-${contentKey}`}
+                  trialRecords={trialRecords}
+                  onBack={() => setShowTrialFlipDetail(false)}
                 />
               ) : (
                 <Dashboard
@@ -626,6 +634,7 @@ function App() {
                   onStatsPeriodChange={setDashboardStatsPeriod}
                   onShowIncomeDetail={() => setShowIncomeDetail(true)}
                   onShowCrystalDetail={() => setShowCrystalDetail(true)}
+                  onShowTrialFlipDetail={() => setShowTrialFlipDetail(true)}
                 />
               )
             )}

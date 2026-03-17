@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
 import { RaidRecord, Account, AccountType, Role, BaizhanRecord } from '../types';
 import { toast } from '../utils/toastManager';
@@ -174,6 +175,17 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     };
   }, [filteredRecords, safeAccounts]);
 
+  // 副本收益分布图表数据
+  const chartData = useMemo(() => {
+    const grouped: Record<string, number> = {};
+    filteredRecords.forEach(r => {
+      grouped[r.raidName] = (grouped[r.raidName] || 0) + r.goldIncome;
+    });
+    return Object.keys(grouped)
+      .map(k => ({ name: k, value: grouped[k] }))
+      .sort((a, b) => b.value - a.value);
+  }, [filteredRecords]);
+
   const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -300,6 +312,66 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
         </div>
       </div>
+
+      {/* 副本收益分布图表 */}
+      <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-main">副本收益分布</h3>
+          <span className="text-sm text-muted">
+            {period === 'week' ? '本周' : period === 'month' ? '本月' : '全部'}数据
+          </span>
+        </div>
+        {chartData.length > 0 ? (
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
+                <XAxis
+                  dataKey="name"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: 'rgb(var(--text-muted))' }}
+                  interval={0}
+                  angle={-20}
+                  textAnchor="end"
+                  height={50}
+                />
+                <YAxis
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: 'rgb(var(--text-muted))' }}
+                  tickFormatter={(val) => val >= 10000 ? `${(val / 10000).toFixed(1)}w` : val}
+                />
+                <Tooltip
+                  cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
+                  contentStyle={{
+                    backgroundColor: 'rgb(var(--bg-surface))',
+                    borderColor: 'rgb(var(--border-base))',
+                    borderRadius: '0.5rem',
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                    color: 'rgb(var(--text-main))'
+                  }}
+                  itemStyle={{ color: 'rgb(var(--text-main))' }}
+                  formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
+                />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
+                  {chartData.map((_entry: any, index: number) => (
+                    <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${0.7 - index * 0.05})`} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-12 text-muted">
+            <Coins className="w-10 h-10 text-muted/30 mb-2" />
+            <p className="text-sm">暂无收益数据</p>
+          </div>
+        )}
+      </div>
+
 
       <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden">
         <div className="p-4 border-b border-base">

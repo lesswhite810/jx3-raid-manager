@@ -106,6 +106,22 @@ export interface TrialPlaceRecord {
   notes?: string;
 }
 
+export interface TrialFlipPositionStats {
+  position: number;
+  flipCount: number;
+  flippedEquipmentCount: number;
+  appearanceCount: number;
+  flipEquipmentRate: number;
+  appearanceRate: number;
+}
+
+export interface TrialFlipStatsSummary {
+  totalRecords: number;
+  positions: TrialFlipPositionStats[];
+  bestFlipPosition: TrialFlipPositionStats | null;
+  bestAppearancePosition: TrialFlipPositionStats | null;
+}
+
 export type AnyRecord = RaidRecord | TrialPlaceRecord | BaizhanRecord;
 
 export interface DashboardStats {

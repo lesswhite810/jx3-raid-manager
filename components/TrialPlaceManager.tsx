@@ -1,12 +1,14 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { TrialPlaceRecord, Account } from '../types';
-import { Trophy, Check, Copy, Target, Search, X } from 'lucide-react';
+import { Trophy, Check, Copy, Target, Search, X, BarChart3 } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
+import { TrialFlipStatsModal } from './TrialFlipStatsModal';
 import { getLastMonday } from '../utils/cooldownManager';
 import { db } from '../services/db';
 import { toast } from '../utils/toastManager';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
+import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
@@ -22,6 +24,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     // Filter and flat map roles
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
+    const [viewFlipStatsRole, setViewFlipStatsRole] = useState<any>(null);
     const [roleSearchTerm, setRoleSearchTerm] = useState('');
 
     const allRoles = useMemo(() => {
@@ -72,6 +75,17 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         return stats;
     }, [allRoles, records]);
 
+    const roleFlipStats = useMemo(() => {
+        const stats = new Map<string, ReturnType<typeof calculateTrialFlipStats>>();
+        allRoles.forEach(role => {
+            stats.set(
+                role.id,
+                calculateTrialFlipStats(records.filter(record => record.roleId === role.id))
+            );
+        });
+        return stats;
+    }, [allRoles, records]);
+
     const sortedRoles = useMemo(() => {
         const sorted = [...allRoles];
         sorted.sort((a, b) => {
@@ -118,6 +132,10 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
     const handleOpenRecordsModal = (role: any) => {
         setViewRecordsRole(role);
+    };
+
+    const handleOpenFlipStatsModal = (role: any) => {
+        setViewFlipStatsRole(role);
     };
 
     // 添加试炼记录：刷新记录列表（toast 已在 Modal 中显示）
@@ -203,7 +221,6 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredRoles.map(role => {
                             const stats = roleStats.get(role.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
-
                             // 三态：未清(0) / 部分清(1-2) / 完全清(3)
                             const getTrialStatus = (): 'none' | 'partial' | 'complete' => {
                                 if (stats.weeklyCount === 0) return 'none';
@@ -372,7 +389,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                     </div>
 
                                     {/* Action Buttons */}
-                                    <div className="mt-3 grid grid-cols-2 gap-2">
+                                    <div className="mt-3 grid grid-cols-3 gap-2">
                                         <button
                                             onClick={() => handleOpenAddModal(role)}
                                             disabled={trialStatus === 'complete'}
@@ -382,6 +399,13 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                                 }`}
                                         >
                                             添加记录
+                                        </button>
+                                        <button
+                                            onClick={() => handleOpenFlipStatsModal(role)}
+                                            className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 flex items-center justify-center gap-1"
+                                        >
+                                            <BarChart3 className="w-3.5 h-3.5" />
+                                            翻牌统计
                                         </button>
                                         <button
                                             onClick={() => handleOpenRecordsModal(role)}
@@ -413,6 +437,17 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                         role={viewRecordsRole}
                         records={records}
                         onDeleteRecord={handleDeleteTrialRecord}
+                    />
+                )
+            }
+            {
+                viewFlipStatsRole && (
+                    <TrialFlipStatsModal
+                        isOpen={!!viewFlipStatsRole}
+                        onClose={() => setViewFlipStatsRole(null)}
+                        roleName={viewFlipStatsRole.name}
+                        server={viewFlipStatsRole.server}
+                        stats={roleFlipStats.get(viewFlipStatsRole.id) || calculateTrialFlipStats([])}
                     />
                 )
             }
