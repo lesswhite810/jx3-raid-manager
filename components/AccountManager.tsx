@@ -12,6 +12,7 @@ import { AddRoleModal } from './AddRoleModal';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
 import { getClientAccountNote } from '../utils/raidRoleUtils';
+import { getBaseServerName } from '../utils/serverUtils';
 
 
 interface AccountManagerProps {
@@ -1085,7 +1086,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className={`text-sm font-medium text-main truncate ${role.disabled ? 'line-through text-muted' : ''}`}>
-                                      {role.name}@{role.server}
+                                      {role.name}·{getBaseServerName(role.server)}
                                     </span>
                                     {role.sect && (
                                       <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{role.sect}</span>

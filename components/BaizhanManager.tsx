@@ -266,7 +266,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
 
                                             <div className="min-w-0 flex-1">
                                                 <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
-                                                    <span className="truncate" title={`${role.name}@${role.server}`}>{role.name}@{role.server}</span>
+                                                    <span className="truncate" title={`${role.name}·${role.server}`}>{role.name}·{role.server}</span>
                                                     {role.sect && (
                                                         <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${getSectStyle()}`}>
                                                             {role.sect}

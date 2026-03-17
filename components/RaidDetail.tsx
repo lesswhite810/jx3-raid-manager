@@ -691,7 +691,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                       {getIconStyle()}
                       <div className="min-w-0 flex-1">
                         <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
-                          <span className="truncate">{cleanRoleName(role.name)}@{role.server}</span>
+                          <span className="truncate">{cleanRoleName(role.name)}·{role.server}</span>
                           {role.sect && role.sect !== '未知' && (
                             <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${getSectStyle()}`}>{role.sect}</span>
                           )}

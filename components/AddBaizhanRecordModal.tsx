@@ -6,6 +6,7 @@ import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
 import { db } from '../services/db';
 import { DateTimePicker } from './DateTimePicker';
+import { getBaseServerName } from '../utils/serverUtils';
 
 interface RoleWithStatus {
     id: string;
@@ -169,7 +170,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                 <h2 className="text-lg font-bold text-main">记录百战</h2>
                                 {initialRole && (
                                     <p className="text-xs text-muted mt-0.5">
-                                        <span className="font-medium text-main">{initialRole.name}@{initialRole.server}</span>
+                                        <span className="font-medium text-main">{initialRole.name}·{getBaseServerName(initialRole.server)}</span>
                                     </p>
                                 )}
                             </div>
@@ -186,7 +187,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                 >
                                     <option value="">选择挑战角色...</option>
                                     {allRoles.map(r => (
-                                        <option key={r.id} value={r.id}>{r.name} @ {r.server}</option>
+                                        <option key={r.id} value={r.id}>{r.name} · {getBaseServerName(r.server)}</option>
                                     ))}
                                 </select>
                             </>

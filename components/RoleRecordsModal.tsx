@@ -6,6 +6,7 @@ import { formatGoldAmount } from '../utils/recordUtils';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
+import { getBaseServerName } from '../utils/serverUtils';
 import { db } from '../services/db';
 
 interface RoleWithStatus {
@@ -194,7 +195,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
           <div>
             <h2 className="text-lg font-bold text-main">副本记录详情</h2>
             <p className="text-muted text-xs mt-0.5">
-              <span className="font-medium text-main">{role.name}@{role.server}</span>
+              <span className="font-medium text-main">{role.name}·{getBaseServerName(role.server)}</span>
               <span className="mx-1.5 text-muted/40">·</span>
               {isTenPerson ? '10人' : '25人'}{raid.difficulty}{raid.name}
             </p>

@@ -4,6 +4,7 @@ import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialP
 import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
 import { getLastMonday } from '../utils/cooldownManager';
+import { getBaseServerName } from '../utils/serverUtils';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 
 interface DashboardProps {
@@ -184,7 +185,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     filteredRecords.forEach(r => {
       const roleId = r.roleId || r.accountId;
       const roleName = r.roleName || '未知角色';
-      const server = r.server || '未知服务器';
+      const server = getBaseServerName(r.server || '未知服务器');
 
       if (!roleMap.has(roleId)) {
         roleMap.set(roleId, { roleName, server, totalGold: 0, xuanjingCount: 0 });
@@ -198,7 +199,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     filteredBaizhanRecords.forEach(r => {
       const roleId = r.roleId || r.accountId;
       const roleName = r.roleName || '未知角色';
-      const server = r.server || '未知服务器';
+      const server = getBaseServerName(r.server || '未知服务器');
 
       if (!roleMap.has(roleId)) {
         roleMap.set(roleId, { roleName, server, totalGold: 0, xuanjingCount: 0 });
@@ -233,7 +234,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         if (r.goldExpense && r.goldExpense > 0) {
           const roleId = r.roleId || r.accountId;
           const roleName = r.roleName || '未知角色';
-          const server = r.server || '未知服务器';
+          const server = getBaseServerName(r.server || '未知服务器');
 
           if (!roleMap.has(roleId)) {
             roleMap.set(roleId, { roleName, server, totalExpense: 0 });
@@ -250,7 +251,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         if (r.goldExpense && r.goldExpense > 0) {
           const roleId = r.roleId || r.accountId;
           const roleName = r.roleName || '未知角色';
-          const server = r.server || '未知服务器';
+          const server = getBaseServerName(r.server || '未知服务器');
 
           if (!roleMap.has(roleId)) {
             roleMap.set(roleId, { roleName, server, totalExpense: 0 });
@@ -316,8 +317,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div>
                 <p className="text-muted text-sm">本期欧皇</p>
-                <h3 className="text-xl font-bold mt-1 text-main">{luckyRole.roleName}</h3>
-                <p className="text-muted text-xs mt-0.5">{luckyRole.server}</p>
+                <h3 className="text-xl font-bold mt-1 text-main">
+                  {luckyRole.roleName}
+                  {luckyRole.server && (
+                    <span className="text-sm font-normal text-muted ml-1.5">· {luckyRole.server}</span>
+                  )}
+                </h3>
               </div>
             </div>
             <div className="flex items-center gap-6">
@@ -350,8 +355,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div>
                 <p className="text-muted text-sm">本期败家子</p>
-                <h3 className="text-xl font-bold mt-1 text-main">{bigSpender.roleName}</h3>
-                <p className="text-muted text-xs mt-0.5">{bigSpender.server}</p>
+                <h3 className="text-xl font-bold mt-1 text-main">
+                  {bigSpender.roleName}
+                  {bigSpender.server && (
+                    <span className="text-sm font-normal text-muted ml-1.5">· {bigSpender.server}</span>
+                  )}
+                </h3>
               </div>
             </div>
             <div className="text-right">

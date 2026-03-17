@@ -4,6 +4,7 @@ import { Raid, RaidRecord } from '../types';
 import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag, BookOpen } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
+import { getBaseServerName } from '../utils/serverUtils';
 import { DateTimePicker } from './DateTimePicker';
 
 interface RoleWithStatus {
@@ -187,7 +188,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
             <div>
               <h2 className="text-lg font-bold text-main">{initialData ? '修改副本记录' : '添加副本记录'}</h2>
               <p className="text-muted text-xs mt-0.5">
-                <span className="font-medium text-main">{role.name}@{role.server}</span>
+                <span className="font-medium text-main">{role.name}·{getBaseServerName(role.server)}</span>
                 <span className="mx-1.5 text-muted/40">·</span>
                 {constructRaidName()}
               </p>
