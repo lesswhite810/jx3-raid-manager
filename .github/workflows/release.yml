@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -87,6 +89,13 @@ jobs:
         working-directory: .
         run: node scripts/build-updater-manifest.mjs ${{ github.ref_name }}
 
+      - name: Build gitee updater manifest
+        working-directory: .
+        run: node scripts/build-updater-manifest.mjs ${{ github.ref_name }} gitee tmp/gitee-updater/latest.json
+        env:
+          GITEE_REPO: ${{ secrets.GITEE_REPO }}
+          GITEE_ASSETS_BRANCH: ${{ secrets.GITEE_ASSETS_BRANCH }}
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
@@ -97,6 +106,60 @@ jobs:
             src-tauri/target/release/bundle/latest*.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror code to Gitee
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GITEE_PUSH_URL:-}" ]]; then
+            echo "Missing GITEE_PUSH_URL repository secret." >&2
+            exit 1
+          fi
+
+          git remote remove gitee 2>/dev/null || true
+          git remote add gitee "${GITEE_PUSH_URL}"
+          git fetch origin master --tags
+          git push gitee refs/remotes/origin/master:refs/heads/master
+          git push gitee --tags
+        env:
+          GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}
+
+      - name: Sync updater assets to Gitee
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GITEE_PUSH_URL:-}" ]]; then
+            echo "Missing GITEE_PUSH_URL repository secret." >&2
+            exit 1
+          fi
+
+          branch="${GITEE_ASSETS_BRANCH:-updater-assets}"
+          rm -rf tmp/gitee-sync
+          git clone --depth=1 --branch "$branch" "${GITEE_PUSH_URL}" tmp/gitee-sync 2>/dev/null || (
+            git clone --depth=1 "${GITEE_PUSH_URL}" tmp/gitee-sync
+            cd tmp/gitee-sync
+            git checkout --orphan "$branch"
+            git rm -rf . >/dev/null 2>&1 || true
+            cd ..
+          )
+
+          mkdir -p tmp/gitee-sync/updater
+          cp tmp/gitee-updater/latest.json "tmp/gitee-sync/updater/latest.json"
+          cp "src-tauri/target/release/bundle/nsis/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe" "tmp/gitee-sync/updater/"
+          cp "src-tauri/target/release/bundle/nsis/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe.sig" "tmp/gitee-sync/updater/"
+
+          cd tmp/gitee-sync
+          git checkout "$branch" 2>/dev/null || git checkout -b "$branch"
+          git add updater/latest.json "updater/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe" "updater/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe.sig"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "release: 同步 ${GITHUB_REF_NAME} 更新资产" || echo "No updater asset changes to commit"
+          git push origin "$branch"
+        env:
+          GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}
+          GITEE_ASSETS_BRANCH: ${{ secrets.GITEE_ASSETS_BRANCH }}
 
       - name: Update asset labels
         shell: bash

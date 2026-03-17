@@ -3,9 +3,11 @@ use tauri::{AppHandle, Emitter, Runtime, Window};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
-const GITHUB_REPO: &str = "lesswhite810/jx3-raid-manager";
-const UPDATER_ENDPOINT: &str =
+const GITEE_REPO: &str = "lesswhite810/jx3-raid-manager";
+const GITHUB_UPDATER_ENDPOINT: &str =
     "https://github.com/lesswhite810/jx3-raid-manager/releases/latest/download/latest.json";
+const GITEE_UPDATER_ENDPOINT: &str =
+    "https://gitee.com/lesswhite810/jx3-raid-manager/raw/updater-assets/updater/latest.json";
 const UPDATER_PROGRESS_EVENT: &str = "updater://progress";
 
 #[derive(Debug, Serialize)]
@@ -54,9 +56,9 @@ fn updater_pubkey() -> String {
 fn updater_release_url(tag: Option<&str>) -> String {
     match tag {
         Some(tag) if !tag.trim().is_empty() => {
-            format!("https://github.com/{GITHUB_REPO}/releases/tag/{tag}")
+            format!("https://gitee.com/{GITEE_REPO}/releases/tag/{tag}")
         }
-        _ => format!("https://github.com/{GITHUB_REPO}/releases/latest"),
+        _ => format!("https://gitee.com/{GITEE_REPO}/releases"),
     }
 }
 
@@ -92,11 +94,14 @@ fn build_updater<R: Runtime>(app: &AppHandle<R>) -> Result<tauri_plugin_updater:
         return Err("当前构建未启用自动更新".to_string());
     }
 
-    let endpoint = Url::parse(UPDATER_ENDPOINT).map_err(|err| format!("更新地址无效: {err}"))?;
+    let github_endpoint =
+        Url::parse(GITHUB_UPDATER_ENDPOINT).map_err(|err| format!("GitHub 更新地址无效: {err}"))?;
+    let gitee_endpoint =
+        Url::parse(GITEE_UPDATER_ENDPOINT).map_err(|err| format!("Gitee 更新地址无效: {err}"))?;
 
     app.updater_builder()
         .pubkey(pubkey)
-        .endpoints(vec![endpoint])
+        .endpoints(vec![github_endpoint, gitee_endpoint])
         .map_err(|err| format!("配置更新服务失败: {err}"))?
         .build()
         .map_err(|err| format!("初始化更新服务失败: {err}"))
@@ -162,7 +167,7 @@ pub async fn updater_check(app: AppHandle) -> Result<UpdaterCheckResult, String>
 pub async fn updater_download_and_install(app: AppHandle, window: Window) -> Result<(), String> {
     let runtime_info = detect_runtime_info(&app)?;
     if runtime_info.is_portable {
-        return Err("便携版不支持应用内自动更新，请前往 GitHub Release 下载新版本".to_string());
+        return Err("便携版不支持应用内自动更新，请前往 Gitee 或 GitHub Release 下载新版本".to_string());
     }
 
     if !runtime_info.updater_configured {

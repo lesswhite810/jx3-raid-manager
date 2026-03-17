@@ -40,6 +40,7 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - Release 中包含 `latest.json` 和对应签名文件
 - 安装版资产命名保持稳定，避免更新清单指向错误资源
 - 仓库 Secrets 同时配置了 `TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`
+- 如果启用了 Gitee 回退源，还要同步配置 `GITEE_PUSH_URL`，可选配置 `GITEE_REPO`、`GITEE_ASSETS_BRANCH`
 - `latest.json` 中的下载地址、版本号、签名与本次 release 资产一致
 - Release 页面中，`latest.json` 标签应显示为“自动更新元数据”，`.sig` 标签应显示为“自动更新签名文件”
 
@@ -104,5 +105,6 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 4. 在 `release-notes/` 新增或更新对应版本说明。
 5. 用 `npm run release:notes -- <tag> <notes-file>` 更新 GitHub Release Notes。
 6. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
-7. 确认 `scripts/build-updater-manifest.mjs` 生成的 `latest.json` 已上传到 release。
-8. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 release 里已上传安装包、便携版、`latest.json` 与签名文件。
+7. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
+8. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
+9. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
