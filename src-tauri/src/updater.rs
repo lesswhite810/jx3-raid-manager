@@ -3,11 +3,11 @@ use tauri::{AppHandle, Emitter, Runtime, Window};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
-const GITEE_REPO: &str = "lesswhite810/jx3-raid-manager";
+const GITEE_REPO: &str = "lesswhite/jx3-raid-manager";
 const GITHUB_UPDATER_ENDPOINT: &str =
     "https://github.com/lesswhite810/jx3-raid-manager/releases/latest/download/latest.json";
 const GITEE_UPDATER_ENDPOINT: &str =
-    "https://gitee.com/lesswhite810/jx3-raid-manager/raw/updater-assets/updater/latest.json";
+    "https://gitee.com/lesswhite/jx3-raid-manager/raw/updater-assets/updater/latest.json";
 const UPDATER_PROGRESS_EVENT: &str = "updater://progress";
 
 #[derive(Debug, Serialize)]

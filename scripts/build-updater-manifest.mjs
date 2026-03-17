@@ -20,7 +20,7 @@ const signaturePath = path.resolve(
 const outputPath = customOutputPath
   ? path.resolve(customOutputPath)
   : path.resolve('src-tauri', 'target', 'release', 'bundle', channel === 'gitee' ? 'latest.gitee.json' : 'latest.json');
-const giteeRepo = process.env.GITEE_REPO ?? 'lesswhite810/jx3-raid-manager';
+const giteeRepo = process.env.GITEE_REPO ?? 'lesswhite/jx3-raid-manager';
 const giteeAssetsBranch = process.env.GITEE_ASSETS_BRANCH ?? 'updater-assets';
 
 const buildPlatformUrl = () => {

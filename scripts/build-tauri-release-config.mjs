@@ -6,7 +6,7 @@ const targetFile = path.join(targetDir, 'tauri.release.conf.json');
 const sourceFile = path.resolve('src-tauri', 'tauri.conf.json');
 const githubUpdaterEndpoint =
   'https://github.com/lesswhite810/jx3-raid-manager/releases/latest/download/latest.json';
-const giteeRepo = process.env.GITEE_REPO ?? 'lesswhite810/jx3-raid-manager';
+const giteeRepo = process.env.GITEE_REPO ?? 'lesswhite/jx3-raid-manager';
 const giteeAssetsBranch = process.env.GITEE_ASSETS_BRANCH ?? 'updater-assets';
 const giteeUpdaterEndpoint =
   `https://gitee.com/${giteeRepo}/raw/${giteeAssetsBranch}/updater/latest.json`;
