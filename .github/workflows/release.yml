@@ -13,14 +13,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
       - name: Validate release versions
@@ -97,13 +97,28 @@ jobs:
           GITEE_ASSETS_BRANCH: ${{ secrets.GITEE_ASSETS_BRANCH }}
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.6.1
         with:
           files: |
             src-tauri/target/release/JX3RaidManager_${{ github.ref_name }}.exe
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/**/*.sig
             src-tauri/target/release/bundle/latest*.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notes_file="release-notes/${GITHUB_REF_NAME}.md"
+          if [[ ! -f "${notes_file}" ]]; then
+            echo "Missing release notes file: ${notes_file}" >&2
+            exit 1
+          fi
+
+          npm run release:notes -- "${GITHUB_REF_NAME}" "${notes_file}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

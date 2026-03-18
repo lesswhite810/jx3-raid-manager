@@ -1,5 +1,5 @@
 import { Config } from '../types';
-import { readDir } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface ConfigValidationResult {
   isValid: boolean;
@@ -239,36 +239,9 @@ export const isValidGamePath = async (path: string): Promise<GamePathValidationR
   }
 
   try {
-    const entries = await readDir(runtimePath);
-    const existingEntries = new Set(entries.map(entry => entry.name?.toLowerCase()).filter(Boolean));
-    const requiredEntries = ['userdata', 'interface'];
-    const missingDirectories = requiredEntries.filter(entry => !existingEntries.has(entry));
-
-    if (missingDirectories.length > 0) {
-      return {
-        isValid: false,
-        message: '目录结构不完整，请确认目录可自动补全到 SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
-        details: {
-          checkedPath: path,
-          expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
-          currentStructure: runtimePath,
-          missingDirectories,
-          checkTime
-        }
-      };
-    }
-
-    return {
-      isValid: true,
-      message: '游戏目录验证成功',
-      details: {
-        checkedPath: path,
-        expectedStructure: 'SeasunGame\\' + GAME_RUNTIME_SUFFIX_PATH,
-        currentStructure: runtimePath,
-        missingDirectories: [],
-        checkTime
-      }
-    };
+    return await invoke<GamePathValidationResult>('validate_game_directory', {
+      gameDirectory: path
+    });
   } catch (error) {
     logValidationStep('读取目录异常', '读取运行时目录时发生错误', {
       runtimePath,

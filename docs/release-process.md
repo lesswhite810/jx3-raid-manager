@@ -103,7 +103,7 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 2. 本地执行 `npm run build` 或 `npm run tauri build`。
 3. GitHub Actions 发版时会额外生成 updater 产物，本地 `tauri build` 不依赖这一步。
 4. 在 `release-notes/` 新增或更新对应版本说明。
-5. 用 `npm run release:notes -- <tag> <notes-file>` 更新 GitHub Release Notes。
+5. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
 6. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
 7. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
 8. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。

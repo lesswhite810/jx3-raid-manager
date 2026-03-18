@@ -19,10 +19,7 @@
     {
       "identifier": "fs:scope",
       "allow": [
-        "$APPDATA/**",
-        "$HOME/**",
-        "$USERPROFILE/**",
-        "**"
+        "$APPCONFIG/**"
       ]
     },
     "core:window:allow-create",

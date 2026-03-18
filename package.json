@@ -44,5 +44,9 @@
     "typescript": "^5.3.3",
     "vite": "^5.1.4",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "lodash": "^4.17.22",
+    "minimatch": "^9.0.7"
   }
 }

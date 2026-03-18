@@ -43,7 +43,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src https://fonts.googleapis.com; img-src 'self' data: https://icon.jx3box.com; connect-src ipc: http://ipc.localhost 'self' https://open.bigmodel.cn https://generativelanguage.googleapis.com https://node.jx3box.com"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://icon.jx3box.com; connect-src ipc: http://ipc.localhost 'self' https://open.bigmodel.cn https://generativelanguage.googleapis.com https://node.jx3box.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     }
   }
 }

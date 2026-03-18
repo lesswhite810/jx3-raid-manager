@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod db;
+mod game_directory;
 mod gkp_parser;
 mod updater;
 
@@ -127,6 +128,8 @@ fn main() {
     builder
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
+            game_directory::scan_game_directory,
+            game_directory::validate_game_directory,
             db::db_init,
             // 新的版本管理命令
             db::db_get_version_info,
