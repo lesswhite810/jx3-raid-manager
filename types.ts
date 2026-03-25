@@ -51,6 +51,7 @@ export interface Account {
   username?: string; // Game Account (optional)
   password?: string; // Game Password (optional)
   type: AccountType;
+  sortOrder?: number; // 账号显示排序
   notes?: string;
   roles: Role[]; // 角色列表
   hidden?: boolean; // 是否隐藏该账户，防止重复解析

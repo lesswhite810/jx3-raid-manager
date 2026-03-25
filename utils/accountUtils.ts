@@ -1,18 +1,82 @@
 import { Account, Role } from '../types';
 
+interface ClosestCapableTarget {
+    closest?: (selector: string) => unknown;
+}
+
+const ACCOUNT_REORDER_MIN_DURATION = 170;
+const ACCOUNT_REORDER_MAX_DURATION = 280;
+const ACCOUNT_REORDER_DURATION_PER_PIXEL = 0.2;
+
+const getAccountSortOrder = (account: Account, fallbackIndex: number): number => {
+    return typeof account.sortOrder === 'number' ? account.sortOrder : fallbackIndex;
+};
+
+export const canStartAccountDrag = (target: EventTarget | ClosestCapableTarget | null): boolean => {
+    if (!target || typeof (target as ClosestCapableTarget).closest !== 'function') {
+        return true;
+    }
+
+    return !(target as ClosestCapableTarget).closest?.('[data-no-account-drag="true"]');
+};
+
+export const normalizeAccountSortOrder = (accounts: Account[]): Account[] => {
+    return accounts.map((account, index) => ({
+        ...account,
+        sortOrder: index,
+    }));
+};
+
+export const getAccountReorderAnimationDuration = (distance: number): number => {
+    const normalizedDistance = Math.abs(distance);
+    const duration = ACCOUNT_REORDER_MIN_DURATION + normalizedDistance * ACCOUNT_REORDER_DURATION_PER_PIXEL;
+
+    return Math.max(
+        ACCOUNT_REORDER_MIN_DURATION,
+        Math.min(ACCOUNT_REORDER_MAX_DURATION, Math.round(duration)),
+    );
+};
+
+export const reorderAccounts = (
+    accounts: Account[],
+    draggedAccountId: string,
+    targetAccountId: string,
+): Account[] => {
+    if (draggedAccountId === targetAccountId) {
+        return normalizeAccountSortOrder(accounts);
+    }
+
+    const draggedIndex = accounts.findIndex(account => account.id === draggedAccountId);
+    const targetIndex = accounts.findIndex(account => account.id === targetAccountId);
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+        return normalizeAccountSortOrder(accounts);
+    }
+
+    const reorderedAccounts = [...accounts];
+    const [draggedAccount] = reorderedAccounts.splice(draggedIndex, 1);
+    reorderedAccounts.splice(targetIndex, 0, draggedAccount);
+
+    return normalizeAccountSortOrder(reorderedAccounts);
+};
+
 /**
- * Sorts accounts and their roles based on disabled status.
- * Enabled items appear first, disabled items appear last.
- * @param accounts The list of accounts to sort
- * @returns A new sorted list of accounts
+ * Sorts accounts by persisted manual order first.
+ * Disabled state only acts as a tie-breaker when sortOrder is identical.
  */
 export const sortAccounts = (accounts: Account[]): Account[] => {
-    // Sort accounts: Enabled first, Disabled last
+    const originalOrderMap = new Map(accounts.map((account, index) => [account.id, index]));
+
     const sortedAccounts = [...accounts].sort((a, b) => {
-        // Treat undefined disabled as false (enabled)
+        const aSortOrder = getAccountSortOrder(a, originalOrderMap.get(a.id) ?? 0);
+        const bSortOrder = getAccountSortOrder(b, originalOrderMap.get(b.id) ?? 0);
+
+        if (aSortOrder !== bSortOrder) {
+            return aSortOrder - bSortOrder;
+        }
+
         const aDisabled = !!a.disabled;
         const bDisabled = !!b.disabled;
-
         if (aDisabled !== bDisabled) {
             return (aDisabled ? 1 : 0) - (bDisabled ? 1 : 0);
         }
@@ -22,10 +86,10 @@ export const sortAccounts = (accounts: Account[]): Account[] => {
     });
 
     // Sort roles within each account
-    return sortedAccounts.map(account => ({
+    return normalizeAccountSortOrder(sortedAccounts.map(account => ({
         ...account,
         roles: sortRoles(account.roles || [])
-    }));
+    })));
 };
 
 /**

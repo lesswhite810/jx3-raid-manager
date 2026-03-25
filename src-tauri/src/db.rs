@@ -7,7 +7,7 @@ pub mod migrations;
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 6;
+pub const CURRENT_SCHEMA_VERSION: i32 = 7;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -327,6 +327,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             id TEXT PRIMARY KEY,
             account_name TEXT NOT NULL,
             account_type TEXT NOT NULL DEFAULT 'OWN',
+            sort_order INTEGER DEFAULT 0,
             password TEXT,
             notes TEXT,
             hidden INTEGER DEFAULT 0,
@@ -352,6 +353,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
         CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
+        CREATE INDEX IF NOT EXISTS idx_accounts_sort_order ON accounts(sort_order);
 
         -- ========== 副本表 (V2+ 结构化格式) ==========
         CREATE TABLE IF NOT EXISTS raids (
@@ -1020,10 +1022,11 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
     }
 
     // 6. 插入或更新账号和角色
-    for account in parsed {
+    for (sort_order, account) in parsed.iter().enumerate() {
         let id = account["id"].as_str().unwrap_or_default().to_string();
         let account_name = account["accountName"].as_str().unwrap_or("").to_string();
         let account_type = account["type"].as_str().unwrap_or("OWN").to_string();
+        let sort_order = sort_order as i64;
         let password = account["password"].as_str().map(|s| s.to_string());
         let notes = account["notes"].as_str().map(|s| s.to_string());
         let hidden = account["hidden"].as_bool().unwrap_or(false) as i32;
@@ -1032,17 +1035,18 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
         // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
         // 注意：INSERT OR REPLACE 会先 DELETE 再 INSERT，会触发外键级联删除！
         tx.execute(
-            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO accounts (id, account_name, account_type, sort_order, password, notes, hidden, disabled, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 account_name = excluded.account_name,
                 account_type = excluded.account_type,
+                sort_order = excluded.sort_order,
                 password = excluded.password,
                 notes = excluded.notes,
                 hidden = excluded.hidden,
                 disabled = excluded.disabled,
                 updated_at = excluded.updated_at",
-            params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
+            params![id, account_name, account_type, sort_order, password, notes, hidden, disabled, timestamp],
         )
         .map_err(|e| e.to_string())?;
 
@@ -1089,25 +1093,26 @@ pub fn db_get_accounts_structured() -> Result<String, String> {
     let mut stmt = conn
         .prepare(
             "
-        SELECT id, account_name, account_type, hidden, disabled, password, notes, created_at, updated_at 
-        FROM accounts ORDER BY account_name
+        SELECT id, account_name, account_type, sort_order, hidden, disabled, password, notes, created_at, updated_at 
+        FROM accounts ORDER BY sort_order, account_name
     ",
         )
         .map_err(|e| e.to_string())?;
 
-    // SELECT 顺序: id, account_name, account_type, hidden, disabled, password, notes, created_at, updated_at
+    // SELECT 顺序: id, account_name, account_type, sort_order, hidden, disabled, password, notes, created_at, updated_at
     let accounts: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
             Ok(serde_json::json!({
                 "id": row.get::<_, String>(0)?,
                 "accountName": row.get::<_, String>(1)?,
                 "type": row.get::<_, String>(2)?,
-                "hidden": row.get::<_, i32>(3)? != 0,
-                "disabled": row.get::<_, i32>(4)? != 0,
-                "password": row.get::<_, Option<String>>(5)?,
-                "notes": row.get::<_, Option<String>>(6)?,
-                "createdAt": row.get::<_, Option<String>>(7)?,
-                "updatedAt": row.get::<_, Option<String>>(8)?,
+                "sortOrder": row.get::<_, i64>(3)?,
+                "hidden": row.get::<_, i32>(4)? != 0,
+                "disabled": row.get::<_, i32>(5)? != 0,
+                "password": row.get::<_, Option<String>>(6)?,
+                "notes": row.get::<_, Option<String>>(7)?,
+                "createdAt": row.get::<_, Option<String>>(8)?,
+                "updatedAt": row.get::<_, Option<String>>(9)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -1171,6 +1176,7 @@ struct AccountJoinRow {
     account_id: String,
     account_name: String,
     account_type: String,
+    sort_order: i64,
     password: Option<String>,
     notes: Option<String>,
     hidden: bool,
@@ -1193,6 +1199,7 @@ fn upsert_account_from_join_row(
             "id": &account_id,
             "accountName": row.account_name,
             "type": row.account_type,
+            "sortOrder": row.sort_order,
             "password": row.password,
             "notes": row.notes,
             "hidden": row.hidden,
@@ -1268,18 +1275,18 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
     }
 
     // 单次 LEFT JOIN 查询获取账号和角色
-    // Account 字段: 0-8, Role 字段: 9-17 (可能为 NULL)
+    // Account 字段: 0-9, Role 字段: 10-18 (可能为 NULL)
     let mut stmt = conn
         .prepare(
             "
         SELECT
-            a.id, a.account_name, a.account_type, a.password, a.notes,
+            a.id, a.account_name, a.account_type, a.sort_order, a.password, a.notes,
             a.hidden, a.disabled, a.created_at, a.updated_at,
             r.id, r.account_id, r.name, r.server, r.region,
             r.sect, r.equipment_score, r.disabled, r.created_at, r.updated_at
         FROM accounts a
         LEFT JOIN roles r ON a.id = r.account_id
-        ORDER BY a.account_name, r.name
+        ORDER BY a.sort_order, a.account_name, r.name
     ",
         )
         .map_err(|e| e.to_string())?;
@@ -1289,17 +1296,17 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
 
     let rows = stmt
         .query_map([], |row| {
-            let role_id: Option<String> = row.get(9)?;
+            let role_id: Option<String> = row.get(10)?;
             let role = if let Some(role_id) = role_id {
                 Some(RoleJoinRow {
                     role_id,
-                    account_id: row.get(10)?,
-                    name: row.get(11)?,
-                    server: row.get(12)?,
-                    region: row.get(13)?,
-                    sect: row.get(14)?,
-                    equipment_score: row.get(15)?,
-                    disabled: row.get::<_, i32>(16)? != 0,
+                    account_id: row.get(11)?,
+                    name: row.get(12)?,
+                    server: row.get(13)?,
+                    region: row.get(14)?,
+                    sect: row.get(15)?,
+                    equipment_score: row.get(16)?,
+                    disabled: row.get::<_, i32>(17)? != 0,
                 })
             } else {
                 None
@@ -1309,12 +1316,13 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
                 account_id: row.get(0)?,
                 account_name: row.get(1)?,
                 account_type: row.get(2)?,
-                password: row.get(3)?,
-                notes: row.get(4)?,
-                hidden: row.get::<_, i32>(5)? != 0,
-                disabled: row.get::<_, i32>(6)? != 0,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                sort_order: row.get(3)?,
+                password: row.get(4)?,
+                notes: row.get(5)?,
+                hidden: row.get::<_, i32>(6)? != 0,
+                disabled: row.get::<_, i32>(7)? != 0,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
                 role,
             })
         })
@@ -1326,12 +1334,18 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
     }
     // 返回账号数组
     let mut accounts: Vec<serde_json::Value> = account_map.into_values().collect();
-    // 按 accountName 排序
+    // 按 sortOrder 排序
     accounts.sort_by(|a, b| {
-        a["accountName"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["accountName"].as_str().unwrap_or(""))
+        let a_sort_order = a["sortOrder"].as_i64().unwrap_or_default();
+        let b_sort_order = b["sortOrder"].as_i64().unwrap_or_default();
+        a_sort_order
+            .cmp(&b_sort_order)
+            .then_with(|| {
+                a["accountName"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["accountName"].as_str().unwrap_or(""))
+            })
     });
 
     log::info!("[db_get_accounts_with_roles] 查询完成，返回 {} 个账号", accounts.len());
@@ -1422,6 +1436,7 @@ pub fn db_save_account_structured(account_json: String) -> Result<(), String> {
     let id = account["id"].as_str().unwrap_or_default().to_string();
     let account_name = account["accountName"].as_str().unwrap_or("").to_string();
     let account_type = account["type"].as_str().unwrap_or("OWN").to_string();
+    let sort_order = account["sortOrder"].as_i64().unwrap_or(0);
     let password = account["password"].as_str().map(|s| s.to_string());
     let notes = account["notes"].as_str().map(|s| s.to_string());
     let hidden = account["hidden"].as_bool().unwrap_or(false) as i32;
@@ -1443,31 +1458,33 @@ pub fn db_save_account_structured(account_json: String) -> Result<(), String> {
     // 新建账号时设置 created_at，更新时只更新 updated_at
     if is_new_account {
         conn.execute(
-            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, created_at, updated_at)
+            "INSERT INTO accounts (id, account_name, account_type, sort_order, password, notes, hidden, disabled, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                account_name = excluded.account_name,
+                account_type = excluded.account_type,
+                sort_order = excluded.sort_order,
+                password = excluded.password,
+                notes = excluded.notes,
+                hidden = excluded.hidden,
+                disabled = excluded.disabled,
+                updated_at = excluded.updated_at",
+            params![id, account_name, account_type, sort_order, password, notes, hidden, disabled, timestamp, timestamp],
+        ).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, account_type, sort_order, password, notes, hidden, disabled, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 account_name = excluded.account_name,
                 account_type = excluded.account_type,
+                sort_order = excluded.sort_order,
                 password = excluded.password,
                 notes = excluded.notes,
                 hidden = excluded.hidden,
                 disabled = excluded.disabled,
                 updated_at = excluded.updated_at",
-            params![id, account_name, account_type, password, notes, hidden, disabled, timestamp, timestamp],
-        ).map_err(|e| e.to_string())?;
-    } else {
-        conn.execute(
-            "INSERT INTO accounts (id, account_name, account_type, password, notes, hidden, disabled, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-                account_name = excluded.account_name,
-                account_type = excluded.account_type,
-                password = excluded.password,
-                notes = excluded.notes,
-                hidden = excluded.hidden,
-                disabled = excluded.disabled,
-                updated_at = excluded.updated_at",
-            params![id, account_name, account_type, password, notes, hidden, disabled, timestamp],
+            params![id, account_name, account_type, sort_order, password, notes, hidden, disabled, timestamp],
         ).map_err(|e| e.to_string())?;
     }
 
@@ -2497,6 +2514,7 @@ mod tests {
                 account_id: "account-1".to_string(),
                 account_name: "测试账号".to_string(),
                 account_type: "OWN".to_string(),
+                sort_order: 0,
                 password: Some("secret".to_string()),
                 notes: Some("notes".to_string()),
                 hidden: false,
@@ -2532,6 +2550,7 @@ mod tests {
                 account_id: "account-1".to_string(),
                 account_name: "测试账号".to_string(),
                 account_type: "OWN".to_string(),
+                sort_order: 0,
                 password: None,
                 notes: None,
                 hidden: false,

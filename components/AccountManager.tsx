@@ -1,9 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Account, AccountType, Role, Config, InstanceType } from '../types';
 import { SECTS } from '../constants';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText } from 'lucide-react';
 import { convertToSystemAccounts } from '../services/directoryParser';
-import { sortRoles } from '../utils/accountUtils';
+import {
+  canStartAccountDrag,
+  getAccountReorderAnimationDuration,
+  reorderAccounts,
+  sortRoles,
+} from '../utils/accountUtils';
 import { generateUUID } from '../utils/uuid';
 import { scanGameDirectory, ScanProgress } from '../services/gameDirectoryScanner';
 import { toast } from '../utils/toastManager';
@@ -22,7 +27,15 @@ interface AccountManagerProps {
   instanceTypes: InstanceType[];
 }
 
+interface AccountDragPointerPosition {
+  clientX: number;
+  clientY: number;
+}
+
 export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, config, instanceTypes }) => {
+  const ACCOUNT_DRAG_START_DISTANCE = 6;
+  const ACCOUNT_REORDER_EASING = 'cubic-bezier(0.22, 0.8, 0.2, 1)';
+  const ACCOUNT_DRAG_SURFACE_EASING = 'cubic-bezier(0.2, 0.85, 0.2, 1)';
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
@@ -64,16 +77,81 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
+  const [dragPreviewAccounts, setDragPreviewAccounts] = useState<Account[] | null>(null);
+  const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null);
+  const [dragOverAccountId, setDragOverAccountId] = useState<string | null>(null);
+  const [isAccountDragActive, setIsAccountDragActive] = useState(false);
+  const accountCardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const previousAccountPositions = useRef<Map<string, number>>(new Map());
+  const pendingAccountDragRef = useRef<{
+    accountId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    anchorOffsetY: number;
+    sourceElement: HTMLDivElement;
+  } | null>(null);
+  const dragPreviewAccountsRef = useRef<Account[] | null>(null);
+  const draggedAccountIdRef = useRef<string | null>(null);
+  const dragOverAccountIdRef = useRef<string | null>(null);
+  const isAccountDragActiveRef = useRef(false);
+  const dragOffsetYRef = useRef(0);
+  const dragPreviewFrameRef = useRef<number | null>(null);
+  const latestDragPointerRef = useRef<AccountDragPointerPosition | null>(null);
+  const pendingDragPointerRef = useRef<AccountDragPointerPosition | null>(null);
+  const dragAnchorOffsetYRef = useRef(0);
+  const suppressNextAccountClickRef = useRef(false);
+  const latestAccountsRef = useRef<Account[]>(safeAccounts);
+  const latestSearchTermRef = useRef(searchTerm);
+  const latestSetAccountsRef = useRef(setAccounts);
+
+  useEffect(() => {
+    latestAccountsRef.current = safeAccounts;
+  }, [safeAccounts]);
+
+  useEffect(() => {
+    latestSearchTermRef.current = searchTerm;
+  }, [searchTerm]);
+
+  useEffect(() => {
+    latestSetAccountsRef.current = setAccounts;
+  }, [setAccounts]);
+
+  useEffect(() => {
+    // 监听全局指针事件，彻底防止因 DOM 元素本身因排序复用而被浏览器切断 Pointer Capture 导致的卡手/丢失事件
+    const handleMove = (e: PointerEvent) => handleAccountHeaderPointerMove(e as any);
+    const handleUp = (e: PointerEvent) => handleAccountHeaderPointerUp(e as any);
+    const handleCancel = (e: PointerEvent) => handleAccountHeaderPointerCancel(e as any);
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleCancel);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+    };
+  });
+
+  useEffect(() => {
+    return () => {
+      if (dragPreviewFrameRef.current !== null) {
+        cancelAnimationFrame(dragPreviewFrameRef.current);
+      }
+    };
+  }, []);
+
+  const displayAccounts = dragPreviewAccounts ?? safeAccounts;
 
   // 搜索筛选逻辑
   const filteredAccounts = useMemo(() => {
     if (!searchTerm.trim()) {
-      return safeAccounts;
+      return displayAccounts;
     }
 
     const term = searchTerm.toLowerCase().trim();
 
-    return safeAccounts.filter(account => {
+    return displayAccounts.filter(account => {
       // 搜索账号名称
       if (account.accountName.toLowerCase().includes(term)) {
         return true;
@@ -99,7 +177,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       return false;
     });
-  }, [safeAccounts, searchTerm]);
+  }, [displayAccounts, searchTerm]);
 
   // 清空搜索
   const clearSearch = () => {
@@ -678,6 +756,282 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setRoleDeleteDirectoryChecked(true);
   };
 
+  useEffect(() => {
+    if (!isAccountDragActive) {
+      return;
+    }
+
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+    };
+  }, [isAccountDragActive]);
+
+  useLayoutEffect(() => {
+    const nextPositions = new Map<string, number>();
+
+    filteredAccounts.forEach(account => {
+      const cardElement = accountCardRefs.current.get(account.id);
+      if (!cardElement) {
+        return;
+      }
+
+      const isDraggedCard = isAccountDragActiveRef.current && draggedAccountIdRef.current === account.id;
+      const currentRectTop = cardElement.getBoundingClientRect().top;
+      const currentTop = isDraggedCard ? currentRectTop - dragOffsetYRef.current : currentRectTop;
+      nextPositions.set(account.id, currentTop);
+
+      if (isDraggedCard) {
+        return;
+      }
+
+      const previousTop = previousAccountPositions.current.get(account.id);
+      if (previousTop === undefined) {
+        return;
+      }
+
+      const deltaY = previousTop - currentTop;
+      if (Math.abs(deltaY) < 1) {
+        return;
+      }
+
+      cardElement.style.transition = 'none';
+      cardElement.style.transform = `translate3d(0, ${deltaY}px, 0)`;
+
+      requestAnimationFrame(() => {
+        const duration = getAccountReorderAnimationDuration(deltaY);
+        cardElement.style.transition = `transform ${duration}ms ${ACCOUNT_REORDER_EASING}`;
+        cardElement.style.transform = '';
+      });
+    });
+
+    previousAccountPositions.current = nextPositions;
+
+    const latestPointer = latestDragPointerRef.current;
+    if (isAccountDragActiveRef.current && latestPointer) {
+      syncDraggedCardOffset(latestPointer.clientY);
+    }
+  }, [filteredAccounts]);
+
+  const syncDraggedCardOffset = (clientY: number) => {
+    const draggedId = draggedAccountIdRef.current;
+    if (!draggedId) {
+      return;
+    }
+
+    const draggedCard = accountCardRefs.current.get(draggedId);
+    if (!draggedCard) {
+      return;
+    }
+
+    const currentRectTop = draggedCard.getBoundingClientRect().top;
+    const baseTop = currentRectTop - dragOffsetYRef.current;
+    const nextOffsetY = clientY - baseTop - dragAnchorOffsetYRef.current;
+
+    if (Math.abs(nextOffsetY - dragOffsetYRef.current) < 0.5) {
+      return;
+    }
+
+    dragOffsetYRef.current = nextOffsetY;
+    
+    // 直接变异 DOM 以跳过 React 的重渲染（消除拖动顿挫感）
+    draggedCard.style.transform = `translate3d(0, ${nextOffsetY}px, 0) scale(1.02)`;
+  };
+
+  const scheduleAccountDragFrame = () => {
+    if (dragPreviewFrameRef.current !== null) {
+      return;
+    }
+
+    dragPreviewFrameRef.current = requestAnimationFrame(() => {
+      dragPreviewFrameRef.current = null;
+
+      const pointer = pendingDragPointerRef.current;
+      if (!pointer || !isAccountDragActiveRef.current) {
+        return;
+      }
+
+      syncDraggedCardOffset(pointer.clientY);
+      updateDragPreviewTarget(pointer.clientX, pointer.clientY);
+    });
+  };
+
+  const resetAccountDragState = () => {
+    const pendingDrag = pendingAccountDragRef.current;
+    if (pendingDrag?.sourceElement.hasPointerCapture?.(pendingDrag.pointerId)) {
+      pendingDrag.sourceElement.releasePointerCapture(pendingDrag.pointerId);
+    }
+
+    if (dragPreviewFrameRef.current !== null) {
+      cancelAnimationFrame(dragPreviewFrameRef.current);
+      dragPreviewFrameRef.current = null;
+    }
+
+    // 释放直接附加的 Transform，让其回推给正常布局或 FLIP 动画接管
+    const draggedId = draggedAccountIdRef.current;
+    if (draggedId) {
+      const draggedCard = accountCardRefs.current.get(draggedId);
+      if (draggedCard) {
+        draggedCard.style.transform = '';
+      }
+    }
+
+    pendingAccountDragRef.current = null;
+    pendingDragPointerRef.current = null;
+    latestDragPointerRef.current = null;
+    dragPreviewAccountsRef.current = null;
+    draggedAccountIdRef.current = null;
+    dragOverAccountIdRef.current = null;
+    isAccountDragActiveRef.current = false;
+    dragAnchorOffsetYRef.current = 0;
+    dragOffsetYRef.current = 0;
+
+    setDragPreviewAccounts(null);
+    setDraggedAccountId(null);
+    setDragOverAccountId(null);
+    setIsAccountDragActive(false);
+  };
+
+  const updateDragPreviewTarget = (clientX: number, clientY: number) => {
+    const draggedId = draggedAccountIdRef.current;
+    const currentPreview = dragPreviewAccountsRef.current;
+    if (!draggedId || !currentPreview) {
+      return;
+    }
+
+    const hoveredElement = document.elementFromPoint(clientX, clientY);
+    const targetCard = hoveredElement instanceof HTMLElement
+      ? hoveredElement.closest<HTMLElement>('[data-account-card-id]')
+      : null;
+    const targetAccountId = targetCard?.dataset.accountCardId;
+
+    if (!targetAccountId || targetAccountId === draggedId || targetAccountId === dragOverAccountIdRef.current) {
+      return;
+    }
+
+    const nextPreviewAccounts = reorderAccounts(currentPreview, draggedId, targetAccountId);
+    dragPreviewAccountsRef.current = nextPreviewAccounts;
+    dragOverAccountIdRef.current = targetAccountId;
+    setDragPreviewAccounts(nextPreviewAccounts);
+    setDragOverAccountId(targetAccountId);
+  };
+
+  const handleAccountHeaderPointerDown = (event: React.PointerEvent<HTMLDivElement>, accountId: string) => {
+    if (event.button !== 0 || !canStartAccountDrag(event.target)) {
+      return;
+    }
+
+    pendingAccountDragRef.current = {
+      accountId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      anchorOffsetY: event.clientY - event.currentTarget.getBoundingClientRect().top,
+      sourceElement: event.currentTarget,
+    };
+
+    pendingDragPointerRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    latestDragPointerRef.current = pendingDragPointerRef.current;
+  };
+
+  const handleAccountHeaderPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pendingDrag = pendingAccountDragRef.current;
+    if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextPointerPosition = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    pendingDragPointerRef.current = nextPointerPosition;
+    latestDragPointerRef.current = nextPointerPosition;
+
+    const movedDistance = Math.hypot(event.clientX - pendingDrag.startX, event.clientY - pendingDrag.startY);
+
+    if (!isAccountDragActiveRef.current) {
+      if (movedDistance < ACCOUNT_DRAG_START_DISTANCE) {
+        return;
+      }
+
+      const initialPreviewAccounts = [...latestAccountsRef.current];
+      dragPreviewAccountsRef.current = initialPreviewAccounts;
+      draggedAccountIdRef.current = pendingDrag.accountId;
+      dragOverAccountIdRef.current = pendingDrag.accountId;
+      isAccountDragActiveRef.current = true;
+      dragAnchorOffsetYRef.current = pendingDrag.anchorOffsetY;
+      dragOffsetYRef.current = 0;
+      suppressNextAccountClickRef.current = true;
+
+      setDragPreviewAccounts(initialPreviewAccounts);
+      setDraggedAccountId(pendingDrag.accountId);
+      setDragOverAccountId(pendingDrag.accountId);
+      setIsAccountDragActive(true);
+    }
+
+    syncDraggedCardOffset(event.clientY);
+    scheduleAccountDragFrame();
+  };
+
+  const finalizeAccountDrag = () => {
+    const latestPointer = pendingDragPointerRef.current;
+    if (isAccountDragActiveRef.current && latestPointer) {
+      updateDragPreviewTarget(latestPointer.clientX, latestPointer.clientY);
+    }
+
+    const previewAccounts = dragPreviewAccountsRef.current;
+    const currentAccounts = latestAccountsRef.current;
+    const hasPreviewOrderChange = Array.isArray(previewAccounts)
+      && previewAccounts.length === currentAccounts.length
+      && previewAccounts.some((account, index) => account.id !== currentAccounts[index]?.id);
+
+    if (isAccountDragActiveRef.current && previewAccounts && hasPreviewOrderChange) {
+      latestSetAccountsRef.current(previewAccounts);
+      if (!latestSearchTermRef.current.trim()) {
+        toast.success('账号顺序已更新');
+      } else {
+        toast.success('已按当前拖拽结果更新账号顺序');
+      }
+    }
+
+    resetAccountDragState();
+  };
+
+  const handleAccountHeaderPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pendingDrag = pendingAccountDragRef.current;
+    if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    finalizeAccountDrag();
+  };
+
+  const handleAccountHeaderPointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pendingDrag = pendingAccountDragRef.current;
+    if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    resetAccountDragState();
+  };
+
+  const handleAccountHeaderClick = (accountId: string) => {
+    if (suppressNextAccountClickRef.current) {
+      suppressNextAccountClickRef.current = false;
+      return;
+    }
+
+    toggleAccountExpansion(accountId);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -754,14 +1108,21 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* 全选功能 */}
       {
         safeAccounts.length > 0 && (
-          <div className="flex items-center gap-2 px-1">
-            <input
-              type="checkbox"
-              checked={isAllSelected}
-              onChange={handleSelectAll}
-              className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
-            />
-            <label className="text-sm font-medium text-main">全选 ({safeAccounts.length} 个账户)</label>
+          <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={isAllSelected}
+                onChange={handleSelectAll}
+                className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
+              />
+              <label className="text-sm font-medium text-main">全选 ({safeAccounts.length} 个账户)</label>
+            </div>
+            {safeAccounts.length > 1 && (
+              <span className="text-xs text-muted">
+                拖动账号栏即可调整显示顺序
+              </span>
+            )}
           </div>
         )
       }
@@ -845,12 +1206,37 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         {filteredAccounts.map(account => {
           const clientNote = getClientAccountNote(account.type, account.notes);
           const isExpanded = expandedAccountIds.has(account.id);
+          const isDragging = isAccountDragActive && draggedAccountId === account.id;
+          const isDragTarget = isAccountDragActive && dragOverAccountId === account.id && draggedAccountId !== account.id;
+          
+          const cardStyle: React.CSSProperties | undefined = isDragging
+            ? {
+              transformOrigin: 'top center',
+              transition: `background-color 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, border-color 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, box-shadow 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, opacity 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, backdrop-filter 180ms ${ACCOUNT_DRAG_SURFACE_EASING}`,
+              willChange: 'transform',
+              pointerEvents: 'none',
+              zIndex: 30, // 挂载时给予最高层级
+            }
+            : undefined;
           return (
-            <div key={account.id} className={`bg-surface rounded-lg border border-base transition-all ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''}`}>
+            <div
+              key={account.id}
+              data-account-card-id={account.id}
+              ref={node => {
+                if (node) {
+                  accountCardRefs.current.set(account.id, node);
+                } else {
+                  accountCardRefs.current.delete(account.id);
+                }
+              }}
+              style={cardStyle}
+              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-md' : 'border-base'} ${isDragTarget ? '' : ''}`}
+            >
               {/* 可点击的头部区域 */}
               <div
-                className={`flex items-center justify-between p-4 cursor-pointer select-none transition-colors ${isExpanded ? 'bg-base/50' : 'hover:bg-base/30'}`}
-                onClick={() => toggleAccountExpansion(account.id)}
+                className={`flex items-center justify-between p-4 select-none transition-colors ${isDragging ? 'cursor-grabbing' : 'cursor-grab'} ${isExpanded ? 'bg-base/50' : 'hover:bg-base/30'}`}
+                onClick={() => handleAccountHeaderClick(account.id)}
+                onPointerDown={(event) => handleAccountHeaderPointerDown(event, account.id)}
               >
                 <div className="flex items-center gap-3 overflow-hidden">
                   {/* 展开/折叠图标 */}
@@ -859,7 +1245,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   </div>
 
                   {/* 复选框 - 阻止冒泡 */}
-                  <div onClick={e => e.stopPropagation()} className="flex items-center">
+                  <div onClick={e => e.stopPropagation()} className="flex items-center" data-no-account-drag="true">
                     <input
                       type="checkbox"
                       checked={selectedAccounts.has(account.id)}
@@ -888,6 +1274,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           e.stopPropagation();
                           copyUsername(account.username || account.accountName, account.id);
                         }}
+                        data-no-account-drag="true"
                         className={`p-1.5 rounded-lg transition-colors shrink-0 ${copyUsernameSuccess === account.id ? 'text-emerald-600 bg-emerald-50' : 'text-muted/60 hover:text-primary hover:bg-base'}`}
                         title="复制账号"
                       >
@@ -899,6 +1286,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                             e.stopPropagation();
                             copyPassword(account.password!, account.id);
                           }}
+                          data-no-account-drag="true"
                           className={`p-1.5 rounded-lg transition-colors shrink-0 ${copySuccess === account.id ? 'text-emerald-600 bg-emerald-50' : 'text-muted/60 hover:text-primary hover:bg-base'}`}
                           title="复制密码"
                         >
@@ -927,7 +1315,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 </div>
 
                 {/* 操作按钮区域 - 阻止冒泡 */}
-                <div className="flex gap-1 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+                <div className="flex gap-1 shrink-0 ml-2" onClick={e => e.stopPropagation()} data-no-account-drag="true">
                   <button
                     onClick={() => {
                       setAccounts(prev => prev.map(a => {
