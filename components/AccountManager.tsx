@@ -32,6 +32,10 @@ interface AccountDragPointerPosition {
   clientY: number;
 }
 
+interface AccountDragPointerPayload extends AccountDragPointerPosition {
+  pointerId: number;
+}
+
 export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, config, instanceTypes }) => {
   const ACCOUNT_DRAG_START_DISTANCE = 6;
   const ACCOUNT_REORDER_EASING = 'cubic-bezier(0.22, 0.8, 0.2, 1)';
@@ -77,6 +81,12 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
+  // 账号类型筛选状态：'all' | 'own' | 'client'
+  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'own' | 'client'>('all');
+  // 防抖搜索词（用于实际的筛选逻辑）
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  // 防抖定时器引用
+  const debounceTimerRef = useRef<number | null>(null);
   const [dragPreviewAccounts, setDragPreviewAccounts] = useState<Account[] | null>(null);
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null);
   const [dragOverAccountId, setDragOverAccountId] = useState<string | null>(null);
@@ -119,9 +129,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   useEffect(() => {
     // 监听全局指针事件，彻底防止因 DOM 元素本身因排序复用而被浏览器切断 Pointer Capture 导致的卡手/丢失事件
-    const handleMove = (e: PointerEvent) => handleAccountHeaderPointerMove(e as any);
-    const handleUp = (e: PointerEvent) => handleAccountHeaderPointerUp(e as any);
-    const handleCancel = (e: PointerEvent) => handleAccountHeaderPointerCancel(e as any);
+    const handleMove = (event: PointerEvent) => handleAccountPointerMoveInternal(event);
+    const handleUp = (event: PointerEvent) => handleAccountPointerUpInternal(event);
+    const handleCancel = (event: PointerEvent) => handleAccountPointerCancelInternal(event);
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
@@ -131,27 +141,40 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleCancel);
     };
-  });
+  }, []);
 
   useEffect(() => {
     return () => {
       if (dragPreviewFrameRef.current !== null) {
         cancelAnimationFrame(dragPreviewFrameRef.current);
       }
+      // 清理搜索防抖定时器
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+      }
     };
   }, []);
 
   const displayAccounts = dragPreviewAccounts ?? safeAccounts;
 
-  // 搜索筛选逻辑
-  const filteredAccounts = useMemo(() => {
-    if (!searchTerm.trim()) {
+  // 应用账号类型筛选
+  const typeFilteredAccounts = useMemo(() => {
+    if (accountTypeFilter === 'all') {
       return displayAccounts;
     }
+    const targetType = accountTypeFilter === 'own' ? AccountType.OWN : AccountType.CLIENT;
+    return displayAccounts.filter(account => account.type === targetType);
+  }, [displayAccounts, accountTypeFilter]);
 
-    const term = searchTerm.toLowerCase().trim();
+  // 搜索筛选逻辑（使用防抖后的搜索词）
+  const filteredAccounts = useMemo(() => {
+    if (!debouncedSearchTerm.trim()) {
+      return typeFilteredAccounts;
+    }
 
-    return displayAccounts.filter(account => {
+    const term = debouncedSearchTerm.toLowerCase().trim();
+
+    return typeFilteredAccounts.filter(account => {
       // 搜索账号名称
       if (account.accountName.toLowerCase().includes(term)) {
         return true;
@@ -177,11 +200,25 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       return false;
     });
-  }, [displayAccounts, searchTerm]);
+  }, [typeFilteredAccounts, debouncedSearchTerm]);
 
   // 清空搜索
   const clearSearch = () => {
     setSearchTerm('');
+    setDebouncedSearchTerm('');
+  };
+
+  // 处理搜索输入（带防抖）
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    // 清除之前的定时器
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    // 设置新的定时器，150ms 防抖
+    debounceTimerRef.current = window.setTimeout(() => {
+      setDebouncedSearchTerm(value);
+    }, 150);
   };
 
   const pendingDeleteAccount = useMemo(() => {
@@ -942,7 +979,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     latestDragPointerRef.current = pendingDragPointerRef.current;
   };
 
-  const handleAccountHeaderPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handleAccountPointerMoveInternal = (event: AccountDragPointerPayload) => {
     const pendingDrag = pendingAccountDragRef.current;
     if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) {
       return;
@@ -1005,7 +1042,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     resetAccountDragState();
   };
 
-  const handleAccountHeaderPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handleAccountPointerUpInternal = (event: AccountDragPointerPayload) => {
     const pendingDrag = pendingAccountDragRef.current;
     if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) {
       return;
@@ -1014,7 +1051,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     finalizeAccountDrag();
   };
 
-  const handleAccountHeaderPointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handleAccountPointerCancelInternal = (event: AccountDragPointerPayload) => {
     const pendingDrag = pendingAccountDragRef.current;
     if (!pendingDrag || pendingDrag.pointerId !== event.pointerId) {
       return;
@@ -1042,9 +1079,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input
               type="text"
-              placeholder="搜索账号 or 角色..."
+              data-page-search-input="true"
+              placeholder="搜索账号或角色"
               value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
+              onChange={e => handleSearchChange(e.target.value)}
               className="pl-9 pr-8 py-1.5 w-full sm:w-48 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder:text-muted text-main transition-all"
             />
             {searchTerm && (
@@ -1057,12 +1095,22 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             )}
           </div>
 
-          {/* 搜索结果提示 */}
-          {searchTerm && (
-            <span className="text-sm text-muted">
-              找到 <span className="font-medium text-emerald-600">{filteredAccounts.length}</span> 个匹配
-            </span>
+          {/* 筛选结果提示 */}
+          {(searchTerm || accountTypeFilter !== 'all') && filteredAccounts.length > 0 && (
+            <div className="flex items-center text-sm text-muted">
+              {filteredAccounts.length === safeAccounts.length && accountTypeFilter === 'all' && !searchTerm ? (
+                <>
+                  共 <span className="font-medium text-main mx-1">{safeAccounts.length}</span> 个账户
+                </>
+              ) : (
+                <>
+                  找到 <span className="font-medium text-emerald-600 mx-1">{filteredAccounts.length}</span> 个匹配
+                </>
+              )}
+            </div>
           )}
+
+          {/* 原账号类型筛选区域，移至全选栏 */}
 
           {/* 使用配置目录解析按钮 */}
           {config?.game?.gameDirectory && (
@@ -1105,20 +1153,66 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       </div>
 
 
-      {/* 全选功能 */}
+      {/* 列表控制栏：全选与筛选 */}
       {
         safeAccounts.length > 0 && (
-          <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={isAllSelected}
-                onChange={handleSelectAll}
-                className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
-              />
-              <label className="text-sm font-medium text-main">全选 ({safeAccounts.length} 个账户)</label>
+          <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              {filteredAccounts.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={handleSelectAll}
+                    className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
+                  />
+                  <label className="text-sm font-medium text-main">
+                    全选 ({filteredAccounts.length} 个账户)
+                    {accountTypeFilter !== 'all' && filteredAccounts.length !== safeAccounts.length && (
+                      <span className="text-muted ml-1">
+                        / 共 {safeAccounts.length}
+                      </span>
+                    )}
+                  </label>
+                </div>
+              )}
+              
+              {/* 账号类型筛选 */}
+              <div className="flex items-center gap-1 bg-base rounded-lg p-0.5 border border-base">
+                <button
+                  onClick={() => setAccountTypeFilter('all')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    accountTypeFilter === 'all'
+                      ? 'bg-surface text-primary shadow-sm'
+                      : 'text-muted hover:text-main'
+                  }`}
+                >
+                  全部
+                </button>
+                <button
+                  onClick={() => setAccountTypeFilter('own')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    accountTypeFilter === 'own'
+                      ? 'bg-surface text-primary shadow-sm'
+                      : 'text-muted hover:text-main'
+                  }`}
+                >
+                  本人
+                </button>
+                <button
+                  onClick={() => setAccountTypeFilter('client')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    accountTypeFilter === 'client'
+                      ? 'bg-surface text-primary shadow-sm'
+                      : 'text-muted hover:text-main'
+                  }`}
+                >
+                  代清
+                </button>
+              </div>
             </div>
-            {safeAccounts.length > 1 && (
+
+            {filteredAccounts.length > 0 && safeAccounts.length > 1 && (
               <span className="text-xs text-muted">
                 拖动账号栏即可调整显示顺序
               </span>
@@ -1183,20 +1277,41 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
 
 
-      {/* 无搜索结果提示 */}
+      {/* 无筛选结果提示 */}
       {
-        searchTerm && filteredAccounts.length === 0 && (
+        filteredAccounts.length === 0 && safeAccounts.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
             <Search className="w-12 h-12 text-slate-200 mx-auto mb-3" />
             <p className="text-slate-500 mb-2">未找到匹配的结果</p>
             <p className="text-sm text-slate-400">
-              搜索关键词: <span className="font-medium text-slate-600">"{searchTerm}"</span>
+              {accountTypeFilter !== 'all' && (
+                <>
+                  已筛选{accountTypeFilter === 'own' ? '本人' : '代清'}账号
+                  {searchTerm && (
+                    <>
+                      ，搜索 "<span className="font-medium text-slate-600">{searchTerm}</span>"
+                    </>
+                  )}
+                </>
+              )}
+              {accountTypeFilter === 'all' && searchTerm && (
+                <>
+                  搜索关键词: <span className="font-medium text-slate-600">"{searchTerm}"</span>
+                </>
+              )}
             </p>
             <button
-              onClick={clearSearch}
+              onClick={() => {
+                if (accountTypeFilter !== 'all') {
+                  setAccountTypeFilter('all');
+                }
+                if (searchTerm) {
+                  clearSearch();
+                }
+              }}
               className="mt-4 px-4 py-2 bg-surface border border-base hover:border-primary hover:text-primary hover:bg-base/50 active:scale-[0.98] rounded-lg transition-all text-sm font-medium"
             >
-              清除搜索
+              {accountTypeFilter !== 'all' && searchTerm ? '清除筛选和搜索' : accountTypeFilter !== 'all' ? '清除筛选' : '清除搜索'}
             </button>
           </div>
         )
@@ -1208,14 +1323,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           const isExpanded = expandedAccountIds.has(account.id);
           const isDragging = isAccountDragActive && draggedAccountId === account.id;
           const isDragTarget = isAccountDragActive && dragOverAccountId === account.id && draggedAccountId !== account.id;
-          
+
           const cardStyle: React.CSSProperties | undefined = isDragging
             ? {
               transformOrigin: 'top center',
               transition: `background-color 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, border-color 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, box-shadow 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, opacity 180ms ${ACCOUNT_DRAG_SURFACE_EASING}, backdrop-filter 180ms ${ACCOUNT_DRAG_SURFACE_EASING}`,
               willChange: 'transform',
               pointerEvents: 'none',
-              zIndex: 30, // 挂载时给予最高层级
+              zIndex: 30,
             }
             : undefined;
           return (

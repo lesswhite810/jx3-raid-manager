@@ -24,9 +24,13 @@
 npm run tauri dev
 npm run build
 npm run tauri build
+npm run tauri:bundle
 npm run test
 npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 ```
+
+- `npm run tauri build`：本地默认只生成可执行文件，不打安装包。
+- `npm run tauri:bundle`：本地显式生成 NSIS 安装包。
 
 ## 3. 前后端通信约定
 
@@ -149,6 +153,7 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 
 - 推荐安装版资产使用 `JX3RaidManager_<version>_x64-setup.exe`。
 - 便携版资产使用 `JX3RaidManager_v<version>.exe`。
+- Windows 安装器定制统一维护在 `src-tauri/nsis/hooks.nsh` 与 `src-tauri/nsis/SimpChinese.nsh`，不要额外维护整份 `installer.nsi` 模板。
 - 发现历史 release 资产挂错时，先移除错资产，再在 notes 中给用户明确说明。
 - 自动更新发布依赖仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
 - 如果自动更新启用了 Gitee 回退源，同步配置 `GITEE_PUSH_URL`，可选配置 `GITEE_REPO`、`GITEE_ASSETS_BRANCH`。

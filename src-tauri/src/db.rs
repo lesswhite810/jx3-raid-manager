@@ -1,10 +1,15 @@
 use rusqlite::{params, Connection, Result};
+use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 mod migration;
 pub mod migrations;
 
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
+const LOG_FILE_NAME: &str = "jx3-raid-manager.log";
+const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
+const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
 pub const CURRENT_SCHEMA_VERSION: i32 = 7;
@@ -17,16 +22,258 @@ fn get_local_timestamp() -> String {
     chrono::Local::now().to_rfc3339()
 }
 
-pub fn get_app_dir() -> Result<PathBuf, String> {
-    let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DataDirBootstrapConfig {
+    custom_data_dir: Option<String>,
+    pending_migration_from: Option<String>,
+}
 
-    let app_dir = home_dir.join(".jx3-raid-manager");
+/// 检测是否为安装版（通过检查同目录下是否有 uninstall.exe）
+fn is_install_mode() -> bool {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            return exe_dir.join("uninstall.exe").exists();
+        }
+    }
+    false
+}
 
-    if !app_dir.exists() {
-        std::fs::create_dir_all(&app_dir).map_err(|e| format!("无法创建应用目录: {}", e))?;
+/// 获取安装目录（仅在安装版中有效）
+fn get_install_dir() -> Option<PathBuf> {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            return Some(exe_dir.to_path_buf());
+        }
+    }
+    None
+}
+
+fn ensure_directory_exists(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
+        }
+        return Err(format!("目标路径不是目录: {}", path.display()));
     }
 
-    Ok(app_dir)
+    fs::create_dir_all(path).map_err(|e| format!("无法创建目录 {}: {}", path.display(), e))
+}
+
+fn get_home_app_dir() -> Result<PathBuf, String> {
+    let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
+    Ok(home_dir.join(".jx3-raid-manager"))
+}
+
+fn get_data_dir_bootstrap_path() -> Result<PathBuf, String> {
+    let base_dir = dirs::data_local_dir()
+        .or_else(dirs::config_local_dir)
+        .ok_or_else(|| "无法获取本地配置目录".to_string())?;
+
+    let bootstrap_dir = base_dir.join("jx3-raid-manager");
+    ensure_directory_exists(&bootstrap_dir)?;
+    Ok(bootstrap_dir.join(DATA_DIR_BOOTSTRAP_FILE))
+}
+
+fn get_data_dir_installer_state_path() -> Result<PathBuf, String> {
+    let bootstrap_path = get_data_dir_bootstrap_path()?;
+    let bootstrap_dir = bootstrap_path
+        .parent()
+        .ok_or_else(|| "无法获取数据目录状态文件所在目录".to_string())?;
+    Ok(bootstrap_dir.join(DATA_DIR_INSTALLER_STATE_FILE))
+}
+
+fn read_data_dir_bootstrap_config() -> Result<DataDirBootstrapConfig, String> {
+    let config_path = get_data_dir_bootstrap_path()?;
+    if !config_path.exists() {
+        return Ok(DataDirBootstrapConfig::default());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("读取数据目录配置失败: {}", e))?;
+
+    serde_json::from_str::<DataDirBootstrapConfig>(&content)
+        .map_err(|e| format!("解析数据目录配置失败: {}", e))
+}
+
+fn write_data_dir_bootstrap_config(config: &DataDirBootstrapConfig) -> Result<(), String> {
+    let config_path = get_data_dir_bootstrap_path()?;
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("序列化数据目录配置失败: {}", e))?;
+    fs::write(&config_path, content).map_err(|e| format!("写入数据目录配置失败: {}", e))?;
+    sync_data_dir_installer_state(config)
+}
+
+fn get_custom_data_dir(config: &DataDirBootstrapConfig) -> Option<PathBuf> {
+    config.custom_data_dir.as_ref().and_then(|path| {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(trimmed))
+        }
+    })
+}
+
+fn has_persisted_app_data(path: &Path) -> bool {
+    path.join(DATABASE_NAME).exists() || path.join(LOG_FILE_NAME).exists()
+}
+
+fn copy_directory_contents(source: &Path, target: &Path) -> Result<(), String> {
+    ensure_directory_exists(target)?;
+
+    for entry in fs::read_dir(source).map_err(|e| format!("读取目录失败 {}: {}", source.display(), e))? {
+        let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copy_directory_contents(&source_path, &target_path)?;
+            continue;
+        }
+
+        if target_path.exists() {
+            continue;
+        }
+
+        fs::copy(&source_path, &target_path).map_err(|e| {
+            format!(
+                "复制数据文件失败: {} -> {} ({})",
+                source_path.display(),
+                target_path.display(),
+                e
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn resolve_target_app_dir(
+    config: &DataDirBootstrapConfig,
+) -> Result<(PathBuf, String, bool), String> {
+    if let Some(custom_dir) = get_custom_data_dir(config) {
+        return Ok((custom_dir, "custom".to_string(), is_install_mode()));
+    }
+
+    if is_install_mode() {
+        let install_dir =
+            get_install_dir().ok_or_else(|| "无法获取安装目录".to_string())?;
+        return Ok((install_dir, "install".to_string(), true));
+    }
+
+    Ok((get_home_app_dir()?, "user_home".to_string(), false))
+}
+
+fn resolve_effective_app_dir(config: &DataDirBootstrapConfig, target_dir: &Path) -> PathBuf {
+    config
+        .pending_migration_from
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| target_dir.to_path_buf())
+}
+
+fn write_data_dir_installer_state(
+    config: &DataDirBootstrapConfig,
+    target_dir: &Path,
+    location: &str,
+) -> Result<(), String> {
+    let installer_state_path = get_data_dir_installer_state_path()?;
+    let effective_dir = resolve_effective_app_dir(config, target_dir);
+    let custom_dir = get_custom_data_dir(config)
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let pending_migration_from = config
+        .pending_migration_from
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+
+    let content = format!(
+        "[data]\nlocation={}\neffectiveDataDir={}\nresolvedTargetDir={}\ncustomDataDir={}\npendingMigrationFrom={}\n",
+        location,
+        effective_dir.to_string_lossy(),
+        target_dir.to_string_lossy(),
+        custom_dir,
+        pending_migration_from
+    );
+
+    fs::write(&installer_state_path, content)
+        .map_err(|e| format!("写入安装器数据目录状态失败: {}", e))
+}
+
+fn sync_data_dir_installer_state(config: &DataDirBootstrapConfig) -> Result<(), String> {
+    let (target_dir, location, _) = resolve_target_app_dir(config)?;
+    write_data_dir_installer_state(config, &target_dir, &location)
+}
+
+fn maybe_migrate_app_data(
+    target_dir: &Path,
+    config: &mut DataDirBootstrapConfig,
+) -> Result<(), String> {
+    let mut migration_sources: Vec<PathBuf> = Vec::new();
+
+    if let Some(source) = config.pending_migration_from.as_ref() {
+        let source_path = PathBuf::from(source.trim());
+        if !source_path.as_os_str().is_empty() {
+            migration_sources.push(source_path);
+        }
+    }
+
+    let home_dir = get_home_app_dir()?;
+    if home_dir != target_dir {
+        migration_sources.push(home_dir);
+    }
+
+    let mut migrated = false;
+    for source_dir in migration_sources {
+        if source_dir == target_dir || !source_dir.exists() {
+            continue;
+        }
+
+        if has_persisted_app_data(target_dir) || !has_persisted_app_data(&source_dir) {
+            continue;
+        }
+
+        copy_directory_contents(&source_dir, target_dir)?;
+        migrated = true;
+        log::info!(
+            "已迁移数据目录内容: {:?} -> {:?}",
+            source_dir,
+            target_dir
+        );
+        break;
+    }
+
+    if migrated || config.pending_migration_from.is_some() {
+        config.pending_migration_from = None;
+        write_data_dir_bootstrap_config(config)?;
+    }
+    Ok(())
+}
+
+pub fn get_app_dir() -> Result<PathBuf, String> {
+    let mut config = read_data_dir_bootstrap_config()?;
+    let (target_dir, location, _) = resolve_target_app_dir(&config)?;
+    ensure_directory_exists(&target_dir)?;
+    maybe_migrate_app_data(&target_dir, &mut config)?;
+    write_data_dir_installer_state(&config, &target_dir, &location)?;
+    Ok(target_dir)
+}
+
+/// 获取当前数据目录信息
+pub fn get_app_dir_info() -> Result<(PathBuf, String, bool, bool), String> {
+    let config = read_data_dir_bootstrap_config()?;
+    let (target_dir, location, is_install) = resolve_target_app_dir(&config)?;
+    write_data_dir_installer_state(&config, &target_dir, &location)?;
+    Ok((
+        target_dir,
+        location,
+        is_install,
+        get_custom_data_dir(&config).is_some(),
+    ))
 }
 
 pub fn get_db_path() -> Result<PathBuf, String> {
@@ -2497,6 +2744,85 @@ pub fn db_save_raid_role_visibility(roleId: String, raidKey: String, visible: bo
     .map_err(|e| format!("保存团队副本角色可见性失败: {}", e))?;
 
     Ok(())
+}
+
+// ========== 数据目录管理 ==========
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataDirInfo {
+    pub current_path: String,
+    pub location: String,       // "custom" | "install" | "user_home"
+    pub is_install_mode: bool,
+    pub custom_dir_configured: bool,
+}
+
+/// 获取当前数据目录信息
+#[tauri::command]
+pub fn db_get_data_dir_info() -> Result<DataDirInfo, String> {
+    let (app_dir, location, is_install, custom_configured) = get_app_dir_info()?;
+
+    Ok(DataDirInfo {
+        current_path: app_dir.to_string_lossy().to_string(),
+        location,
+        is_install_mode: is_install,
+        custom_dir_configured: custom_configured,
+    })
+}
+
+fn write_custom_data_dir_config(path: Option<&Path>, migration_source: Option<&Path>) -> Result<(), String> {
+    let mut config = read_data_dir_bootstrap_config()?;
+    config.custom_data_dir = path.map(|item| item.to_string_lossy().to_string());
+    config.pending_migration_from = migration_source
+        .filter(|item| !item.as_os_str().is_empty())
+        .map(|item| item.to_string_lossy().to_string());
+    write_data_dir_bootstrap_config(&config)
+}
+
+/// 设置自定义数据目录（持久化保存，重启后生效）
+#[tauri::command]
+pub fn db_set_custom_data_dir(path: String) -> Result<String, String> {
+    let dir_path = PathBuf::from(&path);
+
+    if dir_path.as_os_str().is_empty() {
+        return Err("目录不能为空".to_string());
+    }
+
+    ensure_directory_exists(&dir_path)?;
+    let current_dir = get_app_dir()?;
+
+    let migration_source = if current_dir != dir_path {
+        Some(current_dir.as_path())
+    } else {
+        None
+    };
+
+    write_custom_data_dir_config(Some(dir_path.as_path()), migration_source)?;
+    log::info!("自定义数据目录已保存，将在重启后启用: {:?}", dir_path);
+    Ok(dir_path.to_string_lossy().to_string())
+}
+
+/// 恢复默认数据目录（安装版为安装目录，非安装版为用户目录）
+#[tauri::command]
+pub fn db_reset_custom_data_dir() -> Result<String, String> {
+    let current_dir = get_app_dir()?;
+    let install_mode = is_install_mode();
+    let default_dir = if install_mode {
+        get_install_dir().ok_or_else(|| "无法获取安装目录".to_string())?
+    } else {
+        get_home_app_dir()?
+    };
+
+    let migration_source = if current_dir != default_dir {
+        Some(current_dir.as_path())
+    } else {
+        None
+    };
+
+    ensure_directory_exists(&default_dir)?;
+    write_custom_data_dir_config(None, migration_source)?;
+    log::info!("已恢复默认数据目录，将在重启后启用: {:?}", default_dir);
+    Ok(default_dir.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

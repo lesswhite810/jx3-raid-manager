@@ -585,6 +585,46 @@ class DatabaseService {
       throw error;
     }
   }
+
+  // ========== 数据目录管理 ==========
+
+  /// 获取数据目录信息
+  async getDataDirInfo(): Promise<{
+    currentPath: string;
+    location: 'custom' | 'install' | 'user_home';
+    isInstallMode: boolean;
+    customDirConfigured: boolean;
+  }> {
+    await this.init();
+    try {
+      return await invoke('db_get_data_dir_info');
+    } catch (error) {
+      console.error('Failed to get data dir info:', error);
+      throw error;
+    }
+  }
+
+  /// 设置自定义数据目录
+  async setCustomDataDir(path: string): Promise<string> {
+    await this.init();
+    try {
+      return await invoke<string>('db_set_custom_data_dir', { path });
+    } catch (error) {
+      console.error('Failed to set custom data dir:', error);
+      throw error;
+    }
+  }
+
+  /// 恢复默认数据目录
+  async resetCustomDataDir(): Promise<string> {
+    await this.init();
+    try {
+      return await invoke<string>('db_reset_custom_data_dir');
+    } catch (error) {
+      console.error('Failed to reset custom data dir:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new DatabaseService();

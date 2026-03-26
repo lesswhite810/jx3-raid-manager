@@ -39,6 +39,7 @@ import {
 import { saveRaidCache } from './utils/raidUtils';
 import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts } from './utils/accountUtils';
+import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { syncEquipment } from './services/jx3BoxApi';
@@ -453,6 +454,22 @@ function App() {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleFindShortcut = (event: KeyboardEvent) => {
+      if (!isPageFindShortcut(event)) {
+        return;
+      }
+
+      event.preventDefault(); // 始终阻止默认的浏览器查找，在全应用中都不显示原生框
+      focusPageSearchInput(document);
+    };
+
+    window.addEventListener('keydown', handleFindShortcut, true);
+    return () => {
+      window.removeEventListener('keydown', handleFindShortcut, true);
     };
   }, []);
 

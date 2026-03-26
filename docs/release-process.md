@@ -43,6 +43,8 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - 如果启用了 Gitee 回退源，还要同步配置 `GITEE_PUSH_URL`，可选配置 `GITEE_REPO`、`GITEE_ASSETS_BRANCH`
 - `latest.json` 中的下载地址、版本号、签名与本次 release 资产一致
 - Release 页面中，`latest.json` 标签应显示为“自动更新元数据”，`.sig` 标签应显示为“自动更新签名文件”
+- Windows 安装器定制统一维护在 `src-tauri/nsis/hooks.nsh` 与 `src-tauri/nsis/SimpChinese.nsh`，不要再单独维护整份 `installer.nsi` 模板
+- 安装目录选择页追加应用名称依赖 Tauri 默认 NSIS 模板行为，如需调整，先验证生成的 `target/release/nsis/x64/installer.nsi`
 
 ## Release Notes 存放位置
 
@@ -101,10 +103,11 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 
 1. 先完成版本号同步。
 2. 本地执行 `npm run build` 或 `npm run tauri build`。
-3. GitHub Actions 发版时会额外生成 updater 产物，本地 `tauri build` 不依赖这一步。
-4. 在 `release-notes/` 新增或更新对应版本说明。
-5. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
-6. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
-7. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
-8. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
-9. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
+3. `npm run tauri build` 本地默认只生成可执行文件；如需本地验证安装包，使用 `npm run tauri:bundle`。
+4. GitHub Actions 发版时会通过 `TAURI_BUNDLE=1 npm run tauri build -- --config ...` 生成安装包与 updater 产物。
+5. 在 `release-notes/` 新增或更新对应版本说明。
+6. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
+7. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
+8. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
+9. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
+10. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。

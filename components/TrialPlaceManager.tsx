@@ -194,6 +194,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
                     <input
                         type="text"
+                        data-page-search-input="true"
                         value={roleSearchTerm}
                         onChange={(event) => setRoleSearchTerm(event.target.value)}
                         placeholder="搜索角色、区服或账号"

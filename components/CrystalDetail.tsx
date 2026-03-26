@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { RaidRecord, Account } from '../types';
 import { getLastMonday } from '../utils/cooldownManager';
+import { buildSpecialDropRecords, SpecialDropRecord, SpecialDropType } from '../utils/rareDropUtils';
 
 interface CrystalDetailProps {
   records: RaidRecord[];
@@ -16,7 +17,7 @@ interface CrystalRoleStats {
   roleName: string;
   server: string;
   totalCount: number;
-  records: { id: string; date: string | number; raidName: string; notes?: string; type: string; equip?: any }[];
+  records: SpecialDropRecord[];
 }
 
 export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts, initialPeriod, onPeriodChange, onBack }) => {
@@ -38,7 +39,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     for (const account of safeAccounts) {
       if (account.id === accountId) {
         const roles = account.roles || [];
-        const role = roles.find((r: any) => r.id === roleId);
+        const role = roles.find(item => item.id === roleId);
         if (role) {
           return {
             roleName: role.name,
@@ -63,19 +64,9 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
 
   const periodStartTime = getPeriodStartTime();
 
-  // 仅统计团队副本中的稀有特殊掉落
+  // 统计所有团队副本中的稀有特殊掉落
   const allDropRecords = useMemo(() => {
-    const getRecordTime = (date: string | number): number => {
-      return typeof date === 'number' ? date : new Date(date).getTime();
-    };
-
-    return safeRecords
-      .filter(r => {
-        if (r.hasXuanjing !== true) return false;
-        if (periodStartTime === null) return true;
-        return getRecordTime(r.date) >= periodStartTime;
-      })
-      .map(r => ({ id: r.id, date: r.date, raidName: r.raidName, notes: r.notes, type: '玄晶', roleId: r.roleId || r.accountId, accountId: r.accountId, roleName: r.roleName, server: r.server }));
+    return buildSpecialDropRecords(safeRecords, periodStartTime);
   }, [safeRecords, periodStartTime]);
 
   const roleStats = useMemo<CrystalRoleStats[]>(() => {
@@ -101,7 +92,19 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     });
 
     return Array.from(roleMap.values()).sort((a, b) => b.totalCount - a.totalCount);
-  }, [allDropRecords]);
+  }, [allDropRecords, safeAccounts]);
+
+  const getBadgeClassName = (type: SpecialDropType): string => {
+    if (type === '玄晶') {
+      return 'bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800/30';
+    }
+
+    if (type === '马具' || type === '宠物' || type === '挂件' || type === '坐骑') {
+      return 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/30';
+    }
+
+    return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700';
+  };
 
   const toggleExpand = (roleId: string) => {
     setExpandedRoleId(expandedRoleId === roleId ? null : roleId);
@@ -159,12 +162,18 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <span className="text-muted font-medium text-sm">玄晶总数</span>
+            <span className="text-muted font-medium text-sm">特殊掉落总数</span>
           </div>
-          <p className="text-3xl font-bold text-main">{xuanjingTotal}</p>
+          <p className="text-3xl font-bold text-main">{totalDrops}</p>
+        </div>
+        <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-muted font-medium text-sm">玄晶</span>
+          </div>
+          <p className="text-3xl font-bold text-violet-600 dark:text-violet-400">{xuanjingTotal}</p>
         </div>
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
@@ -181,7 +190,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
               <span className="text-slate-400 dark:text-slate-500 text-xl font-bold">0</span>
             </div>
             <p className="text-muted">暂无稀有掉落记录</p>
-            <p className="text-sm text-muted/70 mt-1">团队副本掉落玄晶后会自动记录在这里</p>
+            <p className="text-sm text-muted/70 mt-1">团队副本掉落特殊物品后会自动记录在这里</p>
             {allDropRecords.length === 0 && safeRecords.length > 0 && (
               <p className="text-xs text-muted/50 mt-2">共有 {safeRecords.length} 条副本记录，暂无特殊掉落</p>
             )}
@@ -189,7 +198,6 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
         ) : (
           <div className="space-y-1">
             {roleStats.map((stat, index) => {
-              console.log('[CrystalDetail] Rendering role stat:', stat.roleName, 'count:', stat.totalCount, 'records:', stat.records.length);
               return (
                 <div key={stat.roleId} className="border-b border-base last:border-b-0">
                   <button
@@ -241,11 +249,10 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                               <p className="font-medium text-main">{record.raidName}</p>
                               <p className="text-xs text-muted">{record.notes || '稀有特殊掉落'}</p>
                             </div>
-                            <div className={`flex-shrink-0 px-2 py-0.5 rounded text-[11px] font-medium border ${record.type === '玄晶'
-                              ? 'bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800/30'
-                              : 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30'
-                              }`}>
-                              {record.type}
+                            <div className="flex-shrink-0">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${getBadgeClassName(record.type)}`}>
+                                {record.type}
+                              </span>
                             </div>
                           </div>
                         ))}

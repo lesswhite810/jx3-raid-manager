@@ -12,7 +12,14 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "customLanguageFiles": {
+          "SimpChinese": "nsis/SimpChinese.nsh"
+        },
+        "installerHooks": "nsis/hooks.nsh"
       }
     },
     "icon": [
@@ -21,7 +28,8 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": []
   },
   "productName": "JX3RaidManager",
   "mainBinaryName": "JX3RaidManager",

@@ -5,6 +5,8 @@ mod game_directory;
 mod gkp_parser;
 mod updater;
 
+const PREPARE_INSTALL_DATA_FLAG: &str = "--prepare-install-data";
+
 #[cfg(target_os = "windows")]
 fn check_webview2() -> Result<String, String> {
     use std::os::windows::process::CommandExt;
@@ -76,7 +78,25 @@ fn init_logging() -> tauri_plugin_log::Builder {
         .max_file_size(10 * 1024 * 1024)
 }
 
+fn is_prepare_install_data_mode() -> bool {
+    std::env::args()
+        .skip(1)
+        .any(|arg| arg == PREPARE_INSTALL_DATA_FLAG)
+}
+
+fn run_prepare_install_data() -> Result<(), String> {
+    db::init_db().map(|_| ())
+}
+
 fn main() {
+    if is_prepare_install_data_mode() {
+        if let Err(error) = run_prepare_install_data() {
+            eprintln!("准备安装版数据失败: {}", error);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // 设置 panic hook
     std::panic::set_hook(Box::new(|info| {
         log::error!("Panic occurred: {:?}", info);
@@ -192,6 +212,10 @@ fn main() {
             // 团队副本角色可见性配置 (V6+)
             db::db_get_raid_role_visibility,
             db::db_save_raid_role_visibility,
+            // 数据目录管理
+            db::db_get_data_dir_info,
+            db::db_set_custom_data_dir,
+            db::db_reset_custom_data_dir,
             updater::updater_get_runtime_info,
             updater::updater_check,
             updater::updater_download_and_install,

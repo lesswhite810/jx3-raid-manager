@@ -77,6 +77,7 @@ jobs:
         working-directory: .
         run: npm run tauri build -- --config tmp/tauri.release.conf.json
         env:
+          TAURI_BUNDLE: '1'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
           TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}

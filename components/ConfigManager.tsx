@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus } from '../types';
-import { Check, AlertTriangle, FolderOpen, Download, RefreshCw } from 'lucide-react';
+import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink } from 'lucide-react';
 import { saveConfigToStorage, isValidGamePath } from '../utils/configUtils';
+import { db } from '../services/db';
+import { open } from '@tauri-apps/plugin-dialog';
+import { toast } from '../utils/toastManager';
 
 interface ConfigManagerProps {
   config: Config;
@@ -21,6 +24,26 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   onCheckForUpdates
 }) => {
   const [pathValid, setPathValid] = useState<boolean | null>(null);
+  const [dataDirInfo, setDataDirInfo] = useState<{
+    currentPath: string;
+    location: 'custom' | 'install' | 'user_home';
+    isInstallMode: boolean;
+    customDirConfigured: boolean;
+  } | null>(null);
+
+  const loadDataDirInfo = useCallback(async () => {
+    try {
+      const info = await db.getDataDirInfo();
+      setDataDirInfo(info);
+    } catch (error) {
+      console.error('Failed to load data dir info:', error);
+    }
+  }, []);
+
+  // 加载数据目录信息
+  useEffect(() => {
+    loadDataDirInfo();
+  }, [loadDataDirInfo]);
 
   useEffect(() => {
     if (!config.game.gameDirectory) {
@@ -60,6 +83,54 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         return '检查更新失败';
       default:
         return updateRuntimeInfo?.updaterConfigured ? '尚未检查更新' : '当前构建未启用自动更新';
+    }
+  };
+
+  // 选择自定义数据目录
+  const handleSelectCustomDataDir = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: '选择数据存储目录',
+      });
+
+      if (typeof selected === 'string') {
+        const customPath = selected;
+        await db.setCustomDataDir(customPath);
+        toast.success(`已将数据目录修改为: ${customPath}`);
+        toast.info('修改将在重启应用后生效，重启时会自动迁移数据库和日志文件');
+        await loadDataDirInfo();
+      }
+    } catch (error) {
+      console.error('Failed to set custom data dir:', error);
+      toast.error('设置自定义目录失败: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+
+  const handleResetCustomDataDir = async () => {
+    try {
+      const targetPath = await db.resetCustomDataDir();
+      toast.success(`已恢复默认数据目录: ${targetPath}`);
+      toast.info('修改将在重启应用后生效，重启时会自动迁移数据库和日志文件');
+      await loadDataDirInfo();
+    } catch (error) {
+      console.error('Failed to reset custom data dir:', error);
+      toast.error('恢复默认目录失败: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+
+  const getDataDirLocationText = () => {
+    if (!dataDirInfo) return '加载中...';
+    switch (dataDirInfo.location) {
+      case 'custom':
+        return '自定义目录';
+      case 'install':
+        return '安装目录';
+      case 'user_home':
+        return '用户目录';
+      default:
+        return '未知';
     }
   };
 
@@ -171,6 +242,79 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                   <span>游戏目录路径有效</span>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 数据目录配置 */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+            <Database className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-main">数据存储</h3>
+            <p className="text-xs text-muted">配置数据库与日志文件的存储位置</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+            <label className="text-sm font-medium text-muted pt-0.5">当前数据目录</label>
+            <div className="col-span-2">
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  dataDirInfo?.location === 'custom'
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                    : dataDirInfo?.location === 'install'
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                }`}>
+                  {getDataDirLocationText()}
+                </span>
+                {dataDirInfo?.isInstallMode && dataDirInfo?.location === 'install' && (
+                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                    安装版默认
+                  </span>
+                )}
+              </div>
+              <div className="py-1">
+                <p className="text-sm text-main break-all font-mono select-all">
+                  {dataDirInfo?.currentPath ?? '加载中...'}
+                </p>
+              </div>
+              <p className="mt-2 text-xs text-muted">
+                {dataDirInfo?.location === 'install'
+                  ? '当前使用安装目录存储数据，适合安装版用户'
+                  : dataDirInfo?.location === 'custom'
+                  ? '当前使用自定义目录存储数据'
+                  : '当前使用用户目录存储数据'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            <label className="text-sm font-medium text-muted">自定义目录</label>
+            <div className="col-span-2">
+              <button
+                onClick={handleSelectCustomDataDir}
+                className="btn btn-secondary flex items-center gap-2 text-sm"
+              >
+                <ExternalLink className="w-4 h-4" />
+                选择其他目录
+              </button>
+              {dataDirInfo?.customDirConfigured && (
+                <button
+                  onClick={handleResetCustomDataDir}
+                  className="btn btn-secondary ml-2 text-sm"
+                >
+                  恢复默认目录
+                </button>
+              )}
+              <p className="mt-2 text-xs text-muted">
+                修改后需要重启应用才能生效。下次启动时会自动将数据库和日志迁移到目标目录。
+              </p>
             </div>
           </div>
         </div>
