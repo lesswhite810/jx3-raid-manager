@@ -142,7 +142,13 @@ pub async fn updater_check(app: AppHandle) -> Result<UpdaterCheckResult, String>
             available: true,
             version: Some(update.version.clone()),
             body: update.body.clone(),
-            pub_date: update.date.map(|value| value.to_string()),
+            pub_date: update.date.and_then(|date| {
+                chrono::DateTime::<chrono::Utc>::from_timestamp(
+                    date.unix_timestamp(),
+                    date.nanosecond(),
+                )
+                .map(|datetime| datetime.to_rfc3339())
+            }),
             is_portable: runtime_info.is_portable,
             will_install_in_place: runtime_info.will_install_in_place,
             updater_configured: true,

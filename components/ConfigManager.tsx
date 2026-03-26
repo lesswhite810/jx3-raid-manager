@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus } from '../types';
 import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink } from 'lucide-react';
 import { saveConfigToStorage, isValidGamePath } from '../utils/configUtils';
+import { formatUpdatePubDate } from '../utils/updaterUtils';
 import { db } from '../services/db';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from '../utils/toastManager';
@@ -23,6 +24,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   updateCheckResult,
   onCheckForUpdates
 }) => {
+  const publishedAtText = formatUpdatePubDate(updateCheckResult?.pubDate);
   const [pathValid, setPathValid] = useState<boolean | null>(null);
   const [dataDirInfo, setDataDirInfo] = useState<{
     currentPath: string;
@@ -187,9 +189,9 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
               <label className="text-sm font-medium text-muted pt-0.5">最新版本</label>
               <div className="col-span-2">
                 <div className="text-sm font-medium text-main">v{updateCheckResult.version}</div>
-                {updateCheckResult.pubDate && (
+                {publishedAtText && (
                   <p className="text-xs text-muted mt-1">
-                    发布时间：{new Date(updateCheckResult.pubDate).toLocaleString('zh-CN')}
+                    发布时间：{publishedAtText}
                   </p>
                 )}
                 <p className="text-xs text-muted mt-1">

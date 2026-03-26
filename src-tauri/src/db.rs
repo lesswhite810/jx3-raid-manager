@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 mod migration;
@@ -115,37 +116,195 @@ fn get_custom_data_dir(config: &DataDirBootstrapConfig) -> Option<PathBuf> {
     })
 }
 
-fn has_persisted_app_data(path: &Path) -> bool {
-    path.join(DATABASE_NAME).exists() || path.join(LOG_FILE_NAME).exists()
+fn canonicalize_existing_directory(path: &Path) -> Result<PathBuf, String> {
+    ensure_directory_exists(path)?;
+    fs::canonicalize(path).map_err(|e| format!("解析目录路径失败 {}: {}", path.display(), e))
 }
 
-fn copy_directory_contents(source: &Path, target: &Path) -> Result<(), String> {
-    ensure_directory_exists(target)?;
+fn directories_match(left: &Path, right: &Path) -> Result<bool, String> {
+    let left_path = canonicalize_existing_directory(left)?;
+    let right_path = canonicalize_existing_directory(right)?;
+    Ok(left_path == right_path)
+}
 
-    for entry in fs::read_dir(source).map_err(|e| format!("读取目录失败 {}: {}", source.display(), e))? {
+fn matches_managed_file_prefix(file_name: &str, prefix: &str) -> bool {
+    file_name == prefix
+        || file_name.starts_with(&format!("{prefix}."))
+        || file_name.starts_with(&format!("{prefix}-"))
+}
+
+fn is_managed_app_data_file_name(file_name: &str) -> bool {
+    matches_managed_file_prefix(file_name, DATABASE_NAME)
+        || matches_managed_file_prefix(file_name, LOG_FILE_NAME)
+}
+
+fn get_managed_app_data_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    if !path.is_dir() {
+        return Err(format!("数据目录不是文件夹: {}", path.display()));
+    }
+
+    let mut files = Vec::new();
+    for entry in fs::read_dir(path).map_err(|e| format!("读取目录失败 {}: {}", path.display(), e))? {
         let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-
-        if source_path.is_dir() {
-            copy_directory_contents(&source_path, &target_path)?;
+        let entry_path = entry.path();
+        if !entry_path.is_file() {
             continue;
         }
+
+        let Some(file_name) = entry.file_name().to_str().map(|value| value.to_string()) else {
+            continue;
+        };
+
+        if is_managed_app_data_file_name(&file_name) {
+            files.push(entry_path);
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn has_persisted_app_data(path: &Path) -> bool {
+    get_managed_app_data_files(path)
+        .map(|files| !files.is_empty())
+        .unwrap_or(false)
+}
+
+fn files_are_identical(left: &Path, right: &Path) -> Result<bool, String> {
+    let left_metadata = fs::metadata(left)
+        .map_err(|e| format!("读取文件信息失败 {}: {}", left.display(), e))?;
+    let right_metadata = fs::metadata(right)
+        .map_err(|e| format!("读取文件信息失败 {}: {}", right.display(), e))?;
+
+    if left_metadata.len() != right_metadata.len() {
+        return Ok(false);
+    }
+
+    let mut left_file = fs::File::open(left)
+        .map_err(|e| format!("打开文件失败 {}: {}", left.display(), e))?;
+    let mut right_file = fs::File::open(right)
+        .map_err(|e| format!("打开文件失败 {}: {}", right.display(), e))?;
+
+    let mut left_buffer = [0_u8; 8 * 1024];
+    let mut right_buffer = [0_u8; 8 * 1024];
+
+    loop {
+        let left_read = left_file
+            .read(&mut left_buffer)
+            .map_err(|e| format!("读取文件失败 {}: {}", left.display(), e))?;
+        let right_read = right_file
+            .read(&mut right_buffer)
+            .map_err(|e| format!("读取文件失败 {}: {}", right.display(), e))?;
+
+        if left_read != right_read {
+            return Ok(false);
+        }
+
+        if left_read == 0 {
+            return Ok(true);
+        }
+
+        if left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+    }
+}
+
+fn target_file_is_authoritative(source: &Path, target: &Path) -> Result<bool, String> {
+    if files_are_identical(source, target)? {
+        return Ok(true);
+    }
+
+    let source_modified = fs::metadata(source)
+        .map_err(|e| format!("读取文件信息失败 {}: {}", source.display(), e))?
+        .modified()
+        .ok();
+    let target_modified = fs::metadata(target)
+        .map_err(|e| format!("读取文件信息失败 {}: {}", target.display(), e))?
+        .modified()
+        .ok();
+
+    Ok(matches!(
+        (source_modified, target_modified),
+        (Some(source_time), Some(target_time)) if target_time >= source_time
+    ))
+}
+
+fn move_file_with_fallback(source: &Path, target: &Path) -> Result<(), String> {
+    match fs::rename(source, target) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            fs::copy(source, target).map_err(|e| {
+                format!(
+                    "复制数据文件失败: {} -> {} ({})",
+                    source.display(),
+                    target.display(),
+                    e
+                )
+            })?;
+            fs::remove_file(source)
+                .map_err(|e| format!("删除源文件失败 {}: {}", source.display(), e))
+        }
+    }
+}
+
+fn migrate_managed_app_data_files(source: &Path, target: &Path) -> Result<bool, String> {
+    if !source.exists() {
+        return Ok(false);
+    }
+
+    ensure_directory_exists(target)?;
+    if directories_match(source, target)? {
+        return Ok(false);
+    }
+
+    let managed_files = get_managed_app_data_files(source)?;
+    let mut changed = false;
+
+    for source_path in managed_files {
+        let file_name = source_path
+            .file_name()
+            .ok_or_else(|| format!("无法获取源文件名: {}", source_path.display()))?;
+        let target_path = target.join(file_name);
 
         if target_path.exists() {
+            if target_file_is_authoritative(&source_path, &target_path)? {
+                fs::remove_file(&source_path)
+                    .map_err(|e| format!("删除源文件失败 {}: {}", source_path.display(), e))?;
+                changed = true;
+                log::info!("已清理旧数据文件: {:?} -> {:?}", source_path, target_path);
+            } else {
+                log::warn!(
+                    "跳过冲突数据文件迁移，目标目录已存在无法安全覆盖的文件: {:?} -> {:?}",
+                    source_path,
+                    target_path
+                );
+            }
             continue;
         }
 
-        fs::copy(&source_path, &target_path).map_err(|e| {
-            format!(
-                "复制数据文件失败: {} -> {} ({})",
-                source_path.display(),
-                target_path.display(),
-                e
-            )
-        })?;
+        move_file_with_fallback(&source_path, &target_path)?;
+        changed = true;
+        log::info!("已迁移数据文件: {:?} -> {:?}", source_path, target_path);
     }
-    Ok(())
+
+    Ok(changed)
+}
+
+fn can_clear_pending_migration(source: &Path, target: &Path) -> Result<bool, String> {
+    if source.as_os_str().is_empty() || !source.exists() {
+        return Ok(true);
+    }
+
+    if directories_match(source, target)? {
+        return Ok(true);
+    }
+
+    Ok(!has_persisted_app_data(source))
 }
 
 fn resolve_target_app_dir(
@@ -229,27 +388,35 @@ fn maybe_migrate_app_data(
 
     let mut migrated = false;
     for source_dir in migration_sources {
-        if source_dir == target_dir || !source_dir.exists() {
+        if !source_dir.exists() {
             continue;
         }
 
-        if has_persisted_app_data(target_dir) || !has_persisted_app_data(&source_dir) {
+        if directories_match(&source_dir, target_dir)? || !has_persisted_app_data(&source_dir) {
             continue;
         }
 
-        copy_directory_contents(&source_dir, target_dir)?;
-        migrated = true;
-        log::info!(
-            "已迁移数据目录内容: {:?} -> {:?}",
-            source_dir,
-            target_dir
-        );
-        break;
+        if migrate_managed_app_data_files(&source_dir, target_dir)? {
+            migrated = true;
+            log::info!(
+                "已迁移数据目录内容: {:?} -> {:?}",
+                source_dir,
+                target_dir
+            );
+        }
     }
 
-    if migrated || config.pending_migration_from.is_some() {
+    let should_clear_pending = if let Some(source) = config.pending_migration_from.as_ref() {
+        can_clear_pending_migration(Path::new(source.trim()), target_dir)?
+    } else {
+        false
+    };
+
+    if should_clear_pending {
         config.pending_migration_from = None;
         write_data_dir_bootstrap_config(config)?;
+    } else if migrated && config.pending_migration_from.is_some() {
+        log::warn!("数据迁移后源目录仍保留文件，保留待迁移状态以便后续继续处理");
     }
     Ok(())
 }
@@ -2791,10 +2958,10 @@ pub fn db_set_custom_data_dir(path: String) -> Result<String, String> {
     ensure_directory_exists(&dir_path)?;
     let current_dir = get_app_dir()?;
 
-    let migration_source = if current_dir != dir_path {
-        Some(current_dir.as_path())
-    } else {
+    let migration_source = if directories_match(&current_dir, &dir_path)? {
         None
+    } else {
+        Some(current_dir.as_path())
     };
 
     write_custom_data_dir_config(Some(dir_path.as_path()), migration_source)?;
@@ -2813,10 +2980,10 @@ pub fn db_reset_custom_data_dir() -> Result<String, String> {
         get_home_app_dir()?
     };
 
-    let migration_source = if current_dir != default_dir {
-        Some(current_dir.as_path())
-    } else {
+    let migration_source = if directories_match(&current_dir, &default_dir)? {
         None
+    } else {
+        Some(current_dir.as_path())
     };
 
     ensure_directory_exists(&default_dir)?;
@@ -2828,6 +2995,37 @@ pub fn db_reset_custom_data_dir() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestTempDir {
+        path: PathBuf,
+    }
+
+    impl TestTempDir {
+        fn new() -> Self {
+            let unique = format!(
+                "jx3-raid-manager-test-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system time should be after unix epoch")
+                    .as_nanos()
+            );
+            let path = std::env::temp_dir().join(unique);
+            fs::create_dir_all(&path).expect("temp dir should be created");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestTempDir {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.path).ok();
+        }
+    }
 
     #[test]
     fn preserves_account_without_roles_as_empty_roles_array() {
@@ -2902,5 +3100,89 @@ mod tests {
         assert_eq!(account["roles"].as_array().map(|roles| roles.len()), Some(1));
         assert_eq!(account["roles"][0]["id"], "role-1");
         assert_eq!(account["roles"][0]["visibility"]["raid"], false);
+    }
+
+    #[test]
+    fn migrates_data_files_by_removing_source_files() {
+        let temp_dir = TestTempDir::new();
+        let source_dir = temp_dir.path().join("source");
+        let target_dir = temp_dir.path().join("target");
+
+        fs::create_dir_all(&source_dir).expect("source dir should exist");
+        fs::create_dir_all(&target_dir).expect("target dir should exist");
+        fs::write(source_dir.join(DATABASE_NAME), "db-content").expect("db file should be written");
+        fs::write(source_dir.join(LOG_FILE_NAME), "log-content").expect("log file should be written");
+
+        let mut config = DataDirBootstrapConfig {
+            custom_data_dir: Some(target_dir.to_string_lossy().to_string()),
+            pending_migration_from: Some(source_dir.to_string_lossy().to_string()),
+        };
+
+        maybe_migrate_app_data(&target_dir, &mut config).expect("migration should succeed");
+
+        assert!(target_dir.join(DATABASE_NAME).exists(), "db file should exist in target");
+        assert!(target_dir.join(LOG_FILE_NAME).exists(), "log file should exist in target");
+        assert!(
+            !source_dir.join(DATABASE_NAME).exists(),
+            "db file should be removed from source after migration"
+        );
+        assert!(
+            !source_dir.join(LOG_FILE_NAME).exists(),
+            "log file should be removed from source after migration"
+        );
+        assert!(config.pending_migration_from.is_none(), "pending migration should be cleared");
+    }
+
+    #[test]
+    fn migrates_only_managed_files_when_target_is_nested_in_source() {
+        let temp_dir = TestTempDir::new();
+        let source_dir = temp_dir.path().join("source");
+        let target_dir = source_dir.join("nested-target");
+        let unrelated_dir = source_dir.join("screenshots");
+
+        fs::create_dir_all(&source_dir).expect("source dir should exist");
+        fs::create_dir_all(&unrelated_dir).expect("unrelated dir should exist");
+        fs::write(source_dir.join(DATABASE_NAME), "db-content").expect("db file should be written");
+        fs::write(source_dir.join(LOG_FILE_NAME), "log-content").expect("log file should be written");
+        fs::write(unrelated_dir.join("note.txt"), "keep").expect("unrelated file should be written");
+
+        let changed = migrate_managed_app_data_files(&source_dir, &target_dir)
+            .expect("migration should succeed for nested target");
+
+        assert!(changed, "managed files should be moved");
+        assert!(target_dir.join(DATABASE_NAME).exists(), "db file should exist in nested target");
+        assert!(target_dir.join(LOG_FILE_NAME).exists(), "log file should exist in nested target");
+        assert!(
+            !source_dir.join(DATABASE_NAME).exists(),
+            "db file should be removed from source"
+        );
+        assert!(
+            !source_dir.join(LOG_FILE_NAME).exists(),
+            "log file should be removed from source"
+        );
+        assert!(unrelated_dir.join("note.txt").exists(), "unrelated file should be preserved");
+        assert!(
+            !target_dir.join("nested-target").exists(),
+            "nested target should not recursively contain itself"
+        );
+    }
+
+    #[test]
+    fn skips_migration_when_target_is_same_directory_alias() {
+        let temp_dir = TestTempDir::new();
+        let source_dir = temp_dir.path().join("source");
+        let target_dir = source_dir.join(".");
+
+        fs::create_dir_all(&source_dir).expect("source dir should exist");
+        fs::write(source_dir.join(DATABASE_NAME), "db-content").expect("db file should be written");
+
+        let changed = migrate_managed_app_data_files(&source_dir, &target_dir)
+            .expect("same directory alias should not error");
+
+        assert!(!changed, "same directory should not trigger migration");
+        assert!(
+            source_dir.join(DATABASE_NAME).exists(),
+            "source file should remain in place when target is the same directory"
+        );
     }
 }

@@ -30,7 +30,9 @@ npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 ```
 
 - `npm run tauri build`：本地默认只生成可执行文件，不打安装包。
+- `npm run tauri build`：本地默认只生成可执行文件，不打安装包；同时会启用快速本地 release 配置（incremental、较高 `codegen-units`、`rust-lld`）以缩短反复构建时间。
 - `npm run tauri:bundle`：本地显式生成 NSIS 安装包。
+- 如需本地验证完整 release 配置，可临时设置环境变量 `JX3_TAURI_FULL_LOCAL_BUILD=1` 后再执行 `npm run tauri build`。
 
 ## 3. 前后端通信约定
 

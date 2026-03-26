@@ -33,9 +33,16 @@
   },
   "productName": "JX3RaidManager",
   "mainBinaryName": "JX3RaidManager",
-  "version": "2.1.17",
+  "version": "2.1.18",
   "identifier": "com.jx3.raidmanager",
-  "plugins": {},
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "windows": {
+        "installMode": "basicUi"
+      }
+    }
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [

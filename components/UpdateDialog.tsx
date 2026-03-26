@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react';
 import { UpdateCheckResult, UpdateStatus } from '../types';
+import { formatUpdatePubDate } from '../utils/updaterUtils';
 
 interface UpdateDialogProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     return null;
   }
 
+  const publishedAtText = formatUpdatePubDate(updateInfo.pubDate);
   const percent = totalBytes && totalBytes > 0
     ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
     : null;
@@ -59,16 +61,16 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
                 <span className="px-2.5 py-1 rounded-full bg-surface border border-base text-main">
                   {isPortable ? '便携版' : '安装版'}
                 </span>
-                {updateInfo.pubDate && (
+                {publishedAtText && (
                   <span className="text-muted">
-                    发布时间：{new Date(updateInfo.pubDate).toLocaleString('zh-CN')}
+                    发布时间：{publishedAtText}
                   </span>
                 )}
               </div>
               <p className="text-sm text-main mt-3">
                 {isPortable
                   ? '当前运行的是便携版，应用不会自动安装更新，将为你打开 GitHub Release 下载页面。'
-                  : '确认后将下载安装更新，并按当前安装路径执行升级安装。安装程序启动后，应用会退出并交由安装器完成更新。'}
+                  : '确认后将下载安装更新，并按当前安装路径执行升级安装。安装程序启动后，应用会退出并交由安装器完成更新；升级完成后可在完成页选择是否立即运行，且默认已勾选。'}
               </p>
             </div>
 

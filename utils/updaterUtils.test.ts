@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGitHubReleaseUrl,
   detectUpdateChannel,
+  formatUpdatePubDate,
   normalizeReleaseNotes,
   pickInstallerAsset,
   type GitHubReleaseAsset
@@ -36,6 +37,22 @@ describe('normalizeReleaseNotes', () => {
 
   it('returns fallback text when release notes are empty', () => {
     expect(normalizeReleaseNotes('   ')).toBe('本次版本未提供更新说明。');
+  });
+});
+
+describe('formatUpdatePubDate', () => {
+  it('formats legacy OffsetDateTime strings that JS cannot parse directly', () => {
+    const legacyTimeString = '2026-03-27 00:10:20.123456789 +00:00:00';
+    const isoTimeString = '2026-03-27T00:10:20.123456789Z';
+
+    expect(formatUpdatePubDate(legacyTimeString)).toBe(formatUpdatePubDate(isoTimeString));
+    expect(formatUpdatePubDate(legacyTimeString)).not.toBeNull();
+  });
+
+  it('returns null for empty or invalid release timestamps', () => {
+    expect(formatUpdatePubDate('')).toBeNull();
+    expect(formatUpdatePubDate('not-a-date')).toBeNull();
+    expect(formatUpdatePubDate(undefined)).toBeNull();
   });
 });
 
