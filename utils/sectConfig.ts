@@ -153,9 +153,9 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
   },
   '天罗诡道': {
     name: '天罗诡道',
-    color: 'bg-emerald-100 dark:bg-emerald-900/30',
-    textColor: 'text-emerald-700 dark:text-emerald-400',
-    borderColor: 'border-emerald-200 dark:border-emerald-800',
+    color: 'bg-lime-100 dark:bg-lime-900/30',
+    textColor: 'text-lime-700 dark:text-lime-400',
+    borderColor: 'border-lime-200 dark:border-lime-800',
     shortName: 'TL'
   },
   '惊羽诀': {
