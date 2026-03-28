@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { TrialPlaceRecord } from '../types';
 import { X, Calendar, Trophy, Search, CheckCircle, Circle, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { SectIcon } from './SectIcon';
 import { db } from '../services/db';
 import { JX3Equip } from '../services/jx3BoxApi';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
@@ -175,7 +176,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                             {role.sect && (
                                 <>
                                     <span className="mx-1.5 text-muted/40">·</span>
-                                    {role.sect}
+                                    <SectIcon sectName={role.sect} variant="short" />
                                 </>
                             )}
                         </p>

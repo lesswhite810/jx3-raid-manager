@@ -14,6 +14,7 @@ import { scanGameDirectory, ScanProgress } from '../services/gameDirectoryScanne
 import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
+import { SectIcon } from './SectIcon';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
 import { getClientAccountNote } from '../utils/raidRoleUtils';
@@ -1592,7 +1593,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                       {role.name}·{getBaseServerName(role.server)}
                                     </span>
                                     {role.sect && (
-                                      <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md font-medium">{role.sect}</span>
+                                      <SectIcon sectName={role.sect} variant="short" />
                                     )}
                                     {role.equipmentScore !== undefined && role.equipmentScore !== null && (
                                       <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md font-medium">

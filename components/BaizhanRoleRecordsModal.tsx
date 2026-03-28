@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { BaizhanRecord } from '../types';
 import { X, Calendar, Swords, Trash2, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Pencil } from 'lucide-react';
+import { SectIcon } from './SectIcon';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 
 // 格式化金币显示（对齐 RoleRecordsModal 风格）
@@ -136,7 +137,7 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                             {role.sect && (
                                 <>
                                     <span className="mx-1.5 text-muted/40">·</span>
-                                    {role.sect}
+                                    <SectIcon sectName={role.sect} variant="short" />
                                 </>
                             )}
                         </p>
