@@ -1,14 +1,16 @@
 import React from 'react';
-import { getSectConfig } from '../utils/sectConfig';
+import { getSectConfig, getSectIconPath } from '../utils/sectConfig';
 
 interface SectIconProps {
   sectName: string;
-  /** 显示模式: 'full' 显示完整名称, 'short' 显示简称 */
-  variant?: 'full' | 'short' | 'badge';
+  /** 显示模式: 'full' 显示完整名称, 'short' 显示简称, 'icon' 仅图标 */
+  variant?: 'full' | 'short' | 'badge' | 'icon';
   /** 自定义样式类 */
   className?: string;
   /** 图标尺寸 */
   size?: 'xs' | 'sm' | 'md' | 'lg';
+  /** 是否显示图标 */
+  showIcon?: boolean;
 }
 
 /**
@@ -19,9 +21,11 @@ export const SectIcon: React.FC<SectIconProps> = ({
   sectName,
   variant = 'badge',
   className = '',
-  size = 'sm'
+  size = 'sm',
+  showIcon = false
 }) => {
   const config = getSectConfig(sectName);
+  const iconPath = getSectIconPath(sectName);
 
   // 尺寸配置
   const sizeClasses = {
@@ -31,8 +35,52 @@ export const SectIcon: React.FC<SectIconProps> = ({
     lg: 'text-base px-3 py-1'
   };
 
+  // 图标尺寸
+  const iconSizes = {
+    xs: 'w-4 h-4',
+    sm: 'w-5 h-5',
+    md: 'w-6 h-6',
+    lg: 'w-7 h-7'
+  };
+
   if (!sectName) {
     return null;
+  }
+
+  // 仅显示图标模式
+  if (variant === 'icon') {
+    return (
+      <img
+        src={iconPath}
+        alt={config.name}
+        className={`${iconSizes[size]} object-contain ${className}`}
+        title={config.name}
+      />
+    );
+  }
+
+  // 带图标的徽章模式
+  if (showIcon && iconPath) {
+    return (
+      <span
+        className={`
+          inline-flex items-center gap-1
+          font-medium rounded-md
+          ${config.color} ${config.textColor} ${config.borderColor}
+          border
+          ${sizeClasses[size]}
+          ${className}
+        `}
+        title={config.name}
+      >
+        <img
+          src={iconPath}
+          alt=""
+          className={`${iconSizes[size]} object-contain`}
+        />
+        <span>{config.shortName}</span>
+      </span>
+    );
   }
 
   if (variant === 'short') {
