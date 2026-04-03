@@ -137,7 +137,7 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                             {role.sect && (
                                 <>
                                     <span className="mx-1.5 text-muted/40">·</span>
-                                    <SectIcon sectName={role.sect} variant="short" />
+                                    <SectIcon sectName={role.sect} />
                                 </>
                             )}
                         </p>

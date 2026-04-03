@@ -1593,7 +1593,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                       {role.name}·{getBaseServerName(role.server)}
                                     </span>
                                     {role.sect && (
-                                      <SectIcon sectName={role.sect} variant="short" />
+                                      <SectIcon sectName={role.sect} />
                                     )}
                                     {role.equipmentScore !== undefined && role.equipmentScore !== null && (
                                       <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md font-medium">
