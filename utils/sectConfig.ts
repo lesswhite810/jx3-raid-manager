@@ -347,12 +347,24 @@ export function getSectColorClasses(sectName: string): {
 }
 
 /**
- * 获取职业图标路径
+ * 获取职业图标路径（优先本地路径）
  */
 export function getSectIconPath(sectName: string): string | undefined {
   const iconId = SECT_ICON_IDS[sectName];
-  if (iconId) {
-    return `https://img.jx3box.com/image/xf/${iconId}.png`;
+  if (iconId === undefined || iconId === 0) {
+    return undefined;
   }
-  return undefined;
+  // 优先使用本地路径
+  return `/sect-icons/icon_${iconId}.png`;
+}
+
+/**
+ * 获取职业图标 CDN URL
+ */
+export function getSectIconUrl(sectName: string): string | undefined {
+  const iconId = SECT_ICON_IDS[sectName];
+  if (iconId === undefined || iconId === 0) {
+    return undefined;
+  }
+  return `https://img.jx3box.com/image/xf/${iconId}.png`;
 }
