@@ -108,6 +108,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-green-200 dark:border-green-800',
     shortName: 'BT',
   },
+  // 长歌
   '莫问': {
     name: '莫问',
     color: 'bg-indigo-100 dark:bg-indigo-900/30',
@@ -122,6 +123,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-indigo-200 dark:border-indigo-800',
     shortName: 'XZ',
   },
+  // 药宗
   '无方': {
     name: '无方',
     color: 'bg-teal-100 dark:bg-teal-900/30',
@@ -206,6 +208,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-sky-200 dark:border-sky-800',
     shortName: 'TX',
   },
+  // 唐门
   '天罗诡道': {
     name: '天罗诡道',
     color: 'bg-lime-100 dark:bg-lime-900/30',
@@ -236,6 +239,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-amber-500 dark:border-amber-700',
     shortName: 'GB',
   },
+  // 霸刀
   '北傲诀': {
     name: '北傲诀',
     color: 'bg-rose-100 dark:bg-rose-900/30',
@@ -243,6 +247,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-rose-200 dark:border-rose-800',
     shortName: 'BA',
   },
+  // 蓬莱
   '凌海诀': {
     name: '凌海诀',
     color: 'bg-rose-100 dark:bg-rose-900/30',
@@ -250,6 +255,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-rose-200 dark:border-rose-800',
     shortName: 'LH',
   },
+  // 凌雪
   '隐龙诀': {
     name: '隐龙诀',
     color: 'bg-cyan-100 dark:bg-cyan-900/30',
@@ -278,6 +284,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-slate-200 dark:border-slate-800',
     shortName: 'SH',
   },
+  // 段氏
   '周天功': {
     name: '周天功',
     color: 'bg-violet-100 dark:bg-violet-900/30',
@@ -285,6 +292,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-violet-200 dark:border-violet-800',
     shortName: 'ZT',
   },
+  // 无相楼
   '幽罗引': {
     name: '幽罗引',
     color: 'bg-violet-100 dark:bg-violet-900/30',
