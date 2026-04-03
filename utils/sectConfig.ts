@@ -69,42 +69,42 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-pink-100 dark:bg-pink-900/30',
     textColor: 'text-pink-700 dark:text-pink-400',
     borderColor: 'border-pink-200 dark:border-pink-800',
-    shortName: 'BX',
+    shortName: '冰心',
   },
   '云裳心经': {
     name: '云裳心经',
     color: 'bg-pink-100 dark:bg-pink-900/30',
     textColor: 'text-pink-700 dark:text-pink-400',
     borderColor: 'border-pink-200 dark:border-pink-800',
-    shortName: 'YS',
+    shortName: '秀奶',
   },
   '花间游': {
     name: '花间游',
     color: 'bg-purple-100 dark:bg-purple-900/30',
     textColor: 'text-purple-700 dark:text-purple-400',
     borderColor: 'border-purple-200 dark:border-purple-800',
-    shortName: 'HJ',
+    shortName: '花间',
   },
   '离经易道': {
     name: '离经易道',
     color: 'bg-purple-100 dark:bg-purple-900/30',
     textColor: 'text-purple-700 dark:text-purple-400',
     borderColor: 'border-purple-200 dark:border-purple-800',
-    shortName: 'LJ',
+    shortName: '花奶',
   },
   '毒经': {
     name: '毒经',
     color: 'bg-green-100 dark:bg-green-900/30',
     textColor: 'text-green-700 dark:text-green-400',
     borderColor: 'border-green-200 dark:border-green-800',
-    shortName: 'DJ',
+    shortName: '毒经',
   },
   '补天诀': {
     name: '补天诀',
     color: 'bg-green-100 dark:bg-green-900/30',
     textColor: 'text-green-700 dark:text-green-400',
     borderColor: 'border-green-200 dark:border-green-800',
-    shortName: 'BT',
+    shortName: '毒奶',
   },
   // 长歌
   '莫问': {
@@ -112,14 +112,14 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-indigo-100 dark:bg-indigo-900/30',
     textColor: 'text-indigo-700 dark:text-indigo-400',
     borderColor: 'border-indigo-200 dark:border-indigo-800',
-    shortName: 'MW',
+    shortName: '长歌',
   },
   '相知': {
     name: '相知',
     color: 'bg-indigo-100 dark:bg-indigo-900/30',
     textColor: 'text-indigo-700 dark:text-indigo-400',
     borderColor: 'border-indigo-200 dark:border-indigo-800',
-    shortName: 'XZ',
+    shortName: '歌奶',
   },
   // 药宗
   '无方': {
@@ -127,84 +127,84 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-teal-100 dark:bg-teal-900/30',
     textColor: 'text-teal-700 dark:text-teal-400',
     borderColor: 'border-teal-200 dark:border-teal-800',
-    shortName: 'WF',
+    shortName: '药总',
   },
   '灵素': {
     name: '灵素',
     color: 'bg-teal-100 dark:bg-teal-900/30',
     textColor: 'text-teal-700 dark:text-teal-400',
     borderColor: 'border-teal-200 dark:border-teal-800',
-    shortName: 'LS',
+    shortName: '药奶',
   },
   '傲血战意': {
     name: '傲血战意',
     color: 'bg-red-100 dark:bg-red-900/30',
     textColor: 'text-red-700 dark:text-red-400',
     borderColor: 'border-red-200 dark:border-red-800',
-    shortName: 'AX',
+    shortName: '天策',
   },
   '铁牢律': {
     name: '铁牢律',
     color: 'bg-red-100 dark:bg-red-900/30',
     textColor: 'text-red-700 dark:text-red-400',
     borderColor: 'border-red-200 dark:border-red-800',
-    shortName: 'TL',
+    shortName: '天策T',
   },
   '易筋经': {
     name: '易筋经',
     color: 'bg-amber-100 dark:bg-amber-900/30',
     textColor: 'text-amber-700 dark:text-amber-400',
     borderColor: 'border-amber-200 dark:border-amber-800',
-    shortName: 'YJ',
+    shortName: '和尚',
   },
   '洗髓经': {
     name: '洗髓经',
     color: 'bg-amber-100 dark:bg-amber-900/30',
     textColor: 'text-amber-700 dark:text-amber-400',
     borderColor: 'border-amber-200 dark:border-amber-800',
-    shortName: 'XS',
+    shortName: '和尚T',
   },
   '焚影圣诀': {
     name: '焚影圣诀',
     color: 'bg-yellow-100 dark:bg-yellow-900/30',
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
-    shortName: 'FY',
+    shortName: '明教',
   },
   '明尊琉璃体': {
     name: '明尊琉璃体',
     color: 'bg-yellow-100 dark:bg-yellow-900/30',
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
-    shortName: 'MZ',
+    shortName: '明教T',
   },
   '分山劲': {
     name: '分山劲',
     color: 'bg-stone-100 dark:bg-stone-900/30',
     textColor: 'text-stone-700 dark:text-stone-400',
     borderColor: 'border-stone-200 dark:border-stone-800',
-    shortName: 'FS',
+    shortName: '苍云',
   },
   '铁骨衣': {
     name: '铁骨衣',
     color: 'bg-stone-100 dark:bg-stone-900/30',
     textColor: 'text-stone-700 dark:text-stone-400',
     borderColor: 'border-stone-200 dark:border-stone-800',
-    shortName: 'TG',
+    shortName: '苍云T',
   },
   '紫霞功': {
     name: '紫霞功',
     color: 'bg-sky-100 dark:bg-sky-900/30',
     textColor: 'text-sky-700 dark:text-sky-400',
     borderColor: 'border-sky-200 dark:border-sky-800',
-    shortName: 'ZX',
+    shortName: '纯阳',
   },
   '太虚剑意': {
     name: '太虚剑意',
     color: 'bg-sky-100 dark:bg-sky-900/30',
     textColor: 'text-sky-700 dark:text-sky-400',
     borderColor: 'border-sky-200 dark:border-sky-800',
-    shortName: 'TX',
+    shortName: '纯阳',
   },
   // 唐门
   '天罗诡道': {
@@ -212,14 +212,14 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-lime-100 dark:bg-lime-900/30',
     textColor: 'text-lime-700 dark:text-lime-400',
     borderColor: 'border-lime-200 dark:border-lime-800',
-    shortName: 'TL',
+    shortName: '田螺',
   },
   '惊羽诀': {
     name: '惊羽诀',
     color: 'bg-emerald-100 dark:bg-emerald-900/30',
     textColor: 'text-emerald-700 dark:text-emerald-400',
     borderColor: 'border-emerald-200 dark:border-emerald-800',
-    shortName: 'JY',
+    shortName: '鲸鱼',
   },
   // 藏剑
   '问水诀': {
@@ -227,7 +227,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-yellow-100 dark:bg-yellow-900/30',
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
-    shortName: 'WS',
+    shortName: '藏剑',
   },
   // 丐帮（笑尘诀）
   '笑尘诀': {
@@ -235,7 +235,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-amber-600 dark:bg-amber-900/50',
     textColor: 'text-amber-50',
     borderColor: 'border-amber-500 dark:border-amber-700',
-    shortName: 'GB',
+    shortName: '丐帮',
   },
   // 霸刀
   '北傲诀': {
@@ -243,7 +243,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-rose-100 dark:bg-rose-900/30',
     textColor: 'text-rose-700 dark:text-rose-400',
     borderColor: 'border-rose-200 dark:border-rose-800',
-    shortName: 'BA',
+    shortName: '霸刀',
   },
   // 蓬莱
   '凌海诀': {
@@ -251,7 +251,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-rose-100 dark:bg-rose-900/30',
     textColor: 'text-rose-700 dark:text-rose-400',
     borderColor: 'border-rose-200 dark:border-rose-800',
-    shortName: 'LH',
+    shortName: '蓬莱',
   },
   // 凌雪
   '隐龙诀': {
@@ -259,28 +259,28 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-cyan-100 dark:bg-cyan-900/30',
     textColor: 'text-cyan-700 dark:text-cyan-400',
     borderColor: 'border-cyan-200 dark:border-cyan-800',
-    shortName: 'YL',
+    shortName: '凌雪',
   },
   '太玄经': {
     name: '太玄经',
     color: 'bg-cyan-100 dark:bg-cyan-900/30',
     textColor: 'text-cyan-700 dark:text-cyan-400',
     borderColor: 'border-cyan-200 dark:border-cyan-800',
-    shortName: 'TX',
+    shortName: '衍天',
   },
   '孤锋诀': {
     name: '孤锋诀',
     color: 'bg-slate-100 dark:bg-slate-900/30',
     textColor: 'text-slate-700 dark:text-slate-400',
     borderColor: 'border-slate-200 dark:border-slate-800',
-    shortName: 'GF',
+    shortName: '刀宗',
   },
   '山海心决': {
     name: '山海心决',
     color: 'bg-slate-100 dark:bg-slate-900/30',
     textColor: 'text-slate-700 dark:text-slate-400',
     borderColor: 'border-slate-200 dark:border-slate-800',
-    shortName: 'SH',
+    shortName: '万灵',
   },
   // 段氏
   '周天功': {
@@ -288,7 +288,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-violet-100 dark:bg-violet-900/30',
     textColor: 'text-violet-700 dark:text-violet-400',
     borderColor: 'border-violet-200 dark:border-violet-800',
-    shortName: 'ZT',
+    shortName: '段氏',
   },
   // 无相楼
   '幽罗引': {
@@ -296,14 +296,14 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-violet-100 dark:bg-violet-900/30',
     textColor: 'text-violet-700 dark:text-violet-400',
     borderColor: 'border-violet-200 dark:border-violet-800',
-    shortName: 'YL',
+    shortName: '无相楼',
   },
   '通用': {
     name: '通用',
     color: 'bg-gray-100 dark:bg-gray-900/30',
     textColor: 'text-gray-700 dark:text-gray-400',
     borderColor: 'border-gray-200 dark:border-gray-800',
-    shortName: 'TY',
+    shortName: '通用',
   }
 };
 
