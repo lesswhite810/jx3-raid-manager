@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { SECTS } from '../constants';
-import { getSectIconPath } from '../utils/sectConfig';
+import { getSectConfig, getSectIconPath } from '../utils/sectConfig';
 import { ChevronDown, Sparkles } from 'lucide-react';
 
 interface SectSelectProps {
@@ -13,7 +13,7 @@ interface SectSelectProps {
 export const SectSelect: React.FC<SectSelectProps> = ({
     value,
     onChange,
-    placeholder = '请选择门派',
+    placeholder = '请选择心法',
     error = false
 }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -32,6 +32,7 @@ export const SectSelect: React.FC<SectSelectProps> = ({
 
     const selectedSect = value;
     const selectedIconPath = selectedSect ? getSectIconPath(selectedSect) : null;
+    const selectedConfig = selectedSect ? getSectConfig(selectedSect) : null;
 
     return (
         <div ref={containerRef} className="relative">
@@ -54,7 +55,7 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                                     className="w-5 h-5 object-contain"
                                 />
                             )}
-                            <span>{selectedSect}</span>
+                            <span>{selectedConfig?.shortName || selectedSect}</span>
                         </div>
                     ) : (
                         <span className="text-muted">{placeholder}</span>
@@ -84,9 +85,10 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                         >
                             <span>{placeholder}</span>
                         </div>
-                        {/* 职业选项 */}
+                        {/* 心法选项 */}
                         {SECTS.map((sect) => {
                             const iconPath = getSectIconPath(sect);
+                            const sectConfig = getSectConfig(sect);
                             const isSelected = sect === selectedSect;
                             return (
                                 <div
@@ -110,7 +112,8 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                                             className="w-5 h-5 object-contain"
                                         />
                                     )}
-                                    <span>{sect}</span>
+                                    <span className="font-medium">{sectConfig.shortName}</span>
+                                    <span className="text-muted text-sm">- {sect}</span>
                                 </div>
                             );
                         })}

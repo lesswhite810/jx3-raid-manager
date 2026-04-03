@@ -152,12 +152,12 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
 
                         <div className="space-y-1.5">
                             <label className="block text-sm font-medium text-main ml-1">
-                                门派
+                                心法
                             </label>
                             <SectSelect
                                 value={sect}
                                 onChange={setSect}
-                                placeholder="请选择门派"
+                                placeholder="请选择心法"
                             />
                         </div>
 
