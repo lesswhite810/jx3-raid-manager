@@ -220,6 +220,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-emerald-200 dark:border-emerald-800',
     shortName: 'JY',
   },
+  // 藏剑
   '问水诀': {
     name: '问水诀',
     color: 'bg-yellow-100 dark:bg-yellow-900/30',
@@ -227,12 +228,13 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-yellow-200 dark:border-yellow-800',
     shortName: 'WS',
   },
+  // 丐帮（笑尘诀）
   '笑尘诀': {
     name: '笑尘诀',
-    color: 'bg-yellow-100 dark:bg-yellow-900/30',
-    textColor: 'text-yellow-700 dark:text-yellow-400',
-    borderColor: 'border-yellow-200 dark:border-yellow-800',
-    shortName: 'XC',
+    color: 'bg-amber-600 dark:bg-amber-900/50',
+    textColor: 'text-amber-50',
+    borderColor: 'border-amber-500 dark:border-amber-700',
+    shortName: 'GB',
   },
   '北傲诀': {
     name: '北傲诀',
