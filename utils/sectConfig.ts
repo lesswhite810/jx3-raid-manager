@@ -14,9 +14,9 @@ export interface SectConfig {
 export const SECT_ICON_IDS: Record<string, number> = {
   // 七秀
   '冰心诀': 10081,
-  '云裳心经': 10082,
+  '云裳心经': 10080,
   // 万花
-  '花间游': 10083,
+  '花间游': 10021,
   '离经易道': 10084,
   // 五毒
   '毒经': 10085,
