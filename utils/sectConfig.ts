@@ -7,59 +7,61 @@ export interface SectConfig {
   textColor: string;    // 文字颜色
   borderColor: string;   // 边框颜色
   shortName: string;     // 简称（用于图标显示）
-  iconPath?: string;     // 图标路径（可选）
 }
 
 // 职业图标 ID 映射
+// 图标来源: https://img.jx3box.com/image/xf/{id}.png
 export const SECT_ICON_IDS: Record<string, number> = {
-  // 纯阳
-  '紫霞功': 11001,
-  '太虚剑意': 11001,
   // 七秀
-  '冰心诀': 11002,
-  '云裳心经': 11002,
+  '冰心诀': 10081,
+  '云裳心经': 10082,
   // 万花
-  '花间游': 11003,
-  '离经易道': 11003,
-  // 少林
-  '易筋经': 11004,
-  '洗髓经': 11004,
-  // 天策
-  '傲血战意': 11005,
-  '铁牢律': 11005,
-  // 藏剑
-  '问水诀': 11006,
-  '笑尘诀': 11006,
+  '花间游': 10083,
+  '离经易道': 10084,
   // 五毒
-  '毒经': 11008,
-  '补天诀': 11008,
-  // 明教
-  '焚影圣诀': 11009,
-  '明尊琉璃体': 11009,
+  '毒经': 10085,
+  '补天诀': 10086,
+  // 纯阳
+  '紫霞功': 10087,
+  '太虚剑意': 10088,
+  // 少林
+  '易筋经': 10089,
+  '洗髓经': 10090,
+  // 天策
+  '傲血战意': 10091,
+  '铁牢律': 10092,
+  // 藏剑
+  '问水诀': 10093,
+  '笑尘诀': 10094,
   // 苍云
-  '分山劲': 11010,
-  '铁骨衣': 11010,
+  '分山劲': 10095,
+  '铁骨衣': 10096,
+  // 明教
+  '焚影圣诀': 10097,
+  '明尊琉璃体': 10098,
   // 田青
-  '天罗诡道': 11011,
-  '惊羽诀': 11011,
+  '天罗诡道': 10099,
+  '惊羽诀': 10100,
   // 衍天
-  '隐龙诀': 11012,
-  '太玄经': 11012,
+  '隐龙诀': 10101,
+  '太玄经': 10102,
   // 孤锋
-  '孤锋诀': 11013,
-  '山海心决': 11013,
+  '孤锋诀': 10103,
+  '山海心决': 10104,
   // 北傲
-  '北傲诀': 11014,
-  '凌海诀': 11014,
+  '北傲诀': 10105,
+  '凌海诀': 10106,
+  // 丐帮
+  '丐帮': 10107,
   // 通用
-  '通用': 11001,
-  // 其他
-  '莫问': 11001,
-  '相知': 11001,
-  '无方': 11001,
-  '灵素': 11001,
-  '周天功': 11001,
-  '幽罗引': 11001,
+  '通用': 10081,
+  // 其他门派
+  '莫问': 10087,
+  '相知': 10087,
+  '无方': 10087,
+  '灵素': 10087,
+  '周天功': 10087,
+  '幽罗引': 10087,
 };
 
 // 职业配置映射
@@ -70,7 +72,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-pink-700 dark:text-pink-400',
     borderColor: 'border-pink-200 dark:border-pink-800',
     shortName: 'BX',
-    iconPath: '/sect-icons/icon_11002.png'
   },
   '云裳心经': {
     name: '云裳心经',
@@ -78,7 +79,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-pink-700 dark:text-pink-400',
     borderColor: 'border-pink-200 dark:border-pink-800',
     shortName: 'YS',
-    iconPath: '/sect-icons/icon_11002.png'
   },
   '花间游': {
     name: '花间游',
@@ -86,7 +86,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-purple-700 dark:text-purple-400',
     borderColor: 'border-purple-200 dark:border-purple-800',
     shortName: 'HJ',
-    iconPath: '/sect-icons/icon_11003.png'
   },
   '离经易道': {
     name: '离经易道',
@@ -94,7 +93,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-purple-700 dark:text-purple-400',
     borderColor: 'border-purple-200 dark:border-purple-800',
     shortName: 'LJ',
-    iconPath: '/sect-icons/icon_11003.png'
   },
   '毒经': {
     name: '毒经',
@@ -102,7 +100,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-green-700 dark:text-green-400',
     borderColor: 'border-green-200 dark:border-green-800',
     shortName: 'DJ',
-    iconPath: '/sect-icons/icon_11008.png'
   },
   '补天诀': {
     name: '补天诀',
@@ -110,7 +107,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-green-700 dark:text-green-400',
     borderColor: 'border-green-200 dark:border-green-800',
     shortName: 'BT',
-    iconPath: '/sect-icons/icon_11008.png'
   },
   '莫问': {
     name: '莫问',
@@ -118,7 +114,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-indigo-700 dark:text-indigo-400',
     borderColor: 'border-indigo-200 dark:border-indigo-800',
     shortName: 'MW',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '相知': {
     name: '相知',
@@ -126,7 +121,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-indigo-700 dark:text-indigo-400',
     borderColor: 'border-indigo-200 dark:border-indigo-800',
     shortName: 'XZ',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '无方': {
     name: '无方',
@@ -134,7 +128,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-teal-700 dark:text-teal-400',
     borderColor: 'border-teal-200 dark:border-teal-800',
     shortName: 'WF',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '灵素': {
     name: '灵素',
@@ -142,7 +135,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-teal-700 dark:text-teal-400',
     borderColor: 'border-teal-200 dark:border-teal-800',
     shortName: 'LS',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '傲血战意': {
     name: '傲血战意',
@@ -150,7 +142,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-red-700 dark:text-red-400',
     borderColor: 'border-red-200 dark:border-red-800',
     shortName: 'AX',
-    iconPath: '/sect-icons/icon_11005.png'
   },
   '铁牢律': {
     name: '铁牢律',
@@ -158,7 +149,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-red-700 dark:text-red-400',
     borderColor: 'border-red-200 dark:border-red-800',
     shortName: 'TL',
-    iconPath: '/sect-icons/icon_11005.png'
   },
   '易筋经': {
     name: '易筋经',
@@ -166,7 +156,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-amber-700 dark:text-amber-400',
     borderColor: 'border-amber-200 dark:border-amber-800',
     shortName: 'YJ',
-    iconPath: '/sect-icons/icon_11004.png'
   },
   '洗髓经': {
     name: '洗髓经',
@@ -174,7 +163,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-amber-700 dark:text-amber-400',
     borderColor: 'border-amber-200 dark:border-amber-800',
     shortName: 'XS',
-    iconPath: '/sect-icons/icon_11004.png'
   },
   '焚影圣诀': {
     name: '焚影圣诀',
@@ -182,7 +170,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
     shortName: 'FY',
-    iconPath: '/sect-icons/icon_11009.png'
   },
   '明尊琉璃体': {
     name: '明尊琉璃体',
@@ -190,7 +177,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
     shortName: 'MZ',
-    iconPath: '/sect-icons/icon_11009.png'
   },
   '分山劲': {
     name: '分山劲',
@@ -198,7 +184,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-stone-700 dark:text-stone-400',
     borderColor: 'border-stone-200 dark:border-stone-800',
     shortName: 'FS',
-    iconPath: '/sect-icons/icon_11010.png'
   },
   '铁骨衣': {
     name: '铁骨衣',
@@ -206,7 +191,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-stone-700 dark:text-stone-400',
     borderColor: 'border-stone-200 dark:border-stone-800',
     shortName: 'TG',
-    iconPath: '/sect-icons/icon_11010.png'
   },
   '紫霞功': {
     name: '紫霞功',
@@ -214,7 +198,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-sky-700 dark:text-sky-400',
     borderColor: 'border-sky-200 dark:border-sky-800',
     shortName: 'ZX',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '太虚剑意': {
     name: '太虚剑意',
@@ -222,7 +205,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-sky-700 dark:text-sky-400',
     borderColor: 'border-sky-200 dark:border-sky-800',
     shortName: 'TX',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '天罗诡道': {
     name: '天罗诡道',
@@ -230,7 +212,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-lime-700 dark:text-lime-400',
     borderColor: 'border-lime-200 dark:border-lime-800',
     shortName: 'TL',
-    iconPath: '/sect-icons/icon_11011.png'
   },
   '惊羽诀': {
     name: '惊羽诀',
@@ -238,7 +219,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-emerald-700 dark:text-emerald-400',
     borderColor: 'border-emerald-200 dark:border-emerald-800',
     shortName: 'JY',
-    iconPath: '/sect-icons/icon_11011.png'
   },
   '问水诀': {
     name: '问水诀',
@@ -246,7 +226,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
     shortName: 'WS',
-    iconPath: '/sect-icons/icon_11006.png'
   },
   '笑尘诀': {
     name: '笑尘诀',
@@ -254,7 +233,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-yellow-700 dark:text-yellow-400',
     borderColor: 'border-yellow-200 dark:border-yellow-800',
     shortName: 'XC',
-    iconPath: '/sect-icons/icon_11006.png'
   },
   '北傲诀': {
     name: '北傲诀',
@@ -262,7 +240,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-rose-700 dark:text-rose-400',
     borderColor: 'border-rose-200 dark:border-rose-800',
     shortName: 'BA',
-    iconPath: '/sect-icons/icon_11014.png'
   },
   '凌海诀': {
     name: '凌海诀',
@@ -270,7 +247,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-rose-700 dark:text-rose-400',
     borderColor: 'border-rose-200 dark:border-rose-800',
     shortName: 'LH',
-    iconPath: '/sect-icons/icon_11014.png'
   },
   '隐龙诀': {
     name: '隐龙诀',
@@ -278,7 +254,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-cyan-700 dark:text-cyan-400',
     borderColor: 'border-cyan-200 dark:border-cyan-800',
     shortName: 'YL',
-    iconPath: '/sect-icons/icon_11012.png'
   },
   '太玄经': {
     name: '太玄经',
@@ -286,7 +261,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-cyan-700 dark:text-cyan-400',
     borderColor: 'border-cyan-200 dark:border-cyan-800',
     shortName: 'TX',
-    iconPath: '/sect-icons/icon_11012.png'
   },
   '孤锋诀': {
     name: '孤锋诀',
@@ -294,7 +268,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-slate-700 dark:text-slate-400',
     borderColor: 'border-slate-200 dark:border-slate-800',
     shortName: 'GF',
-    iconPath: '/sect-icons/icon_11013.png'
   },
   '山海心决': {
     name: '山海心决',
@@ -302,7 +275,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-slate-700 dark:text-slate-400',
     borderColor: 'border-slate-200 dark:border-slate-800',
     shortName: 'SH',
-    iconPath: '/sect-icons/icon_11013.png'
   },
   '周天功': {
     name: '周天功',
@@ -310,7 +282,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-violet-700 dark:text-violet-400',
     borderColor: 'border-violet-200 dark:border-violet-800',
     shortName: 'ZT',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '幽罗引': {
     name: '幽罗引',
@@ -318,7 +289,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-violet-700 dark:text-violet-400',
     borderColor: 'border-violet-200 dark:border-violet-800',
     shortName: 'YL',
-    iconPath: '/sect-icons/icon_11001.png'
   },
   '通用': {
     name: '通用',
@@ -326,7 +296,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     textColor: 'text-gray-700 dark:text-gray-400',
     borderColor: 'border-gray-200 dark:border-gray-800',
     shortName: 'TY',
-    iconPath: '/sect-icons/icon_11001.png'
   }
 };
 
@@ -371,6 +340,9 @@ export function getSectColorClasses(sectName: string): {
  * 获取职业图标路径
  */
 export function getSectIconPath(sectName: string): string | undefined {
-  const config = getSectConfig(sectName);
-  return config.iconPath;
+  const iconId = SECT_ICON_IDS[sectName];
+  if (iconId) {
+    return `https://img.jx3box.com/image/xf/${iconId}.png`;
+  }
+  return undefined;
 }
