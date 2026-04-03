@@ -127,7 +127,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-teal-100 dark:bg-teal-900/30',
     textColor: 'text-teal-700 dark:text-teal-400',
     borderColor: 'border-teal-200 dark:border-teal-800',
-    shortName: '药总',
+    shortName: '药宗',
   },
   '灵素': {
     name: '灵素',
@@ -197,14 +197,14 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     color: 'bg-sky-100 dark:bg-sky-900/30',
     textColor: 'text-sky-700 dark:text-sky-400',
     borderColor: 'border-sky-200 dark:border-sky-800',
-    shortName: '纯阳',
+    shortName: '气纯',
   },
   '太虚剑意': {
     name: '太虚剑意',
     color: 'bg-sky-100 dark:bg-sky-900/30',
     textColor: 'text-sky-700 dark:text-sky-400',
     borderColor: 'border-sky-200 dark:border-sky-800',
-    shortName: '纯阳',
+    shortName: '剑纯',
   },
   // 唐门
   '天罗诡道': {
@@ -268,6 +268,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-cyan-200 dark:border-cyan-800',
     shortName: '衍天',
   },
+  // 刀宗
   '孤锋诀': {
     name: '孤锋诀',
     color: 'bg-slate-100 dark:bg-slate-900/30',
@@ -275,6 +276,7 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     borderColor: 'border-slate-200 dark:border-slate-800',
     shortName: '刀宗',
   },
+  // 万灵
   '山海心决': {
     name: '山海心决',
     color: 'bg-slate-100 dark:bg-slate-900/30',
