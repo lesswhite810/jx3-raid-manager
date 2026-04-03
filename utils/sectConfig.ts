@@ -51,8 +51,6 @@ export const SECT_ICON_IDS: Record<string, number> = {
   // 北傲
   '北傲诀': 10464,
   '凌海诀': 10533,
-  // 丐帮
-  '丐帮': 10268,
   // 通用
   '通用': 0,
   // 其他门派
