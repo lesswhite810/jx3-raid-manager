@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { SECTS } from '../constants';
-import { X, User, MapPin, Server, Sparkles, Shield, AlertCircle } from 'lucide-react';
+import { X, User, MapPin, Server, Shield, AlertCircle } from 'lucide-react';
+import { SectSelect } from './SectSelect';
 
 interface AddRoleModalProps {
     isOpen: boolean;
@@ -154,19 +154,11 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                             <label className="block text-sm font-medium text-main ml-1">
                                 门派
                             </label>
-                            <div className="relative group">
-                                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
-                                <select
-                                    value={sect}
-                                    onChange={e => setSect(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all appearance-none text-main"
-                                >
-                                    <option value="">请选择门派</option>
-                                    {SECTS.map(s => (
-                                        <option key={s} value={s}>{s}</option>
-                                    ))}
-                                </select>
-                            </div>
+                            <SectSelect
+                                value={sect}
+                                onChange={setSect}
+                                placeholder="请选择门派"
+                            />
                         </div>
 
                         <div className="space-y-1.5">

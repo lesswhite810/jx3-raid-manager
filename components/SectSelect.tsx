@@ -1,0 +1,122 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { SECTS } from '../constants';
+import { getSectIconPath } from '../utils/sectConfig';
+import { ChevronDown, Sparkles } from 'lucide-react';
+
+interface SectSelectProps {
+    value: string;
+    onChange: (value: string) => void;
+    placeholder?: string;
+    error?: boolean;
+}
+
+export const SectSelect: React.FC<SectSelectProps> = ({
+    value,
+    onChange,
+    placeholder = '请选择门派',
+    error = false
+}) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // 点击外部关闭下拉菜单
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const selectedSect = value;
+    const selectedIconPath = selectedSect ? getSectIconPath(selectedSect) : null;
+
+    return (
+        <div ref={containerRef} className="relative">
+            <div
+                className={`
+                    relative group cursor-pointer
+                    ${error ? 'ring-1 ring-red-500' : ''}
+                `}
+                onClick={() => setIsOpen(!isOpen)}
+            >
+                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors pointer-events-none" />
+                {/* 选中值显示 */}
+                <div className="w-full pl-9 pr-10 py-2.5 bg-base border border-base rounded-lg transition-all text-main">
+                    {selectedSect ? (
+                        <div className="flex items-center gap-2">
+                            {selectedIconPath && (
+                                <img
+                                    src={selectedIconPath}
+                                    alt=""
+                                    className="w-5 h-5 object-contain"
+                                />
+                            )}
+                            <span>{selectedSect}</span>
+                        </div>
+                    ) : (
+                        <span className="text-muted">{placeholder}</span>
+                    )}
+                </div>
+                {/* 下拉箭头 */}
+                <ChevronDown
+                    className={`
+                        absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted
+                        transition-transform duration-200 pointer-events-none
+                        ${isOpen ? 'rotate-180' : ''}
+                    `}
+                />
+            </div>
+
+            {/* 下拉菜单 */}
+            {isOpen && (
+                <div className="absolute z-50 w-full mt-1 bg-surface border border-base rounded-lg shadow-lg max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="py-1">
+                        {/* 空选项 */}
+                        <div
+                            className="px-3 py-2 hover:bg-base cursor-pointer text-muted transition-colors flex items-center gap-2"
+                            onClick={() => {
+                                onChange('');
+                                setIsOpen(false);
+                            }}
+                        >
+                            <span>{placeholder}</span>
+                        </div>
+                        {/* 职业选项 */}
+                        {SECTS.map((sect) => {
+                            const iconPath = getSectIconPath(sect);
+                            const isSelected = sect === selectedSect;
+                            return (
+                                <div
+                                    key={sect}
+                                    className={`
+                                        px-3 py-2 cursor-pointer transition-colors flex items-center gap-2
+                                        ${isSelected
+                                            ? 'bg-primary/10 text-primary'
+                                            : 'hover:bg-base text-main'
+                                        }
+                                    `}
+                                    onClick={() => {
+                                        onChange(sect);
+                                        setIsOpen(false);
+                                    }}
+                                >
+                                    {iconPath && (
+                                        <img
+                                            src={iconPath}
+                                            alt=""
+                                            className="w-5 h-5 object-contain"
+                                        />
+                                    )}
+                                    <span>{sect}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};

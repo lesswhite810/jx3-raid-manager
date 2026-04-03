@@ -3,6 +3,8 @@ use tauri::{AppHandle, Emitter, Runtime, Window};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
+use crate::runtime_mode::{self, RuntimeMode};
+
 const GITEE_REPO: &str = "lesswhite/jx3-raid-manager";
 const GITHUB_UPDATER_ENDPOINT: &str =
     "https://github.com/lesswhite810/jx3-raid-manager/releases/latest/download/latest.json";
@@ -63,19 +65,13 @@ fn updater_release_url(tag: Option<&str>) -> String {
 }
 
 fn detect_runtime_info<R: Runtime>(app: &AppHandle<R>) -> Result<UpdaterRuntimeInfo, String> {
-    let current_exe =
-        std::env::current_exe().map_err(|err| format!("获取当前程序路径失败: {err}"))?;
+    let current_exe = runtime_mode::current_executable_path()?;
     let executable_path = current_exe.to_string_lossy().to_string();
-    let install_dir = current_exe
-        .parent()
-        .ok_or_else(|| "无法识别当前程序目录".to_string())?;
-    let has_uninstall_executable = install_dir.join("uninstall.exe").exists();
-    let looks_like_portable = current_exe
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.contains("_v"))
-        .unwrap_or(false);
-    let is_portable = looks_like_portable || !has_uninstall_executable;
+    let has_uninstall_executable = runtime_mode::executable_has_uninstall_marker(&current_exe);
+    let is_portable = matches!(
+        runtime_mode::detect_runtime_mode_for_executable(&current_exe),
+        RuntimeMode::Portable
+    );
 
     Ok(UpdaterRuntimeInfo {
         current_version: app.package_info().version.to_string(),

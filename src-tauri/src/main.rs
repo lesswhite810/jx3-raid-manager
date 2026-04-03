@@ -3,6 +3,7 @@
 mod db;
 mod game_directory;
 mod gkp_parser;
+mod runtime_mode;
 mod updater;
 
 const PREPARE_INSTALL_DATA_FLAG: &str = "--prepare-install-data";

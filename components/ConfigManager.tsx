@@ -299,21 +299,23 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
             <label className="text-sm font-medium text-muted">自定义目录</label>
             <div className="col-span-2">
-              <button
-                onClick={handleSelectCustomDataDir}
-                className="btn btn-secondary flex items-center gap-2 text-sm"
-              >
-                <ExternalLink className="w-4 h-4" />
-                选择其他目录
-              </button>
-              {dataDirInfo?.customDirConfigured && (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={handleResetCustomDataDir}
-                  className="btn btn-secondary ml-2 text-sm"
+                  onClick={handleSelectCustomDataDir}
+                  className="btn btn-secondary flex items-center gap-2 text-sm"
                 >
-                  恢复默认目录
+                  <ExternalLink className="w-4 h-4" />
+                  选择其他目录
                 </button>
-              )}
+                {dataDirInfo?.customDirConfigured && (
+                  <button
+                    onClick={handleResetCustomDataDir}
+                    className="btn btn-secondary text-sm"
+                  >
+                    还原默认
+                  </button>
+                )}
+              </div>
               <p className="mt-2 text-xs text-muted">
                 修改后需要重启应用才能生效。下次启动时会自动将数据库和日志迁移到目标目录。
               </p>

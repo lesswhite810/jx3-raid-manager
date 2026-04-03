@@ -1,0 +1,339 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774620196737,
+  "projectRoot": "E:\\Data\\jx3-raid-manager",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "react",
+        "version": "18.2.0",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "18.2.0",
+        "category": "frontend"
+      },
+      {
+        "name": "vite",
+        "version": "5.1.4",
+        "category": "build"
+      },
+      {
+        "name": "vitest",
+        "version": "4.0.18",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "vite",
+      "build": "tsc && vite build",
+      "preview": "vite preview",
+      "tauri": "node scripts/run-tauri.mjs",
+      "tauri:bundle": "node scripts/run-tauri.mjs build --bundles nsis",
+      "test": "vitest run",
+      "test:watch": "vitest",
+      "release:notes": "node scripts/update-release-notes.mjs"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "components",
+      "docs",
+      "scripts",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "master",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "components": {
+      "path": "components",
+      "purpose": "UI components",
+      "fileCount": 28,
+      "lastAccessed": 1774620196686,
+      "keyFiles": [
+        "AccountManager.tsx",
+        "AddAccountModal.tsx",
+        "AddBaizhanRecordModal.tsx",
+        "AddRecordModal.tsx",
+        "AddRoleModal.tsx"
+      ]
+    },
+    "contexts": {
+      "path": "contexts",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1774620196686,
+      "keyFiles": [
+        "context.md",
+        "ThemeContext.tsx"
+      ]
+    },
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 3,
+      "lastAccessed": 1774620196715,
+      "keyFiles": [
+        "baizhanBosses.ts",
+        "raidBosses.ts",
+        "raidBosses.ts.backup"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 1,
+      "lastAccessed": 1774620196716,
+      "keyFiles": [
+        "index.html"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 2,
+      "lastAccessed": 1774620196716,
+      "keyFiles": [
+        "release-process.md",
+        "TEST_CASES.md"
+      ]
+    },
+    "hooks": {
+      "path": "hooks",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1774620196716,
+      "keyFiles": [
+        "index.ts",
+        "useCountdown.tsx"
+      ]
+    },
+    "release-notes": {
+      "path": "release-notes",
+      "purpose": null,
+      "fileCount": 13,
+      "lastAccessed": 1774620196717,
+      "keyFiles": [
+        "v2.1.11.md",
+        "v2.1.12.md",
+        "v2.1.13.md",
+        "v2.1.14.md",
+        "v2.1.15.md"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 8,
+      "lastAccessed": 1774620196717,
+      "keyFiles": [
+        "build-tauri-release-config.mjs",
+        "build-updater-manifest.mjs",
+        "nsisLanguage.test.mjs",
+        "releaseWorkflow.test.mjs",
+        "run-tauri.mjs"
+      ]
+    },
+    "services": {
+      "path": "services",
+      "purpose": "Business logic services",
+      "fileCount": 14,
+      "lastAccessed": 1774620196717,
+      "keyFiles": [
+        "accountDirectoryCleanup.test.ts",
+        "accountDirectoryCleanup.ts",
+        "aiService.ts",
+        "db.ts",
+        "directoryParser.ts"
+      ]
+    },
+    "skills": {
+      "path": "skills",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774620196717,
+      "keyFiles": []
+    },
+    "specs": {
+      "path": "specs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1774620196718,
+      "keyFiles": [
+        "design-tokens.md"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1774620196718,
+      "keyFiles": [
+        "tauri.d.ts"
+      ]
+    },
+    "src-tauri": {
+      "path": "src-tauri",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1774620196718,
+      "keyFiles": [
+        "build.rs",
+        "Cargo.lock",
+        "Cargo.toml",
+        "tauri.conf.json"
+      ]
+    },
+    "test-screenshots": {
+      "path": "test-screenshots",
+      "purpose": null,
+      "fileCount": 16,
+      "lastAccessed": 1774620196719,
+      "keyFiles": [
+        "jx3-account-expanded.png",
+        "jx3-accounts-page.png",
+        "jx3-after-click.png",
+        "jx3-baizhan-before-filter.png",
+        "jx3-baizhan-search.png"
+      ]
+    },
+    "tmp": {
+      "path": "tmp",
+      "purpose": null,
+      "fileCount": 13,
+      "lastAccessed": 1774620196720,
+      "keyFiles": [
+        "gitee-latest-v2.1.15.json",
+        "gitee-latest-v2.1.16.json",
+        "tauri-updater-v2.key",
+        "tauri-updater-v2.key.pub",
+        "tauri-updater-v3.key"
+      ]
+    },
+    "utils": {
+      "path": "utils",
+      "purpose": "Utility functions",
+      "fileCount": 25,
+      "lastAccessed": 1774620196720,
+      "keyFiles": [
+        "accountUtils.test.ts",
+        "accountUtils.ts",
+        "bossCooldownManager.ts",
+        "configUtils.test.ts",
+        "configUtils.ts"
+      ]
+    },
+    "dist\\assets": {
+      "path": "dist\\assets",
+      "purpose": "Static assets",
+      "fileCount": 8,
+      "lastAccessed": 1774620196721,
+      "keyFiles": [
+        "charts-vendor-D8cOnoaI.js",
+        "ConfigManager-Cs4l68z3.js",
+        "date-vendor-Cp5LsURE.js"
+      ]
+    },
+    "src-tauri\\src": {
+      "path": "src-tauri\\src",
+      "purpose": "Source code",
+      "fileCount": 5,
+      "lastAccessed": 1774620196722,
+      "keyFiles": [
+        "db.rs",
+        "game_directory.rs",
+        "gkp_parser.rs"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "docs\\user-guide.md",
+      "accessCount": 4,
+      "lastAccessed": 1774700408502,
+      "type": "file"
+    },
+    {
+      "path": "D:\\Documents\\Obsidian Vault\\剑网三\\JX3副本管家 使用手册.md",
+      "accessCount": 2,
+      "lastAccessed": 1774700396026,
+      "type": "file"
+    },
+    {
+      "path": "contexts\\context.md",
+      "accessCount": 1,
+      "lastAccessed": 1774620238651,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1774620248044,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 1,
+      "lastAccessed": 1774620260078,
+      "type": "directory"
+    },
+    {
+      "path": "components\\ConfigManager.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774620270244,
+      "type": "file"
+    },
+    {
+      "path": "components\\AccountManager.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774620270262,
+      "type": "file"
+    },
+    {
+      "path": "components\\Dashboard.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1774620270331,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

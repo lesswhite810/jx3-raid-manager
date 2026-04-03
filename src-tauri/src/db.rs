@@ -4,6 +4,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+use crate::runtime_mode::{self, RuntimeMode};
+
 mod migration;
 pub mod migrations;
 
@@ -32,22 +35,15 @@ struct DataDirBootstrapConfig {
 
 /// 检测是否为安装版（通过检查同目录下是否有 uninstall.exe）
 fn is_install_mode() -> bool {
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            return exe_dir.join("uninstall.exe").exists();
-        }
-    }
-    false
+    matches!(
+        runtime_mode::detect_current_runtime_mode(),
+        Ok(RuntimeMode::Installer)
+    )
 }
 
 /// 获取安装目录（仅在安装版中有效）
 fn get_install_dir() -> Option<PathBuf> {
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            return Some(exe_dir.to_path_buf());
-        }
-    }
-    None
+    runtime_mode::current_executable_dir().ok()
 }
 
 fn ensure_directory_exists(path: &Path) -> Result<(), String> {
