@@ -7,7 +7,7 @@ interface SectSelectProps {
     value: string;
     onChange: (value: string) => void;
     placeholder?: string;
-    error?: boolean;
+    error?: string | boolean;
 }
 
 export const SectSelect: React.FC<SectSelectProps> = ({

@@ -1,6 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Account, AccountType, Role, Config, InstanceType } from '../types';
-import { SECTS } from '../constants';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText } from 'lucide-react';
 import { convertToSystemAccounts } from '../services/directoryParser';
 import {
@@ -15,6 +14,7 @@ import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
 import { SectIcon } from './SectIcon';
+import { SectSelect } from './SectSelect';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
 import { getClientAccountNote } from '../utils/raidRoleUtils';
@@ -1813,30 +1813,22 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               <h3 className="text-lg font-semibold text-main mb-4">修改角色信息</h3>
 
               <div className="space-y-4">
-                {/* 门派选择 */}
+                {/* 心法选择 */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    门派 <span className="text-red-500">*</span>
+                    心法 <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    className={`w-full px-3 py-2 border rounded-lg bg-surface text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.sect ? 'border-red-300 bg-red-50' : 'border-base'
-                      }`}
+                  <SectSelect
                     value={editRoleModal.sect}
-                    onChange={(e) => {
-                      setEditRoleModal(prev => prev ? { ...prev, sect: e.target.value } : null);
-                      if (e.target.value.trim()) {
+                    onChange={(sect) => {
+                      setEditRoleModal(prev => prev ? { ...prev, sect } : null);
+                      if (sect.trim()) {
                         setRoleFormErrors(prev => ({ ...prev, sect: undefined }));
                       }
                     }}
-                  >
-                    <option value="">请选择门派</option>
-                    {SECTS.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                  {roleFormErrors.sect && (
-                    <p className="text-xs text-red-500 mt-1">{roleFormErrors.sect}</p>
-                  )}
+                    placeholder="请选择心法"
+                    error={roleFormErrors.sect}
+                  />
                 </div>
 
                 {/* 装分输入 */}
