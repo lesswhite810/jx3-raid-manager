@@ -66,6 +66,7 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 
 ```bash
 npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
+npm run version:prepare -- --next-patch-from 2.1.19
 ```
 
 这个脚本会：
@@ -111,4 +112,5 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 8. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
 9. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
 10. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
-11. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
+11. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
+12. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。

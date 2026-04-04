@@ -14,7 +14,10 @@
       "nsis": {
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": false,
         "customLanguageFiles": {
           "SimpChinese": "nsis/SimpChinese.nsh"
@@ -33,7 +36,7 @@
   },
   "productName": "JX3RaidManager",
   "mainBinaryName": "JX3RaidManager",
-  "version": "2.1.18",
+  "version": "2.1.19",
   "identifier": "com.jx3.raidmanager",
   "plugins": {
     "updater": {

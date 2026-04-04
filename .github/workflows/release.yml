@@ -191,3 +191,35 @@ jobs:
             --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare next patch version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin master
+          git checkout -B master origin/master
+
+          current_master_version="$(node -p "require('./package.json').version")"
+          release_version="${GITHUB_REF_NAME#v}"
+
+          if [[ "${current_master_version}" != "${release_version}" ]]; then
+            echo "master is already on ${current_master_version}; skip automatic version bump for ${release_version}"
+            exit 0
+          fi
+
+          next_version="$(node --input-type=module -e "import { bumpPatchVersion } from './scripts/prepare-next-version.mjs'; process.stdout.write(bumpPatchVersion(process.argv[1]));" "${release_version}")"
+
+          npm run version:prepare -- "${next_version}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml "release-notes/v${next_version}.md"
+
+          if git diff --cached --quiet; then
+            echo "No version bump changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore: 版本推进到 ${next_version}"
+          git push origin HEAD:master

@@ -1,7 +1,7 @@
 {
   "name": "jx3-raid-manager",
   "private": true,
-  "version": "2.1.18",
+  "version": "2.1.19",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,8 @@
     "tauri:bundle": "node scripts/run-tauri.mjs build --bundles nsis",
     "test": "vitest run",
     "test:watch": "vitest",
-    "release:notes": "node scripts/update-release-notes.mjs"
+    "release:notes": "node scripts/update-release-notes.mjs",
+    "version:prepare": "node scripts/prepare-next-version.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
