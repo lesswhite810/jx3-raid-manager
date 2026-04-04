@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { SECTS } from '../constants';
 import { getSectConfig, getSectIconPath } from '../utils/sectConfig';
 import { ChevronDown } from 'lucide-react';
@@ -17,29 +17,53 @@ export const SectSelect: React.FC<SectSelectProps> = ({
     error = false
 }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLDivElement>(null);
 
     // 点击外部关闭下拉菜单
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
                 setIsOpen(false);
+                setDropdownStyle(null);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // 检测下拉菜单是否超出视口
-    const [dropdownUp, setDropdownUp] = useState(false);
-    useEffect(() => {
-        if (isOpen && containerRef.current) {
-            const rect = containerRef.current.getBoundingClientRect();
-            const dropdownHeight = 280; // 估算下拉菜单高度
-            const spaceBelow = window.innerHeight - rect.bottom;
-            setDropdownUp(spaceBelow < dropdownHeight);
+    const toggleDropdown = useCallback(() => {
+        if (isOpen) {
+            setIsOpen(false);
+            setDropdownStyle(null);
+        } else {
+            // 计算下拉菜单位置
+            if (triggerRef.current) {
+                const rect = triggerRef.current.getBoundingClientRect();
+                const dropdownHeight = 320; // 下拉菜单估算高度
+                const gap = 8; // 间距
+                const spaceBelow = window.innerHeight - rect.bottom - gap;
+                const openUp = spaceBelow < dropdownHeight;
+
+                setDropdownStyle({
+                    position: 'fixed' as const,
+                    top: openUp ? rect.top - gap - dropdownHeight : rect.bottom + gap,
+                    left: rect.left,
+                    width: rect.width,
+                    zIndex: 9999,
+                    transformOrigin: openUp ? 'bottom' : 'top'
+                });
+                setIsOpen(true);
+            }
         }
     }, [isOpen]);
+
+    const handleSelect = (sect: string) => {
+        onChange(sect);
+        setIsOpen(false);
+        setDropdownStyle(null);
+    };
 
     const selectedSect = value;
     const selectedIconPath = selectedSect ? getSectIconPath(selectedSect) : null;
@@ -48,11 +72,12 @@ export const SectSelect: React.FC<SectSelectProps> = ({
     return (
         <div ref={containerRef} className="relative">
             <div
+                ref={triggerRef}
                 className={`
                     relative group cursor-pointer
                     ${error ? 'ring-1 ring-red-500' : ''}
                 `}
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={toggleDropdown}
             >
                 {/* 选中值显示 */}
                 <div className="w-full pl-9 pr-10 py-2.5 bg-base border border-base rounded-lg transition-all text-main">
@@ -84,23 +109,17 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                 />
             </div>
 
-            {/* 下拉菜单 */}
-            {isOpen && (
+            {/* 下拉菜单 - 使用 fixed 定位 */}
+            {isOpen && dropdownStyle && (
                 <div
-                    className={`
-                        absolute z-50 w-full bg-surface border border-base rounded-lg shadow-lg
-                        max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150
-                        ${dropdownUp ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1 origin-top'}
-                    `}
+                    className="fixed bg-surface border border-base rounded-lg shadow-xl max-h-72 overflow-y-auto"
+                    style={dropdownStyle}
                 >
                     <div className="py-1">
                         {/* 空选项 */}
                         <div
                             className="px-3 py-2 hover:bg-base cursor-pointer text-muted transition-colors flex items-center gap-2"
-                            onClick={() => {
-                                onChange('');
-                                setIsOpen(false);
-                            }}
+                            onClick={() => handleSelect('')}
                         >
                             <span>{placeholder}</span>
                         </div>
@@ -119,10 +138,7 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                                             : 'hover:bg-base text-main'
                                         }
                                     `}
-                                    onClick={() => {
-                                        onChange(sect);
-                                        setIsOpen(false);
-                                    }}
+                                    onClick={() => handleSelect(sect)}
                                 >
                                     {iconPath && (
                                         <img
@@ -131,7 +147,7 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                                             className="w-5 h-5 object-contain"
                                         />
                                     )}
-                                    <span className="font-medium">{sectConfig.shortName}</span>
+                                    <span className="font-medium">{sectConfig?.shortName || sect}</span>
                                     <span className="text-muted text-sm">- {sect}</span>
                                 </div>
                             );
