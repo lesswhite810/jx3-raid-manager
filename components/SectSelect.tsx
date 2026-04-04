@@ -68,7 +68,10 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                             <span>{selectedConfig?.shortName || selectedSect}</span>
                         </div>
                     ) : (
-                        <span className="text-muted">{placeholder}</span>
+                        <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 flex items-center justify-center text-muted text-xs">-</span>
+                            <span className="text-muted">{placeholder}</span>
+                        </div>
                     )}
                 </div>
                 {/* 下拉箭头 */}
