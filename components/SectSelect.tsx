@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { SECTS } from '../constants';
 import { getSectConfig, getSectIconPath } from '../utils/sectConfig';
-import { ChevronDown, Sparkles } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 interface SectSelectProps {
     value: string;
@@ -30,6 +30,17 @@ export const SectSelect: React.FC<SectSelectProps> = ({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
+    // 检测下拉菜单是否超出视口
+    const [dropdownUp, setDropdownUp] = useState(false);
+    useEffect(() => {
+        if (isOpen && containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const dropdownHeight = 280; // 估算下拉菜单高度
+            const spaceBelow = window.innerHeight - rect.bottom;
+            setDropdownUp(spaceBelow < dropdownHeight);
+        }
+    }, [isOpen]);
+
     const selectedSect = value;
     const selectedIconPath = selectedSect ? getSectIconPath(selectedSect) : null;
     const selectedConfig = selectedSect ? getSectConfig(selectedSect) : null;
@@ -43,7 +54,6 @@ export const SectSelect: React.FC<SectSelectProps> = ({
                 `}
                 onClick={() => setIsOpen(!isOpen)}
             >
-                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors pointer-events-none" />
                 {/* 选中值显示 */}
                 <div className="w-full pl-9 pr-10 py-2.5 bg-base border border-base rounded-lg transition-all text-main">
                     {selectedSect ? (
@@ -73,7 +83,13 @@ export const SectSelect: React.FC<SectSelectProps> = ({
 
             {/* 下拉菜单 */}
             {isOpen && (
-                <div className="absolute z-50 w-full mt-1 bg-surface border border-base rounded-lg shadow-lg max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150">
+                <div
+                    className={`
+                        absolute z-50 w-full bg-surface border border-base rounded-lg shadow-lg
+                        max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150
+                        ${dropdownUp ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1 origin-top'}
+                    `}
+                >
                     <div className="py-1">
                         {/* 空选项 */}
                         <div
