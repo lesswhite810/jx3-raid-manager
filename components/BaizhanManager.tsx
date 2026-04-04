@@ -6,6 +6,7 @@ import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
 import { getLastMonday } from '../utils/cooldownManager';
 import { db } from '../services/db';
 import { toast } from '../utils/toastManager';
+import { SectIcon } from './SectIcon';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
 
 interface BaizhanManagerProps {
@@ -231,14 +232,6 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                 }
                             };
 
-                            const getSectStyle = () => {
-                                if (baizhanStatus === 'complete') {
-                                    return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
-                                } else {
-                                    return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
-                                }
-                            };
-
                             const getButtonAddStyle = () => {
                                 if (baizhanStatus === 'complete') {
                                     return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
@@ -269,9 +262,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                 <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
                                                     <span className="truncate" title={`${role.name}·${role.server}`}>{role.name}·{role.server}</span>
                                                     {role.sect && (
-                                                        <span className={`text-xs px-2 py-1 rounded-md font-medium flex-shrink-0 ${getSectStyle()}`}>
-                                                            {role.sect}
-                                                        </span>
+                                                        <SectIcon sectName={role.sect} variant="image" size="sm" />
                                                     )}
                                                     {role.equipmentScore !== undefined && role.equipmentScore !== null && (
                                                         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
