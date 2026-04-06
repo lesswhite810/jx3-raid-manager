@@ -97,14 +97,37 @@ jobs:
           GITEE_REPO: ${{ secrets.GITEE_REPO }}
           GITEE_ASSETS_BRANCH: ${{ secrets.GITEE_ASSETS_BRANCH }}
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2.6.1
-        with:
-          files: |
-            src-tauri/target/release/JX3RaidManager_${{ github.ref_name }}.exe
+      - name: Create release and upload assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notes_file="release-notes/${GITHUB_REF_NAME}.md"
+          if [[ ! -f "${notes_file}" ]]; then
+            echo "Missing release notes file: ${notes_file}" >&2
+            exit 1
+          fi
+
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file "${notes_file}"
+          fi
+
+          shopt -s globstar nullglob
+          assets=(
+            "src-tauri/target/release/JX3RaidManager_${GITHUB_REF_NAME}.exe"
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/**/*.sig
             src-tauri/target/release/bundle/latest*.json
+          )
+
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "No release assets found for ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

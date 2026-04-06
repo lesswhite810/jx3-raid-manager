@@ -298,12 +298,12 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                             <div className="min-w-0 flex-1">
                                                 <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
                                                     <span className="truncate" title={`${role.name}·${role.server}`}>{role.name}·{role.server}</span>
-                                                    {role.sect && (
-                                                        <SectIcon sectName={role.sect} variant="image" size="sm" />
+                                                    {role.martial && (
+                                                        <SectIcon sectName={role.martial} variant="image" size="sm" />
                                                     )}
-                                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && role.equipmentScore > 0 && (
                                                         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
-                                                            {role.equipmentScore.toLocaleString()}
+                                                            装分 {role.equipmentScore.toLocaleString()}
                                                         </span>
                                                     )}
                                                 </div>

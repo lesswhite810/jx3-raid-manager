@@ -5,7 +5,9 @@ export interface SearchableRaidRole {
   name: string;
   server: string;
   region: string;
-  sect: string;
+  sect?: string;
+  martial?: string;
+  equipmentScore?: number;
   accountName: string;
   accountNote?: string;
 }

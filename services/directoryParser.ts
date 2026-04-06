@@ -13,14 +13,24 @@ const generateUUID = (): string => {
   });
 };
 
-// 剑网三目录解析结果接口
+// 剑网三自动解析结果接口
 export interface ParsedAccount {
   accountName: string;
-  roles: {
-    name: string;
-    region: string;
-    server: string;
-  }[];
+  roles: ParsedRole[];
+}
+
+// 角色解析结果接口
+export interface ParsedRole {
+  name: string;
+  region: string;
+  server: string;
+  forceId?: number;        // 门派ID
+  forceName?: string;        // 门派名称
+  kungfuId?: number;        // 心法ID
+  kungfuName?: string;       // 心法名称
+  level?: number;            // 角色等级
+  score?: number;            // 装备分数（第一套）
+  scores?: number[];         // 所有套装的装备分数 [第1套, 第2套, 第3套, 第4套]
 }
 
 // 缓存相关类型定义
@@ -48,13 +58,14 @@ export const convertToSystemAccounts = (parsedAccounts: ParsedAccount[]): Accoun
       roles: []
     };
 
-    // 添加角色，不设置默认门派，由用户自行选择
+    // 添加角色，使用茗伊数据库中的门派和心法信息（如果有）
     account.roles = parsedAccount.roles.map(role => ({
       id: generateUUID(),
       name: role.name,
       region: role.region,
       server: role.server,
-      sect: '' // 初始化为空，用户可以后续修改
+      sect: role.forceName || '', // 优先使用茗伊数据库的门派名称
+      martial: role.kungfuName || '' // 优先使用茗伊数据库的心法名称
     }));
 
     return account;

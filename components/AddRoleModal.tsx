@@ -9,7 +9,7 @@ interface AddRoleModalProps {
         name: string;
         server: string;
         region: string;
-        sect: string;
+        martial: string;
         equipmentScore?: number;
         isClient: boolean;
     }) => void;
@@ -25,7 +25,7 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
     const [name, setName] = useState('');
     const [server, setServer] = useState('梦江南');
     const [region, setRegion] = useState('电信区');
-    const [sect, setSect] = useState('');
+    const [martial, setMartial] = useState('');
     const [equipmentScore, setEquipmentScore] = useState<number | undefined>(undefined);
     const [isClient, setIsClient] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -35,7 +35,7 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
             setName('');
             setServer('梦江南');
             setRegion('电信区');
-            setSect('');
+            setMartial('');
             setEquipmentScore(undefined);
             setIsClient(accountTypeIsClient);
             setError(null);
@@ -61,7 +61,7 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
             name: name.trim(),
             server: server.trim(),
             region: region.trim(),
-            sect: sect || '',
+            martial: martial || '',
             equipmentScore,
             isClient
         });
@@ -155,8 +155,8 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
                                 心法
                             </label>
                             <SectSelect
-                                value={sect}
-                                onChange={setSect}
+                                value={martial}
+                                onChange={setMartial}
                                 placeholder="请选择心法"
                             />
                         </div>

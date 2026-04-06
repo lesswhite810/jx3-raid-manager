@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::game_directory::get_sect_by_martial;
 use crate::runtime_mode::{self, RuntimeMode};
 
 mod migration;
@@ -16,13 +17,13 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 7;
+pub const CURRENT_SCHEMA_VERSION: i32 = 8;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
 
 /// 获取当前本地时间的 RFC3339 格式字符串
-fn get_local_timestamp() -> String {
+pub fn get_local_timestamp() -> String {
     chrono::Local::now().to_rfc3339()
 }
 
@@ -86,8 +87,8 @@ fn read_data_dir_bootstrap_config() -> Result<DataDirBootstrapConfig, String> {
         return Ok(DataDirBootstrapConfig::default());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("读取数据目录配置失败: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("读取数据目录配置失败: {}", e))?;
 
     serde_json::from_str::<DataDirBootstrapConfig>(&content)
         .map_err(|e| format!("解析数据目录配置失败: {}", e))
@@ -144,7 +145,9 @@ fn get_managed_app_data_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     }
 
     let mut files = Vec::new();
-    for entry in fs::read_dir(path).map_err(|e| format!("读取目录失败 {}: {}", path.display(), e))? {
+    for entry in
+        fs::read_dir(path).map_err(|e| format!("读取目录失败 {}: {}", path.display(), e))?
+    {
         let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
         let entry_path = entry.path();
         if !entry_path.is_file() {
@@ -171,19 +174,19 @@ fn has_persisted_app_data(path: &Path) -> bool {
 }
 
 fn files_are_identical(left: &Path, right: &Path) -> Result<bool, String> {
-    let left_metadata = fs::metadata(left)
-        .map_err(|e| format!("读取文件信息失败 {}: {}", left.display(), e))?;
-    let right_metadata = fs::metadata(right)
-        .map_err(|e| format!("读取文件信息失败 {}: {}", right.display(), e))?;
+    let left_metadata =
+        fs::metadata(left).map_err(|e| format!("读取文件信息失败 {}: {}", left.display(), e))?;
+    let right_metadata =
+        fs::metadata(right).map_err(|e| format!("读取文件信息失败 {}: {}", right.display(), e))?;
 
     if left_metadata.len() != right_metadata.len() {
         return Ok(false);
     }
 
-    let mut left_file = fs::File::open(left)
-        .map_err(|e| format!("打开文件失败 {}: {}", left.display(), e))?;
-    let mut right_file = fs::File::open(right)
-        .map_err(|e| format!("打开文件失败 {}: {}", right.display(), e))?;
+    let mut left_file =
+        fs::File::open(left).map_err(|e| format!("打开文件失败 {}: {}", left.display(), e))?;
+    let mut right_file =
+        fs::File::open(right).map_err(|e| format!("打开文件失败 {}: {}", right.display(), e))?;
 
     let mut left_buffer = [0_u8; 8 * 1024];
     let mut right_buffer = [0_u8; 8 * 1024];
@@ -311,8 +314,7 @@ fn resolve_target_app_dir(
     }
 
     if is_install_mode() {
-        let install_dir =
-            get_install_dir().ok_or_else(|| "无法获取安装目录".to_string())?;
+        let install_dir = get_install_dir().ok_or_else(|| "无法获取安装目录".to_string())?;
         return Ok((install_dir, "install".to_string(), true));
     }
 
@@ -394,11 +396,7 @@ fn maybe_migrate_app_data(
 
         if migrate_managed_app_data_files(&source_dir, target_dir)? {
             migrated = true;
-            log::info!(
-                "已迁移数据目录内容: {:?} -> {:?}",
-                source_dir,
-                target_dir
-            );
+            log::info!("已迁移数据目录内容: {:?} -> {:?}", source_dir, target_dir);
         }
     }
 
@@ -459,12 +457,18 @@ fn format_directory_delete_message(target_type: &str, display_path: &str, delete
 }
 
 #[tauri::command]
-pub fn db_delete_directory(path: String, target_type: String) -> Result<DirectoryDeleteResult, String> {
+pub fn db_delete_directory(
+    path: String,
+    target_type: String,
+) -> Result<DirectoryDeleteResult, String> {
     let target_path = PathBuf::from(path.trim());
     let display_path = target_path.display().to_string();
 
     if !target_path.exists() {
-        log::debug!("{}", format_directory_delete_message(&target_type, &display_path, false));
+        log::debug!(
+            "{}",
+            format_directory_delete_message(&target_type, &display_path, false)
+        );
         return Ok(DirectoryDeleteResult {
             deleted: false,
             path: display_path,
@@ -483,7 +487,10 @@ pub fn db_delete_directory(path: String, target_type: String) -> Result<Director
         error_message
     })?;
 
-    log::info!("{}", format_directory_delete_message(&target_type, &display_path, true));
+    log::info!(
+        "{}",
+        format_directory_delete_message(&target_type, &display_path, true)
+    );
 
     Ok(DirectoryDeleteResult {
         deleted: true,
@@ -498,13 +505,12 @@ pub fn db_delete_directory(path: String, target_type: String) -> Result<Director
 /// 2. 如果数据库存在但版本较低 → 升级，执行增量迁移
 /// 3. 如果数据库存在且是最新版本 → 直接返回连接
 pub fn init_db() -> Result<Connection, String> {
-    // 检查是否已初始化
-    {
-        let initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
-        if *initialized {
-            // 已初始化，直接返回新连接（SQLite 支持多连接）
-            return Connection::open(get_db_path()?).map_err(|e| e.to_string());
-        }
+    // 使用互斥锁保护整个初始化过程，防止并发初始化导致的竞态条件
+    let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
+
+    if *initialized {
+        // 已初始化，直接返回新连接（SQLite 支持多连接）
+        return Connection::open(get_db_path()?).map_err(|e| e.to_string());
     }
 
     // 执行初始化（首次）
@@ -566,7 +572,8 @@ pub fn init_db() -> Result<Connection, String> {
         for version in 1..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
             // 使用事务包装迁移，大幅提升性能
-            conn.execute("BEGIN TRANSACTION", []).map_err(|e| e.to_string())?;
+            conn.execute("BEGIN TRANSACTION", [])
+                .map_err(|e| e.to_string())?;
             let result = migration::apply_migration(&conn, version);
             if let Err(e) = result {
                 conn.execute("ROLLBACK", []).ok();
@@ -594,7 +601,8 @@ pub fn init_db() -> Result<Connection, String> {
         for version in (current_version + 1)..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
             // 使用事务包装迁移，大幅提升性能
-            conn.execute("BEGIN TRANSACTION", []).map_err(|e| e.to_string())?;
+            conn.execute("BEGIN TRANSACTION", [])
+                .map_err(|e| e.to_string())?;
             let result = migration::apply_migration(&conn, version);
             if let Err(e) = result {
                 conn.execute("ROLLBACK", []).ok();
@@ -612,11 +620,8 @@ pub fn init_db() -> Result<Connection, String> {
         log::info!("数据库初始化：已是最新版本 V{}", current_version);
     }
 
-    // 标记已初始化
-    {
-        let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
-        *initialized = true;
-    }
+    // 标记已初始化（此时互斥锁仍在持有中，确保竞态安全）
+    *initialized = true;
 
     Ok(conn)
 }
@@ -754,6 +759,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             server TEXT,
             region TEXT,
             sect TEXT,
+            martial TEXT,
             equipment_score INTEGER,
             disabled INTEGER DEFAULT 0,
             created_at TEXT,
@@ -846,8 +852,9 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (2, 'baizhan', '百战异闻录');
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (3, 'trial', '试炼之地');
-        "#
-    ).map_err(|e| e.to_string())?;
+        "#,
+    )
+    .map_err(|e| e.to_string())?;
 
     log::info!("数据库结构创建完成");
     Ok(())
@@ -1386,7 +1393,9 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
         let mut stmt = tx
             .prepare("SELECT id FROM accounts")
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
 
@@ -1395,7 +1404,9 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
         let mut stmt = tx
             .prepare("SELECT id FROM roles")
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
 
@@ -1466,24 +1477,31 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
                 let name = role["name"].as_str().unwrap_or("").to_string();
                 let server = role["server"].as_str().map(|s| s.to_string());
                 let region = role["region"].as_str().map(|s| s.to_string());
-                let sect = role["sect"].as_str().map(|s| s.to_string());
+                let martial = role["martial"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let sect = get_sect_by_martial(&martial)
+                    .unwrap_or_default()
+                    .to_string();
                 let r_disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
                 let equipment_score = role["equipmentScore"].as_i64();
 
                 // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
                 tx.execute(
-                    "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON CONFLICT(id) DO UPDATE SET
                         account_id = excluded.account_id,
                         name = excluded.name,
                         server = excluded.server,
                         region = excluded.region,
                         sect = excluded.sect,
+                        martial = excluded.martial,
                         equipment_score = excluded.equipment_score,
                         disabled = excluded.disabled,
                         updated_at = excluded.updated_at",
-                    params![role_id, id, name, server, region, sect, equipment_score, r_disabled, timestamp],
+                    params![role_id, id, name, server, region, sect, martial, equipment_score, r_disabled, timestamp],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -1539,10 +1557,10 @@ pub fn db_get_all_roles() -> Result<String, String> {
     let mut stmt = conn
         .prepare(
             "
-        SELECT r.id, r.account_id, r.name, r.server, r.region, r.sect, 
+        SELECT r.id, r.account_id, r.name, r.server, r.region, r.sect, r.martial,
                r.equipment_score, r.disabled, r.created_at, r.updated_at,
                a.account_name
-        FROM roles r JOIN accounts a ON r.account_id = a.id 
+        FROM roles r JOIN accounts a ON r.account_id = a.id
         ORDER BY r.name
     ",
         )
@@ -1557,11 +1575,12 @@ pub fn db_get_all_roles() -> Result<String, String> {
                 "server": row.get::<_, Option<String>>(3)?,
                 "region": row.get::<_, Option<String>>(4)?,
                 "sect": row.get::<_, Option<String>>(5)?,
-                "equipmentScore": row.get::<_, Option<i64>>(6)?,
-                "disabled": row.get::<_, i32>(7)? != 0,
-                "createdAt": row.get::<_, Option<String>>(8)?,
-                "updatedAt": row.get::<_, Option<String>>(9)?,
-                "accountName": row.get::<_, String>(10)?,
+                "martial": row.get::<_, Option<String>>(6)?,
+                "equipmentScore": row.get::<_, Option<i64>>(7)?,
+                "disabled": row.get::<_, i32>(8)? != 0,
+                "createdAt": row.get::<_, Option<String>>(9)?,
+                "updatedAt": row.get::<_, Option<String>>(10)?,
+                "accountName": row.get::<_, String>(11)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -1578,6 +1597,7 @@ struct RoleJoinRow {
     server: Option<String>,
     region: Option<String>,
     sect: Option<String>,
+    martial: Option<String>,
     equipment_score: Option<i64>,
     disabled: bool,
 }
@@ -1633,6 +1653,7 @@ fn upsert_account_from_join_row(
             "server": role.server,
             "region": role.region,
             "sect": role.sect,
+            "martial": role.martial,
             "equipmentScore": role.equipment_score,
             "disabled": role.disabled,
             "visibility": visibility,
@@ -1662,30 +1683,39 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
     }
 
     // 2. 获取角色的个性化配置
-    let mut vis_stmt = conn.prepare("
+    let mut vis_stmt = conn
+        .prepare(
+            "
         SELECT riv.role_id, it.type, riv.visible
         FROM role_instance_visibility riv
         JOIN instance_types it ON riv.instance_type_id = it.id
-    ").map_err(|e| e.to_string())?;
+    ",
+        )
+        .map_err(|e| e.to_string())?;
 
-    let mut vis_map: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> = std::collections::HashMap::new();
-    let vis_rows = vis_stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i32>(2)? == 1
-        ))
-    }).map_err(|e| e.to_string())?;
+    let mut vis_map: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> =
+        std::collections::HashMap::new();
+    let vis_rows = vis_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(2)? == 1,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
 
     for row_res in vis_rows {
         if let Ok((role_id, type_str, visible)) = row_res {
-            let role_vis = vis_map.entry(role_id).or_insert_with(|| default_vis_map.clone());
+            let role_vis = vis_map
+                .entry(role_id)
+                .or_insert_with(|| default_vis_map.clone());
             role_vis.insert(type_str, serde_json::json!(visible));
         }
     }
 
     // 单次 LEFT JOIN 查询获取账号和角色
-    // Account 字段: 0-9, Role 字段: 10-18 (可能为 NULL)
+    // Account 字段: 0-9, Role 字段: 10-19 (可能为 NULL)
     let mut stmt = conn
         .prepare(
             "
@@ -1693,7 +1723,7 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
             a.id, a.account_name, a.account_type, a.sort_order, a.password, a.notes,
             a.hidden, a.disabled, a.created_at, a.updated_at,
             r.id, r.account_id, r.name, r.server, r.region,
-            r.sect, r.equipment_score, r.disabled, r.created_at, r.updated_at
+            r.sect, r.martial, r.equipment_score, r.disabled, r.created_at, r.updated_at
         FROM accounts a
         LEFT JOIN roles r ON a.id = r.account_id
         ORDER BY a.sort_order, a.account_name, r.name
@@ -1715,8 +1745,9 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
                     server: row.get(13)?,
                     region: row.get(14)?,
                     sect: row.get(15)?,
-                    equipment_score: row.get(16)?,
-                    disabled: row.get::<_, i32>(17)? != 0,
+                    martial: row.get(16)?,
+                    equipment_score: row.get(17)?,
+                    disabled: row.get::<_, i32>(18)? != 0,
                 })
             } else {
                 None
@@ -1748,17 +1779,18 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
     accounts.sort_by(|a, b| {
         let a_sort_order = a["sortOrder"].as_i64().unwrap_or_default();
         let b_sort_order = b["sortOrder"].as_i64().unwrap_or_default();
-        a_sort_order
-            .cmp(&b_sort_order)
-            .then_with(|| {
-                a["accountName"]
-                    .as_str()
-                    .unwrap_or("")
-                    .cmp(b["accountName"].as_str().unwrap_or(""))
-            })
+        a_sort_order.cmp(&b_sort_order).then_with(|| {
+            a["accountName"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["accountName"].as_str().unwrap_or(""))
+        })
     });
 
-    log::info!("[db_get_accounts_with_roles] 查询完成，返回 {} 个账号", accounts.len());
+    log::info!(
+        "[db_get_accounts_with_roles] 查询完成，返回 {} 个账号",
+        accounts.len()
+    );
     serde_json::to_string(&accounts).map_err(|e| e.to_string())
 }
 
@@ -1779,25 +1811,34 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
     }
 
     // 2. 获取角色的个性化配置
-    let mut vis_stmt = conn.prepare("
+    let mut vis_stmt = conn
+        .prepare(
+            "
         SELECT riv.role_id, it.type, riv.visible
         FROM role_instance_visibility riv
         JOIN instance_types it ON riv.instance_type_id = it.id
         WHERE riv.role_id IN (SELECT id FROM roles WHERE account_id = ?)
-    ").map_err(|e| e.to_string())?;
+    ",
+        )
+        .map_err(|e| e.to_string())?;
 
-    let mut vis_map: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> = std::collections::HashMap::new();
-    let vis_rows = vis_stmt.query_map(params![account_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i32>(2)? == 1
-        ))
-    }).map_err(|e| e.to_string())?;
+    let mut vis_map: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> =
+        std::collections::HashMap::new();
+    let vis_rows = vis_stmt
+        .query_map(params![account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(2)? == 1,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
 
     for row_res in vis_rows {
         if let Ok((role_id, type_str, visible)) = row_res {
-            let role_vis = vis_map.entry(role_id).or_insert_with(|| default_vis_map.clone());
+            let role_vis = vis_map
+                .entry(role_id)
+                .or_insert_with(|| default_vis_map.clone());
             role_vis.insert(type_str, serde_json::json!(visible));
         }
     }
@@ -1805,7 +1846,7 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
     let mut stmt = conn
         .prepare(
             "
-        SELECT id, name, server, region, sect, equipment_score, disabled, created_at, updated_at 
+        SELECT id, name, server, region, sect, martial, equipment_score, disabled, created_at, updated_at
         FROM roles WHERE account_id = ? ORDER BY name
     ",
         )
@@ -1814,7 +1855,10 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
     let roles: Vec<serde_json::Value> = stmt
         .query_map(params![account_id], |row| {
             let role_id: String = row.get(0)?;
-            let visibility = vis_map.get(&role_id).cloned().unwrap_or_else(|| default_vis_map.clone());
+            let visibility = vis_map
+                .get(&role_id)
+                .cloned()
+                .unwrap_or_else(|| default_vis_map.clone());
 
             Ok(serde_json::json!({
                 "id": role_id,
@@ -1822,10 +1866,11 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
                 "server": row.get::<_, Option<String>>(2)?,
                 "region": row.get::<_, Option<String>>(3)?,
                 "sect": row.get::<_, Option<String>>(4)?,
-                "equipmentScore": row.get::<_, Option<i64>>(5)?,
-                "disabled": row.get::<_, i32>(6)? != 0,
-                "createdAt": row.get::<_, Option<String>>(7)?,
-                "updatedAt": row.get::<_, Option<String>>(8)?,
+                "martial": row.get::<_, Option<String>>(5)?,
+                "equipmentScore": row.get::<_, Option<i64>>(6)?,
+                "disabled": row.get::<_, i32>(7)? != 0,
+                "createdAt": row.get::<_, Option<String>>(8)?,
+                "updatedAt": row.get::<_, Option<String>>(9)?,
                 "visibility": visibility,
             }))
         })
@@ -1912,6 +1957,7 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
     let server = role["server"].as_str().map(|s| s.to_string());
     let region = role["region"].as_str().map(|s| s.to_string());
     let sect = role["sect"].as_str().map(|s| s.to_string());
+    let martial = role["martial"].as_str().map(|s| s.to_string());
     let disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
     let equipment_score = role["equipmentScore"].as_i64();
 
@@ -1928,18 +1974,19 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
         .unwrap_or(true);
 
     conn.execute(
-        "INSERT INTO roles (id, account_id, name, server, region, sect, equipment_score, disabled, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             account_id = excluded.account_id,
             name = excluded.name,
             server = excluded.server,
             region = excluded.region,
             sect = excluded.sect,
+            martial = excluded.martial,
             equipment_score = excluded.equipment_score,
             disabled = excluded.disabled,
             updated_at = excluded.updated_at",
-        params![id, account_id, name, server, region, sect, equipment_score, disabled, timestamp],
+        params![id, account_id, name, server, region, sect, martial, equipment_score, disabled, timestamp],
     ).map_err(|e| e.to_string())?;
 
     // 如果是新建角色，自动创建可见性记录
@@ -2152,7 +2199,9 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
         let mut stmt = tx
             .prepare("SELECT id FROM raids")
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
 
@@ -2224,7 +2273,8 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
                             name = excluded.name,
                             boss_order = excluded.boss_order",
                         params![boss_id, id, boss_name, boss_order],
-                    ).map_err(|e| e.to_string())?;
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -2835,7 +2885,11 @@ pub fn db_get_all_role_visibility() -> Result<String, String> {
 
 /// 保存单个角色的可见性配置（用于账号管理中的大类配置：raid/baizhan/trial）
 #[tauri::command]
-pub fn db_save_role_visibility(role_id: String, instance_type: String, visible: bool) -> Result<(), String> {
+pub fn db_save_role_visibility(
+    role_id: String,
+    instance_type: String,
+    visible: bool,
+) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
     // 获取 instance_type_id（只允许预定义的类型）
@@ -2871,9 +2925,7 @@ pub fn db_get_raid_role_visibility(raid_key: String) -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
     let visibility: Vec<serde_json::Value> = conn
-        .prepare(
-            "SELECT role_id, visible FROM raid_role_visibility WHERE raid_key = ?1",
-        )
+        .prepare("SELECT role_id, visible FROM raid_role_visibility WHERE raid_key = ?1")
         .map_err(|e| e.to_string())?
         .query_map(params![raid_key], |row| {
             Ok(serde_json::json!({
@@ -2891,7 +2943,11 @@ pub fn db_get_raid_role_visibility(raid_key: String) -> Result<String, String> {
 /// 保存团队副本中单个角色的可见性配置
 #[allow(non_snake_case)]
 #[tauri::command]
-pub fn db_save_raid_role_visibility(roleId: String, raidKey: String, visible: bool) -> Result<(), String> {
+pub fn db_save_raid_role_visibility(
+    roleId: String,
+    raidKey: String,
+    visible: bool,
+) -> Result<(), String> {
     let conn = init_db().map_err(|e| format!("初始化数据库失败: {}", e))?;
 
     let timestamp = get_local_timestamp();
@@ -2915,7 +2971,7 @@ pub fn db_save_raid_role_visibility(roleId: String, raidKey: String, visible: bo
 #[serde(rename_all = "camelCase")]
 pub struct DataDirInfo {
     pub current_path: String,
-    pub location: String,       // "custom" | "install" | "user_home"
+    pub location: String, // "custom" | "install" | "user_home"
     pub is_install_mode: bool,
     pub custom_dir_configured: bool,
 }
@@ -2933,7 +2989,10 @@ pub fn db_get_data_dir_info() -> Result<DataDirInfo, String> {
     })
 }
 
-fn write_custom_data_dir_config(path: Option<&Path>, migration_source: Option<&Path>) -> Result<(), String> {
+fn write_custom_data_dir_config(
+    path: Option<&Path>,
+    migration_source: Option<&Path>,
+) -> Result<(), String> {
     let mut config = read_data_dir_bootstrap_config()?;
     config.custom_data_dir = path.map(|item| item.to_string_lossy().to_string());
     config.pending_migration_from = migration_source
@@ -3093,7 +3152,10 @@ mod tests {
         );
 
         let account = account_map.get("account-1").expect("account should exist");
-        assert_eq!(account["roles"].as_array().map(|roles| roles.len()), Some(1));
+        assert_eq!(
+            account["roles"].as_array().map(|roles| roles.len()),
+            Some(1)
+        );
         assert_eq!(account["roles"][0]["id"], "role-1");
         assert_eq!(account["roles"][0]["visibility"]["raid"], false);
     }
@@ -3107,7 +3169,8 @@ mod tests {
         fs::create_dir_all(&source_dir).expect("source dir should exist");
         fs::create_dir_all(&target_dir).expect("target dir should exist");
         fs::write(source_dir.join(DATABASE_NAME), "db-content").expect("db file should be written");
-        fs::write(source_dir.join(LOG_FILE_NAME), "log-content").expect("log file should be written");
+        fs::write(source_dir.join(LOG_FILE_NAME), "log-content")
+            .expect("log file should be written");
 
         let mut config = DataDirBootstrapConfig {
             custom_data_dir: Some(target_dir.to_string_lossy().to_string()),
@@ -3116,8 +3179,14 @@ mod tests {
 
         maybe_migrate_app_data(&target_dir, &mut config).expect("migration should succeed");
 
-        assert!(target_dir.join(DATABASE_NAME).exists(), "db file should exist in target");
-        assert!(target_dir.join(LOG_FILE_NAME).exists(), "log file should exist in target");
+        assert!(
+            target_dir.join(DATABASE_NAME).exists(),
+            "db file should exist in target"
+        );
+        assert!(
+            target_dir.join(LOG_FILE_NAME).exists(),
+            "log file should exist in target"
+        );
         assert!(
             !source_dir.join(DATABASE_NAME).exists(),
             "db file should be removed from source after migration"
@@ -3126,7 +3195,10 @@ mod tests {
             !source_dir.join(LOG_FILE_NAME).exists(),
             "log file should be removed from source after migration"
         );
-        assert!(config.pending_migration_from.is_none(), "pending migration should be cleared");
+        assert!(
+            config.pending_migration_from.is_none(),
+            "pending migration should be cleared"
+        );
     }
 
     #[test]
@@ -3139,15 +3211,23 @@ mod tests {
         fs::create_dir_all(&source_dir).expect("source dir should exist");
         fs::create_dir_all(&unrelated_dir).expect("unrelated dir should exist");
         fs::write(source_dir.join(DATABASE_NAME), "db-content").expect("db file should be written");
-        fs::write(source_dir.join(LOG_FILE_NAME), "log-content").expect("log file should be written");
-        fs::write(unrelated_dir.join("note.txt"), "keep").expect("unrelated file should be written");
+        fs::write(source_dir.join(LOG_FILE_NAME), "log-content")
+            .expect("log file should be written");
+        fs::write(unrelated_dir.join("note.txt"), "keep")
+            .expect("unrelated file should be written");
 
         let changed = migrate_managed_app_data_files(&source_dir, &target_dir)
             .expect("migration should succeed for nested target");
 
         assert!(changed, "managed files should be moved");
-        assert!(target_dir.join(DATABASE_NAME).exists(), "db file should exist in nested target");
-        assert!(target_dir.join(LOG_FILE_NAME).exists(), "log file should exist in nested target");
+        assert!(
+            target_dir.join(DATABASE_NAME).exists(),
+            "db file should exist in nested target"
+        );
+        assert!(
+            target_dir.join(LOG_FILE_NAME).exists(),
+            "log file should exist in nested target"
+        );
         assert!(
             !source_dir.join(DATABASE_NAME).exists(),
             "db file should be removed from source"
@@ -3156,7 +3236,10 @@ mod tests {
             !source_dir.join(LOG_FILE_NAME).exists(),
             "log file should be removed from source"
         );
-        assert!(unrelated_dir.join("note.txt").exists(), "unrelated file should be preserved");
+        assert!(
+            unrelated_dir.join("note.txt").exists(),
+            "unrelated file should be preserved"
+        );
         assert!(
             !target_dir.join("nested-target").exists(),
             "nested target should not recursively contain itself"

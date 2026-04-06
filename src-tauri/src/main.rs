@@ -150,7 +150,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             gkp_parser::parse_binary_gkp,
             game_directory::scan_game_directory,
+            game_directory::auto_parse_game_directory,
             game_directory::validate_game_directory,
+            game_directory::scan_jx3_clients,
             db::db_init,
             // 新的版本管理命令
             db::db_get_version_info,

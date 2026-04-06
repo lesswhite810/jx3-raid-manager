@@ -76,11 +76,9 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 fn migrate_existing_roles_visibility(conn: &Connection) -> Result<(), String> {
     // 检查是否已有可见性记录（幂等检查）
     let count: i32 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM role_instance_visibility",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM role_instance_visibility", [], |row| {
+            row.get(0)
+        })
         .unwrap_or(0);
 
     if count > 0 {

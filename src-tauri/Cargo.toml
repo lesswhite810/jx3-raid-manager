@@ -28,6 +28,8 @@ tauri-plugin-http = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-mcp-bridge = "0.9"
 tauri-plugin-updater = "2"
+winreg = "0.52"
+regex = "1"
 
 [features]
 default = ["custom-protocol"]

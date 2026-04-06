@@ -100,6 +100,6 @@ JX3 Raid Manager (剑网三副本管家) 是一个专为《剑网三》玩家设
 ## 关键业务逻辑
 - **副本 CD**: 25 人本周一 7:00 刷新，10 人本周一/周五 7:00 刷新（`utils/cooldownManager.ts`）
 - **数据迁移**: 启动时检查 LocalStorage 旧数据，迁移至 IndexedDB（`services/migration.ts`）
-- **目录扫描**: 扫描剑网三目录解析账号/角色（`services/gameDirectoryScanner.ts`）
+- **自动解析**: 扫描剑网三目录解析账号/角色（`services/gameDirectoryScanner.ts`）
 - **JX3Box API**: 获取装备数据用于试炼之地翻牌展示（`services/jx3BoxApi.ts`）
 

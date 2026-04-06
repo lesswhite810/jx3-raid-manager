@@ -27,7 +27,8 @@ interface RoleWithStatus {
   name: string;
   server: string;
   region: string;
-  sect: string;
+  sect?: string;
+  martial?: string;
   equipmentScore?: number;
   accountId: string;
   accountName: string;
@@ -261,6 +262,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
       let roleName = '未知角色';
       let sect = '';
+      let martial = '';
       let region = '';
       let server = record.server || '未知服务器';
       let accountName = record.accountId || '未知账号';
@@ -285,6 +287,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             }
             roleName = role.name;
             sect = role.sect || '';
+            martial = role.martial || '';
             region = role.region || '';
             server = role.server;
             equipmentScore = role.equipmentScore;
@@ -326,6 +329,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         server: server,
         region: region || '未知',
         sect: sect || '未知',
+        martial: martial,
         equipmentScore,
         accountId: record.accountId,
         accountName,
@@ -399,6 +403,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           server: role.server,
           region: role.region,
           sect: role.sect,
+          martial: role.martial,
           equipmentScore: role.equipmentScore,
           accountId: account.id,
           accountName: account.accountName,
@@ -684,12 +689,12 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                       <div className="min-w-0 flex-1">
                         <div className="font-semibold text-main truncate flex items-center gap-2 flex-wrap">
                           <span className="truncate">{cleanRoleName(role.name)}·{role.server}</span>
-                          {role.sect && role.sect !== '未知' && (
-                            <SectIcon sectName={role.sect} variant="image" size="sm" />
+                          {role.martial && (
+                            <SectIcon sectName={role.martial} variant="image" size="sm" />
                           )}
-                          {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                          {role.equipmentScore !== undefined && role.equipmentScore !== null && role.equipmentScore > 0 && (
                             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
-                              {role.equipmentScore.toLocaleString()}
+                              装分 {role.equipmentScore.toLocaleString()}
                             </span>
                           )}
                         </div>

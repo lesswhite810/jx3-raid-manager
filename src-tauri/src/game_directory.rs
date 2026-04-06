@@ -1,11 +1,434 @@
 use chrono::NaiveDateTime;
+use regex::Regex;
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use winreg::enums::*;
+use winreg::RegKey;
+
+// 引入 db 模块用于数据库操作
+use crate::db;
 
 const GKP_BASE_PATH: &str = r"interface\my#data";
 const USERDATA_BASE_PATH: &str = "userdata";
 const GAME_RUNTIME_SUFFIX: [&str; 4] = ["Game", "JX3", "bin", "zhcn_hd"];
+
+// 茗伊数据库路径常量
+const MING_YI_DB_PATH: &str =
+    r"Interface\MY#DATA\!all-users@zhcn_hd\userdata\role_statistics\equip_stat.v4.db";
+
+// 当前游戏等级
+const CURRENT_LEVEL: i32 = 130;
+
+// 门派ID到名称的映射（来源：茗伊插件 MY_!Base/src/lib/Constant.lua - FORCE_TYPE）
+fn get_force_name(force_id: i32) -> Option<String> {
+    match force_id {
+        0 => Some("江湖".to_string()),
+        1 => Some("少林".to_string()),
+        2 => Some("万花".to_string()),
+        3 => Some("天策".to_string()),
+        4 => Some("纯阳".to_string()),
+        5 => Some("七秀".to_string()),
+        6 => Some("五毒".to_string()),
+        7 => Some("唐门".to_string()),
+        8 => Some("藏剑".to_string()),
+        9 => Some("丐帮".to_string()),
+        10 => Some("明教".to_string()),
+        21 => Some("苍云".to_string()),
+        22 => Some("长歌".to_string()),
+        23 => Some("霸刀".to_string()),
+        24 => Some("蓬莱".to_string()),
+        25 => Some("凌雪".to_string()),
+        211 => Some("衍天宗".to_string()),
+        212 => Some("药宗".to_string()),
+        213 => Some("刀宗".to_string()),
+        214 => Some("万灵".to_string()),
+        215 => Some("段氏".to_string()),
+        _ => None,
+    }
+}
+
+// 心法名称到门派名称的映射
+pub(crate) fn get_sect_by_martial(martial: &str) -> Option<&'static str> {
+    match martial {
+        // 少林
+        "洗髓经" | "易筋经" => Some("少林"),
+        // 万花
+        "花间游" | "离经易道" => Some("万花"),
+        // 天策
+        "傲血战意" | "铁牢律" => Some("天策"),
+        // 纯阳
+        "紫霞功" | "太虚剑意" => Some("纯阳"),
+        // 七秀
+        "云裳心经" | "冰心诀" => Some("七秀"),
+        // 五毒
+        "毒经" | "补天诀" => Some("五毒"),
+        // 唐门
+        "惊羽诀" | "天罗诡道" => Some("唐门"),
+        // 藏剑
+        "问水诀" => Some("藏剑"),
+        // 丐帮
+        "笑尘诀" => Some("丐帮"),
+        // 明教
+        "焚影圣诀" | "明尊琉璃体" => Some("明教"),
+        // 苍云
+        "铁骨衣" | "分山劲" => Some("苍云"),
+        // 长歌
+        "莫问" | "相知" => Some("长歌"),
+        // 霸刀
+        "北傲诀" => Some("霸刀"),
+        // 蓬莱
+        "凌海诀" => Some("蓬莱"),
+        // 凌雪
+        "隐龙诀" => Some("凌雪"),
+        // 衍天
+        "太玄经" => Some("衍天"),
+        // 药宗
+        "灵素" | "无方" => Some("药宗"),
+        // 刀宗
+        "孤锋诀" => Some("刀宗"),
+        // 万灵
+        "山海心决" => Some("万灵"),
+        // 段氏
+        "周天功" => Some("段氏"),
+        // 无相楼
+        "幽罗引" => Some("无相楼"),
+        _ => None,
+    }
+}
+
+// 预处理：构建 (force_id, kungfu_name) -> kungfu_id 的快速查找表
+fn build_kungfu_force_name_to_id_map() -> HashMap<(i32, String), i32> {
+    let mut map = HashMap::new();
+    // 所有已知门派的心法
+    let forces = [
+        (0, vec![(10821, "无相")]),
+        (1, vec![(10002, "洗髓经"), (10003, "易筋经")]),
+        (2, vec![(10021, "花间游"), (10028, "离经易道")]),
+        (3, vec![(10026, "傲血战意"), (10062, "铁牢律")]),
+        (4, vec![(10014, "紫霞功"), (10015, "太虚剑意")]),
+        (5, vec![(10080, "云裳心经"), (10081, "冰心诀")]),
+        (6, vec![(10175, "毒经"), (10176, "补天诀")]),
+        (7, vec![(10224, "惊羽诀"), (10225, "天罗诡道")]),
+        (8, vec![(10144, "问水决"), (10145, "山居剑意")]),
+        (9, vec![(10368, "笑尘诀")]),
+        (10, vec![(10242, "焚影圣诀"), (10243, "明尊琉璃体")]),
+        (21, vec![(10389, "铁骨诀"), (10390, "分山劲")]),
+        (22, vec![(10447, "莫问"), (10448, "相知")]),
+        (23, vec![(10464, "北傲诀")]),
+        (24, vec![(10533, "凌海诀")]),
+        (25, vec![(10585, "隐龙诀")]),
+        (211, vec![(10615, "太玄经")]),
+        (212, vec![(10626, "灵素"), (10627, "无方")]),
+        (213, vec![(10698, "孤风")]),
+        (214, vec![(10756, "山海")]),
+        (215, vec![(10786, "周天")]),
+    ];
+    for (force_id, kungfus) in forces {
+        for (kungfu_id, kungfu_name) in kungfus {
+            map.insert((force_id, kungfu_name.to_string()), kungfu_id);
+        }
+    }
+    map
+}
+
+// 茗伊数据库的角色信息
+#[derive(Debug, Clone)]
+pub struct MingYiRoleInfo {
+    pub owner_name: String,
+    pub server_name: String,
+    pub force_id: i32,
+    pub level: i32,
+    pub scores: Vec<i32>,            // 4套装备分数
+    pub effective_suit: i32,         // 当前使用套装的索引 (1-4)
+    pub kungfu_id: Option<i32>,      // 心法ID
+    pub kungfu_name: Option<String>, // 心法名称
+}
+
+// 解析 ownerscore 字段，支持多种格式：
+// - 数组格式: "[100,200,300,400]"
+// - 字典格式: "{1:100,2:200,3:300,4:400}"
+// - 单值格式: "{404898}" (等价于第1套)
+// - 稀疏格式: "{[2]=515657}" 或 "{0,0,0,671428,[7]=4608}"
+// - 混合格式: "{520999,[3]=527449}"
+fn parse_ownerscore(ownerscore: &str) -> Vec<i32> {
+    let trimmed = ownerscore.trim();
+
+    // 如果为空或为 "0.0"，返回空数组
+    if trimmed.is_empty() || trimmed == "0.0" || trimmed == "0" {
+        return vec![0, 0, 0, 0];
+    }
+
+    // 尝试解析数组格式 [100,200,300,400]
+    if trimmed.starts_with('[') {
+        let content = trimmed.trim_start_matches('[').trim_end_matches(']');
+        let values: Vec<i32> = content
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        // 确保有4个值
+        let mut result = vec![0; 4];
+        for (i, v) in values.into_iter().take(4).enumerate() {
+            result[i] = v;
+        }
+        return result;
+    }
+
+    // 解析字典/稀疏格式 {key:value,...} 或 {[index]=value,...} 或 {value,value,...}
+    if trimmed.starts_with('{') {
+        let content = trimmed.trim_start_matches('{').trim_end_matches('}');
+        let mut scores = vec![0; 4];
+        let mut sequential_index: usize = 0; // 用于裸数值的顺序索引
+
+        for pair in content.split(',') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+
+            // 情况1: 括号索引格式 {[2]=515657}
+            if pair.starts_with('[') {
+                if let Some(bracket_end) = pair.find("]=") {
+                    let inner = &pair[1..bracket_end];
+                    if let (Ok(index), Ok(value)) = (
+                        inner.parse::<usize>(),
+                        pair[bracket_end + 2..].parse::<i32>(),
+                    ) {
+                        if index >= 1 && index <= 4 {
+                            scores[index - 1] = value;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // 情况2: 字典格式 {3:520351}
+            if let Some(colon_pos) = pair.find(':') {
+                let key_str = &pair[..colon_pos];
+                let value_str = &pair[colon_pos + 1..];
+                if let (Ok(key), Ok(value)) = (
+                    key_str.trim().parse::<usize>(),
+                    value_str.trim().parse::<i32>(),
+                ) {
+                    if key >= 1 && key <= 4 {
+                        scores[key - 1] = value;
+                    }
+                }
+                continue;
+            }
+
+            // 情况3: 裸数值 {520999} - 按顺序映射到第1,2,3,4套
+            if let Ok(value) = pair.parse::<i32>() {
+                sequential_index += 1;
+                if sequential_index <= 4 {
+                    scores[sequential_index - 1] = value;
+                }
+            }
+        }
+        return scores;
+    }
+
+    vec![0, 0, 0, 0]
+}
+
+// 从 desc 中用正则匹配 "推荐心法：门派(心法)" 格式
+// 返回 (force_id, kungfu_name) 元组
+fn parse_recommended_kungfu_from_desc(desc: &str) -> Option<(i32, String)> {
+    // 正则匹配：推荐心法：门派(心法)
+    let re = Regex::new(r"推荐心法[：:]([^()]+)\(([^()]+)\)").ok()?;
+    let caps = re.captures(desc)?;
+
+    let force_name = caps.get(1)?.as_str().trim();
+    let kungfu_name = caps.get(2)?.as_str().trim();
+
+    let force_id = force_name_to_id(force_name)?;
+    Some((force_id, kungfu_name.to_string()))
+}
+
+// 将门派名称转换为门派ID
+fn force_name_to_id(force_name: &str) -> Option<i32> {
+    match force_name {
+        "江湖" => Some(0),
+        "少林" => Some(1),
+        "万花" => Some(2),
+        "天策" => Some(3),
+        "纯阳" => Some(4),
+        "七秀" => Some(5),
+        "五毒" => Some(6),
+        "唐门" => Some(7),
+        "藏剑" => Some(8),
+        "丐帮" => Some(9),
+        "明教" => Some(10),
+        "苍云" => Some(21),
+        "长歌" => Some(22),
+        "霸刀" => Some(23),
+        "蓬莱" => Some(24),
+        "凌雪" => Some(25),
+        "衍天宗" => Some(211),
+        "药宗" => Some(212),
+        "刀宗" => Some(213),
+        "万灵" => Some(214),
+        "段氏" => Some(215),
+        _ => None,
+    }
+}
+
+// 从装备描述中解析心法（需要与角色的门派匹配）
+fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i32, String)> {
+    let kungfu_map = build_kungfu_force_name_to_id_map();
+
+    for desc in descs {
+        if let Some((force_id, kungfu_name)) = parse_recommended_kungfu_from_desc(desc) {
+            // 只取与角色门派匹配的心法
+            if force_id == role_force_id {
+                if let Some(&kungfu_id) = kungfu_map.get(&(force_id, kungfu_name.clone())) {
+                    return Some((kungfu_id, kungfu_name));
+                }
+            }
+        }
+    }
+    None
+}
+
+// 根据 ownerkey 和 suit_index 从 EquipItems 表读取武器栏装备描述
+// boxtype=0 表示武器栏
+fn read_equip_descs_for_suit(
+    conn: &rusqlite::Connection,
+    owner_key: i64,
+    suit_index: i32,
+) -> Vec<String> {
+    let mut descs = Vec::new();
+
+    let mut stmt = match conn.prepare(
+        "SELECT `desc` FROM EquipItems WHERE ownerkey = ? AND suitindex = ? AND boxtype = 0",
+    ) {
+        Ok(s) => s,
+        Err(_) => return descs,
+    };
+
+    let rows = stmt
+        .query_map([owner_key.to_string(), suit_index.to_string()], |row| {
+            let desc: String = row.get(0)?;
+            Ok(desc)
+        })
+        .ok();
+
+    if let Some(rows) = rows {
+        for row in rows.flatten() {
+            descs.push(row);
+        }
+    }
+
+    descs
+}
+
+// 读取茗伊数据库中的角色信息
+fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, String> {
+    let db_path = game_directory.join(MING_YI_DB_PATH);
+
+    if !db_path.exists() {
+        return Ok(Vec::new()); // 数据库不存在不算错误
+    }
+
+    let conn =
+        rusqlite::Connection::open(&db_path).map_err(|e| format!("打开茗伊数据库失败: {}", e))?;
+
+    // 查询角色信息，只取当前等级的角色
+    let mut stmt = conn
+        .prepare(
+            "SELECT ownerkey, ownername, servername, ownerforce, ownerlevel, ownerscore, ownersuitindex
+             FROM OwnerInfo
+             WHERE ownerlevel = ?",
+        )
+        .map_err(|e| format!("准备查询失败: {}", e))?;
+
+    let role_iter = stmt
+        .query_map([CURRENT_LEVEL], |row| {
+            let owner_key_str: String = row.get(0)?;
+            let _owner_key: i64 = owner_key_str.parse().unwrap_or(0);
+            let owner_name: String = row.get(1)?;
+            let server_name: String = row.get(2)?;
+            let force_id: i32 = row.get(3)?;
+            let level: i32 = row.get(4)?;
+            let ownerscore: String = row.get(5)?;
+            let suit_index: Option<i32> = row.get(6).ok();
+            Ok((
+                owner_key_str,
+                owner_name,
+                server_name,
+                force_id,
+                level,
+                ownerscore,
+                suit_index,
+            ))
+        })
+        .map_err(|e| format!("查询失败: {}", e))?;
+
+    let mut roles = Vec::new();
+    for role_result in role_iter {
+        let (owner_key_str, owner_name, server_name, force_id, level, ownerscore, suit_index) =
+            role_result.map_err(|e| format!("读取数据失败: {}", e))?;
+
+        let owner_key: i64 = owner_key_str.parse().unwrap_or(0);
+        let scores = parse_ownerscore(&ownerscore);
+
+        // 确定使用哪套装备解析心法
+        // 优先使用 ownersuitindex 指定的那套，如果无效则找装分最高的那套
+        let effective_suit = suit_index
+            .and_then(|idx| {
+                if idx >= 1 && idx <= 4 {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                scores
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, &score)| score)
+                    .map(|(i, _)| (i + 1) as i32)
+                    .filter(|&idx| idx >= 1 && idx <= 4 && scores[(idx - 1) as usize] > 0)
+            });
+
+        // 从对应套装的装备中解析心法
+        let (kungfu_id, kungfu_name) = if let Some(suit) = effective_suit {
+            let descs = read_equip_descs_for_suit(&conn, owner_key, suit);
+            resolve_kungfu_from_descs(&descs, force_id)
+                .map(|(k_id, k_name)| (Some(k_id), Some(k_name)))
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+
+        roles.push(MingYiRoleInfo {
+            owner_name,
+            server_name,
+            force_id,
+            level,
+            scores,
+            effective_suit: effective_suit.unwrap_or(1),
+            kungfu_id,
+            kungfu_name,
+        });
+    }
+
+    Ok(roles)
+}
+
+// 根据角色名称和服务器查找茗伊数据库中的角色信息
+fn find_mingyi_role<'a>(
+    mingyi_roles: &'a [MingYiRoleInfo],
+    role_name: &str,
+    server_name: &str,
+) -> Option<&'a MingYiRoleInfo> {
+    mingyi_roles
+        .iter()
+        .find(|r| r.owner_name == role_name && r.server_name == server_name)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +436,13 @@ pub struct ParsedRole {
     pub name: String,
     pub region: String,
     pub server: String,
+    pub force_id: Option<i32>,       // 门派ID
+    pub force_name: Option<String>,  // 门派名称
+    pub kungfu_id: Option<i32>,      // 心法ID
+    pub kungfu_name: Option<String>, // 心法名称
+    pub level: Option<i32>,          // 角色等级
+    pub score: Option<i32>,          // 装备分数（第一套）
+    pub scores: Option<Vec<i32>>,    // 所有套装的装备分数 [第1套, 第2套, 第3套, 第4套]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +542,9 @@ fn parse_gkp_file_name(file_name: &str) -> Option<(i64, i32, String)> {
     let people_marker = "人";
     let marker_index = rest.find(people_marker)?;
     let player_count = rest[..marker_index].parse::<i32>().ok()?;
-    let map_name = rest[marker_index + people_marker.len()..].trim().to_string();
+    let map_name = rest[marker_index + people_marker.len()..]
+        .trim()
+        .to_string();
     if map_name.is_empty() {
         return None;
     }
@@ -121,7 +553,10 @@ fn parse_gkp_file_name(file_name: &str) -> Option<(i64, i32, String)> {
     Some((naive.and_utc().timestamp_millis(), player_count, map_name))
 }
 
-fn scan_userdata_directory(game_directory: &Path) -> Result<Vec<ParsedAccount>, String> {
+fn scan_userdata_directory(
+    game_directory: &Path,
+    mingyi_roles: &[MingYiRoleInfo],
+) -> Result<Vec<ParsedAccount>, String> {
     let userdata_path = game_directory.join(USERDATA_BASE_PATH);
     let mut accounts = Vec::new();
 
@@ -167,17 +602,55 @@ fn scan_userdata_directory(game_directory: &Path) -> Result<Vec<ParsedAccount>, 
                         continue;
                     }
 
+                    let role_name = role_entry.file_name().to_string_lossy().to_string();
+
+                    // 尝试从茗伊数据库获取职业和装备分数信息
+                    let mingyi_info = find_mingyi_role(mingyi_roles, &role_name, &server_name);
+
+                    // 获取当前套装对应的装分（effective_suit 指向当前使用的套装）
+                    let current_score = mingyi_info
+                        .as_ref()
+                        .and_then(|info| {
+                            info.scores.get((info.effective_suit - 1) as usize).copied()
+                        })
+                        .unwrap_or(0);
+
+                    let (force_id, force_name, kungfu_id, kungfu_name, level, score, scores) =
+                        if let Some(info) = mingyi_info {
+                            (
+                                Some(info.force_id),
+                                get_force_name(info.force_id),
+                                info.kungfu_id,
+                                info.kungfu_name.clone(),
+                                Some(info.level),
+                                Some(current_score),
+                                Some(info.scores.clone()),
+                            )
+                        } else {
+                            (None, None, None, None, None, None, None)
+                        };
+
                     roles.push(ParsedRole {
-                        name: role_entry.file_name().to_string_lossy().to_string(),
+                        name: role_name,
                         region: region_name.clone(),
                         server: server_name.clone(),
+                        force_id,
+                        force_name,
+                        kungfu_id,
+                        kungfu_name,
+                        level,
+                        score,
+                        scores,
                     });
                 }
             }
         }
 
         if !roles.is_empty() {
-            accounts.push(ParsedAccount { account_name, roles });
+            accounts.push(ParsedAccount {
+                account_name,
+                roles,
+            });
         }
     }
 
@@ -257,6 +730,238 @@ fn scan_gkp_files_directory(
     Ok(files)
 }
 
+// 自动解析结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoParseResult {
+    pub success: bool,
+    pub new_accounts: i32,     // 新增账号数
+    pub updated_accounts: i32, // 更新账号数
+    pub new_roles: i32,        // 新增角色数
+    pub updated_roles: i32,    // 更新角色数
+    pub error: Option<String>,
+}
+
+// 根据复合键生成确定性 UUID
+fn generate_uuid_from_key(key: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    format!("{:016x}-auto-0000-0000-000000000000", hasher.finish())
+}
+
+// 自动解析游戏目录并将结果存入数据库
+fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String> {
+    let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
+    let timestamp = db::get_local_timestamp();
+
+    // 读取茗伊数据库
+    let mingyi_roles = match read_mingyi_role_info(game_directory) {
+        Ok(roles) => {
+            log::info!("从茗伊数据库读取到 {} 个角色信息", roles.len());
+            roles
+        }
+        Err(e) => {
+            log::warn!("读取茗伊数据库失败: {}", e);
+            Vec::new()
+        }
+    };
+
+    // 扫描 userdata 目录
+    let parsed_accounts = scan_userdata_directory(game_directory, &mingyi_roles)
+        .map_err(|e| format!("扫描目录失败: {}", e))?;
+
+    if parsed_accounts.is_empty() {
+        return Ok(AutoParseResult {
+            success: true,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: None,
+        });
+    }
+
+    let mut new_accounts = 0;
+    let updated_accounts = 0;
+    let mut new_roles = 0;
+    let updated_roles = 0;
+
+    for parsed_account in &parsed_accounts {
+        let account_id =
+            generate_uuid_from_key(&format!("account:{}", parsed_account.account_name));
+
+        // 检查账号是否存在（按 UUID 或按 account_name 双重检查）
+        // 旧数据 UUID 是随机的，新 UUID 是确定性的，需要兼容
+        let old_account_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM accounts WHERE account_name = ?",
+                params![parsed_account.account_name.clone()],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match old_account_id {
+            Some(_) => {
+                // 账号已存在，使用现有 ID，不改变其 UUID
+            }
+            None => {
+                // 账号不存在，插入新账号
+                conn.execute(
+                    "INSERT INTO accounts (id, account_name, account_type, sort_order, created_at, updated_at)
+                     VALUES (?, ?, 'OWN', 0, ?, ?)",
+                    params![account_id, parsed_account.account_name, timestamp, timestamp],
+                )
+                .map_err(|e| format!("插入账号失败: {}", e))?;
+                new_accounts += 1;
+            }
+        }
+
+        // 使用账号 ID（如果账号已存在则是其现有 ID，如果是新插入则是新生成的 ID）
+        let account_id_to_use = old_account_id.unwrap_or_else(|| account_id);
+
+        // 处理角色
+        for parsed_role in &parsed_account.roles {
+            let role_id = generate_uuid_from_key(&format!(
+                "role:{}:{}:{}:{}",
+                parsed_account.account_name,
+                parsed_role.name,
+                parsed_role.region,
+                parsed_role.server
+            ));
+
+            // 按角色唯一键（account_id + name + server + region）查找旧记录
+            let old_role_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM roles WHERE account_id = ? AND name = ? AND server = ? AND region = ?",
+                    params![
+                        account_id_to_use,
+                        parsed_role.name.clone(),
+                        parsed_role.server.clone(),
+                        parsed_role.region.clone()
+                    ],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match old_role_id {
+                Some(ref existing_role_id) => {
+                    // 检查茗伊数据库是否有该角色的信息
+                    if parsed_role.kungfu_name.is_none() {
+                        // 茗伊数据库中没有该角色，只修正 sect
+                        let old_role_data: Option<(String, String)> = conn
+                            .query_row(
+                                "SELECT martial, sect FROM roles WHERE id = ?",
+                                params![existing_role_id],
+                                |row| {
+                                    let martial: String = row.get(0)?;
+                                    let sect: String = row.get(1)?;
+                                    Ok((martial, sect))
+                                },
+                            )
+                            .ok();
+
+                        if let Some((old_martial, old_sect)) = old_role_data {
+                            if !old_martial.is_empty() {
+                                // martial 不为空，检查 sect 是否需要修正
+                                if let Some(expected_sect) = get_sect_by_martial(&old_martial) {
+                                    if old_sect != expected_sect {
+                                        // sect 不正确，修正 sect
+                                        conn.execute(
+                                            "UPDATE roles SET sect = ?, updated_at = ? WHERE id = ?",
+                                            params![expected_sect, timestamp, existing_role_id],
+                                        )
+                                        .map_err(|e| format!("修正门派失败: {}", e))?;
+                                        log::info!(
+                                            "角色 {} 的门派已从 {} 修正为 {}",
+                                            parsed_role.name,
+                                            old_sect,
+                                            expected_sect
+                                        );
+                                    }
+                                }
+                            }
+                            // martial 为空或sect已正确，不做处理
+                        }
+                        // 跳过后续的通用更新逻辑
+                        continue;
+                    }
+
+                    // 茗伊数据库中有该角色，正常更新门派、心法、装分
+                    conn.execute(
+                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                        params![
+                            parsed_role.force_name.clone().unwrap_or_default(),
+                            parsed_role.kungfu_name.clone().unwrap_or_default(),
+                            parsed_role.score.unwrap_or(0) as i64,
+                            timestamp,
+                            existing_role_id,
+                        ],
+                    )
+                    .map_err(|e| format!("更新角色信息失败: {}", e))?;
+                }
+                None => {
+                    // 角色不存在，插入新角色
+                    conn.execute(
+                        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        params![
+                            role_id,
+                            account_id_to_use,
+                            parsed_role.name.clone(),
+                            parsed_role.server.clone(),
+                            parsed_role.region.clone(),
+                            parsed_role.force_name.clone().unwrap_or_default(),
+                            parsed_role.kungfu_name.clone().unwrap_or_default(),
+                            parsed_role.score.unwrap_or(0) as i64,
+                            timestamp,
+                            timestamp,
+                        ],
+                    )
+                    .map_err(|e| format!("插入角色失败: {}", e))?;
+                    new_roles += 1;
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "自动解析完成：新增 {} 个账号，新增 {} 个角色",
+        new_accounts,
+        new_roles
+    );
+
+    Ok(AutoParseResult {
+        success: true,
+        new_accounts,
+        updated_accounts,
+        new_roles,
+        updated_roles,
+        error: None,
+    })
+}
+
+// 自动解析并保存到数据库的命令
+#[tauri::command]
+pub fn auto_parse_game_directory(game_directory: String) -> Result<AutoParseResult, String> {
+    let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
+    let runtime_path = PathBuf::from(&runtime_game_directory);
+
+    if runtime_path.to_string_lossy().is_empty() {
+        return Ok(AutoParseResult {
+            success: false,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: Some("非剑网三目录".to_string()),
+        });
+    }
+
+    auto_parse_and_save(&runtime_path)
+}
+
 #[tauri::command]
 pub fn scan_game_directory(
     game_directory: String,
@@ -266,7 +971,20 @@ pub fn scan_game_directory(
     let runtime_path = PathBuf::from(&runtime_game_directory);
 
     let mut errors = Vec::new();
-    let accounts = match scan_userdata_directory(&runtime_path) {
+
+    // 先读取茗伊数据库的角色信息
+    let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
+        Ok(roles) => {
+            log::info!("从茗伊数据库读取到 {} 个角色信息", roles.len());
+            roles
+        }
+        Err(e) => {
+            log::warn!("读取茗伊数据库失败: {}", e);
+            Vec::new()
+        }
+    };
+
+    let accounts = match scan_userdata_directory(&runtime_path, &mingyi_roles) {
         Ok(accounts) => accounts,
         Err(error) => {
             errors.push(error);
@@ -274,14 +992,14 @@ pub fn scan_game_directory(
         }
     };
 
-    let gkp_files = match scan_gkp_files_directory(&runtime_path, active_roles.as_deref().unwrap_or(&[]))
-    {
-        Ok(files) => files,
-        Err(error) => {
-            errors.push(error);
-            Vec::new()
-        }
-    };
+    let gkp_files =
+        match scan_gkp_files_directory(&runtime_path, active_roles.as_deref().unwrap_or(&[])) {
+            Ok(files) => files,
+            Err(error) => {
+                errors.push(error);
+                Vec::new()
+            }
+        };
 
     Ok(GameDirectoryScanResult {
         success: true,
@@ -382,4 +1100,211 @@ pub fn validate_game_directory(game_directory: String) -> Result<GamePathValidat
             check_time,
         }),
     })
+}
+
+// 客户端类型枚举
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClientType {
+    #[serde(rename = "zhcn_hd")]
+    ZhcnHd, // 重制版正式服
+    #[serde(rename = "zhcn_exp")]
+    ZhcnExp, // 重制版测试服
+    #[serde(rename = "zhcn_tw")]
+    ZhcnTw, // 重制版国际服
+    #[serde(rename = "classic_yq")]
+    ClassicYq, // 缘起正式服
+    #[serde(rename = "classic_exp")]
+    ClassicExp, // 缘起测试服
+}
+
+impl ClientType {
+    fn display_name(&self) -> &'static str {
+        match self {
+            ClientType::ZhcnHd => "重制版正式服",
+            ClientType::ZhcnExp => "重制版测试服",
+            ClientType::ZhcnTw => "重制版国际服",
+            ClientType::ClassicYq => "缘起正式服",
+            ClientType::ClassicExp => "缘起测试服",
+        }
+    }
+
+    // 获取注册表路径和子键名
+    fn reg_info(&self) -> (String, String, String) {
+        match self {
+            ClientType::ZhcnHd => (
+                r"SOFTWARE\Kingsoft".to_string(),
+                r"SeasunGame\JX3".to_string(),
+                "JX3".to_string(),
+            ),
+            ClientType::ZhcnExp => (
+                r"SOFTWARE\Kingsoft".to_string(),
+                r"SeasunGame\JX3_EXP".to_string(),
+                "JX3_EXP".to_string(),
+            ),
+            ClientType::ZhcnTw => (
+                r"SOFTWARE\WOW6432Node\kingsoft\JX3".to_string(),
+                r"zhcn_tw".to_string(),
+                "zhcn_tw".to_string(),
+            ),
+            ClientType::ClassicYq => (
+                r"SOFTWARE\Kingsoft".to_string(),
+                r"SeasunGame\JX3_CLASSIC".to_string(),
+                "JX3_CLASSIC".to_string(),
+            ),
+            ClientType::ClassicExp => (
+                r"SOFTWARE\Kingsoft".to_string(),
+                r"SeasunGame\JX3_CLASSIC_EXP".to_string(),
+                "JX3_CLASSIC_EXP".to_string(),
+            ),
+        }
+    }
+
+    // 获取游戏工作目录（bin/{client_name}）
+    fn get_workdir(&self, install_path: &Path) -> Option<PathBuf> {
+        let client_name = match self {
+            ClientType::ZhcnHd => "zhcn_hd",
+            ClientType::ZhcnExp => "zhcn_exp",
+            ClientType::ZhcnTw => "zhcn_tw",
+            ClientType::ClassicYq => "classic_yq",
+            ClientType::ClassicExp => "classic_exp",
+        };
+        let workdir = install_path.join("bin").join(client_name);
+        if workdir.is_dir() {
+            Some(workdir)
+        } else {
+            None
+        }
+    }
+}
+
+// 扫描到的客户端信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Jx3ClientInfo {
+    pub client_type: String,
+    pub display_name: String,
+    pub install_path: String,
+    pub work_directory: String,
+    pub version: Option<String>,
+}
+
+// 扫描结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanClientsResult {
+    pub success: bool,
+    pub clients: Vec<Jx3ClientInfo>,
+    pub error: Option<String>,
+}
+
+// 从注册表读取字符串值
+fn read_registry_string(hkey: &RegKey, subkey: &str, value_name: &str) -> Option<String> {
+    hkey.open_subkey(subkey)
+        .ok()?
+        .enum_values()
+        .filter_map(|v| v.ok())
+        .find(|(name, _)| name.eq_ignore_ascii_case(value_name))
+        .and_then(|(_, value)| match value {
+            winreg::RegValue { bytes, .. } => {
+                // 移除末尾的空字节并转换为字符串
+                let s = String::from_utf8_lossy(&bytes);
+                Some(s.trim_end_matches('\0').to_string())
+            }
+        })
+        .filter(|s| !s.is_empty())
+}
+
+// 扫描单个客户端
+fn scan_single_client(client_type: &ClientType) -> Option<Jx3ClientInfo> {
+    let (reg_parent, _reg_subkey, _reg_name) = client_type.reg_info();
+
+    // 尝试从 HKLM 读取
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+
+    // 尝试 XLauncherV2 路径（新启动器）
+    let xlauncher_path = format!(r"{}\SeasunGame\{}", reg_parent, _reg_name);
+    let install_path: String = read_registry_string(&hklm, &xlauncher_path, "InstallPath")
+        .or_else(|| {
+            // 回退到旧路径
+            read_registry_string(
+                &hklm,
+                &format!(r"{}\{}", reg_parent, _reg_name),
+                "InstallPath",
+            )
+        })?;
+
+    let install_path = PathBuf::from(&install_path);
+    if !install_path.exists() {
+        return None;
+    }
+
+    // 获取工作目录
+    let work_directory = client_type
+        .get_workdir(&install_path)
+        .map(|p| p.display().to_string())?;
+
+    // 获取版本号（从 version.cfg 读取）
+    let version = if let Ok(version_cfg) =
+        std::fs::read_to_string(PathBuf::from(&work_directory).join("version.cfg"))
+    {
+        // 解析 version.cfg 中的版本号
+        // 格式: [Version]\nSword3.version=3-0-123-45678
+        version_cfg
+            .lines()
+            .find(|line| line.starts_with("Sword3.version="))
+            .map(|line| line.trim_start_matches("Sword3.version=").to_string())
+    } else {
+        None
+    };
+
+    Some(Jx3ClientInfo {
+        client_type: serde_json::to_string(client_type)
+            .ok()?
+            .trim_matches('"')
+            .to_string(),
+        display_name: client_type.display_name().to_string(),
+        install_path: install_path.display().to_string(),
+        work_directory,
+        version,
+    })
+}
+
+// 扫描所有已安装的剑网3客户端
+#[tauri::command]
+pub fn scan_jx3_clients() -> ScanClientsResult {
+    let client_types = vec![
+        ClientType::ZhcnHd,
+        ClientType::ZhcnExp,
+        ClientType::ZhcnTw,
+        ClientType::ClassicYq,
+        ClientType::ClassicExp,
+    ];
+
+    let mut clients = Vec::new();
+    let mut errors = Vec::new();
+
+    for client_type in client_types {
+        match scan_single_client(&client_type) {
+            Some(info) => clients.push(info),
+            None => {
+                // 单个客户端不存在不记录错误，这是正常情况
+                log::debug!("未检测到客户端: {:?}", client_type);
+            }
+        }
+    }
+
+    if clients.is_empty() {
+        errors.push("未在注册表中找到任何已安装的剑网3客户端".to_string());
+    }
+
+    ScanClientsResult {
+        success: !clients.is_empty(),
+        clients,
+        error: if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
+        },
+    }
 }

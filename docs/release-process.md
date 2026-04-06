@@ -108,9 +108,10 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 4. 如需在本地复现 GitHub Release 的完整 release 配置，可临时设置 `JX3_TAURI_FULL_LOCAL_BUILD=1` 后再执行 `npm run tauri build`。
 5. GitHub Actions 发版时会通过 `TAURI_BUNDLE=1 npm run tauri build -- --config ...` 生成安装包与 updater 产物，不会使用本地快速构建配置。
 6. 在 `release-notes/` 新增或更新对应版本说明。
-7. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
-8. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
-9. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
-10. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
-11. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
-12. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
+7. GitHub Actions 发版时会使用 `gh release create` / `gh release upload` 创建 Release 并上传资产，不再依赖 `softprops/action-gh-release` 这类 Node 20 action。
+8. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
+9. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
+10. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
+11. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
+12. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
+13. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。

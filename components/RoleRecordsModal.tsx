@@ -14,7 +14,7 @@ interface RoleWithStatus {
   name: string;
   server: string;
   region: string;
-  sect: string;
+  sect?: string;
   accountId: string;
   accountName: string;
 }

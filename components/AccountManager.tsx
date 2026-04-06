@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Account, AccountType, Role, Config, InstanceType } from '../types';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText } from 'lucide-react';
-import { convertToSystemAccounts } from '../services/directoryParser';
+import { autoParseGameDirectory } from '../services/gameDirectoryScanner';
 import {
   canStartAccountDrag,
   getAccountReorderAnimationDuration,
@@ -9,7 +9,6 @@ import {
   sortRoles,
 } from '../utils/accountUtils';
 import { generateUUID } from '../utils/uuid';
-import { scanGameDirectory, ScanProgress } from '../services/gameDirectoryScanner';
 import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
@@ -69,7 +68,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   // 解析相关状态
   const [isScanning, setIsScanning] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
 
   // Dialog State
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
@@ -257,7 +255,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     open: boolean;
     accountId: string;
     roleId: string;
-    sect: string;
+    martial: string;
     equipmentScore: number | undefined;
   } | null>(null);
 
@@ -379,7 +377,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       open: true,
       accountId,
       roleId: role.id,
-      sect: role.sect || '',
+      martial: role.martial || role.sect || '',
       equipmentScore: role.equipmentScore
     });
     setRoleFormErrors({});
@@ -420,9 +418,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const handleSaveRoleInfo = () => {
     if (!editRoleModal) return;
 
-    const { accountId, roleId, sect, equipmentScore } = editRoleModal;
+    const { accountId, roleId, martial, equipmentScore } = editRoleModal;
 
-    if (!validateRoleForm(sect, equipmentScore)) {
+    if (!validateRoleForm(martial, equipmentScore)) {
       return;
     }
 
@@ -433,7 +431,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         if (role.id !== roleId) return role;
         return {
           ...role,
-          sect: sect.trim(),
+          martial: martial.trim(),
           equipmentScore: equipmentScore !== undefined && equipmentScore !== null ? equipmentScore : undefined
         };
       });
@@ -510,7 +508,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
 
 
-  // 使用配置目录解析功能
+  // 使用配置自动解析功能
   const handleUseConfigDirectory = async () => {
     if (!config?.game?.gameDirectory) {
       toast.error('请先在配置页面设置游戏目录');
@@ -518,111 +516,31 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     }
 
     setIsScanning(true);
-    setScanProgress(null);
     setParseError(null);
 
     try {
-      const result = await scanGameDirectory({
-        gameDirectory: config.game.gameDirectory,
-        onProgress: (progress) => {
-          setScanProgress(progress);
-        }
-      });
+      const result = await autoParseGameDirectory(config.game.gameDirectory);
 
-      if (result.success && result.accounts.length > 0) {
-        const systemAccounts = convertToSystemAccounts(result.accounts);
+      if (result.success) {
+        // 后端入库成功，重新从数据库查询账号数据
+        const accountsFromDb = await db.getAccounts();
+        setAccounts(accountsFromDb);
 
-        const newAccounts: Account[] = [];
-        const updatedAccountsMap = new Map<string, Account>();
-        let updatedCount = 0;
-        let newRoleCount = 0;
-
-        for (const scannedAccount of systemAccounts) {
-          const existingAccount = safeAccounts.find(acc => acc.accountName === scannedAccount.accountName);
-
-          if (!existingAccount) {
-            newAccounts.push(scannedAccount);
-          } else {
-            // MERGE & CLEANUP LOGIC
-            let hasChanges = false;
-            let currentRoles = [...existingAccount.roles];
-
-            for (const scannedRole of scannedAccount.roles) {
-              // 1. Try to find an exact correct match
-              const perfectMatch = currentRoles.find(r =>
-                r.name === scannedRole.name &&
-                r.region === scannedRole.region &&
-                r.server === scannedRole.server
-              );
-
-              // 2. Try to find the specific "Bad Mapping" match from previous version
-              // Logic: "Previous Region is Current Server" -> Old.Region == New.Server (and Names match)
-              const legacyBadMatch = currentRoles.find(r =>
-                r.name === scannedRole.name &&
-                r.region === scannedRole.server &&
-                (!perfectMatch || r.id !== perfectMatch.id)
-              );
-
-              if (perfectMatch) {
-                // Case: Perfect match exists. 
-                // If we ALSO have a bad legacy match, it's a duplicate. Remove the bad one.
-                if (legacyBadMatch) {
-                  currentRoles = currentRoles.filter(r => r.id !== legacyBadMatch.id);
-                  hasChanges = true;
-                  updatedCount++;
-                }
-              } else if (legacyBadMatch) {
-                // Case: Only bad legacy match exists. This is our data to migrate.
-                // Fix the Region and Server to correct values from scan.
-                currentRoles = currentRoles.map(r => {
-                  if (r.id === legacyBadMatch.id) {
-                    return {
-                      ...r,
-                      region: scannedRole.region,
-                      server: scannedRole.server
-                    };
-                  }
-                  return r;
-                });
-                hasChanges = true;
-                updatedCount++;
-              } else {
-                // Case: No match at all. Add new.
-                currentRoles.push(scannedRole);
-                hasChanges = true;
-                newRoleCount++;
-              }
-            }
-
-            if (hasChanges) {
-              updatedAccountsMap.set(existingAccount.id, {
-                ...existingAccount,
-                roles: sortRoles(currentRoles)
-              });
-            }
-          }
-        }
-
-        if (newAccounts.length > 0 || updatedAccountsMap.size > 0) {
-          setAccounts(prev => {
-            const next = prev.map(acc => updatedAccountsMap.get(acc.id) || acc);
-            return [...next, ...newAccounts];
-          });
-
-          const totalNewRoles = newAccounts.reduce((total, acc) => total + acc.roles.length, 0) + newRoleCount;
-          toast.success(`扫描完成：新增 ${newAccounts.length} 个账号，更新 ${updatedCount} 个账号，共发现 ${totalNewRoles} 个新角色`);
-        } else {
+        if (result.newAccounts === 0 && result.updatedAccounts === 0 && result.newRoles === 0) {
           toast.info('解析完成，所有账号和角色已是最新状态。');
+        } else {
+          toast.success(
+            `自动解析完成：新增 ${result.newAccounts} 个账号，更新 ${result.updatedAccounts} 个账号，新增 ${result.newRoles} 个角色`
+          );
         }
       } else {
-        setParseError('解析完成，但未找到有效的账号和角色。请检查配置的游戏目录路径是否正确。');
+        setParseError(result.error || '自动解析失败，请检查游戏目录配置。');
       }
     } catch (error) {
-      console.error('使用配置目录解析失败:', error);
+      console.error('使用配置自动解析失败:', error);
       setParseError(`解析失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsScanning(false);
-      setScanProgress(null);
     }
   };
 
@@ -645,7 +563,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     name: string;
     server: string;
     region: string;
-    sect: string;
+    martial: string;
     equipmentScore?: number;
     isClient: boolean;
   }) => {
@@ -659,7 +577,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       name: data.name,
       server: data.server,
       region: data.region,
-      sect: data.sect,
+      martial: data.martial,
       isClient: data.isClient,
       equipmentScore: data.equipmentScore
     };
@@ -1113,7 +1031,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
           {/* 原账号类型筛选区域，移至全选栏 */}
 
-          {/* 使用配置目录解析按钮 */}
+          {/* 使用配置自动解析按钮 */}
           {config?.game?.gameDirectory && (
             <button
               onClick={handleUseConfigDirectory}
@@ -1128,7 +1046,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               ) : (
                 <>
                   <Loader2 className="w-4 h-4" />
-                  <span>目录解析</span>
+                  <span>自动解析</span>
                 </>
               )}
             </button>
@@ -1222,30 +1140,32 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         )
       }
 
-      {/* 解析错误显示 */}
+      {/* 解析错误弹窗 */}
       {
         parseError && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-5 h-5 text-red-600" />
-                <div>
-                  <h4 className="font-medium text-red-800">解析错误</h4>
-                  <p className="text-sm text-red-600 mt-1">{parseError}</p>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-surface border border-base rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+              <div className="px-6 py-4 flex items-center justify-between border-b border-base">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600" />
+                  <h2 className="text-lg font-semibold text-main">解析错误</h2>
                 </div>
-              </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={handleUseConfigDirectory}
-                  className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
-                >
-                  <Loader2 className="w-3 h-3" /> 重试解析
-                </button>
                 <button
                   onClick={() => setParseError(null)}
-                  className="text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+                  className="text-muted hover:text-main hover:bg-base p-1.5 rounded-lg transition-colors"
                 >
-                  关闭
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-sm text-red-600 whitespace-pre-wrap">{parseError}</p>
+              </div>
+              <div className="px-6 py-4 bg-base/50 flex justify-end gap-2">
+                <button
+                  onClick={() => setParseError(null)}
+                  className="text-sm bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg transition-colors"
+                >
+                  确定
                 </button>
               </div>
             </div>
@@ -1253,25 +1173,12 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         )
       }
 
-      {/* 扫描进度显示 */}
+      {/* 扫描加载提示 */}
       {
-        scanProgress && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
-              <div className="flex-1">
-                <p className="font-medium text-blue-800">{scanProgress.message}</p>
-                <div className="mt-2 bg-blue-100 rounded-full h-2 overflow-hidden">
-                  <div
-                    className="bg-blue-600 h-full transition-all duration-300"
-                    style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
-                  />
-                </div>
-                <p className="text-xs text-blue-600 mt-1">
-                  {scanProgress.current} / {scanProgress.total}
-                </p>
-              </div>
-            </div>
+        isScanning && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+            <p className="font-medium text-emerald-800">自动解析中，请稍候...</p>
           </div>
         )
       }
@@ -1592,10 +1499,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                     <span className={`text-sm font-medium text-main truncate ${role.disabled ? 'line-through text-muted' : ''}`}>
                                       {role.name}·{getBaseServerName(role.server)}
                                     </span>
-                                    {role.sect && (
-                                      <SectIcon sectName={role.sect} />
+                                    {role.martial && (
+                                      <SectIcon sectName={role.martial} />
                                     )}
-                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && (
+                                    {role.equipmentScore !== undefined && role.equipmentScore !== null && role.equipmentScore > 0 && (
                                       <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md font-medium">
                                         装分 {role.equipmentScore.toLocaleString()}
                                       </span>
@@ -1819,10 +1726,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     心法 <span className="text-red-500">*</span>
                   </label>
                   <SectSelect
-                    value={editRoleModal.sect}
-                    onChange={(sect) => {
-                      setEditRoleModal(prev => prev ? { ...prev, sect } : null);
-                      if (sect.trim()) {
+                    value={editRoleModal.martial}
+                    onChange={(martial) => {
+                      setEditRoleModal(prev => prev ? { ...prev, martial } : null);
+                      if (martial.trim()) {
                         setRoleFormErrors(prev => ({ ...prev, sect: undefined }));
                       }
                     }}

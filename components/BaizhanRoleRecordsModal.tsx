@@ -18,6 +18,7 @@ interface RoleDisplayData {
     name: string;
     server: string;
     sect?: string;
+    martial?: string;
     accountName: string;
 }
 
@@ -134,10 +135,10 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                         <h2 className="text-lg font-bold text-main">百战记录详情</h2>
                         <p className="text-muted text-xs mt-0.5">
                             <span className="font-medium text-main">{role.name}@{role.server}</span>
-                            {role.sect && (
+                            {role.martial && (
                                 <>
                                     <span className="mx-1.5 text-muted/40">·</span>
-                                    <SectIcon sectName={role.sect} />
+                                    <SectIcon sectName={role.martial} />
                                 </>
                             )}
                         </p>

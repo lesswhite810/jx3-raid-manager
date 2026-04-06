@@ -96,12 +96,7 @@ mod tests {
     }
 
     /// 辅助函数：插入测试账号
-    fn insert_test_account(
-        conn: &Connection,
-        id: &str,
-        name: &str,
-        created_at: &str,
-    ) {
+    fn insert_test_account(conn: &Connection, id: &str, name: &str, created_at: &str) {
         conn.execute(
             "INSERT INTO accounts (id, account_name, account_type, created_at) VALUES (?1, ?2, 'OWN', ?3)",
             rusqlite::params![id, name, created_at],

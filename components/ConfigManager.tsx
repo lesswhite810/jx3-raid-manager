@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus } from '../types';
-import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink } from 'lucide-react';
+import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor } from 'lucide-react';
 import { saveConfigToStorage, isValidGamePath } from '../utils/configUtils';
 import { formatUpdatePubDate } from '../utils/updaterUtils';
 import { db } from '../services/db';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from '../utils/toastManager';
+import { scanJx3Clients, Jx3ClientInfo } from '../services/gameDirectoryScanner';
 
 interface ConfigManagerProps {
   config: Config;
@@ -32,6 +33,9 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     isInstallMode: boolean;
     customDirConfigured: boolean;
   } | null>(null);
+  const [scanningClients, setScanningClients] = useState(false);
+  const [scanResults, setScanResults] = useState<Jx3ClientInfo[]>([]);
+  const [showScanResults, setShowScanResults] = useState(false);
 
   const loadDataDirInfo = useCallback(async () => {
     try {
@@ -57,6 +61,44 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
       setPathValid(result.isValid);
     });
   }, [config.game.gameDirectory]);
+
+  // 扫描已安装的剑网3客户端
+  const handleScanClients = useCallback(async () => {
+    setScanningClients(true);
+    setShowScanResults(false);
+
+    try {
+      const result = await scanJx3Clients();
+
+      if (result.success && result.clients.length > 0) {
+        setScanResults(result.clients);
+        setShowScanResults(true);
+
+        // 如果只有一个客户端且当前未配置，自动填入
+        if (result.clients.length === 1 && !config.game.gameDirectory) {
+          const client = result.clients[0];
+          handleConfigChange('game', 'gameDirectory', client.workDirectory);
+          toast.success(`已自动填入 ${client.displayName} 的安装目录`);
+        } else if (result.clients.length > 1) {
+          toast.info(`检测到 ${result.clients.length} 个客户端，请选择`);
+        }
+      } else {
+        toast.error(result.error || '未检测到剑网3客户端，请确认游戏已安装');
+      }
+    } catch (error) {
+      console.error('扫描客户端失败:', error);
+      toast.error('扫描失败: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setScanningClients(false);
+    }
+  }, [config.game.gameDirectory]);
+
+  // 选择扫描到的客户端
+  const handleSelectClient = useCallback((client: Jx3ClientInfo) => {
+    handleConfigChange('game', 'gameDirectory', client.workDirectory);
+    setShowScanResults(false);
+    toast.success(`已选择 ${client.displayName}`);
+  }, []);
 
   const handleConfigChange = (section: keyof Config, key: string, value: unknown) => {
     const nextConfig = { ...config, [section]: { ...config[section], [key]: value } };
@@ -220,13 +262,28 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
             <label className="text-sm font-medium text-muted">游戏安装目录</label>
             <div className="col-span-2">
-              <input
-                type="text"
-                value={config.game.gameDirectory}
-                onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
-                className="w-full px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
-                placeholder="输入剑网三安装目录，例如 E:\\Game\\SeasunGame"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={config.game.gameDirectory}
+                  onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
+                  className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
+                  placeholder="输入剑网三安装目录，例如 E:\Game\SeasunGame"
+                />
+                <button
+                  onClick={handleScanClients}
+                  disabled={scanningClients}
+                  className="btn btn-secondary flex items-center gap-2 text-sm whitespace-nowrap"
+                  title="从注册表扫描剑网3客户端"
+                >
+                  {scanningClients ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
+                  {scanningClients ? '扫描中...' : '扫描'}
+                </button>
+              </div>
               <p className="mt-2 text-xs text-muted">
                 支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd。
               </p>
@@ -242,6 +299,48 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                 <div className="flex items-center gap-1.5 text-xs text-emerald-500 mt-2">
                   <Check className="w-3.5 h-3.5" />
                   <span>游戏目录路径有效</span>
+                </div>
+              )}
+
+              {/* 扫描结果列表 */}
+              {showScanResults && scanResults.length > 0 && (
+                <div className="mt-3 p-3 bg-base/30 rounded-lg border border-base">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Monitor className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium text-main">已检测到的客户端</span>
+                    <button
+                      onClick={() => setShowScanResults(false)}
+                      className="ml-auto text-xs text-muted hover:text-main transition-colors"
+                    >
+                      收起
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {scanResults.map((client, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 rounded-lg hover:bg-surface transition-colors cursor-pointer group"
+                        onClick={() => handleSelectClient(client)}
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-main group-hover:text-primary transition-colors">
+                            {client.displayName}
+                          </div>
+                          <div className="text-xs text-muted mt-0.5">
+                            {client.workDirectory}
+                          </div>
+                          {client.version && (
+                            <div className="text-xs text-muted/70">
+                              版本: {client.version}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                          点击选择
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

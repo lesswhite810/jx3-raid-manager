@@ -13,7 +13,8 @@ export interface Role {
   name: string; // Character Name
   server: string; // 区服名称
   region: string; // 大区名称
-  sect: string; // Class/Sect e.g., ChunYang, WanHua
+  sect?: string; // Class/Sect e.g., ChunYang, WanHua (由后端根据 martial 自动映射)
+  martial?: string; // 心法名称
   isClient?: boolean; // @deprecated 使用 Account.type 判断代清账号
   disabled?: boolean; // 是否禁用该角色
   equipmentScore?: number; // 装备分数（装分）

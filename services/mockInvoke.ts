@@ -89,6 +89,14 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'db_get_raid_versions':
           result = [];
           break;
+        case 'db_get_current_raid_version_info':
+          result = {
+            majorVersion: '丝路风雨',
+            level: 130,
+            versionName: '山海源流',
+            startDate: '2025.10.30'
+          };
+          break;
         case 'db_get_config':
           result = JSON.stringify({ theme: 'system', dbPath: 'mock_path' });
           break;

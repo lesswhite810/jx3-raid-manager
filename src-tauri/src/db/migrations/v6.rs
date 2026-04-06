@@ -1,5 +1,5 @@
-use rusqlite::params;
 use crate::db::migration::error_to_string;
+use rusqlite::params;
 use rusqlite::Connection;
 use serde_json::Value;
 
@@ -23,21 +23,28 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_raids_table(conn)?;
 
     // 4. 更新 raid_bosses 表
-    let bosses_updated = conn.execute(
-        "UPDATE raid_bosses SET raid_name = '会战弓月城' WHERE raid_name = '弓月城'",
-        [],
-    ).map_err(error_to_string)?;
+    let bosses_updated = conn
+        .execute(
+            "UPDATE raid_bosses SET raid_name = '会战弓月城' WHERE raid_name = '弓月城'",
+            [],
+        )
+        .map_err(error_to_string)?;
     log::info!("V6 迁移：已更新 {} 条 raid_bosses 记录", bosses_updated);
 
     // 5. 更新 records 表
     migrate_records_data(conn)?;
 
     // 6. 更新 favorite_raids 表
-    let favorite_updated = conn.execute(
-        "UPDATE favorite_raids SET raid_name = '会战弓月城' WHERE raid_name = '弓月城'",
-        [],
-    ).map_err(error_to_string)?;
-    log::info!("V6 迁移：已更新 {} 条 favorite_raids 记录", favorite_updated);
+    let favorite_updated = conn
+        .execute(
+            "UPDATE favorite_raids SET raid_name = '会战弓月城' WHERE raid_name = '弓月城'",
+            [],
+        )
+        .map_err(error_to_string)?;
+    log::info!(
+        "V6 迁移：已更新 {} 条 favorite_raids 记录",
+        favorite_updated
+    );
 
     // 7. 删除历史备份表
     drop_legacy_tables(conn)?;
@@ -90,13 +97,18 @@ fn migrate_raids_table(conn: &Connection) -> Result<(), String> {
             conn.execute(
                 "UPDATE raids SET id = ?1, name = ?3 WHERE id = ?2",
                 params![&new_id, &old_id, &new_name],
-            ).map_err(error_to_string)?;
+            )
+            .map_err(error_to_string)?;
             name_updated += 1;
             id_updated += 1;
         }
     }
 
-    log::info!("V6 迁移：raids 表更新完成 (name: {}, id: {})", name_updated, id_updated);
+    log::info!(
+        "V6 迁移：raids 表更新完成 (name: {}, id: {})",
+        name_updated,
+        id_updated
+    );
     Ok(())
 }
 
@@ -135,7 +147,11 @@ fn convert_utc_to_local_time(conn: &Connection) -> Result<(), String> {
 }
 
 /// 转换单个表的多个时间列（使用预编译语句批量更新）
-fn convert_table_time_columns(conn: &Connection, table: &str, columns: &[&str]) -> Result<usize, String> {
+fn convert_table_time_columns(
+    conn: &Connection,
+    table: &str,
+    columns: &[&str],
+) -> Result<usize, String> {
     // 检查表是否存在
     let table_exists: bool = conn
         .query_row(
@@ -151,11 +167,15 @@ fn convert_table_time_columns(conn: &Connection, table: &str, columns: &[&str]) 
 
     // 构建查询
     let columns_str = columns.join(", ");
-    let conditions: Vec<String> = columns.iter()
+    let conditions: Vec<String> = columns
+        .iter()
         .map(|c| format!("{} IS NOT NULL AND {} != ''", c, c))
         .collect();
     let where_clause = conditions.join(" OR ");
-    let query = format!("SELECT rowid, {} FROM {} WHERE {}", columns_str, table, where_clause);
+    let query = format!(
+        "SELECT rowid, {} FROM {} WHERE {}",
+        columns_str, table, where_clause
+    );
 
     // 获取所有记录
     let records: Vec<(i64, Vec<Option<String>>)> = conn
@@ -163,9 +183,8 @@ fn convert_table_time_columns(conn: &Connection, table: &str, columns: &[&str]) 
         .map_err(error_to_string)?
         .query_map([], |row| {
             let rowid: i64 = row.get(0)?;
-            let values: Vec<Option<String>> = (0..columns.len())
-                .map(|i| row.get(i + 1).ok())
-                .collect();
+            let values: Vec<Option<String>> =
+                (0..columns.len()).map(|i| row.get(i + 1).ok()).collect();
             Ok((rowid, values))
         })
         .map_err(error_to_string)?
@@ -181,12 +200,15 @@ fn convert_table_time_columns(conn: &Connection, table: &str, columns: &[&str]) 
     // 为每个列预编译 UPDATE 语句
     for (col_idx, &column) in columns.iter().enumerate() {
         let update_query = format!("UPDATE {} SET {} = ?1 WHERE rowid = ?2", table, column);
-        let mut stmt = conn.prepare_cached(&update_query).map_err(error_to_string)?;
+        let mut stmt = conn
+            .prepare_cached(&update_query)
+            .map_err(error_to_string)?;
 
         for (rowid, values) in &records {
             if let Some(utc_time) = &values[col_idx] {
                 if let Some(local_time) = convert_utc_string_to_local(utc_time) {
-                    stmt.execute(params![&local_time, rowid]).map_err(error_to_string)?;
+                    stmt.execute(params![&local_time, rowid])
+                        .map_err(error_to_string)?;
                     converted_count += 1;
                 }
             }
@@ -194,7 +216,11 @@ fn convert_table_time_columns(conn: &Connection, table: &str, columns: &[&str]) 
     }
 
     if converted_count > 0 {
-        log::info!("V6 迁移：表 {} 转换了 {} 条时间记录", table, converted_count);
+        log::info!(
+            "V6 迁移：表 {} 转换了 {} 条时间记录",
+            table,
+            converted_count
+        );
     }
 
     Ok(converted_count)
@@ -221,7 +247,9 @@ fn migrate_records_data(conn: &Connection) -> Result<(), String> {
     let mut date_converted = 0;
 
     // 使用预编译语句
-    let mut stmt = conn.prepare_cached("UPDATE records SET data = ?1 WHERE id = ?2").map_err(error_to_string)?;
+    let mut stmt = conn
+        .prepare_cached("UPDATE records SET data = ?1 WHERE id = ?2")
+        .map_err(error_to_string)?;
 
     for (id, data) in records {
         if let Ok(mut json) = serde_json::from_str::<Value>(&data) {
@@ -229,7 +257,8 @@ fn migrate_records_data(conn: &Connection) -> Result<(), String> {
 
             if let Some(raid_name) = json.get("raidName").and_then(|v| v.as_str()) {
                 if raid_name.contains("弓月城") {
-                    json["raidName"] = serde_json::Value::String(raid_name.replace("弓月城", "会战弓月城"));
+                    json["raidName"] =
+                        serde_json::Value::String(raid_name.replace("弓月城", "会战弓月城"));
                     needs_update = true;
                     raid_name_updated += 1;
                 }
@@ -245,13 +274,18 @@ fn migrate_records_data(conn: &Connection) -> Result<(), String> {
 
             if needs_update {
                 if let Ok(new_data) = serde_json::to_string(&json) {
-                    stmt.execute(params![&new_data, &id]).map_err(error_to_string)?;
+                    stmt.execute(params![&new_data, &id])
+                        .map_err(error_to_string)?;
                 }
             }
         }
     }
 
-    log::info!("V6 迁移：records 表更新完成 (raidName: {}, date转换: {})", raid_name_updated, date_converted);
+    log::info!(
+        "V6 迁移：records 表更新完成 (raidName: {}, date转换: {})",
+        raid_name_updated,
+        date_converted
+    );
     Ok(())
 }
 
