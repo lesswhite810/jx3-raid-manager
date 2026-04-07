@@ -509,13 +509,18 @@ pub fn init_db() -> Result<Connection, String> {
     let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
 
     if *initialized {
-        // 已初始化，直接返回新连接（SQLite 支持多连接）
         return Connection::open(get_db_path()?).map_err(|e| e.to_string());
     }
 
     // 执行初始化（首次）
     let path = get_db_path()?;
     let db_exists = path.exists();
+
+    log::info!(
+        "[INIT] 数据库初始化开始，DB路径: {:?}, db_exists: {}",
+        path,
+        db_exists
+    );
 
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
 
@@ -543,12 +548,16 @@ pub fn init_db() -> Result<Connection, String> {
 
     // 获取当前版本
     let current_version = get_schema_version(&conn)?;
+    log::debug!(
+        "[INIT] 当前数据库版本: {}, 目标版本: {}",
+        current_version,
+        CURRENT_SCHEMA_VERSION
+    );
 
     if !db_exists {
         // ========== 全新安装场景 ==========
-        // 数据库文件不存在，创建最新版本结构
         log::info!(
-            "数据库初始化：全新安装，创建最新版本结构 (V{})",
+            "[INIT] 场景判定：全新安装，创建最新版本结构 (V{})",
             CURRENT_SCHEMA_VERSION
         );
 
@@ -556,14 +565,14 @@ pub fn init_db() -> Result<Connection, String> {
         create_latest_schema(&conn)?;
 
         // 记录版本号
+        log::debug!("[INIT] 全新安装：写入初始版本 V{}", CURRENT_SCHEMA_VERSION);
         set_schema_version(&conn, CURRENT_SCHEMA_VERSION, "初始安装")?;
 
         // 初始化静态副本数据
         migration::init_static_raids(&conn)?;
     } else if current_version == 0 {
         // ========== 从旧版本升级场景 ==========
-        // 数据库存在但没有版本记录，说明是旧版本
-        log::info!("数据库初始化：从旧版本升级，执行所有迁移脚本");
+        log::info!("[INIT] 场景判定：从旧版本升级（current_version=0），执行所有迁移脚本");
 
         // 确保基础表存在（升级路径不会调用 create_latest_schema）
         ensure_base_tables(&conn)?;
@@ -571,16 +580,37 @@ pub fn init_db() -> Result<Connection, String> {
         // 执行所有迁移（V1 到当前版本）
         for version in 1..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
-            // 使用事务包装迁移，大幅提升性能
+
+            log::debug!("[TX] 迁移 V{}: 执行 BEGIN TRANSACTION", version);
             conn.execute("BEGIN TRANSACTION", [])
                 .map_err(|e| e.to_string())?;
             let result = migration::apply_migration(&conn, version);
             if let Err(e) = result {
+                log::error!("[TX] 迁移 V{} 失败，执行 ROLLBACK，错误: {}", version, e);
                 conn.execute("ROLLBACK", []).ok();
                 return Err(e);
             }
+
+            log::debug!("[TX] 迁移 V{}: apply_migration 成功，写入版本", version);
             set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
-            conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+
+            log::debug!(
+                "[TX] 迁移 V{}: set_schema_version 成功，执行 COMMIT",
+                version
+            );
+            let commit_result = conn.execute("COMMIT", []);
+            if let Err(e) = commit_result {
+                log::error!("[TX] 迁移 V{} COMMIT 失败，错误: {}", version, e);
+                conn.execute("ROLLBACK", []).ok();
+                return Err(e.to_string());
+            }
+
+            let after_version = get_schema_version(&conn)?;
+            log::debug!(
+                "[TX] 迁移 V{}: COMMIT 成功，验证版本为 {}",
+                version,
+                after_version
+            );
             log::info!("迁移 V{} 完成", version);
         }
 
@@ -600,28 +630,64 @@ pub fn init_db() -> Result<Connection, String> {
         // 执行增量迁移
         for version in (current_version + 1)..=CURRENT_SCHEMA_VERSION {
             log::info!("执行迁移脚本：V{}", version);
+
             // 使用事务包装迁移，大幅提升性能
+            log::debug!("[TX] 迁移 V{}: 执行 BEGIN TRANSACTION", version);
             conn.execute("BEGIN TRANSACTION", [])
                 .map_err(|e| e.to_string())?;
+
             let result = migration::apply_migration(&conn, version);
             if let Err(e) = result {
+                log::error!("[TX] 迁移 V{} 失败，执行 ROLLBACK，错误: {}", version, e);
                 conn.execute("ROLLBACK", []).ok();
                 return Err(e);
             }
+
+            log::debug!("[TX] 迁移 V{}: apply_migration 成功", version);
+            log::debug!(
+                "[TX] 迁移 V{}: set_schema_version 写入 version={}",
+                version,
+                version
+            );
             set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
-            conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+
+            log::debug!(
+                "[TX] 迁移 V{}: set_schema_version 成功，执行 COMMIT",
+                version
+            );
+            let commit_result = conn.execute("COMMIT", []);
+            if let Err(e) = commit_result {
+                log::error!("[TX] 迁移 V{} COMMIT 失败，错误: {}", version, e);
+                conn.execute("ROLLBACK", []).ok();
+                return Err(e.to_string());
+            }
+
+            let after_version = get_schema_version(&conn)?;
+            log::debug!(
+                "[TX] 迁移 V{}: COMMIT 成功，验证版本为 {}",
+                version,
+                after_version
+            );
             log::info!("迁移 V{} 完成", version);
         }
 
         // 初始化静态副本数据（可能会添加新的预设副本）
         migration::init_static_raids(&conn)?;
+        log::debug!("[INIT] 静态副本数据初始化完成");
     } else {
         // ========== 已是最新版本 ==========
-        log::info!("数据库初始化：已是最新版本 V{}", current_version);
+        log::info!(
+            "[INIT] 场景判定：已是最新版本 V{}，无需迁移",
+            current_version
+        );
     }
 
     // 标记已初始化（此时互斥锁仍在持有中，确保竞态安全）
     *initialized = true;
+    log::info!(
+        "[INIT] 数据库初始化完成，当前版本 V{}",
+        CURRENT_SCHEMA_VERSION
+    );
 
     Ok(conn)
 }
@@ -635,18 +701,25 @@ fn get_schema_version(conn: &Connection) -> Result<i32, String> {
             |row| row.get(0),
         )
         .unwrap_or(0);
+    log::debug!("[DEBUG] get_schema_version: 读取到当前版本 = {}", version);
     Ok(version)
 }
 
 /// 设置 schema 版本
 fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Result<(), String> {
     let timestamp = get_local_timestamp();
+    log::debug!(
+        "[DEBUG] set_schema_version: 即将写入 version={}, description={}",
+        version,
+        description
+    );
     conn.execute(
         "INSERT INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)
          ON CONFLICT(version) DO UPDATE SET applied_at = excluded.applied_at, description = excluded.description",
         params![version, timestamp, description],
     )
     .map_err(|e| e.to_string())?;
+    log::debug!("[DEBUG] set_schema_version: version={} 写入成功", version);
     Ok(())
 }
 

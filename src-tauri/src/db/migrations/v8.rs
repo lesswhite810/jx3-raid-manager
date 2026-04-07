@@ -136,7 +136,7 @@ fn add_martial_column(conn: &Connection) -> Result<(), String> {
     log::info!("V8 迁移：找到 {} 条需要处理的角色记录", roles.len());
 
     if roles.is_empty() {
-        log::info!("V8 迁移：无数据需要迁移");
+        log::info!("V8 迁移：无数据需要迁移（roles 表为空或 sect 字段为空）");
         return Ok(());
     }
 
@@ -162,10 +162,7 @@ fn add_martial_column(conn: &Connection) -> Result<(), String> {
         to_unknown.len()
     );
 
-    // 批量更新：在事务中执行所有 UPDATE
-    conn.execute("BEGIN TRANSACTION", [])
-        .map_err(error_to_string)?;
-
+    // 批量更新：在外层事务中执行所有 UPDATE（避免嵌套事务）
     let mut migrated_count = 0;
     let mut unknown_count = 0;
 
@@ -176,10 +173,7 @@ fn add_martial_column(conn: &Connection) -> Result<(), String> {
                 "UPDATE roles SET sect = ?, martial = ? WHERE id = ?",
                 rusqlite::params![sect, martial, role_id],
             )
-            .map_err(|e| {
-                let _ = conn.execute("ROLLBACK", []);
-                error_to_string(e)
-            })?;
+            .map_err(error_to_string)?;
             migrated_count += 1;
         }
     }
@@ -191,15 +185,10 @@ fn add_martial_column(conn: &Connection) -> Result<(), String> {
                 "UPDATE roles SET sect = '通用', martial = ? WHERE id = ?",
                 rusqlite::params![martial, role_id],
             )
-            .map_err(|e| {
-                let _ = conn.execute("ROLLBACK", []);
-                error_to_string(e)
-            })?;
+            .map_err(error_to_string)?;
             unknown_count += 1;
         }
     }
-
-    conn.execute("COMMIT", []).map_err(error_to_string)?;
 
     log::info!(
         "V8 迁移：完成。已迁移 {} 条，无法识别 {} 条，martial 非空 {} 条",
