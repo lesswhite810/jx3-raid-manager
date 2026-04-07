@@ -35,12 +35,19 @@ export const ToastContainer: React.FC = () => {
     setToasts(prev => prev.filter(t => t.id !== toastId));
   }, []);
 
+  // Toast 最大数量限制
+  const MAX_TOASTS = 3;
+
   // 添加 Toast
   const addToast = useCallback((event: Event) => {
     const customEvent = event as CustomEvent<ToastMessage>;
     const newToast = customEvent.detail;
 
-    setToasts(prev => [...prev, newToast]);
+    setToasts(prev => {
+      // 如果已超过最大数量，移除最早的 toast
+      const updated = prev.length >= MAX_TOASTS ? prev.slice(1) : prev;
+      return [...updated, newToast];
+    });
 
     // 自动移除
     if (newToast.duration && newToast.duration > 0) {
