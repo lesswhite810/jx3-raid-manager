@@ -3,6 +3,7 @@
 mod db;
 mod game_directory;
 mod gkp_parser;
+mod kungfu_data;
 mod runtime_mode;
 mod updater;
 

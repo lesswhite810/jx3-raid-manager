@@ -179,6 +179,42 @@ npm run version:prepare -- --next-patch-from 2.1.19
 
 1. 修改前先理解现有实现，不要臆造不存在的能力。
 2. 涉及用户可感知的变更，优先补充验证结果或验证方法。
-3. 发现乱码时，先区分“文件本体损坏”和“终端显示编码问题”。
+3. 发现乱码时，先区分"文件本体损坏"和"终端显示编码问题"。
 4. 涉及发布流程、Release Notes 、资产更新的操作，以 `docs/release-process.md` 为准。
 5. 如果修改了发布相关脚本或流程，同步更新 `AGENTS.md` 与 `docs/release-process.md`。
+
+## 12. Rust 编译告警处理
+
+### 12.1 前端配置字段的 dead_code 告警
+
+当 Rust 结构体中某些字段仅被前端使用、后端不直接引用时，编译器会报 `dead_code` 告警。**不要删除这些字段**，而应使用 `#[allow(dead_code)]` 注解。
+
+**适用场景**：数据结构在前后端之间共享，后端仅负责序列化/反序列化，实际业务逻辑在前端。
+
+**示例**：
+```rust
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Kungfu {
+    pub id: i32,
+    pub name: String,
+    // 前端展示配置字段（后端当前仅用于数据序列化一致性）
+    #[allow(dead_code)]
+    pub icon_id: i32,
+    #[allow(dead_code)]
+    pub color: String,
+    #[allow(dead_code)]
+    pub text_color: String,
+    #[allow(dead_code)]
+    pub border_color: String,
+    #[allow(dead_code)]
+    pub short_name: String,
+}
+```
+
+### 12.2 验证方法
+
+修复后运行 `cargo build` 确认无告警：
+```bash
+cd src-tauri && cargo build
+```。

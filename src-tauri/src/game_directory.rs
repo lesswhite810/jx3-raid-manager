@@ -326,6 +326,21 @@ fn read_equip_descs_for_suit(
 }
 
 // 读取茗伊数据库中的角色信息
+// 从茗伊数据库的 owner_name 中提取真实角色名
+// 兼容 "角色名·区服" 格式，例如 "秦算卦·唯我独尊" -> "秦算卦"
+fn normalize_mingyi_role_name(owner_name: &str, server_name: &str) -> String {
+    // 检查是否包含 "·区服" 格式（通常包含服务器名称）
+    if let Some(idx) = owner_name.find('·') {
+        let potential_server = &owner_name[idx + '·'.len_utf8()..];
+        // 如果 "·" 后面的内容与 server_name 匹配，说明是带区服后缀的格式
+        if potential_server == server_name {
+            return owner_name[..idx].to_string();
+        }
+    }
+    // 如果不匹配，返回原名称
+    owner_name.to_string()
+}
+
 fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, String> {
     let db_path = game_directory.join(MING_YI_DB_PATH);
 
@@ -372,6 +387,9 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
         let (owner_key_str, owner_name, server_name, force_id, level, ownerscore, suit_index) =
             role_result.map_err(|e| format!("读取数据失败: {}", e))?;
 
+        // 标准化角色名称，兼容 "角色名·区服" 格式
+        let normalized_name = normalize_mingyi_role_name(&owner_name, &server_name);
+
         let owner_key: i64 = owner_key_str.parse().unwrap_or(0);
         let scores = parse_ownerscore(&ownerscore);
 
@@ -405,7 +423,7 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
         };
 
         roles.push(MingYiRoleInfo {
-            owner_name,
+            owner_name: normalized_name,
             server_name,
             force_id,
             level,

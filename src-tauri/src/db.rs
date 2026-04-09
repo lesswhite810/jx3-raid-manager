@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::game_directory::get_sect_by_martial;
+use crate::kungfu_data::get_sect_by_martial;
 use crate::runtime_mode::{self, RuntimeMode};
 
 mod migration;
@@ -3216,6 +3216,7 @@ mod tests {
                     server: Some("电一".to_string()),
                     region: Some("梦江南".to_string()),
                     sect: Some("太虚".to_string()),
+                    martial: None,
                     equipment_score: Some(123456),
                     disabled: false,
                 }),

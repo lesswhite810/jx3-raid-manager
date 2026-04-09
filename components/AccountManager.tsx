@@ -74,9 +74,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
   const [confirmDeleteRole, setConfirmDeleteRole] = useState<{ accountId: string; roleId: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [batchDeleteDirectoryChecked, setBatchDeleteDirectoryChecked] = useState(true);
-  const [accountDeleteDirectoryChecked, setAccountDeleteDirectoryChecked] = useState(true);
-  const [roleDeleteDirectoryChecked, setRoleDeleteDirectoryChecked] = useState(true);
+  const [batchDeleteDirectoryChecked, setBatchDeleteDirectoryChecked] = useState(false);
+  const [accountDeleteDirectoryChecked, setAccountDeleteDirectoryChecked] = useState(false);
+  const [roleDeleteDirectoryChecked, setRoleDeleteDirectoryChecked] = useState(false);
 
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
@@ -324,7 +324,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   // 批量删除功能 - 显示确认对话框
   const handleBatchDeleteClick = () => {
     if (selectedAccounts.size === 0) return;
-    setBatchDeleteDirectoryChecked(true);
+    setBatchDeleteDirectoryChecked(false);
     setShowBatchDeleteConfirm(true);
   };
 
@@ -369,7 +369,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   const handleBatchDeleteCancel = () => {
     setShowBatchDeleteConfirm(false);
-    setBatchDeleteDirectoryChecked(true);
+    setBatchDeleteDirectoryChecked(false);
   };
 
   const handleOpenEditRoleModal = (accountId: string, role: Role) => {
@@ -597,7 +597,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 显示删除账号确认对话框
   const handleDeleteAccountClick = (id: string) => {
-    setAccountDeleteDirectoryChecked(true);
+    setAccountDeleteDirectoryChecked(false);
     setConfirmDeleteAccountId(id);
   };
 
@@ -672,7 +672,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   };
 
   const handleDeleteRoleClick = (accountId: string, roleId: string) => {
-    setRoleDeleteDirectoryChecked(true);
+    setRoleDeleteDirectoryChecked(false);
     setConfirmDeleteRole({ accountId, roleId });
   };
 
