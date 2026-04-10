@@ -1,0 +1,11 @@
+{
+  "version": "2.1.24",
+  "notes": "# 剑网三副本管家 v2.1.24\r\n\r\n## 问题修复\r\n\r\n- **修复部分职业无法解析心法与装分的问题** - 统一门派心法数据源，提升数据解析的准确性和稳定性",
+  "pub_date": "2026-04-10T15:34:38.190Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRSkkyaDRheGFNSitoYW5Ndk1WWHdXQktBd3pQSVFpZWRtRmt2SEowdEF2eHhJVGdnY3BxTVc2MEZMZDJ2Q3hkbkNTdmE3dVNkUlNBTTdRYU1Bb2R3VSthSFVoeXpzakE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1ODMzOTU1CWZpbGU6SlgzUmFpZE1hbmFnZXJfMi4xLjI0X3g2NC1zZXR1cC5leGUKOURDR25makdGQ0xMWEtkVFF4QVhSRURqUm5UU2Z2M3VvV3FpU01KaEh5cFFTckowZGluTVVzOFBvaDRlRTF4aWxsVmNXZEpwS2JnWnZEa2JpTDZHRHc9PQo=",
+      "url": "https://github.com/lesswhite810/jx3-raid-manager/releases/download/v2.1.24/JX3RaidManager_2.1.24_x64-setup.exe"
+    }
+  }
+}
