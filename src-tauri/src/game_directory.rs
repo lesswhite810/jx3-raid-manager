@@ -2,7 +2,6 @@ use chrono::NaiveDateTime;
 use regex::Regex;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use winreg::enums::*;
@@ -10,6 +9,9 @@ use winreg::RegKey;
 
 // 引入 db 模块用于数据库操作
 use crate::db;
+
+// 引入 kungfu_data 模块获取统一的心法数据
+use crate::kungfu_data;
 
 const GKP_BASE_PATH: &str = r"interface\my#data";
 const USERDATA_BASE_PATH: &str = "userdata";
@@ -21,118 +23,6 @@ const MING_YI_DB_PATH: &str =
 
 // 当前游戏等级
 const CURRENT_LEVEL: i32 = 130;
-
-// 门派ID到名称的映射（来源：茗伊插件 MY_!Base/src/lib/Constant.lua - FORCE_TYPE）
-fn get_force_name(force_id: i32) -> Option<String> {
-    match force_id {
-        0 => Some("江湖".to_string()),
-        1 => Some("少林".to_string()),
-        2 => Some("万花".to_string()),
-        3 => Some("天策".to_string()),
-        4 => Some("纯阳".to_string()),
-        5 => Some("七秀".to_string()),
-        6 => Some("五毒".to_string()),
-        7 => Some("唐门".to_string()),
-        8 => Some("藏剑".to_string()),
-        9 => Some("丐帮".to_string()),
-        10 => Some("明教".to_string()),
-        21 => Some("苍云".to_string()),
-        22 => Some("长歌".to_string()),
-        23 => Some("霸刀".to_string()),
-        24 => Some("蓬莱".to_string()),
-        25 => Some("凌雪".to_string()),
-        211 => Some("衍天宗".to_string()),
-        212 => Some("药宗".to_string()),
-        213 => Some("刀宗".to_string()),
-        214 => Some("万灵".to_string()),
-        215 => Some("段氏".to_string()),
-        _ => None,
-    }
-}
-
-// 心法名称到门派名称的映射
-pub(crate) fn get_sect_by_martial(martial: &str) -> Option<&'static str> {
-    match martial {
-        // 少林
-        "洗髓经" | "易筋经" => Some("少林"),
-        // 万花
-        "花间游" | "离经易道" => Some("万花"),
-        // 天策
-        "傲血战意" | "铁牢律" => Some("天策"),
-        // 纯阳
-        "紫霞功" | "太虚剑意" => Some("纯阳"),
-        // 七秀
-        "云裳心经" | "冰心诀" => Some("七秀"),
-        // 五毒
-        "毒经" | "补天诀" => Some("五毒"),
-        // 唐门
-        "惊羽诀" | "天罗诡道" => Some("唐门"),
-        // 藏剑
-        "问水诀" => Some("藏剑"),
-        // 丐帮
-        "笑尘诀" => Some("丐帮"),
-        // 明教
-        "焚影圣诀" | "明尊琉璃体" => Some("明教"),
-        // 苍云
-        "铁骨衣" | "分山劲" => Some("苍云"),
-        // 长歌
-        "莫问" | "相知" => Some("长歌"),
-        // 霸刀
-        "北傲诀" => Some("霸刀"),
-        // 蓬莱
-        "凌海诀" => Some("蓬莱"),
-        // 凌雪
-        "隐龙诀" => Some("凌雪"),
-        // 衍天
-        "太玄经" => Some("衍天"),
-        // 药宗
-        "灵素" | "无方" => Some("药宗"),
-        // 刀宗
-        "孤锋诀" => Some("刀宗"),
-        // 万灵
-        "山海心决" => Some("万灵"),
-        // 段氏
-        "周天功" => Some("段氏"),
-        // 无相楼
-        "幽罗引" => Some("无相楼"),
-        _ => None,
-    }
-}
-
-// 预处理：构建 (force_id, kungfu_name) -> kungfu_id 的快速查找表
-fn build_kungfu_force_name_to_id_map() -> HashMap<(i32, String), i32> {
-    let mut map = HashMap::new();
-    // 所有已知门派的心法
-    let forces = [
-        (0, vec![(10821, "无相")]),
-        (1, vec![(10002, "洗髓经"), (10003, "易筋经")]),
-        (2, vec![(10021, "花间游"), (10028, "离经易道")]),
-        (3, vec![(10026, "傲血战意"), (10062, "铁牢律")]),
-        (4, vec![(10014, "紫霞功"), (10015, "太虚剑意")]),
-        (5, vec![(10080, "云裳心经"), (10081, "冰心诀")]),
-        (6, vec![(10175, "毒经"), (10176, "补天诀")]),
-        (7, vec![(10224, "惊羽诀"), (10225, "天罗诡道")]),
-        (8, vec![(10144, "问水决"), (10145, "山居剑意")]),
-        (9, vec![(10368, "笑尘诀")]),
-        (10, vec![(10242, "焚影圣诀"), (10243, "明尊琉璃体")]),
-        (21, vec![(10389, "铁骨诀"), (10390, "分山劲")]),
-        (22, vec![(10447, "莫问"), (10448, "相知")]),
-        (23, vec![(10464, "北傲诀")]),
-        (24, vec![(10533, "凌海诀")]),
-        (25, vec![(10585, "隐龙诀")]),
-        (211, vec![(10615, "太玄经")]),
-        (212, vec![(10626, "灵素"), (10627, "无方")]),
-        (213, vec![(10698, "孤风")]),
-        (214, vec![(10756, "山海")]),
-        (215, vec![(10786, "周天")]),
-    ];
-    for (force_id, kungfus) in forces {
-        for (kungfu_id, kungfu_name) in kungfus {
-            map.insert((force_id, kungfu_name.to_string()), kungfu_id);
-        }
-    }
-    map
-}
 
 // 茗伊数据库的角色信息
 #[derive(Debug, Clone)]
@@ -244,41 +134,13 @@ fn parse_recommended_kungfu_from_desc(desc: &str) -> Option<(i32, String)> {
     let force_name = caps.get(1)?.as_str().trim();
     let kungfu_name = caps.get(2)?.as_str().trim();
 
-    let force_id = force_name_to_id(force_name)?;
+    let force_id = kungfu_data::get_force_id_by_name(force_name)?;
     Some((force_id, kungfu_name.to_string()))
-}
-
-// 将门派名称转换为门派ID
-fn force_name_to_id(force_name: &str) -> Option<i32> {
-    match force_name {
-        "江湖" => Some(0),
-        "少林" => Some(1),
-        "万花" => Some(2),
-        "天策" => Some(3),
-        "纯阳" => Some(4),
-        "七秀" => Some(5),
-        "五毒" => Some(6),
-        "唐门" => Some(7),
-        "藏剑" => Some(8),
-        "丐帮" => Some(9),
-        "明教" => Some(10),
-        "苍云" => Some(21),
-        "长歌" => Some(22),
-        "霸刀" => Some(23),
-        "蓬莱" => Some(24),
-        "凌雪" => Some(25),
-        "衍天宗" => Some(211),
-        "药宗" => Some(212),
-        "刀宗" => Some(213),
-        "万灵" => Some(214),
-        "段氏" => Some(215),
-        _ => None,
-    }
 }
 
 // 从装备描述中解析心法（需要与角色的门派匹配）
 fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i32, String)> {
-    let kungfu_map = build_kungfu_force_name_to_id_map();
+    let kungfu_map = kungfu_data::build_kungfu_force_name_to_id_map();
 
     for desc in descs {
         if let Some((force_id, kungfu_name)) = parse_recommended_kungfu_from_desc(desc) {
@@ -637,7 +499,7 @@ fn scan_userdata_directory(
                         if let Some(info) = mingyi_info {
                             (
                                 Some(info.force_id),
-                                get_force_name(info.force_id),
+                                kungfu_data::get_force_name(info.force_id),
                                 info.kungfu_id,
                                 info.kungfu_name.clone(),
                                 Some(info.level),
@@ -883,7 +745,7 @@ fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String>
                         if let Some((old_martial, old_sect)) = old_role_data {
                             if !old_martial.is_empty() {
                                 // martial 不为空，检查 sect 是否需要修正
-                                if let Some(expected_sect) = get_sect_by_martial(&old_martial) {
+                                if let Some(expected_sect) = kungfu_data::get_sect_by_martial(&old_martial) {
                                     if old_sect != expected_sect {
                                         // sect 不正确，修正 sect
                                         conn.execute(
