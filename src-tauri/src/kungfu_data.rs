@@ -106,6 +106,11 @@ pub fn build_kungfu_force_name_to_id_map() -> HashMap<(i32, String), i32> {
     KUNGFU_FORCE_NAME_TO_ID.clone()
 }
 
+/// 获取心法门派到ID映射的静态引用（避免重复clone）
+pub fn get_kungfu_force_name_to_id_map() -> &'static HashMap<(i32, String), i32> {
+    &KUNGFU_FORCE_NAME_TO_ID
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

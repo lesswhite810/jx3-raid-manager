@@ -4,6 +4,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -23,6 +24,10 @@ const MING_YI_DB_PATH: &str =
 
 // 当前游戏等级
 const CURRENT_LEVEL: i32 = 130;
+
+// 预编译正则表达式，避免重复编译开销
+static KUNGFU_DESC_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"推荐心法[：:]([^()]+)\(([^()]+)\)").unwrap());
 
 // 茗伊数据库的角色信息
 #[derive(Debug, Clone)]
@@ -127,9 +132,7 @@ fn parse_ownerscore(ownerscore: &str) -> Vec<i32> {
 // 从 desc 中用正则匹配 "推荐心法：门派(心法)" 格式
 // 返回 (force_id, kungfu_name) 元组
 fn parse_recommended_kungfu_from_desc(desc: &str) -> Option<(i32, String)> {
-    // 正则匹配：推荐心法：门派(心法)
-    let re = Regex::new(r"推荐心法[：:]([^()]+)\(([^()]+)\)").ok()?;
-    let caps = re.captures(desc)?;
+    let caps = KUNGFU_DESC_REGEX.captures(desc)?;
 
     let force_name = caps.get(1)?.as_str().trim();
     let kungfu_name = caps.get(2)?.as_str().trim();
@@ -141,7 +144,8 @@ fn parse_recommended_kungfu_from_desc(desc: &str) -> Option<(i32, String)> {
 // 从装备描述中解析心法
 // 特殊处理无相楼：如果检测到"推荐心法：无相楼(幽罗引)"，直接返回幽罗引，不需要校验门派一致性
 fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i32, String)> {
-    let kungfu_map = kungfu_data::build_kungfu_force_name_to_id_map();
+    // 直接使用静态引用，避免重复 clone
+    let kungfu_map = kungfu_data::get_kungfu_force_name_to_id_map();
 
     // 特殊处理无相楼：如果检测到"推荐心法：无相楼(幽罗引)"，直接返回幽罗引，不需要校验门派一致性
     const TANGJIAN_FORCE_ID: i32 = 8; // 藏剑门派ID
@@ -168,38 +172,6 @@ fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i3
         }
     }
     None
-}
-
-// 根据 ownerkey 和 suit_index 从 EquipItems 表读取武器栏装备描述
-// boxtype=0 表示武器栏
-fn read_equip_descs_for_suit(
-    conn: &rusqlite::Connection,
-    owner_key: i64,
-    suit_index: i32,
-) -> Vec<String> {
-    let mut descs = Vec::new();
-
-    let mut stmt = match conn.prepare(
-        "SELECT `desc` FROM EquipItems WHERE ownerkey = ? AND suitindex = ? AND boxtype = 0",
-    ) {
-        Ok(s) => s,
-        Err(_) => return descs,
-    };
-
-    let rows = stmt
-        .query_map([owner_key.to_string(), suit_index.to_string()], |row| {
-            let desc: String = row.get(0)?;
-            Ok(desc)
-        })
-        .ok();
-
-    if let Some(rows) = rows {
-        for row in rows.flatten() {
-            descs.push(row);
-        }
-    }
-
-    descs
 }
 
 // 读取茗伊数据库中的角色信息
@@ -240,7 +212,6 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
     let role_iter = stmt
         .query_map([CURRENT_LEVEL], |row| {
             let owner_key_str: String = row.get(0)?;
-            let _owner_key: i64 = owner_key_str.parse().unwrap_or(0);
             let owner_name: String = row.get(1)?;
             let server_name: String = row.get(2)?;
             let force_id: i32 = row.get(3)?;
@@ -259,19 +230,28 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
         })
         .map_err(|e| format!("查询失败: {}", e))?;
 
-    let mut roles = Vec::new();
+    // 第一步：收集所有角色及其有效套装的 ownerkey
+    #[derive(Debug)]
+    struct RoleBasicInfo {
+        owner_key: i64,
+        owner_name: String,
+        server_name: String,
+        force_id: i32,
+        level: i32,
+        scores: Vec<i32>,
+        effective_suit: Option<i32>,
+    }
+
+    let mut role_basic_infos: Vec<RoleBasicInfo> = Vec::new();
+    let mut equip_query_params: Vec<(i64, i32)> = Vec::new(); // (owner_key, suit_index)
+
     for role_result in role_iter {
         let (owner_key_str, owner_name, server_name, force_id, level, ownerscore, suit_index) =
             role_result.map_err(|e| format!("读取数据失败: {}", e))?;
-
-        // 标准化角色名称，兼容 "角色名·区服" 格式
-        let normalized_name = normalize_mingyi_role_name(&owner_name, &server_name);
-
         let owner_key: i64 = owner_key_str.parse().unwrap_or(0);
         let scores = parse_ownerscore(&ownerscore);
 
         // 确定使用哪套装备解析心法
-        // 优先使用 ownersuitindex 指定的那套，如果无效则找装分最高的那套
         let effective_suit = suit_index
             .and_then(|idx| {
                 if idx >= 1 && idx <= 4 {
@@ -289,10 +269,75 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
                     .filter(|&idx| idx >= 1 && idx <= 4 && scores[(idx - 1) as usize] > 0)
             });
 
-        // 从对应套装的装备中解析心法
-        let (kungfu_id, kungfu_name) = if let Some(suit) = effective_suit {
-            let descs = read_equip_descs_for_suit(&conn, owner_key, suit);
-            resolve_kungfu_from_descs(&descs, force_id)
+        if let Some(suit) = effective_suit {
+            equip_query_params.push((owner_key, suit));
+        }
+
+        role_basic_infos.push(RoleBasicInfo {
+            owner_key,
+            owner_name,
+            server_name,
+            force_id,
+            level,
+            scores,
+            effective_suit,
+        });
+    }
+
+    // 第二步：批量查询所有角色对应套装的装备描述
+    use std::collections::HashMap;
+    let mut equip_descs_map: HashMap<(i64, i32), Vec<String>> = HashMap::new();
+
+    if !equip_query_params.is_empty() {
+        // 构建批量查询 SQL
+        let placeholders: Vec<String> = equip_query_params
+            .iter()
+            .map(|_| "(ownerkey = ? AND suitindex = ? AND boxtype = 0)".to_string())
+            .collect();
+        let sql = format!(
+            "SELECT ownerkey, suitindex, `desc` FROM EquipItems WHERE {}",
+            placeholders.join(" OR ")
+        );
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("准备装备查询失败: {}", e))?;
+
+        let mut params: Vec<String> = Vec::with_capacity(equip_query_params.len() * 2);
+        for (owner_key, suit_index) in &equip_query_params {
+            params.push(owner_key.to_string());
+            params.push(suit_index.to_string());
+        }
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let ownerkey_str: String = row.get(0)?;
+            let suitindex: i32 = row.get(1)?;
+            let desc: String = row.get(2)?;
+            Ok((ownerkey_str, suitindex, desc))
+        }).map_err(|e| format!("查询装备描述失败: {}", e))?;
+
+        for row in rows {
+            if let Ok((ownerkey_str, suitindex, desc)) = row {
+                if let Ok(ok) = ownerkey_str.parse::<i64>() {
+                    equip_descs_map
+                        .entry((ok, suitindex))
+                        .or_insert_with(Vec::new)
+                        .push(desc);
+                }
+            }
+        }
+    }
+
+    // 第三步：处理每个角色，解析心法
+    let mut roles = Vec::new();
+    for role_info in role_basic_infos {
+        let normalized_name = normalize_mingyi_role_name(&role_info.owner_name, &role_info.server_name);
+
+        // 从预加载的装备描述中解析心法
+        let (kungfu_id, kungfu_name) = if let Some(suit) = role_info.effective_suit {
+            let descs = equip_descs_map.get(&(role_info.owner_key, suit)).cloned().unwrap_or_default();
+            resolve_kungfu_from_descs(&descs, role_info.force_id)
                 .map(|(k_id, k_name)| (Some(k_id), Some(k_name)))
                 .unwrap_or((None, None))
         } else {
@@ -301,11 +346,11 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
 
         roles.push(MingYiRoleInfo {
             owner_name: normalized_name,
-            server_name,
-            force_id,
-            level,
-            scores,
-            effective_suit: effective_suit.unwrap_or(1),
+            server_name: role_info.server_name,
+            force_id: role_info.force_id,
+            level: role_info.level,
+            scores: role_info.scores,
+            effective_suit: role_info.effective_suit.unwrap_or(1),
             kungfu_id,
             kungfu_name,
         });
