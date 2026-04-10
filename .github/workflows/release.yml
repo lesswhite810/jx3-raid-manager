@@ -159,6 +159,8 @@ jobs:
           git remote remove gitee 2>/dev/null || true
           git remote add gitee "${GITEE_PUSH_URL}"
           git fetch origin master --tags
+          # 删除远程 tag（如果存在），避免 clobber 错误
+          git push gitee :refs/tags/${GITHUB_REF_NAME} 2>/dev/null || true
           git push gitee refs/remotes/origin/master:refs/heads/master --force
           git push gitee --tags --force
         env:
