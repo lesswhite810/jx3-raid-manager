@@ -115,3 +115,93 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 11. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
 12. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
 13. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
+
+---
+
+## 常见问题
+
+### Q: `gh run rerun` 后还是失败？
+
+A: `gh run rerun` 使用的是触发时的代码版本。如果之后提交了修复，需要重新推送 tag。
+
+### Q: latest.json 一直是旧内容？
+
+A: 需要手动重新生成并上传：
+```bash
+# 1. 下载签名文件
+gh release download <tag> --pattern "*.sig" --clobber
+
+# 2. 复制到正确位置
+cp JX3RaidManager_<version>_x64-setup.exe.sig src-tauri/target/release/bundle/nsis/
+
+# 3. 重新生成 latest.json
+node scripts/build-updater-manifest.mjs <tag>
+
+# 4. 上传到 GitHub Release
+gh release upload <tag> src-tauri/target/release/bundle/latest.json --clobber
+```
+
+### Q: Gitee 同步失败，提示 clobber？
+
+A: 在 workflow 的 `Mirror code to Gitee` 步骤中，强制推送前先删除远程 tag：
+```yaml
+- name: Mirror code to Gitee
+  shell: bash
+  run: |
+    set -euo pipefail
+    # ... existing setup ...
+    # 删除远程 tag（如果存在），避免 clobber 错误
+    git push gitee :refs/tags/${GITHUB_REF_NAME} 2>/dev/null || true
+    git push gitee refs/remotes/origin/master:refs/heads/master --force
+    git push gitee --tags --force
+```
+
+### Q: 可以跳过某些 workflow 步骤吗？
+
+A: 不可以。workflow 的步骤是串联的，跳过会导致后续步骤失败。但如果某个步骤失败（如 Gitee 同步），不影响 Release 本身的功能。
+
+---
+
+## v2.1.24 问题总结
+
+本次发布过程中遇到的问题，确保后续不再犯：
+
+### 1. Release Notes 描述不用户友好
+
+**问题**：首次发布的 release notes 包含技术实现细节（"移除 game_directory.rs 中的硬编码..."），用户无法理解。
+
+**后续措施**：
+- release notes 文件中的描述应以用户价值为导向，避免技术实现细节
+- 提交发布前检查 `release-notes/v*.md` 文件内容
+
+### 2. Gitee 同步 Tag Clobber 错误
+
+**问题**：`git push gitee --tags --force` 被拒绝，错误信息 `would clobber existing tag`。
+
+**后续措施**：
+- workflow 中添加 `git push gitee :refs/tags/${GITHUB_REF_NAME} 2>/dev/null || true` 在强制推送前先删除远程 tag
+- 避免手动推送 tag，尽量让 workflow 统一处理
+
+### 3. latest.json 生成时机错误
+
+**问题**：更新 GitHub Release notes 后，`latest.json` 中的 notes 仍为旧内容。
+
+**原因**：`Build updater manifest` 步骤从 tag 对应的代码生成 `latest.json`，而非从 GitHub Release API 获取。
+
+**后续措施**：
+- 更新 release notes 后，必须手动重新生成并上传 `latest.json`
+
+### 4. Workflow Rerun 不使用最新代码
+
+**问题**：`gh run rerun` 使用触发时的代码版本，不会使用后续提交的修复。
+
+**后续措施**：
+- 提交 workflow 修复后，需要重新推送 tag 才能使用新 workflow
+- 不要依赖 rerun 来应用代码修复
+
+### 5. 并发 Workflow 冲突
+
+**问题**：`Prepare next patch version` 步骤因本地文件被远程覆盖而失败。
+
+**后续措施**：
+- 避免短时间内多次 rerun workflow
