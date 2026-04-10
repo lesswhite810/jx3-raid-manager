@@ -138,16 +138,31 @@ fn parse_recommended_kungfu_from_desc(desc: &str) -> Option<(i32, String)> {
     Some((force_id, kungfu_name.to_string()))
 }
 
-// 从装备描述中解析心法（需要与角色的门派匹配）
+// 从装备描述中解析心法
+// 特殊处理无相楼：如果检测到"推荐心法：无相楼(幽罗引)"，直接返回幽罗引，不需要校验门派一致性
 fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i32, String)> {
     let kungfu_map = kungfu_data::build_kungfu_force_name_to_id_map();
 
+    // 特殊处理无相楼：如果检测到"推荐心法：无相楼(幽罗引)"，直接返回幽罗引，不需要校验门派一致性
+    const TANGJIAN_FORCE_ID: i32 = 8; // 藏剑门派ID
+
     for desc in descs {
+        if desc.contains("推荐心法：无相楼(幽罗引)") {
+            // 无相楼特殊处理：直接返回幽罗引，不需要校验门派一致性
+            const YOULUOYIN_ID: i32 = 10821;
+            return Some((YOULUOYIN_ID, "幽罗引".to_string()));
+        }
+
         if let Some((force_id, kungfu_name)) = parse_recommended_kungfu_from_desc(desc) {
-            // 只取与角色门派匹配的心法
             if force_id == role_force_id {
-                if let Some(&kungfu_id) = kungfu_map.get(&(force_id, kungfu_name.clone())) {
-                    return Some((kungfu_id, kungfu_name));
+                // 特殊处理藏剑：如果门派为藏剑且心法为"均可"，返回问水诀
+                let final_kungfu_name = if force_id == TANGJIAN_FORCE_ID && kungfu_name == "均可" {
+                    "问水诀".to_string()
+                } else {
+                    kungfu_name
+                };
+                if let Some(&kungfu_id) = kungfu_map.get(&(force_id, final_kungfu_name.clone())) {
+                    return Some((kungfu_id, final_kungfu_name));
                 }
             }
         }
