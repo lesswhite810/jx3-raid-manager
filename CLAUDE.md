@@ -15,6 +15,7 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
 | **Business & Context** | 👉 `contexts/context.md` | Core project introduction, what is JX3 Raid Manager, main features, file structure, and core logic components. |
 | **Code Style & Rules** | 👉 `AGENTS.md` | TypeScript/React best practices, testing commands, folder structures, and Tauri (Frontend-Backend) IPC conventions. |
 | **UI & Design Tokens** | 👉 `specs/design-tokens.md` | **CRITICAL for UI work.** Contains the comprehensive flat & minimalist design principles, semantic colors (`emerald/amber`), container specs, and interaction colors. |
+| **Release Process** | 👉 `docs/RELEASE_GUIDE.md` | **CRITICAL before publishing.** Contains release checklist, notes writing guidelines, GitHub Actions troubleshooting, and Gitee sync issues. |
 
 ---
 
@@ -26,6 +27,8 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
 4. **Git Commits**: Commit messages must be in Chinese and follow the format: `类型: 描述` (e.g., `feat: 新增记录分类`, `fix: 修复显示错误`).
 5. **Sync Logs**: When adding significant features, fixing bugs, or updating versions, always update the changelog in `README.md`.
 6. **Release Notes**: When creating GitHub releases, follow this user-friendly format (NO technical code details):
+7. **No Manual Tag Push**: Avoid manually pushing tags to GitHub. Let the workflow handle it to prevent sync conflicts with Gitee. If you must push a tag manually, ensure the workflow code is already updated with any necessary fixes.
+8. **Verify latest.json**: After updating release notes, always manually regenerate and upload `latest.json` to ensure auto-update shows correct notes.
 
    ```markdown
    ## ✨ 新增功能
