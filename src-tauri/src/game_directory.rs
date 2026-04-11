@@ -597,6 +597,83 @@ fn scan_userdata_directory(
     Ok(accounts)
 }
 
+/// 简单的账号角色扫描，只获取基本信息，不包含门派/心法/装分
+fn scan_userdata_directory_basic(game_directory: &Path) -> Result<Vec<ParsedAccount>, String> {
+    let userdata_path = game_directory.join(USERDATA_BASE_PATH);
+    let mut accounts = Vec::new();
+
+    for account_entry in read_directory_entries(&userdata_path)? {
+        let Ok(file_type) = account_entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let account_name = account_entry.file_name().to_string_lossy().to_string();
+        let mut roles = Vec::new();
+        let account_path = account_entry.path();
+
+        for region_entry in read_directory_entries(&account_path).unwrap_or_default() {
+            let Ok(region_type) = region_entry.file_type() else {
+                continue;
+            };
+            if !region_type.is_dir() {
+                continue;
+            }
+
+            let region_name = region_entry.file_name().to_string_lossy().to_string();
+            let region_path = region_entry.path();
+
+            for server_entry in read_directory_entries(&region_path).unwrap_or_default() {
+                let Ok(server_type) = server_entry.file_type() else {
+                    continue;
+                };
+                if !server_type.is_dir() {
+                    continue;
+                }
+
+                let server_name = server_entry.file_name().to_string_lossy().to_string();
+                let server_path = server_entry.path();
+
+                for role_entry in read_directory_entries(&server_path).unwrap_or_default() {
+                    let Ok(role_type) = role_entry.file_type() else {
+                        continue;
+                    };
+                    if !role_type.is_dir() {
+                        continue;
+                    }
+
+                    let role_name = role_entry.file_name().to_string_lossy().to_string();
+
+                    // 只获取基本信息，不从茗伊数据库获取门派/心法/装分
+                    roles.push(ParsedRole {
+                        name: role_name,
+                        region: region_name.clone(),
+                        server: server_name.clone(),
+                        force_id: None,
+                        force_name: None,
+                        kungfu_id: None,
+                        kungfu_name: None,
+                        level: None,
+                        score: None,
+                        scores: None,
+                    });
+                }
+            }
+        }
+
+        if !roles.is_empty() {
+            accounts.push(ParsedAccount {
+                account_name,
+                roles,
+            });
+        }
+    }
+
+    Ok(accounts)
+}
+
 fn scan_gkp_files_directory(
     game_directory: &Path,
     active_roles: &[ActiveRole],
@@ -900,6 +977,225 @@ pub fn auto_parse_game_directory(game_directory: String) -> Result<AutoParseResu
     }
 
     auto_parse_and_save(&runtime_path)
+}
+
+/// 导入本地账号 - 只从 userdata 目录导入账号和角色基本信息，不包含门派/心法/装分
+#[tauri::command]
+pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, String> {
+    let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
+    let runtime_path = PathBuf::from(&runtime_game_directory);
+
+    if runtime_path.to_string_lossy().is_empty() {
+        return Ok(AutoParseResult {
+            success: false,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: Some("非剑网三目录".to_string()),
+        });
+    }
+
+    let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
+    let timestamp = db::get_local_timestamp();
+
+    // 扫描 userdata 目录，只获取基本信息
+    let parsed_accounts = scan_userdata_directory_basic(&runtime_path)
+        .map_err(|e| format!("扫描目录失败: {}", e))?;
+
+    if parsed_accounts.is_empty() {
+        return Ok(AutoParseResult {
+            success: true,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: None,
+        });
+    }
+
+    let mut new_accounts = 0;
+    let updated_accounts = 0;
+    let mut new_roles = 0;
+    let updated_roles = 0;
+
+    for parsed_account in &parsed_accounts {
+        let account_id = generate_uuid_from_key(&format!("account:{}", parsed_account.account_name));
+
+        // 检查账号是否存在
+        let old_account_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM accounts WHERE account_name = ?",
+                params![parsed_account.account_name.clone()],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match old_account_id {
+            Some(_) => {
+                // 账号已存在，不做任何更新
+            }
+            None => {
+                // 账号不存在，插入新账号
+                conn.execute(
+                    "INSERT INTO accounts (id, account_name, account_type, sort_order, created_at, updated_at)
+                     VALUES (?, ?, 'OWN', 0, ?, ?)",
+                    params![account_id, parsed_account.account_name, timestamp, timestamp],
+                )
+                .map_err(|e| format!("插入账号失败: {}", e))?;
+                new_accounts += 1;
+            }
+        }
+
+        // 使用账号 ID（如果账号已存在则是其现有 ID，如果是新插入则是新生成的 ID）
+        let account_id_to_use = old_account_id.unwrap_or_else(|| account_id);
+
+        // 处理角色 - 只插入基本信息，不包含门派/心法/装分
+        for parsed_role in &parsed_account.roles {
+            let role_id = generate_uuid_from_key(&format!(
+                "role:{}:{}:{}:{}",
+                parsed_account.account_name,
+                parsed_role.name,
+                parsed_role.region,
+                parsed_role.server
+            ));
+
+            // 按角色唯一键查找旧记录
+            let old_role_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM roles WHERE account_id = ? AND name = ? AND server = ? AND region = ?",
+                    params![
+                        account_id_to_use,
+                        parsed_role.name.clone(),
+                        parsed_role.server.clone(),
+                        parsed_role.region.clone()
+                    ],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            // 只处理新角色，不更新已有角色
+            if old_role_id.is_none() {
+                conn.execute(
+                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, '', '', 0, ?, ?)",
+                    params![
+                        role_id,
+                        account_id_to_use,
+                        parsed_role.name.clone(),
+                        parsed_role.server.clone(),
+                        parsed_role.region.clone(),
+                        timestamp,
+                        timestamp,
+                    ],
+                )
+                .map_err(|e| format!("插入角色失败: {}", e))?;
+                new_roles += 1;
+            }
+        }
+    }
+
+    log::info!(
+        "导入本地账号完成：新增 {} 个账号，新增 {} 个角色",
+        new_accounts,
+        new_roles
+    );
+
+    Ok(AutoParseResult {
+        success: true,
+        new_accounts,
+        updated_accounts,
+        new_roles,
+        updated_roles,
+        error: None,
+    })
+}
+
+/// 角色分析 - 从茗伊数据库分析角色的门派、心法、装分并更新
+#[tauri::command]
+pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> {
+    let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
+    let runtime_path = PathBuf::from(&runtime_game_directory);
+
+    if runtime_path.to_string_lossy().is_empty() {
+        return Ok(AutoParseResult {
+            success: false,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: Some("非剑网三目录".to_string()),
+        });
+    }
+
+    let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
+    let timestamp = db::get_local_timestamp();
+
+    // 读取茗伊数据库
+    let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
+        Ok(roles) => {
+            log::info!("从茗伊数据库读取到 {} 个角色信息", roles.len());
+            roles
+        }
+        Err(e) => {
+            log::warn!("读取茗伊数据库失败: {}", e);
+            Vec::new()
+        }
+    };
+
+    let mut new_accounts = 0;
+    let updated_accounts = 0;
+    let new_roles = 0;
+    let mut updated_roles = 0;
+
+    for mingyi_role in &mingyi_roles {
+        // 按角色名和服务器查找已有角色
+        let old_role_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM roles WHERE name = ? AND server = ?",
+                params![mingyi_role.owner_name.clone(), mingyi_role.server_name.clone()],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(existing_role_id) = old_role_id {
+            // 更新已有角色的门派、心法、装分
+            let force_name = kungfu_data::get_force_name(mingyi_role.force_id);
+            let current_score = mingyi_role
+                .scores
+                .get((mingyi_role.effective_suit - 1) as usize)
+                .copied()
+                .unwrap_or(0);
+
+            conn.execute(
+                "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                params![
+                    force_name.unwrap_or_default(),
+                    mingyi_role.kungfu_name.clone().unwrap_or_default(),
+                    current_score as i64,
+                    timestamp,
+                    existing_role_id,
+                ],
+            )
+            .map_err(|e| format!("更新角色信息失败: {}", e))?;
+            updated_roles += 1;
+        }
+        // 如果没有找到对应角色，不插入新角色（角色分析只更新已有角色）
+    }
+
+    log::info!(
+        "角色分析完成：更新 {} 个角色",
+        updated_roles
+    );
+
+    Ok(AutoParseResult {
+        success: true,
+        new_accounts,
+        updated_accounts,
+        new_roles,
+        updated_roles,
+        error: None,
+    })
 }
 
 #[tauri::command]

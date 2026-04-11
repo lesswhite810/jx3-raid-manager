@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Account, AccountType, Role, Config, InstanceType } from '../types';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText } from 'lucide-react';
-import { autoParseGameDirectory } from '../services/gameDirectoryScanner';
+import { invoke } from '@tauri-apps/api/core';
 import {
   canStartAccountDrag,
   getAccountReorderAnimationDuration,
@@ -508,8 +508,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
 
 
-  // 使用配置自动解析功能
-  const handleUseConfigDirectory = async () => {
+  // 角色分析 - 从茗伊数据库分析角色的门派、心法、装分并更新
+  const handleAnalyzeRoles = async () => {
     if (!config?.game?.gameDirectory) {
       toast.error('请先在配置页面设置游戏目录');
       return;
@@ -519,25 +519,73 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setParseError(null);
 
     try {
-      const result = await autoParseGameDirectory(config.game.gameDirectory);
+      const result = await invoke<{
+        success: boolean;
+        newAccounts: number;
+        updatedAccounts: number;
+        newRoles: number;
+        updatedRoles: number;
+        error: string | null;
+      }>('analyze_roles', { gameDirectory: config.game.gameDirectory });
 
       if (result.success) {
         // 后端入库成功，重新从数据库查询账号数据
         const accountsFromDb = await db.getAccounts();
         setAccounts(accountsFromDb);
 
-        if (result.newAccounts === 0 && result.updatedAccounts === 0 && result.newRoles === 0) {
-          toast.info('解析完成，所有账号和角色已是最新状态。');
+        if (result.updatedRoles === 0) {
+          toast.info('角色分析完成，所有角色已是最新状态。');
+        } else {
+          toast.success(`角色分析完成：更新了 ${result.updatedRoles} 个角色的门派、心法、装分`);
+        }
+      } else {
+        setParseError(result.error || '角色分析失败，请检查游戏目录配置。');
+      }
+    } catch (error) {
+      console.error('角色分析失败:', error);
+      setParseError(`解析失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // 导入本地账号 - 从 userdata 目录导入账号和角色基本信息
+  const handleImportLocalAccounts = async () => {
+    if (!config?.game?.gameDirectory) {
+      toast.error('请先在配置页面设置游戏目录');
+      return;
+    }
+
+    setIsScanning(true);
+    setParseError(null);
+
+    try {
+      const result = await invoke<{
+        success: boolean;
+        newAccounts: number;
+        updatedAccounts: number;
+        newRoles: number;
+        updatedRoles: number;
+        error: string | null;
+      }>('import_local_accounts', { gameDirectory: config.game.gameDirectory });
+
+      if (result.success) {
+        // 后端入库成功，重新从数据库查询账号数据
+        const accountsFromDb = await db.getAccounts();
+        setAccounts(accountsFromDb);
+
+        if (result.newAccounts === 0 && result.newRoles === 0) {
+          toast.info('导入完成，所有账号和角色已是最新状态。');
         } else {
           toast.success(
-            `自动解析完成：新增 ${result.newAccounts} 个账号，更新 ${result.updatedAccounts} 个账号，新增 ${result.newRoles} 个角色`
+            `导入完成：新增 ${result.newAccounts} 个账号，新增 ${result.newRoles} 个角色`
           );
         }
       } else {
-        setParseError(result.error || '自动解析失败，请检查游戏目录配置。');
+        setParseError(result.error || '导入失败，请检查游戏目录配置。');
       }
     } catch (error) {
-      console.error('使用配置自动解析失败:', error);
+      console.error('导入本地账号失败:', error);
       setParseError(`解析失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsScanning(false);
@@ -990,30 +1038,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-xl font-bold text-main">账号管理</h2>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          {/* 搜索框 */}
-          <div className="relative flex-1 sm:flex-none">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              type="text"
-              data-page-search-input="true"
-              placeholder="搜索账号或角色"
-              value={searchTerm}
-              onChange={e => handleSearchChange(e.target.value)}
-              className="pl-9 pr-8 py-1.5 w-full sm:w-48 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder:text-muted text-main transition-all"
-            />
-            {searchTerm && (
-              <button
-                onClick={clearSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary p-1 rounded-md hover:bg-base/80 transition-colors"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <h2 className="text-xl font-bold text-main">账号管理</h2>
           {/* 筛选结果提示 */}
           {(searchTerm || accountTypeFilter !== 'all') && filteredAccounts.length > 0 && (
             <div className="flex items-center text-sm text-muted">
@@ -1028,13 +1055,124 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               )}
             </div>
           )}
+        </div>
 
-          {/* 原账号类型筛选区域，移至全选栏 */}
+        {/* 列表控制栏：全选与筛选、操作按钮 */}
+        {
+          safeAccounts.length > 0 && (
+            <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-4">
+                {filteredAccounts.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={handleSelectAll}
+                      className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
+                    />
+                    <label className="text-sm font-medium text-main">
+                      全选 ({filteredAccounts.length} 个账户)
+                      {accountTypeFilter !== 'all' && filteredAccounts.length !== safeAccounts.length && (
+                        <span className="text-muted ml-1">
+                          / 共 {safeAccounts.length}
+                        </span>
+                      )}
+                    </label>
+                  </div>
+                )}
 
-          {/* 使用配置自动解析按钮 */}
-          {config?.game?.gameDirectory && (
+                {/* 账号类型筛选 */}
+                <div className="flex items-center gap-1 bg-base rounded-lg p-0.5 border border-base">
+                  <button
+                    onClick={() => setAccountTypeFilter('all')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      accountTypeFilter === 'all'
+                        ? 'bg-surface text-primary shadow-sm'
+                        : 'text-muted hover:text-main'
+                    }`}
+                  >
+                    全部
+                  </button>
+                  <button
+                    onClick={() => setAccountTypeFilter('own')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      accountTypeFilter === 'own'
+                        ? 'bg-surface text-primary shadow-sm'
+                        : 'text-muted hover:text-main'
+                    }`}
+                  >
+                    本人
+                  </button>
+                  <button
+                    onClick={() => setAccountTypeFilter('client')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      accountTypeFilter === 'client'
+                        ? 'bg-surface text-primary shadow-sm'
+                        : 'text-muted hover:text-main'
+                    }`}
+                  >
+                    代清
+                  </button>
+                </div>
+              </div>
+
+              {/* 搜索框和操作按钮，靠右显示 */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* 搜索框 */}
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input
+                    type="text"
+                    data-page-search-input="true"
+                    placeholder="搜索账号或角色"
+                    value={searchTerm}
+                    onChange={e => handleSearchChange(e.target.value)}
+                    className="pl-9 pr-8 py-1.5 w-48 bg-surface border border-base rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder:text-muted text-main transition-all"
+                  />
+                  {searchTerm && (
+                    <button
+                      onClick={clearSearch}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary p-1 rounded-md hover:bg-base/80 transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* 新增账号按钮 */}
+                <button
+                  onClick={() => setIsAddAccountModalOpen(true)}
+                  className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow active:scale-[0.98] text-sm font-medium duration-200"
+                >
+                  <Plus className="w-4 h-4" /> 新增账号
+                </button>
+
+                {/* 批量删除按钮 - 始终显示，置灰逻辑 */}
+                <button
+                  onClick={handleBatchDeleteClick}
+                  disabled={selectedAccounts.size === 0}
+                  className={`px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm ${
+                    selectedAccounts.size === 0
+                      ? 'bg-surface text-muted/50 border border-base cursor-not-allowed opacity-50'
+                      : 'bg-surface text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 active:scale-[0.98]'
+                  }`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  删除 {selectedAccounts.size > 0 && `(${selectedAccounts.size})`}
+                </button>
+              </div>
+            </div>
+          )
+        }
+      </div>
+
+      {/* 自动解析按钮区域 */}
+      {
+        config?.game?.gameDirectory && (
+          <div className="flex flex-wrap gap-2 px-1">
+            {/* 角色分析按钮 */}
             <button
-              onClick={handleUseConfigDirectory}
+              onClick={handleAnalyzeRoles}
               className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
               disabled={isScanning}
             >
@@ -1046,96 +1184,28 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               ) : (
                 <>
                   <Loader2 className="w-4 h-4" />
-                  <span>自动解析</span>
+                  <span>角色分析</span>
                 </>
               )}
             </button>
-          )}
-          <button
-            onClick={() => setIsAddAccountModalOpen(true)}
-            className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow active:scale-[0.98] text-sm font-medium duration-200"
-          >
-            <Plus className="w-4 h-4" /> 新增账号
-          </button>
-
-          {/* 批量删除按钮 */}
-          {selectedAccounts.size > 0 && (
+            {/* 导入本地账号按钮 */}
             <button
-              onClick={handleBatchDeleteClick}
-              className="bg-surface text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
+              onClick={handleImportLocalAccounts}
+              className="bg-surface border border-base text-amber-600 hover:border-amber-500 hover:text-amber-700 hover:bg-amber-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
+              disabled={isScanning}
             >
-              <Trash2 className="w-4 h-4" />
-              删除 ({selectedAccounts.size})
-            </button>
-          )}
-        </div>
-      </div>
-
-
-      {/* 列表控制栏：全选与筛选 */}
-      {
-        safeAccounts.length > 0 && (
-          <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-4">
-              {filteredAccounts.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={isAllSelected}
-                    onChange={handleSelectAll}
-                    className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
-                  />
-                  <label className="text-sm font-medium text-main">
-                    全选 ({filteredAccounts.length} 个账户)
-                    {accountTypeFilter !== 'all' && filteredAccounts.length !== safeAccounts.length && (
-                      <span className="text-muted ml-1">
-                        / 共 {safeAccounts.length}
-                      </span>
-                    )}
-                  </label>
-                </div>
+              {isScanning ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>导入中...</span>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="w-4 h-4" />
+                  <span>导入本地账号</span>
+                </>
               )}
-              
-              {/* 账号类型筛选 */}
-              <div className="flex items-center gap-1 bg-base rounded-lg p-0.5 border border-base">
-                <button
-                  onClick={() => setAccountTypeFilter('all')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                    accountTypeFilter === 'all'
-                      ? 'bg-surface text-primary shadow-sm'
-                      : 'text-muted hover:text-main'
-                  }`}
-                >
-                  全部
-                </button>
-                <button
-                  onClick={() => setAccountTypeFilter('own')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                    accountTypeFilter === 'own'
-                      ? 'bg-surface text-primary shadow-sm'
-                      : 'text-muted hover:text-main'
-                  }`}
-                >
-                  本人
-                </button>
-                <button
-                  onClick={() => setAccountTypeFilter('client')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                    accountTypeFilter === 'client'
-                      ? 'bg-surface text-primary shadow-sm'
-                      : 'text-muted hover:text-main'
-                  }`}
-                >
-                  代清
-                </button>
-              </div>
-            </div>
-
-            {filteredAccounts.length > 0 && safeAccounts.length > 1 && (
-              <span className="text-xs text-muted">
-                拖动账号栏即可调整显示顺序
-              </span>
-            )}
+            </button>
           </div>
         )
       }
