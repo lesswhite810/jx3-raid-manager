@@ -981,6 +981,7 @@ pub fn auto_parse_game_directory(game_directory: String) -> Result<AutoParseResu
 
 /// 导入本地账号 - 只从 userdata 目录导入账号和角色基本信息，不包含门派/心法/装分
 #[tauri::command]
+#[allow(dead_code)]
 pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, String> {
     let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
     let runtime_path = PathBuf::from(&runtime_game_directory);
@@ -1113,6 +1114,7 @@ pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, 
 
 /// 角色分析 - 从茗伊数据库分析角色的门派、心法、装分并更新
 #[tauri::command]
+#[allow(dead_code)]
 pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> {
     let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
     let runtime_path = PathBuf::from(&runtime_game_directory);
@@ -1143,7 +1145,6 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
         }
     };
 
-    let mut new_accounts = 0;
     let updated_accounts = 0;
     let new_roles = 0;
     let mut updated_roles = 0;
@@ -1190,7 +1191,7 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
 
     Ok(AutoParseResult {
         success: true,
-        new_accounts,
+        new_accounts: 0,
         updated_accounts,
         new_roles,
         updated_roles,
