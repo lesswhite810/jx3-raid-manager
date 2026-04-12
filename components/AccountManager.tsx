@@ -1040,7 +1040,53 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <h2 className="text-xl font-bold text-main">账号管理</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-bold text-main">账号管理</h2>
+            {/* 角色分析按钮 */}
+            {
+              config?.game?.gameDirectory && (
+                <button
+                  onClick={handleAnalyzeRoles}
+                  className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
+                  disabled={isScanning}
+                >
+                  {isScanning ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>解析中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="w-4 h-4" />
+                      <span>角色分析</span>
+                    </>
+                  )}
+                </button>
+              )
+            }
+            {/* 导入本地账号按钮 */}
+            {
+              config?.game?.gameDirectory && (
+                <button
+                  onClick={handleImportLocalAccounts}
+                  className="bg-surface border border-base text-amber-600 hover:border-amber-500 hover:text-amber-700 hover:bg-amber-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
+                  disabled={isScanning}
+                >
+                  {isScanning ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>导入中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="w-4 h-4" />
+                      <span>导入本地账号</span>
+                    </>
+                  )}
+                </button>
+              )
+            }
+          </div>
           {/* 筛选结果提示 */}
           {(searchTerm || accountTypeFilter !== 'all') && filteredAccounts.length > 0 && (
             <div className="flex items-center text-sm text-muted">
@@ -1165,50 +1211,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           )
         }
       </div>
-
-      {/* 自动解析按钮区域 */}
-      {
-        config?.game?.gameDirectory && (
-          <div className="flex flex-wrap gap-2 px-1">
-            {/* 角色分析按钮 */}
-            <button
-              onClick={handleAnalyzeRoles}
-              className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
-              disabled={isScanning}
-            >
-              {isScanning ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>解析中...</span>
-                </>
-              ) : (
-                <>
-                  <Loader2 className="w-4 h-4" />
-                  <span>角色分析</span>
-                </>
-              )}
-            </button>
-            {/* 导入本地账号按钮 */}
-            <button
-              onClick={handleImportLocalAccounts}
-              className="bg-surface border border-base text-amber-600 hover:border-amber-500 hover:text-amber-700 hover:bg-amber-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
-              disabled={isScanning}
-            >
-              {isScanning ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>导入中...</span>
-                </>
-              ) : (
-                <>
-                  <Loader2 className="w-4 h-4" />
-                  <span>导入本地账号</span>
-                </>
-              )}
-            </button>
-          </div>
-        )
-      }
 
       {/* 解析错误弹窗 */}
       {
