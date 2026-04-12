@@ -1188,7 +1188,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 {/* 新增账号按钮 */}
                 <button
                   onClick={() => setIsAddAccountModalOpen(true)}
-                  className="bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow active:scale-[0.98] text-sm font-medium duration-200"
+                  className="bg-surface border border-base text-primary hover:border-primary hover:text-primary-hover hover:bg-primary/5 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
                 >
                   <Plus className="w-4 h-4" /> 新增账号
                 </button>
