@@ -1040,8 +1040,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-bold text-main">账号管理</h2>
+          <h2 className="text-xl font-bold text-main">账号管理</h2>
+          <div className="flex items-center gap-2">
             {/* 角色分析按钮 */}
             {
               config?.game?.gameDirectory && (
@@ -1087,21 +1087,21 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               )
             }
           </div>
-          {/* 筛选结果提示 */}
-          {(searchTerm || accountTypeFilter !== 'all') && filteredAccounts.length > 0 && (
-            <div className="flex items-center text-sm text-muted">
-              {filteredAccounts.length === safeAccounts.length && accountTypeFilter === 'all' && !searchTerm ? (
-                <>
-                  共 <span className="font-medium text-main mx-1">{safeAccounts.length}</span> 个账户
-                </>
-              ) : (
-                <>
-                  找到 <span className="font-medium text-emerald-600 mx-1">{filteredAccounts.length}</span> 个匹配
-                </>
-              )}
-            </div>
-          )}
         </div>
+        {/* 筛选结果提示 */}
+        {(searchTerm || accountTypeFilter !== 'all') && filteredAccounts.length > 0 && (
+          <div className="flex items-center text-sm text-muted px-1">
+            {filteredAccounts.length === safeAccounts.length && accountTypeFilter === 'all' && !searchTerm ? (
+              <>
+                共 <span className="font-medium text-main mx-1">{safeAccounts.length}</span> 个账户
+              </>
+            ) : (
+              <>
+                找到 <span className="font-medium text-emerald-600 mx-1">{filteredAccounts.length}</span> 个匹配
+              </>
+            )}
+          </div>
+        )}
 
         {/* 列表控制栏：全选与筛选、操作按钮 */}
         {
