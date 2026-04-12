@@ -55,6 +55,7 @@
         "title": "剑网三副本管家",
         "width": 1200,
         "height": 800,
+        "center": true,
         "decorations": true,
         "transparent": false,
         "useHttpsScheme": true
