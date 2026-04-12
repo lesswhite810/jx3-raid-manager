@@ -8,7 +8,7 @@ import {
 } from './accountUtils';
 
 describe('sortAccounts', () => {
-  it('优先按自定义排序字段排序，禁用状态不覆盖手动顺序', () => {
+  it('禁用账号排序在后面，同状态下按 sortOrder 排序', () => {
     const accounts = [
       {
         id: 'disabled-first',
@@ -35,9 +35,9 @@ describe('sortAccounts', () => {
     ] as Account[];
 
     expect(sortAccounts(accounts).map(account => account.id)).toEqual([
-      'disabled-first',
       'own-second',
       'client-third',
+      'disabled-first',
     ]);
   });
 });

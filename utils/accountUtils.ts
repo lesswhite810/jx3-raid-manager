@@ -68,20 +68,21 @@ export const sortAccounts = (accounts: Account[]): Account[] => {
     const originalOrderMap = new Map(accounts.map((account, index) => [account.id, index]));
 
     const sortedAccounts = [...accounts].sort((a, b) => {
-        const aSortOrder = getAccountSortOrder(a, originalOrderMap.get(a.id) ?? 0);
-        const bSortOrder = getAccountSortOrder(b, originalOrderMap.get(b.id) ?? 0);
-
-        if (aSortOrder !== bSortOrder) {
-            return aSortOrder - bSortOrder;
-        }
-
+        // 首先按 disabled 排序：启用账号在前，禁用账号在后
         const aDisabled = !!a.disabled;
         const bDisabled = !!b.disabled;
         if (aDisabled !== bDisabled) {
             return (aDisabled ? 1 : 0) - (bDisabled ? 1 : 0);
         }
 
-        // Secondary sort by accountName alphabetically to ensure stable ordering
+        // 然后按 sortOrder 排序（保持用户手动拖动的排序）
+        const aSortOrder = getAccountSortOrder(a, originalOrderMap.get(a.id) ?? 0);
+        const bSortOrder = getAccountSortOrder(b, originalOrderMap.get(b.id) ?? 0);
+        if (aSortOrder !== bSortOrder) {
+            return aSortOrder - bSortOrder;
+        }
+
+        // 最后按账号名称字母顺序排序，确保稳定排序
         return a.accountName.localeCompare(b.accountName, 'zh-CN');
     });
 
