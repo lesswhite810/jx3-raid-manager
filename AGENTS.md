@@ -157,6 +157,7 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - `workflow_dispatch` 重发已有版本时，会复用现有 tag 与 `release-notes/v<version>.md`，不会删除 tag 或用空模板覆盖发布说明。
 - 如果目标 GitHub Release 已存在，工作流会改为刷新正文、解除 draft / prerelease 状态并重新上传资产。
 - `workflow_dispatch` 手动重发时，会使用当前分支的代码和发布说明构建，不再从旧 tag checkout，避免重发时把已修复的流程和说明回退。
+- 如果 Release 中残留了历史错误命名的旧资产，工作流会在重发时先删除旧资产，再上传正确命名的新资产。
 
 ### 9.3 发布资产
 

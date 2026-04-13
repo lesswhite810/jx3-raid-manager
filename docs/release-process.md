@@ -48,6 +48,7 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - 如果使用 `workflow_dispatch` 重发已存在版本，workflow 会复用现有 tag，不再删除重建
 - 如果目标 Release 已经存在，workflow 会强制刷新正文、解除 draft / prerelease 状态，并重新上传资产
 - `workflow_dispatch` 手动重发时，构建内容以当前分支/当前提交为准，不再强依赖旧 tag checkout，避免修好的发布说明和流程脚本被旧 tag 覆盖
+- 如果历史 Release 中残留了错误命名的旧资产（例如旧版便携包名），workflow 会在重发时先清理再上传新资产
 
 ## Release Notes 存放位置
 

@@ -257,6 +257,12 @@ jobs:
               --verify-tag
           fi
 
+          stale_portable_asset="JX3RaidManager_${version}.exe"
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fx "$stale_portable_asset" >/dev/null; then
+            echo "Removing stale asset: $stale_portable_asset"
+            gh release delete-asset "$tag" "$stale_portable_asset" --yes
+          fi
+
           # 收集资源文件
           shopt -s globstar nullglob
           declare -a assets=()
