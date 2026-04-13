@@ -93,13 +93,7 @@ jobs:
           elif [[ -f "$notes_file" ]]; then
             echo "Release notes already exist, keep current file: $notes_file"
           else
-            cat <<EOF > "$notes_file"
-# 剑网三副本管家 v${version}
-
-## 新增需求
-
-## 修复 bug
-EOF
+            printf '# 剑网三副本管家 v%s\n\n## 新增需求\n\n## 修复 bug\n' "$version" > "$notes_file"
           fi
           echo "Created: $notes_file"
           cat "$notes_file"
@@ -450,10 +444,12 @@ EOF
           git push origin HEAD:master
 
   success:
-    needs: release
+    needs:
+      - prepare
+      - release
     runs-on: ubuntu-latest
     steps:
       - name: Success notification
         run: |
-          echo "=== Release v${{ needs.release.outputs.version || needs.prepare.outputs.version }} Completed ==="
+          echo "=== Release v${{ needs.prepare.outputs.version }} Completed ==="
           echo "GitHub: https://github.com/lesswhite810/jx3-raid-manager/releases/tag/v${{ needs.prepare.outputs.version }}"
