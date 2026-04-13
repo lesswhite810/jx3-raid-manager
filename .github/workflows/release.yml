@@ -1,20 +1,132 @@
-﻿name: Release
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如: 2.1.30)'
+        required: true
+        type: string
+      release_notes:
+        description: '更新内容 (多行，用 | 分隔)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Using version: $version"
+
+      - name: Validate version format
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format: $version (expected: x.y.z)" >&2
+            exit 1
+          fi
+
+      - name: Validate release notes exist
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          notes_file="release-notes/v${version}.md"
+          if [[ ! -f "$notes_file" ]]; then
+            echo "Missing release notes: $notes_file" >&2
+            exit 1
+          fi
+          echo "Release notes found: $notes_file"
+
+      - name: Create release notes (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          notes_file="release-notes/v${version}.md"
+          mkdir -p release-notes
+
+          if [[ -n "${{ github.event.inputs.release_notes }}" ]]; then
+            echo "# v${version}" > "$notes_file"
+            echo "" >> "$notes_file"
+            echo "${{ github.event.inputs.release_notes }}" | sed 's/|/\n/g' >> "$notes_file"
+          else
+            echo "# v${version}" > "$notes_file"
+            echo "" >> "$notes_file"
+            echo "- 暂无更新内容" >> "$notes_file"
+          fi
+          echo "Created: $notes_file"
+          cat "$notes_file"
+
+      - name: Commit release notes if needed
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          notes_file="release-notes/v${version}.md"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$notes_file"
+          git commit -m "docs: 添加 v${version} 更新日志"
+          git push origin master
+
+      - name: Create tag if needed
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="v${version}"
+
+          # 检查 tag 是否存在
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists, deleting..."
+            git push origin ":refs/tags/$tag"
+          fi
+
+          # 创建带注释的 tag
+          notes_file="release-notes/v${version}.md"
+          notes_content=$(cat "$notes_file" 2>/dev/null || echo "v${version}")
+          git tag -a "$tag" -m "$notes_content"
+          git push origin "$tag"
+          echo "Created and pushed tag: $tag"
+
   release:
+    needs: prepare
     runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          ref: v${{ needs.prepare.outputs.version }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -28,28 +140,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          tag_version="${GITHUB_REF_NAME#v}"
+          release_version="${{ needs.prepare.outputs.version }}"
           package_version="$(node -p "require('./package.json').version")"
           tauri_version="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
           cargo_version="$(node -e "const fs=require('fs'); const text=fs.readFileSync('src-tauri/Cargo.toml','utf8'); const match=text.match(/^version\\s*=\\s*\"([^\"]+)\"/m); if(!match){throw new Error('Unable to read version from src-tauri/Cargo.toml')} process.stdout.write(match[1])")"
 
-          echo "Release version map:"
-          echo "  tag: ${tag_version}"
-          echo "  package.json: ${package_version}"
-          echo "  tauri.conf.json: ${tauri_version}"
-          echo "  Cargo.toml: ${cargo_version}"
+          echo "Release version: ${release_version}"
+          echo "package.json: ${package_version}"
+          echo "tauri.conf.json: ${tauri_version}"
+          echo "Cargo.toml: ${cargo_version}"
 
-          if [[ "${tag_version}" != "${package_version}" || "${tag_version}" != "${tauri_version}" || "${tag_version}" != "${cargo_version}" ]]; then
-            echo "Release version mismatch. Sync the tag, package.json, src-tauri/tauri.conf.json, and src-tauri/Cargo.toml before publishing." >&2
+          if [[ "${release_version}" != "${package_version}" || "${release_version}" != "${tauri_version}" || "${release_version}" != "${cargo_version}" ]]; then
+            echo "ERROR: Version mismatch detected!" >&2
             exit 1
           fi
 
       - name: Install dependencies
-        working-directory: .
         run: npm ci
 
       - name: Generate updater bundle config
-        working-directory: .
         run: node scripts/build-tauri-release-config.mjs
         env:
           TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
@@ -58,9 +167,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" || -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" || -z "${TAURI_PUBLIC_KEY:-}" ]]; then
-            echo "Missing TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, or TAURI_PUBLIC_KEY repository secret." >&2
+            echo "Missing signing keys" >&2
             exit 1
           fi
         env:
@@ -74,7 +182,6 @@ jobs:
           target: x86_64-pc-windows-msvc
 
       - name: Build Tauri App
-        working-directory: .
         run: npm run tauri build -- --config tmp/tauri.release.conf.json
         env:
           TAURI_BUNDLE: '1'
@@ -83,16 +190,17 @@ jobs:
           TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
 
       - name: Rename exe file
+        shell: bash
         run: |
-          mv src-tauri/target/release/JX3RaidManager.exe src-tauri/target/release/JX3RaidManager_${{ github.ref_name }}.exe || true
+          version="${{ needs.prepare.outputs.version }}"
+          mv src-tauri/target/release/JX3RaidManager.exe "src-tauri/target/release/JX3RaidManager_${version}.exe" 2>/dev/null || true
+          ls -la src-tauri/target/release/*.exe 2>/dev/null || ls -la src-tauri/target/release/
 
       - name: Build updater manifest
-        working-directory: .
-        run: node scripts/build-updater-manifest.mjs ${{ github.ref_name }}
+        run: node scripts/build-updater-manifest.mjs v${{ needs.prepare.outputs.version }}
 
       - name: Build gitee updater manifest
-        working-directory: .
-        run: node scripts/build-updater-manifest.mjs ${{ github.ref_name }} gitee tmp/gitee-updater/latest.json
+        run: node scripts/build-updater-manifest.mjs v${{ needs.prepare.outputs.version }} gitee tmp/gitee-updater/latest.json
         env:
           GITEE_REPO: ${{ secrets.GITEE_REPO }}
           GITEE_ASSETS_BRANCH: ${{ secrets.GITEE_ASSETS_BRANCH }}
@@ -102,49 +210,66 @@ jobs:
         run: |
           set -euo pipefail
 
-          notes_file="release-notes/${GITHUB_REF_NAME}.md"
-          if [[ ! -f "${notes_file}" ]]; then
-            echo "Missing release notes file: ${notes_file}" >&2
-            exit 1
+          version="${{ needs.prepare.outputs.version }}"
+          tag="v${version}"
+          notes_file="release-notes/${tag}.md"
+
+          echo "=== Release Info ==="
+          echo "Tag: $tag"
+          echo "Notes: $notes_file"
+          echo ""
+
+          # 检查 release 是否已存在
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists"
+          else
+            echo "Creating release $tag..."
+            gh release create "$tag" \
+              --title "$tag" \
+              --notes-file "$notes_file"
           fi
 
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" \
-              --notes-file "${notes_file}"
-          fi
-
+          # 收集资源文件
           shopt -s globstar nullglob
-          assets=(
-            "src-tauri/target/release/JX3RaidManager_${GITHUB_REF_NAME}.exe"
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/**/*.sig
-            src-tauri/target/release/bundle/latest*.json
-          )
+          declare -a assets=()
+
+          exe_file="src-tauri/target/release/JX3RaidManager_${version}.exe"
+          if [[ -f "$exe_file" ]]; then
+            assets+=("$exe_file")
+          fi
+
+          for f in src-tauri/target/release/bundle/nsis/*.exe; do
+            if [[ -f "$f" ]]; then
+              assets+=("$f")
+            fi
+          done
+
+          for f in src-tauri/target/release/bundle/**/*.sig; do
+            if [[ -f "$f" ]]; then
+              assets+=("$f")
+            fi
+          done
+
+          for f in src-tauri/target/release/bundle/latest*.json; do
+            if [[ -f "$f" ]]; then
+              assets+=("$f")
+            fi
+          done
+
+          echo "Assets to upload: ${#assets[@]}"
+          for asset in "${assets[@]}"; do
+            echo "  - $asset"
+          done
 
           if [[ ${#assets[@]} -eq 0 ]]; then
-            echo "No release assets found for ${GITHUB_REF_NAME}" >&2
+            echo "ERROR: No assets found!" >&2
             exit 1
           fi
 
-          gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release upload "$tag" "${assets[@]}" --clobber
 
       - name: Update release notes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          notes_file="release-notes/${GITHUB_REF_NAME}.md"
-          if [[ ! -f "${notes_file}" ]]; then
-            echo "Missing release notes file: ${notes_file}" >&2
-            exit 1
-          fi
-
-          npm run release:notes -- "${GITHUB_REF_NAME}" "${notes_file}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: false # 已在上一步创建 release 时包含
 
       - name: Mirror code to Gitee
         shell: bash
@@ -152,19 +277,36 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GITEE_PUSH_URL:-}" ]]; then
-            echo "Missing GITEE_PUSH_URL repository secret." >&2
-            exit 1
+            echo "Missing GITEE_PUSH_URL, skipping Gitee mirror"
+            exit 0
           fi
+
+          echo "=== Mirroring to Gitee ==="
 
           git remote remove gitee 2>/dev/null || true
           git remote add gitee "${GITEE_PUSH_URL}"
-          git fetch origin master --tags
-          # 删除远程 tag（如果存在），避免 clobber 错误
-          git push gitee :refs/tags/${GITHUB_REF_NAME} 2>/dev/null || true
-          git push gitee refs/remotes/origin/master:refs/heads/master --force
-          git push gitee --tags --force
-        env:
-          GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}
+
+          # 重试机制：最多3次
+          for i in 1 2 3; do
+            echo "Attempt $i: Pushing to Gitee..."
+            if git push gitee refs/remotes/origin/master:refs/heads/master --force 2>&1; then
+              echo "Master branch synced successfully"
+              break
+            fi
+            echo "Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+
+          # 重试推送 tags
+          for i in 1 2 3; do
+            echo "Attempt $i: Pushing tags to Gitee..."
+            if git push gitee --tags --force 2>&1; then
+              echo "Tags synced successfully"
+              break
+            fi
+            echo "Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
 
       - name: Sync updater assets to Gitee
         shell: bash
@@ -172,32 +314,57 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GITEE_PUSH_URL:-}" ]]; then
-            echo "Missing GITEE_PUSH_URL repository secret." >&2
-            exit 1
+            echo "Missing GITEE_PUSH_URL, skipping Gitee asset sync"
+            exit 0
           fi
 
+          version="${{ needs.prepare.outputs.version }}"
           branch="${GITEE_ASSETS_BRANCH:-updater-assets}"
-          rm -rf tmp/gitee-sync
-          git clone --depth=1 --branch "$branch" "${GITEE_PUSH_URL}" tmp/gitee-sync 2>/dev/null || (
-            git clone --depth=1 "${GITEE_PUSH_URL}" tmp/gitee-sync
-            cd tmp/gitee-sync
-            git checkout --orphan "$branch"
-            git rm -rf . >/dev/null 2>&1 || true
-            cd ..
-          )
+
+          echo "=== Syncing updater assets to Gitee ==="
+
+          # 重试机制：最多3次
+          for i in 1 2 3; do
+            echo "Attempt $i: Cloning Gitee repo..."
+            rm -rf tmp/gitee-sync
+            if git clone --depth=1 --branch "$branch" "${GITEE_PUSH_URL}" tmp/gitee-sync 2>/dev/null; then
+              break
+            fi
+            echo "Clone failed, retrying in 5s..."
+            sleep 5
+          done
 
           mkdir -p tmp/gitee-sync/updater
-          cp tmp/gitee-updater/latest.json "tmp/gitee-sync/updater/latest.json"
-          cp "src-tauri/target/release/bundle/nsis/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe" "tmp/gitee-sync/updater/"
-          cp "src-tauri/target/release/bundle/nsis/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe.sig" "tmp/gitee-sync/updater/"
+
+          # 更新文件
+          cp tmp/gitee-updater/latest.json "tmp/gitee-sync/updater/"
+
+          setup_exe="src-tauri/target/release/bundle/nsis/JX3RaidManager_${version}_x64-setup.exe"
+          if [[ -f "$setup_exe" ]]; then
+            cp "$setup_exe" "tmp/gitee-sync/updater/"
+            cp "${setup_exe}.sig" "tmp/gitee-sync/updater/" 2>/dev/null || true
+          fi
 
           cd tmp/gitee-sync
           git checkout "$branch" 2>/dev/null || git checkout -b "$branch"
-          git add updater/latest.json "updater/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe" "updater/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe.sig"
+          git add updater/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "release: 同步 ${GITHUB_REF_NAME} 更新资产" || echo "No updater asset changes to commit"
-          git push origin "$branch"
+          git commit -m "release: 同步 v${version} 更新资产" || echo "No changes to commit"
+
+          # 重试推送
+          for j in 1 2 3; do
+            echo "Attempt $j: Pushing assets..."
+            if git push origin "$branch" 2>&1; then
+              echo "Assets synced successfully"
+              exit 0
+            fi
+            echo "Push failed, retrying in 5s..."
+            sleep 5
+          done
+
+          echo "ERROR: Failed to sync assets after 3 attempts" >&2
+          exit 1
         env:
           GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}
           GITEE_ASSETS_BRANCH: ${{ secrets.GITEE_ASSETS_BRANCH }}
@@ -205,19 +372,21 @@ jobs:
       - name: Update asset labels
         shell: bash
         run: |
-          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          tag="v${version}"
 
-          gh release upload "${GITHUB_REF_NAME}" \
-            "src-tauri/target/release/bundle/nsis/JX3RaidManager_${GITHUB_REF_NAME#v}_x64-setup.exe.sig#自动更新签名文件" \
-            --clobber
+          gh release upload "$tag" \
+            "src-tauri/target/release/bundle/nsis/JX3RaidManager_${version}_x64-setup.exe.sig#自动更新签名文件" \
+            --clobber 2>/dev/null || true
 
-          gh release upload "${GITHUB_REF_NAME}" \
+          gh release upload "$tag" \
             "src-tauri/target/release/bundle/latest.json#自动更新元数据" \
-            --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            --clobber 2>/dev/null || true
+
+          echo "Asset labels updated"
 
       - name: Prepare next patch version
+        if: github.event_name != 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -226,10 +395,10 @@ jobs:
           git checkout -B master origin/master
 
           current_master_version="$(node -p "require('./package.json').version")"
-          release_version="${GITHUB_REF_NAME#v}"
+          release_version="${{ needs.prepare.outputs.version }}"
 
           if [[ "${current_master_version}" != "${release_version}" ]]; then
-            echo "master is already on ${current_master_version}; skip automatic version bump for ${release_version}"
+            echo "master is on ${current_master_version}, release was ${release_version}; skip version bump"
             exit 0
           fi
 
@@ -248,3 +417,12 @@ jobs:
 
           git commit -m "chore: 版本推进到 ${next_version}"
           git push origin HEAD:master
+
+  success:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Success notification
+        run: |
+          echo "=== Release v${{ needs.release.outputs.version || needs.prepare.outputs.version }} Completed ==="
+          echo "GitHub: https://github.com/lesswhite810/jx3-raid-manager/releases/tag/v${{ needs.prepare.outputs.version }}"
