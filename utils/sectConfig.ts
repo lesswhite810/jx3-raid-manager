@@ -70,15 +70,15 @@ export function getSectColorClasses(sectName: string): {
 }
 
 /**
- * 获取职业图标路径（优先本地路径）
+ * 获取职业图标路径（优先本地路径，不存在时回退到 CDN）
  */
 export function getSectIconPath(sectName: string): string | undefined {
   const iconId = SECT_ICON_IDS[sectName];
   if (iconId === undefined || iconId === 0) {
     return undefined;
   }
-  // 优先使用本地路径
-  return `/sect-icons/icon_${iconId}.png`;
+  // 本地图标不存在时使用 CDN
+  return `https://img.jx3box.com/image/xf/${iconId}.png`;
 }
 
 /**
