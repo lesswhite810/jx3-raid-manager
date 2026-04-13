@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      checkout_ref: ${{ steps.checkout_ref.outputs.ref }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -44,6 +45,17 @@ jobs:
           fi
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "Using version: $version"
+
+      - name: Determine checkout ref
+        id: checkout_ref
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "ref=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+          else
+            echo "ref=v${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
+          fi
+          echo "Using checkout ref: $(cat "$GITHUB_OUTPUT" | tail -n 1)"
 
       - name: Validate version format
         shell: bash
@@ -140,7 +152,7 @@ EOF
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          ref: v${{ needs.prepare.outputs.version }}
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
       - name: Setup Node.js

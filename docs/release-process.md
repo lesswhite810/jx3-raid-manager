@@ -47,6 +47,7 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - 安装目录选择页追加应用名称依赖 Tauri 默认 NSIS 模板行为，如需调整，先验证生成的 `target/release/nsis/x64/installer.nsi`
 - 如果使用 `workflow_dispatch` 重发已存在版本，workflow 会复用现有 tag，不再删除重建
 - 如果目标 Release 已经存在，workflow 会强制刷新正文、解除 draft / prerelease 状态，并重新上传资产
+- `workflow_dispatch` 手动重发时，构建内容以当前分支/当前提交为准，不再强依赖旧 tag checkout，避免修好的发布说明和流程脚本被旧 tag 覆盖
 
 ## Release Notes 存放位置
 

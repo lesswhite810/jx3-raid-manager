@@ -156,6 +156,7 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - GitHub release 工作流成功后，会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板。
 - `workflow_dispatch` 重发已有版本时，会复用现有 tag 与 `release-notes/v<version>.md`，不会删除 tag 或用空模板覆盖发布说明。
 - 如果目标 GitHub Release 已存在，工作流会改为刷新正文、解除 draft / prerelease 状态并重新上传资产。
+- `workflow_dispatch` 手动重发时，会使用当前分支的代码和发布说明构建，不再从旧 tag checkout，避免重发时把已修复的流程和说明回退。
 
 ### 9.3 发布资产
 
