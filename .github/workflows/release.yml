@@ -95,9 +95,9 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$notes_file"
-          git commit -m "docs: 添加 v${version} 更新日志"
-          git push origin master
+          git add "$notes_file" || true
+          git commit -m "docs: 添加 v${version} 更新日志" || echo "Nothing to commit"
+          git push origin master || echo "Push skipped"
 
       - name: Create tag if needed
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
