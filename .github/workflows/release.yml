@@ -100,7 +100,7 @@ jobs:
           git push origin master || echo "Push skipped"
 
       - name: Create tag if needed
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           version="${{ steps.version.outputs.version }}"
@@ -109,7 +109,7 @@ jobs:
           # 检查 tag 是否存在
           if git rev-parse "$tag" >/dev/null 2>&1; then
             echo "Tag $tag already exists, deleting..."
-            git push origin ":refs/tags/$tag"
+            git push origin ":refs/tags/$tag" 2>/dev/null || true
           fi
 
           # 创建带注释的 tag
