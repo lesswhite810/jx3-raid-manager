@@ -212,9 +212,9 @@
       "name": "丐帮",
       "kungfus": [
         {
-          "id": 10368,
+          "id": 10268,
           "name": "笑尘诀",
-          "iconId": 10368,
+          "iconId": 10268,
           "color": "bg-amber-600 dark:bg-amber-900/50",
           "textColor": "text-amber-50",
           "borderColor": "border-amber-500 dark:border-amber-700",
