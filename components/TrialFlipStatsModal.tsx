@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { TrialFlipStatsSummary } from '../types';
 
@@ -21,9 +22,15 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
-      <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-base bg-surface shadow-xl">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl overflow-hidden rounded-2xl border border-base bg-surface shadow-xl animate-in fade-in zoom-in-95 duration-200"
+        onClick={e => e.stopPropagation()}
+      >
         <div className="flex items-start justify-between gap-4 border-b border-base px-6 py-5">
           <div>
             <h3 className="text-xl font-semibold text-main">翻牌统计</h3>
@@ -41,7 +48,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
           </button>
         </div>
 
-        <div className="space-y-5 px-6 py-5">
+        <div className="space-y-5 px-6 py-5 max-h-[80vh] overflow-y-auto">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-base bg-base/40 px-4 py-3">
               <div className="text-xs text-muted">总记录数</div>
@@ -138,6 +145,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
