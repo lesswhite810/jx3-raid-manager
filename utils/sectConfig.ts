@@ -77,8 +77,8 @@ export function getSectIconPath(sectName: string): string | undefined {
   if (iconId === undefined || iconId === 0) {
     return undefined;
   }
-  // 本地图标不存在时使用 CDN
-  return `https://img.jx3box.com/image/xf/${iconId}.png`;
+  // 优先使用本地路径
+  return `/sect-icons/icon_${iconId}.png`;
 }
 
 /**
