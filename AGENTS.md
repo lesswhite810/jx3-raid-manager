@@ -154,6 +154,8 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - Release Notes 只写两类信息：`新增需求`、`修复 bug`。没有对应内容的栏目不要写。
 - 错误发版必须明确告知用户“不要下载使用，请改用哪个版本”。
 - GitHub release 工作流成功后，会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板。
+- `workflow_dispatch` 重发已有版本时，会复用现有 tag 与 `release-notes/v<version>.md`，不会删除 tag 或用空模板覆盖发布说明。
+- 如果目标 GitHub Release 已存在，工作流会改为刷新正文、解除 draft / prerelease 状态并重新上传资产。
 
 ### 9.3 发布资产
 

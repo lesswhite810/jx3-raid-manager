@@ -45,6 +45,8 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - Release 页面中，`latest.json` 标签应显示为“自动更新元数据”，`.sig` 标签应显示为“自动更新签名文件”
 - Windows 安装器定制统一维护在 `src-tauri/nsis/hooks.nsh` 与 `src-tauri/nsis/SimpChinese.nsh`，不要再单独维护整份 `installer.nsi` 模板
 - 安装目录选择页追加应用名称依赖 Tauri 默认 NSIS 模板行为，如需调整，先验证生成的 `target/release/nsis/x64/installer.nsi`
+- 如果使用 `workflow_dispatch` 重发已存在版本，workflow 会复用现有 tag，不再删除重建
+- 如果目标 Release 已经存在，workflow 会强制刷新正文、解除 draft / prerelease 状态，并重新上传资产
 
 ## Release Notes 存放位置
 
@@ -109,12 +111,14 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 5. GitHub Actions 发版时会通过 `TAURI_BUNDLE=1 npm run tauri build -- --config ...` 生成安装包与 updater 产物，不会使用本地快速构建配置。
 6. 在 `release-notes/` 新增或更新对应版本说明。
 7. GitHub Actions 发版时会使用 `gh release create` / `gh release upload` 创建 Release 并上传资产，不再依赖 `softprops/action-gh-release` 这类 Node 20 action。
-8. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
-9. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
-10. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
-11. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
-12. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
-13. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
+8. `workflow_dispatch` 模式下，如果仓库里已经存在对应 `release-notes/v<version>.md`，workflow 会直接复用，不会再用空模板覆盖；只有显式传入 `release_notes` 输入时才会重写。
+9. GitHub Actions 发版时会自动把 `release-notes/<tag>.md` 同步到 GitHub Release 正文；如需补写或重写，再手动执行 `npm run release:notes -- <tag> <notes-file>`。
+10. 如果更新了 updater 签名密钥，同步更新仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
+11. 如果使用 Gitee 回退源，确认仓库 Secrets 已配置 `GITEE_PUSH_URL`，并确认 Gitee 仓库存在 `master` 代码分支和 `updater-assets` 资产分支。
+12. 确认 `scripts/build-updater-manifest.mjs` 生成的 GitHub 与 Gitee 两份 `latest.json` 都指向正确资产地址。
+13. 便携版发布资产命名保持为 `JX3RaidManager_v<version>.exe`，安装版保持为 `JX3RaidManager_<version>_x64-setup.exe`。
+14. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
+15. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
 
 ---
 

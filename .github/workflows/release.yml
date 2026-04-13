@@ -78,10 +78,16 @@ jobs:
             echo "# v${version}" > "$notes_file"
             echo "" >> "$notes_file"
             echo "${{ github.event.inputs.release_notes }}" | sed 's/|/\n/g' >> "$notes_file"
+          elif [[ -f "$notes_file" ]]; then
+            echo "Release notes already exist, keep current file: $notes_file"
           else
-            echo "# v${version}" > "$notes_file"
-            echo "" >> "$notes_file"
-            echo "- 暂无更新内容" >> "$notes_file"
+            cat <<EOF > "$notes_file"
+# 剑网三副本管家 v${version}
+
+## 新增需求
+
+## 修复 bug
+EOF
           fi
           echo "Created: $notes_file"
           cat "$notes_file"
@@ -103,17 +109,25 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
+          set -euo pipefail
+
           version="${{ steps.version.outputs.version }}"
           tag="v${version}"
+          notes_file="release-notes/v${version}.md"
 
-          # 检查 tag 是否存在
+          git fetch origin --tags
+
           if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "Tag $tag already exists, deleting..."
-            git push origin ":refs/tags/$tag" 2>/dev/null || true
+            echo "Tag $tag already exists locally, reusing it"
+            exit 0
           fi
 
-          # 创建带注释的 tag
-          notes_file="release-notes/v${version}.md"
+          if git ls-remote --tags origin "refs/tags/$tag" | grep -q "$tag"; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            echo "Fetched existing remote tag: $tag"
+            exit 0
+          fi
+
           notes_content=$(cat "$notes_file" 2>/dev/null || echo "v${version}")
           git tag -a "$tag" -m "$notes_content"
           git push origin "$tag"
@@ -193,7 +207,7 @@ jobs:
         shell: bash
         run: |
           version="${{ needs.prepare.outputs.version }}"
-          mv src-tauri/target/release/JX3RaidManager.exe "src-tauri/target/release/JX3RaidManager_${version}.exe" 2>/dev/null || true
+          mv src-tauri/target/release/JX3RaidManager.exe "src-tauri/target/release/JX3RaidManager_v${version}.exe" 2>/dev/null || true
           ls -la src-tauri/target/release/*.exe 2>/dev/null || ls -la src-tauri/target/release/
 
       - name: Build updater manifest
@@ -213,27 +227,35 @@ jobs:
           version="${{ needs.prepare.outputs.version }}"
           tag="v${version}"
           notes_file="release-notes/${tag}.md"
+          release_title="${tag}"
 
           echo "=== Release Info ==="
           echo "Tag: $tag"
           echo "Notes: $notes_file"
           echo ""
 
-          # 检查 release 是否已存在
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists"
+            echo "Release $tag already exists, updating it..."
+            gh release edit "$tag" \
+              --title "$release_title" \
+              --notes-file "$notes_file" \
+              --draft=false \
+              --prerelease=false \
+              --latest
           else
             echo "Creating release $tag..."
             gh release create "$tag" \
-              --title "$tag" \
-              --notes-file "$notes_file"
+              --title "$release_title" \
+              --notes-file "$notes_file" \
+              --latest \
+              --verify-tag
           fi
 
           # 收集资源文件
           shopt -s globstar nullglob
           declare -a assets=()
 
-          exe_file="src-tauri/target/release/JX3RaidManager_${version}.exe"
+          exe_file="src-tauri/target/release/JX3RaidManager_v${version}.exe"
           if [[ -f "$exe_file" ]]; then
             assets+=("$exe_file")
           fi
