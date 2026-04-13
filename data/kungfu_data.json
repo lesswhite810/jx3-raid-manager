@@ -195,15 +195,6 @@
           "textColor": "text-yellow-700 dark:text-yellow-400",
           "borderColor": "border-yellow-200 dark:border-yellow-800",
           "shortName": "藏剑"
-        },
-        {
-          "id": 10145,
-          "name": "山居剑意",
-          "iconId": 10145,
-          "color": "bg-yellow-100 dark:bg-yellow-900/30",
-          "textColor": "text-yellow-700 dark:text-yellow-400",
-          "borderColor": "border-yellow-200 dark:border-yellow-800",
-          "shortName": "藏剑"
         }
       ]
     },

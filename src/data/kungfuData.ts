@@ -197,15 +197,6 @@ export const FORCES_DATA: Force[] = [
         "textColor": "text-yellow-700 dark:text-yellow-400",
         "borderColor": "border-yellow-200 dark:border-yellow-800",
         "shortName": "藏剑"
-      },
-      {
-        "id": 10145,
-        "name": "山居剑意",
-        "iconId": 10145,
-        "color": "bg-yellow-100 dark:bg-yellow-900/30",
-        "textColor": "text-yellow-700 dark:text-yellow-400",
-        "borderColor": "border-yellow-200 dark:border-yellow-800",
-        "shortName": "藏剑"
       }
     ]
   },
@@ -444,7 +435,6 @@ export const SECT_ICON_IDS: Record<string, number> = {
   "惊羽诀": 10224,
   "天罗诡道": 10225,
   "问水诀": 10144,
-  "山居剑意": 10145,
   "笑尘诀": 10268,
   "焚影圣诀": 10242,
   "明尊琉璃体": 10243,
@@ -555,12 +545,6 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     "shortName": "田螺"
   },
   "问水诀": {
-    "color": "bg-yellow-100 dark:bg-yellow-900/30",
-    "textColor": "text-yellow-700 dark:text-yellow-400",
-    "borderColor": "border-yellow-200 dark:border-yellow-800",
-    "shortName": "藏剑"
-  },
-  "山居剑意": {
     "color": "bg-yellow-100 dark:bg-yellow-900/30",
     "textColor": "text-yellow-700 dark:text-yellow-400",
     "borderColor": "border-yellow-200 dark:border-yellow-800",
@@ -681,7 +665,6 @@ export const MARTIAL_TO_SECT: Record<string, string> = {
   "惊羽诀": "唐门",
   "天罗诡道": "唐门",
   "问水诀": "藏剑",
-  "山居剑意": "藏剑",
   "笑尘诀": "丐帮",
   "焚影圣诀": "明教",
   "明尊琉璃体": "明教",
@@ -741,7 +724,6 @@ export const KUNGFU_MAP: Record<string, number> = {
   "7:惊羽诀": 10224,
   "7:天罗诡道": 10225,
   "8:问水诀": 10144,
-  "8:山居剑意": 10145,
   "9:笑尘诀": 10268,
   "10:焚影圣诀": 10242,
   "10:明尊琉璃体": 10243,
@@ -761,7 +743,7 @@ export const KUNGFU_MAP: Record<string, number> = {
 };
 
 // 所有心法名称列表（按门派排序）
-export const SECTS: string[] = ["幽罗引","洗髓经","易筋经","花间游","离经易道","傲血战意","铁牢律","紫霞功","太虚剑意","云裳心经","冰心诀","毒经","补天诀","惊羽诀","天罗诡道","问水诀","山居剑意","笑尘诀","焚影圣诀","明尊琉璃体","铁骨衣","分山劲","莫问","相知","北傲诀","凌海诀","隐龙诀","太玄经","灵素","无方","孤锋诀","山海心诀","周天功"];
+export const SECTS: string[] = ["幽罗引","洗髓经","易筋经","花间游","离经易道","傲血战意","铁牢律","紫霞功","太虚剑意","云裳心经","冰心诀","毒经","补天诀","惊羽诀","天罗诡道","问水诀","笑尘诀","焚影圣诀","明尊琉璃体","铁骨衣","分山劲","莫问","相知","北傲诀","凌海诀","隐龙诀","太玄经","灵素","无方","孤锋诀","山海心诀","周天功"];
 
 // 额外的心法（不属于任何门派的通用心法）
 // export const EXTRA_SECTS: string[] = [];
