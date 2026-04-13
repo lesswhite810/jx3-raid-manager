@@ -1787,14 +1787,20 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Edit Role Info Modal */}
       {
         editRoleModal && editRoleModal.open && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-md w-full mx-4">
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
+            onClick={handleCloseEditRoleModal}
+          >
+            <div
+              className="bg-surface p-6 rounded-xl shadow-xl border border-base max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200"
+              onClick={e => e.stopPropagation()}
+            >
               <h3 className="text-lg font-semibold text-main mb-4">修改角色信息</h3>
 
               <div className="space-y-4">
                 {/* 心法选择 */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <label className="block text-sm font-medium text-main mb-1">
                     心法 <span className="text-red-500">*</span>
                   </label>
                   <SectSelect
@@ -1812,13 +1818,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
                 {/* 装分输入 */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <label className="block text-sm font-medium text-main mb-1">
                     装分
                   </label>
                   <input
                     type="number"
                     min="0"
-                    className={`w-full px-3 py-2 border rounded-lg bg-surface text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-base'
+                    className={`w-full px-3 py-2 border rounded-lg bg-base text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-base'
                       }`}
                     value={editRoleModal.equipmentScore === undefined ? '' : editRoleModal.equipmentScore}
                     onChange={(e) => handleEquipmentScoreChange(e.target.value)}
@@ -1827,12 +1833,12 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   {roleFormErrors.equipmentScore ? (
                     <p className="text-xs text-red-500 mt-1">{roleFormErrors.equipmentScore}</p>
                   ) : (
-                    <p className="text-xs text-slate-500 mt-1">留空表示不设置装分</p>
+                    <p className="text-xs text-muted mt-1">留空表示不设置装分</p>
                   )}
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border">
                 <button
                   onClick={handleCloseEditRoleModal}
                   className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
