@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AccountType } from '../types';
 import { X, User, Key, FileText, AlertCircle } from 'lucide-react';
 
@@ -56,9 +57,9 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
 
     if (!isOpen) return null;
 
-    return (
+    return createPortal(
         <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden"
             onClick={onClose}
         >
             <div
@@ -189,6 +190,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                     </div>
                 </form>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
