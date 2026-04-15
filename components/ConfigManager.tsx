@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus } from '../types';
 import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor } from 'lucide-react';
-import { saveConfigToStorage, isValidGamePath } from '../utils/configUtils';
+import { isValidGamePath } from '../utils/configUtils';
 import { formatUpdatePubDate } from '../utils/updaterUtils';
 import { db } from '../services/db';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -103,10 +103,6 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const handleConfigChange = (section: keyof Config, key: string, value: unknown) => {
     const nextConfig = { ...config, [section]: { ...config[section], [key]: value } };
     setConfig(nextConfig);
-
-    if (section === 'game' && key === 'gameDirectory') {
-      saveConfigToStorage(nextConfig);
-    }
   };
 
   const getUpdateStatusText = () => {

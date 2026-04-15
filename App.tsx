@@ -30,13 +30,8 @@ import {
   UpdateStatus
 } from './types';
 import {
-  DEFAULT_CONFIG,
-  loadConfigFromStorage,
-  saveConfigToStorage,
-  validateConfig,
-  getConfigSummary
+  DEFAULT_CONFIG
 } from './utils/configUtils';
-import { saveRaidCache } from './utils/raidUtils';
 import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
@@ -278,7 +273,6 @@ function App() {
 
         // 自动为已知副本注入默认 BOSS 配置
         const raidsWithBosses = injectDefaultBossesForRaids(parsedRaids);
-        saveRaidCache(raidsWithBosses);
         setRaids(raidsWithBosses);
 
         if (loadedConfig) {
@@ -382,7 +376,6 @@ function App() {
     const saveData = async () => {
       try {
         await db.saveRaids(raids);
-        saveRaidCache(raids);
       } catch (error) {
         console.error('保存副本失败:', error);
       }
@@ -402,7 +395,6 @@ function App() {
     const saveData = async () => {
       try {
         await db.saveConfig(config);
-        saveConfigToStorage(config);
       } catch (error) {
         console.error('保存配置失败:', error);
       }
@@ -410,52 +402,9 @@ function App() {
     saveData();
   }, [config, isInitialized]);
 
-  useEffect(() => {
-    const handleStorageChange = async (e: StorageEvent) => {
-      if (e.key === 'jx3_config') {
-        try {
-          const newConfig = e.newValue ? JSON.parse(e.newValue) : DEFAULT_CONFIG;
-          const validation = await validateConfig(newConfig);
 
-          if (validation.isValid) {
-            setConfig(newConfig);
-          }
-        } catch (error) {
-          console.error('同步配置失败:', error);
-        }
-      }
-    };
 
-    window.addEventListener('storage', handleStorageChange);
 
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible') {
-        try {
-          const currentConfig = loadConfigFromStorage();
-          const validation = await validateConfig(currentConfig);
-
-          if (validation.isValid && JSON.stringify(currentConfig) !== JSON.stringify(config)) {
-            console.log('检测到配置变更，同步中...', getConfigSummary(currentConfig));
-            setConfig(currentConfig);
-          }
-        } catch (error) {
-          console.error('同步配置失败:', error);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
 
   useEffect(() => {
     const handleFindShortcut = (event: KeyboardEvent) => {

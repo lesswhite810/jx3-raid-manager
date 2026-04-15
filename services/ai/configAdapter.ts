@@ -226,62 +226,27 @@ export class AIConfigAdapter {
     console.log('开始迁移AI配置...');
     
     try {
-      // 备份当前配置
-      const backup = this.convertToLegacyConfig();
-      localStorage.setItem('ai_config_backup', JSON.stringify(backup));
-      
       // 应用新配置
       this.adaptLegacyConfig(legacyConfig);
-      
       console.log('AI配置迁移成功');
     } catch (error) {
       console.error('AI配置迁移失败:', error);
-      
-      // 恢复备份
-      try {
-        const backup = localStorage.getItem('ai_config_backup');
-        if (backup) {
-          const backupConfig = JSON.parse(backup);
-          this.adaptLegacyConfig(backupConfig);
-        }
-      } catch (restoreError) {
-        console.error('恢复配置备份失败:', restoreError);
-      }
     }
   }
 
   /**
-   * 恢复迁移前的配置
+   * 恢复迁移前的配置（已移除 localStorage 备份，此方法保留接口兼容）
    */
   public static restoreConfig(): boolean {
-    try {
-      const backup = localStorage.getItem('ai_config_backup');
-      if (!backup) {
-        console.warn('未找到配置备份');
-        return false;
-      }
-      
-      const backupConfig = JSON.parse(backup);
-      this.adaptLegacyConfig(backupConfig);
-      
-      console.log('配置恢复成功');
-      return true;
-    } catch (error) {
-      console.error('配置恢复失败:', error);
-      return false;
-    }
+    console.warn('restoreConfig 已废弃：不再使用 localStorage 备份');
+    return false;
   }
 
   /**
-   * 清理迁移备份
+   * 清理迁移备份（已移除 localStorage 备份，此方法保留接口兼容）
    */
   public static cleanupBackup(): void {
-    try {
-      localStorage.removeItem('ai_config_backup');
-      console.log('配置备份已清理');
-    } catch (error) {
-      console.error('清理配置备份失败:', error);
-    }
+    // 不再需要清理 localStorage 备份
   }
 
   /**

@@ -127,32 +127,7 @@ export const mergeConfig = (base: Config, override: Partial<Config>): Config => 
   };
 };
 
-export const saveConfigToStorage = (config: Config): void => {
-  try {
-    localStorage.setItem('jx3_config', JSON.stringify(config));
-  } catch (error) {
-    console.error('保存配置到localStorage失败:', error);
-  }
-};
 
-export const loadConfigFromStorage = (): Config => {
-  try {
-    const saved = localStorage.getItem('jx3_config');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      const validation = validateConfigSync(parsed);
-      if (!validation.isValid) {
-        console.error('配置格式无效，使用默认配置:', validation.error);
-        return DEFAULT_CONFIG;
-      }
-      return mergeConfig(DEFAULT_CONFIG, parsed);
-    }
-  } catch (error) {
-    console.error('从localStorage加载配置失败:', error);
-    return DEFAULT_CONFIG;
-  }
-  return DEFAULT_CONFIG;
-};
 
 export interface GamePathValidationResult {
   isValid: boolean;

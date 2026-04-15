@@ -6,9 +6,7 @@
 
 import { AIModel, AIRequestConfig, AIServiceConfig } from './types';
 import { modelManager } from './modelManager';
-
-// 配置存储键名
-const CONFIG_KEY = 'jx3_config'; // 与原有配置保持一致
+import { db } from '../db';
 
 // 从utils/configUtils.ts导入的验证函数
 const isValidApiKey = (apiKey: string): boolean => {
@@ -46,8 +44,28 @@ export class AIConfigManager {
   private listeners: Map<string, Set<Function>> = new Map(); // 事件监听器
 
   private constructor() {
-    this.config = this.loadConfigFromStorage();
+    this.config = this.getDefaultConfig();
     this.initializeEventListeners();
+    // 异步加载配置
+    this.loadConfigFromDb().then(config => {
+      this.config = config;
+      this.emitEvent('config-loaded', this.config);
+    }).catch(error => {
+      console.error('异步加载AI配置失败:', error);
+    });
+  }
+
+  private getDefaultConfig(): AIServiceConfig {
+    return {
+      enabled: false,
+      apiKey: '',
+      model: modelManager.getCurrentModel()?.id || 'glm-4.6',
+      temperature: 0.7,
+      proxyUrl: '',
+      proxyEnabled: false,
+      maxTokens: 2048,
+      timeout: 30000,
+    };
   }
 
   /**
@@ -128,26 +146,24 @@ export class AIConfigManager {
   }
 
   /**
-   * 从本地存储加载配置
+   * 从 SQLite 数据库加载配置
    * 兼容原有的配置格式
    */
-  private loadConfigFromStorage(): AIServiceConfig {
+  private async loadConfigFromDb(): Promise<AIServiceConfig> {
     try {
-      const savedConfig = localStorage.getItem(CONFIG_KEY);
+      const savedConfig = await db.getConfig();
       if (savedConfig) {
-        const parsedConfig = JSON.parse(savedConfig);
-        
         // 兼容原有配置格式
-        if (parsedConfig.ai) {
+        if (savedConfig.ai) {
           return {
-            enabled: parsedConfig.ai.enabled || false,
-            apiKey: parsedConfig.ai.apiKey || '',
-            model: parsedConfig.ai.model || 'glm-4.6',
-            temperature: parsedConfig.ai.temperature || 0.7,
-            proxyUrl: parsedConfig.ai.proxyUrl || '',
-            proxyEnabled: parsedConfig.ai.proxyEnabled || false,
-            maxTokens: parsedConfig.ai.maxTokens || 2048,
-            timeout: parsedConfig.ai.timeout || 30000,
+            enabled: savedConfig.ai.enabled || false,
+            apiKey: savedConfig.ai.apiKey || '',
+            model: savedConfig.ai.model || 'glm-4.6',
+            temperature: savedConfig.ai.temperature || 0.7,
+            proxyUrl: savedConfig.ai.proxyUrl || '',
+            proxyEnabled: savedConfig.ai.proxyEnabled || false,
+            maxTokens: savedConfig.ai.maxTokens || 2048,
+            timeout: savedConfig.ai.timeout || 30000,
           };
         }
       }
@@ -169,14 +185,14 @@ export class AIConfigManager {
   }
 
   /**
-   * 保存配置到本地存储
+   * 保存配置到 SQLite 数据库
    * 兼容原有的配置格式
    */
-  private saveConfigToStorage(): void {
+  private async saveConfigToDb(): Promise<void> {
     try {
       // 获取完整配置
-      const fullConfig = this.getFullConfig();
-      localStorage.setItem(CONFIG_KEY, JSON.stringify(fullConfig));
+      const fullConfig = await this.getFullConfig();
+      await db.saveConfig(fullConfig);
       this.emitEvent('config-saved', this.config);
     } catch (error) {
       console.error('保存AI配置失败:', error);
@@ -187,13 +203,13 @@ export class AIConfigManager {
   /**
    * 获取完整配置（兼容原有格式）
    */
-  private getFullConfig(): any {
+  private async getFullConfig(): Promise<any> {
     // 获取现有配置
     let existingConfig: any = {};
     try {
-      const saved = localStorage.getItem(CONFIG_KEY);
+      const saved = await db.getConfig();
       if (saved) {
-        existingConfig = JSON.parse(saved);
+        existingConfig = saved;
       }
     } catch (error) {
       console.error('读取现有配置失败:', error);
@@ -259,7 +275,7 @@ export class AIConfigManager {
       return;
     }
     
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('config-updated', updates);
   }
 
@@ -274,7 +290,7 @@ export class AIConfigManager {
     }
     
     this.config.apiKey = apiKey.trim();
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('api-key-updated', this.config.apiKey);
     return true;
   }
@@ -318,7 +334,7 @@ export class AIConfigManager {
     }
     
     modelManager.setCurrentModel(modelId);
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('model-changed', { oldModelId, newModelId: modelId, model });
     return true;
   }
@@ -349,7 +365,7 @@ export class AIConfigManager {
     
     const oldTemperature = this.config.temperature;
     this.config.temperature = temperature;
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('temperature-updated', { oldTemperature, newTemperature: temperature });
     return true;
   }
@@ -370,7 +386,7 @@ export class AIConfigManager {
     const oldMaxTokens = this.config.maxTokens;
     
     this.config.maxTokens = clampedMaxTokens;
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('max-tokens-updated', { oldMaxTokens, newMaxTokens: clampedMaxTokens });
     return true;
   }
@@ -394,7 +410,7 @@ export class AIConfigManager {
     
     const oldProxyUrl = this.config.proxyUrl;
     this.config.proxyUrl = proxyUrl ? proxyUrl.trim() : '';
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('proxy-url-updated', { oldProxyUrl, newProxyUrl: this.config.proxyUrl });
     return true;
   }
@@ -412,7 +428,7 @@ export class AIConfigManager {
   public setProxyEnabled(enabled: boolean): void {
     const oldProxyEnabled = this.config.proxyEnabled;
     this.config.proxyEnabled = enabled;
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('proxy-enabled-updated', { oldProxyEnabled, newProxyEnabled: enabled });
     
     // 检查当前模型是否需要代理
@@ -441,7 +457,7 @@ export class AIConfigManager {
     const oldTimeout = this.config.timeout;
     
     this.config.timeout = clampedTimeout;
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('timeout-updated', { oldTimeout, newTimeout: clampedTimeout });
     return true;
   }
@@ -534,7 +550,7 @@ export class AIConfigManager {
       timeout: 30000,
     };
     
-    this.saveConfigToStorage();
+    this.saveConfigToDb();
     this.emitEvent('config-reset', { oldConfig, newConfig: this.config });
   }
 
@@ -564,7 +580,7 @@ export class AIConfigManager {
       
       const oldConfig = { ...this.config };
       this.config = tempConfig;
-      this.saveConfigToStorage();
+      this.saveConfigToDb();
       this.emitEvent('config-imported', { oldConfig, newConfig: this.config });
       return true;
     } catch (error) {

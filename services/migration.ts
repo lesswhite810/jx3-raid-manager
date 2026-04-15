@@ -74,14 +74,15 @@ export async function checkLocalStorageData(): Promise<{
   };
 }
 
-/// 清除 localStorage 中的旧数据
+/// 清除 localStorage 中的旧数据（幂等操作，对不存在的 key 无副作用）
 function clearLocalStorageData(): void {
-  log('INFO', '清除 localStorage 中的旧数据...');
   try {
-    localStorage.removeItem(STORAGE_KEYS.ACCOUNTS);
-    localStorage.removeItem(STORAGE_KEYS.RECORDS);
-    localStorage.removeItem(STORAGE_KEYS.RAIDS);
-    localStorage.removeItem(STORAGE_KEYS.CONFIG);
+    const hasData = Object.values(STORAGE_KEYS).some(key => localStorage.getItem(key) !== null);
+    if (!hasData) return;
+    log('INFO', '清除 localStorage 中的旧数据...');
+    for (const key of Object.values(STORAGE_KEYS)) {
+      localStorage.removeItem(key);
+    }
     log('INFO', '  ✓ localStorage 数据已清除');
   } catch (error: any) {
     log('ERROR', `清除 localStorage 失败: ${error.message}`);
@@ -110,7 +111,8 @@ export async function migrateLocalStorageData(): Promise<{
     // 检查是否已完成迁移
     const alreadyMigrated = await db.isLocalStorageMigrated();
     if (alreadyMigrated) {
-      log('INFO', 'localStorage 迁移已完成，跳过');
+      log('INFO', 'localStorage 迁移已完成，清理残留数据');
+      clearLocalStorageData();
       return { success: true, message: '迁移已完成', migrated: result, details };
     }
 
