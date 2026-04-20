@@ -993,5 +993,54 @@
         "order": 2
       }
     ]
+  },
+  {
+    "name": "阆风悬城",
+    "level": 130,
+    "version": "丝路风雨",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": true
+      }
+    ],
+    "bosses": [
+      {
+        "id": "langfengxuancheng_1",
+        "name": "笑妆娘",
+        "order": 1
+      },
+      {
+        "id": "langfengxuancheng_2",
+        "name": "唐醉",
+        "order": 2
+      },
+      {
+        "id": "langfengxuancheng_3",
+        "name": "柳公子",
+        "order": 3
+      },
+      {
+        "id": "langfengxuancheng_4",
+        "name": "阿史",
+        "order": 4
+      },
+      {
+        "id": "langfengxuancheng_5",
+        "name": "唐怀仁",
+        "order": 5
+      }
+    ]
   }
 ]
