@@ -17,7 +17,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 8;
+pub const CURRENT_SCHEMA_VERSION: i32 = 9;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -680,10 +680,6 @@ pub fn init_db() -> Result<Connection, String> {
             "[INIT] 场景判定：已是最新版本 V{}，无需迁移",
             current_version
         );
-
-        // 仍然需要检查并添加新增的预制副本
-        migration::init_static_raids(&conn)?;
-        log::debug!("[INIT] 静态副本数据同步完成");
     }
 
     // 标记已初始化（此时互斥锁仍在持有中，确保竞态安全）

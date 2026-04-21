@@ -1,43 +1,29 @@
-use rusqlite::{params, Connection};
-use std::collections::HashSet;
+use crate::db::migration::error_to_string;
+use rusqlite::Connection;
 
-// 直接引用同级 migrations 模块
-use super::migrations;
+/// V9 迁移：
+/// - 初始化预制副本数据
+/// - 确保新增的预制副本（如阆风悬城）被添加到数据库
+pub fn migrate(conn: &Connection) -> Result<(), String> {
+    log::info!("========== V9 迁移开始 ==========");
+    log::info!("V9 迁移：初始化预制副本数据");
 
-/// 错误转换辅助函数
-pub fn error_to_string(e: rusqlite::Error) -> String {
-    format!("Database error: {}", e)
-}
+    init_static_raids(conn)?;
 
-/// 执行指定版本的迁移脚本
-///
-/// 注意：此函数只负责执行数据迁移，不检查表结构
-/// 调用方应该根据 schema_versions 表中的版本号来决定是否调用此函数
-pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
-    match version {
-        1 => migrations::v1::migrate(conn),
-        2 => migrations::v2::migrate(conn),
-        3 => migrations::v3::migrate(conn),
-        4 => migrations::v4::migrate(conn),
-        5 => migrations::v5::migrate(conn),
-        6 => migrations::v6::migrate(conn),
-        7 => migrations::v7::migrate(conn),
-        8 => migrations::v8::migrate(conn),
-        9 => migrations::v9::migrate(conn),
-        _ => Err(format!("未知的迁移版本: {}", version)),
-    }
+    log::info!("========== V9 迁移完成 ==========");
+    Ok(())
 }
 
 /// 初始化预制副本数据（从 static_raids.json 读取）
 /// 使用 INSERT OR IGNORE，不会重复插入已有数据
-pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
-    let static_json = include_str!("static_raids.json");
+fn init_static_raids(conn: &Connection) -> Result<(), String> {
+    let static_json = include_str!("../static_raids.json");
     let static_raids: Vec<serde_json::Value> =
         serde_json::from_str(static_json).map_err(|e| format!("解析预制副本数据失败: {}", e))?;
 
     let mut inserted_count = 0;
-    let mut boss_inserted_names: HashSet<String> = HashSet::new();
-    let mut version_inserted_names: HashSet<String> = HashSet::new();
+    let mut boss_inserted_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut version_inserted_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for raid in static_raids.iter() {
         let name = raid["name"].as_str().unwrap_or_default();
@@ -47,7 +33,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
         if !version.is_empty() && !version_inserted_names.contains(version) {
             conn.execute(
                 "INSERT OR IGNORE INTO raid_versions (name) VALUES (?)",
-                params![version],
+                rusqlite::params![version],
             )
             .map_err(error_to_string)?;
             version_inserted_names.insert(version.to_string());
@@ -68,7 +54,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
                 let changes = conn
                     .execute(
                         "INSERT OR IGNORE INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-                        params![&id, name, difficulty, player_count, version, "", is_active],
+                        rusqlite::params![&id, name, difficulty, player_count, version, "", is_active],
                     )
                     .map_err(error_to_string)?;
 
@@ -86,7 +72,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
 
                     conn.execute(
                         "INSERT OR IGNORE INTO raid_bosses (id, raid_name, name, boss_order) VALUES (?, ?, ?, ?)",
-                        params![boss_id, name, boss_name, boss_order],
+                        rusqlite::params![boss_id, name, boss_name, boss_order],
                     )
                     .map_err(error_to_string)?;
                 }
@@ -96,7 +82,9 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
     }
 
     if inserted_count > 0 {
-        log::info!("成功注入 {} 条预制副本数据", inserted_count);
+        log::info!("V9 迁移：成功注入 {} 条预制副本数据", inserted_count);
+    } else {
+        log::info!("V9 迁移：预制副本数据已是最新，无需更新");
     }
 
     Ok(())
