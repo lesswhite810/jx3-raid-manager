@@ -680,6 +680,10 @@ pub fn init_db() -> Result<Connection, String> {
             "[INIT] 场景判定：已是最新版本 V{}，无需迁移",
             current_version
         );
+
+        // 仍然需要检查并添加新增的预制副本
+        migration::init_static_raids(&conn)?;
+        log::debug!("[INIT] 静态副本数据同步完成");
     }
 
     // 标记已初始化（此时互斥锁仍在持有中，确保竞态安全）
