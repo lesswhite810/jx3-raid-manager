@@ -223,12 +223,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredRoles.map(role => {
                             const stats = roleStats.get(role.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
-                            // 三态：未清(0) / 部分清(1-2) / 完全清(3)
+                            // 三态：未清(0) / 部分清(1-2) / 完全清(>=3)
                             const getTrialStatus = (): 'none' | 'partial' | 'complete' => {
                                 if (stats.weeklyCount === 0) return 'none';
                                 if (stats.weeklyCount >= 3) return 'complete';
                                 return 'partial';
                             };
+                            // 按钮禁用逻辑：不限制添加次数
+                            const canAddTrial = true;
                             const trialStatus = getTrialStatus();
 
                             // 根据状态设置样式
@@ -382,8 +384,8 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                     <div className="mt-3 grid grid-cols-3 gap-2">
                                         <button
                                             onClick={() => handleOpenAddModal(role)}
-                                            disabled={trialStatus === 'complete'}
-                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${trialStatus === 'complete'
+                                            disabled={!canAddTrial}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${!canAddTrial
                                                 ? 'bg-base text-muted cursor-not-allowed border border-base'
                                                 : getButtonAddStyle()
                                                 }`}
