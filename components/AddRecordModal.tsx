@@ -15,6 +15,7 @@ interface RoleWithStatus {
   sect?: string;
   accountId: string;
   accountName: string;
+  bossCooldowns?: any[]; // Using any[] for now to avoid circular dependency issues
 }
 
 interface AddRecordModalProps {
@@ -99,7 +100,14 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setHasTitle(false);
         setHasSecretBook(false);
         setNotes('');
-        setSelectedBossIds(availableBosses.map(b => b.id));
+        // 默认只选择未完成的boss
+        setSelectedBossIds(
+          role.bossCooldowns
+            ? role.bossCooldowns
+                .filter(boss => !boss.hasRecord)
+                .map(boss => boss.bossId)
+            : availableBosses.map(b => b.id)
+        );
         setRecordDate(formatDateForInput(new Date()));
       }
       setIsSubmitting(false);
