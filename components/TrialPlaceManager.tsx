@@ -47,7 +47,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
     // Statistics per role
     const roleStats = useMemo(() => {
-        const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string }>();
+        const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string, lastLayer?: number }>();
 
         // 统计本周数据，使用周一 7:00
         const now = new Date();
@@ -67,10 +67,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             const lastRunRecord = [...roleRecords].sort((a, b) => getRecordTime(b.date) - getRecordTime(a.date))[0];
             const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
 
+            // 历史最新层数
+            const lastLayer = lastRunRecord ? lastRunRecord.layer : undefined;
+
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
                 maxLayer,
-                lastRunDate
+                lastRunDate,
+                lastLayer
             });
         });
         return stats;
@@ -127,7 +131,12 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     }, [sortedRoles, roleSearchTerm]);
 
     const handleOpenAddModal = (role?: any) => {
-        setSelectedRole(role || null);
+        if (role) {
+            const stats = roleStats.get(role.id);
+            setSelectedRole({ ...role, lastLayer: stats?.lastLayer });
+        } else {
+            setSelectedRole(null);
+        }
         setIsAdding(true);
     };
 

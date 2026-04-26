@@ -19,6 +19,7 @@ interface RoleWithStatus {
     accountId: string;
     accountName: string;
     sect: string;
+    lastLayer?: number;
 }
 
 interface AddTrialRecordModalProps {
@@ -286,8 +287,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             // The prop is `initialRole`, so we might want to respect that if it changes, 
             // but usually we just want to clear the form fields.
             setSelectedRoleId(initialRole?.id || '');
-
-            setLayer(50);
+            setLayer(initialRole?.lastLayer ?? 50);
             setBoss1('');
             setBoss2('');
             setBoss3('');
