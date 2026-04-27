@@ -22,11 +22,11 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     accounts,
     onRefreshRecords
 }) => {
-    // Filter and flat map roles
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
     const [viewFlipStatsRole, setViewFlipStatsRole] = useState<any>(null);
     const [roleSearchTerm, setRoleSearchTerm] = useState('');
+    const [autoFillEnabled, setAutoFillEnabled] = useState(false);
 
     const allRoles = useMemo(() => {
         return accounts
@@ -198,6 +198,17 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                         <Target className="w-5 h-5 text-primary" />
                         角色挑战进度
                     </h2>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <span className="text-xs text-muted">自动填充</span>
+                        <div
+                            className={`relative w-10 h-5 rounded-full transition-colors ${autoFillEnabled ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}
+                            onClick={() => setAutoFillEnabled(!autoFillEnabled)}
+                        >
+                            <div
+                                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${autoFillEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}
+                            />
+                        </div>
+                    </label>
                 </div>
 
                 <div className="relative max-w-md">
@@ -428,6 +439,8 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 onSubmit={handleAddTrialRecord}
                 accounts={accounts}
                 initialRole={selectedRole}
+                autoFillEnabled={autoFillEnabled}
+                records={records}
             />
 
             {

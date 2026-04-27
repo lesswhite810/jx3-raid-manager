@@ -28,6 +28,8 @@ interface AddTrialRecordModalProps {
     onSubmit: (record: TrialPlaceRecord) => void;
     accounts: Account[];
     initialRole?: RoleWithStatus;
+    autoFillEnabled?: boolean;
+    records?: TrialPlaceRecord[];
 }
 
 const BOSS_LEVEL_1 = ['寅', '雷神', '子'];
@@ -225,7 +227,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     onClose,
     onSubmit,
     accounts,
-    initialRole
+    initialRole,
+    autoFillEnabled = false,
+    records = []
 }) => {
     const [selectedRoleId, setSelectedRoleId] = useState<string>(initialRole?.id || '');
     const [layer, setLayer] = useState<number>(50);
@@ -280,12 +284,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     // --- Reset State when Modal Opens ---
     useEffect(() => {
         if (isOpen) {
-            // Only reset editable fields, keep configuration or smart defaults if needed
-            // But user requested "previous data" to be gone.
-
-            // If we have an initialRole passed in (e.g. from context), keep it or reset if not provided?
-            // The prop is `initialRole`, so we might want to respect that if it changes, 
-            // but usually we just want to clear the form fields.
             setSelectedRoleId(initialRole?.id || '');
             setLayer(initialRole?.lastLayer ?? 50);
             setBoss1('');
@@ -300,19 +298,44 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setError(null);
             setIsSubmitting(false);
             setRecordDate(formatDateForInput(new Date()));
-
-            // Re-apply default filters if desired, or keep user preference? 
-            // Usually form reset implies filters reset too for a fresh start.
-            // But level range might be nice to persist? Let's reset for now as per "redundant data" complaint.
-            // Actually, keep level range might be better UX, but let's reset to ensure "freshness".
-            // setMinLevel(27000); 
-            // setMaxLevel(36000); 
             setAttrFilters(new Set());
 
-            // Trigger load of equipments if needed (or just ensure they are fresh)
+            // 自动填充逻辑：查找本周最新记录
+            if (autoFillEnabled && initialRole?.id) {
+                const now = new Date();
+                const startOfWeek = new Date(now);
+                startOfWeek.setHours(7, 0, 0, 0);
+                if (now.getDay() === 0) {
+                    startOfWeek.setDate(startOfWeek.getDate() - 6);
+                } else {
+                    startOfWeek.setDate(startOfWeek.getDate() - (now.getDay() - 1));
+                }
+
+                const roleRecords = records.filter(r => r.roleId === initialRole.id);
+                const thisWeekRecords = roleRecords.filter(r => {
+                    const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+                    return recordTime >= startOfWeek.getTime();
+                });
+
+                if (thisWeekRecords.length > 0) {
+                    const sortedRecords = [...thisWeekRecords].sort((a, b) => {
+                        const timeA = typeof a.date === 'number' ? a.date : new Date(a.date).getTime();
+                        const timeB = typeof b.date === 'number' ? b.date : new Date(b.date).getTime();
+                        return timeB - timeA;
+                    });
+                    const latestRecord = sortedRecords[0];
+                    setLayer(latestRecord.layer);
+                    if (latestRecord.bosses && latestRecord.bosses.length >= 3) {
+                        setBoss1(latestRecord.bosses[0]);
+                        setBoss2(latestRecord.bosses[1]);
+                        setBoss3(latestRecord.bosses[2]);
+                    }
+                }
+            }
+
             loadAllEquipments();
         }
-    }, [isOpen, initialRole]);
+    }, [isOpen, initialRole, autoFillEnabled, records]);
 
     // 锁定背景滚动
     useEffect(() => {
