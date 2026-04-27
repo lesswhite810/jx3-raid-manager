@@ -182,6 +182,15 @@ fn main() {
             db::db_get_raids,
             db::db_save_raids,
             db::db_get_raid_versions,
+            // 赛季相关
+            db::db_get_game_versions,
+            db::db_save_game_version,
+            db::db_delete_game_version,
+            db::db_get_seasons,
+            db::db_get_seasons_by_version,
+            db::db_save_season,
+            db::db_delete_season,
+            db::db_get_season_for_date,
             // 配置相关
             db::db_get_config,
             db::db_save_config,

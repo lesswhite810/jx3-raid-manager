@@ -272,3 +272,20 @@ export interface BaizhanRecord {
   notes?: string;
   type: 'baizhan';
 }
+
+// ========== 赛季系统 ==========
+
+export interface GameVersion {
+  id?: number;
+  name: string;
+  sortOrder: number;
+}
+
+export interface Season {
+  id?: number;
+  name: string;
+  versionId: number;
+  startDate: number;
+  endDate?: number;
+  sortOrder: number;
+}

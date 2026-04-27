@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { mockInvoke } from './mockInvoke';
+import type { GameVersion, Season } from '../types';
 
 // 环境检测：如果没有注入 __TAURI_INTERNALS__ ，说明是在纯浏览器环境运行
 declare global {
@@ -215,6 +216,91 @@ class DatabaseService {
     } catch (error) {
       console.error('Failed to get raid versions:', error);
       return [];
+    }
+  }
+
+  // ========== 赛季管理 ==========
+
+  async getGameVersions(): Promise<GameVersion[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_game_versions');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get game versions:', error);
+      return [];
+    }
+  }
+
+  async saveGameVersion(version: GameVersion): Promise<number> {
+    await this.init();
+    try {
+      return await invoke<number>('db_save_game_version', { version: JSON.stringify(version) });
+    } catch (error) {
+      console.error('Failed to save game version:', error);
+      throw error;
+    }
+  }
+
+  async deleteGameVersion(id: number): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_game_version', { id });
+    } catch (error) {
+      console.error('Failed to delete game version:', error);
+      throw error;
+    }
+  }
+
+  async getSeasons(): Promise<Season[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_seasons');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get seasons:', error);
+      return [];
+    }
+  }
+
+  async getSeasonsByVersion(versionId: number): Promise<Season[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_seasons_by_version', { versionId });
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get seasons by version:', error);
+      return [];
+    }
+  }
+
+  async saveSeason(season: Season): Promise<number> {
+    await this.init();
+    try {
+      return await invoke<number>('db_save_season', { season: JSON.stringify(season) });
+    } catch (error) {
+      console.error('Failed to save season:', error);
+      throw error;
+    }
+  }
+
+  async deleteSeason(id: number): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_season', { id });
+    } catch (error) {
+      console.error('Failed to delete season:', error);
+      throw error;
+    }
+  }
+
+  async getSeasonForDate(timestamp: number): Promise<Season | null> {
+    await this.init();
+    try {
+      return await invoke<Season | null>('db_get_season_for_date', { timestamp });
+    } catch (error) {
+      console.error('Failed to get season for date:', error);
+      return null;
     }
   }
 

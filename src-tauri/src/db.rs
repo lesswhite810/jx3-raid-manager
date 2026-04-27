@@ -17,7 +17,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 9;
+pub const CURRENT_SCHEMA_VERSION: i32 = 10;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -2258,6 +2258,209 @@ pub fn db_get_raid_versions() -> Result<Vec<String>, String> {
     }
 
     Ok(versions)
+}
+
+// ========== 赛季管理 ==========
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameVersion {
+    pub id: Option<i64>,
+    pub name: String,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Season {
+    pub id: Option<i64>,
+    pub name: String,
+    pub version_id: i64,
+    pub start_date: i64,
+    pub end_date: Option<i64>,
+    pub sort_order: i64,
+}
+
+#[tauri::command]
+pub fn db_get_game_versions() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, sort_order FROM game_versions ORDER BY sort_order ASC")
+        .map_err(|e| e.to_string())?;
+
+    let version_iter = stmt
+        .query_map([], |row| {
+            Ok(GameVersion {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                sort_order: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut versions = Vec::new();
+    for version in version_iter {
+        versions.push(version.map_err(|e| e.to_string())?);
+    }
+
+    serde_json::to_string(&versions).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_save_game_version(version: String) -> Result<i64, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let item: GameVersion = serde_json::from_str(&version).map_err(|e| e.to_string())?;
+    let timestamp = get_local_timestamp();
+
+    if let Some(id) = item.id {
+        conn.execute(
+            "UPDATE game_versions SET name = ?, sort_order = ? WHERE id = ?",
+            params![item.name, item.sort_order, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    } else {
+        conn.execute(
+            "INSERT INTO game_versions (name, sort_order, created_at) VALUES (?, ?, ?)",
+            params![item.name, item.sort_order, &timestamp],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+}
+
+#[tauri::command]
+pub fn db_delete_game_version(id: i64) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM game_versions WHERE id = ?", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_seasons() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons ORDER BY sort_order ASC")
+        .map_err(|e| e.to_string())?;
+
+    let season_iter = stmt
+        .query_map([], |row| {
+            Ok(Season {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                version_id: row.get(2)?,
+                start_date: row.get(3)?,
+                end_date: row.get(4)?,
+                sort_order: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut seasons = Vec::new();
+    for season in season_iter {
+        seasons.push(season.map_err(|e| e.to_string())?);
+    }
+
+    serde_json::to_string(&seasons).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_get_seasons_by_version(version_id: i64) -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons WHERE version_id = ? ORDER BY sort_order ASC")
+        .map_err(|e| e.to_string())?;
+
+    let season_iter = stmt
+        .query_map(params![version_id], |row| {
+            Ok(Season {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                version_id: row.get(2)?,
+                start_date: row.get(3)?,
+                end_date: row.get(4)?,
+                sort_order: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut seasons = Vec::new();
+    for season in season_iter {
+        seasons.push(season.map_err(|e| e.to_string())?);
+    }
+
+    serde_json::to_string(&seasons).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_save_season(season: String) -> Result<i64, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let item: Season = serde_json::from_str(&season).map_err(|e| e.to_string())?;
+    let timestamp = get_local_timestamp();
+
+    // 验证赛季结束时间不晚于版本结束时间
+    if let Some(end_date) = item.end_date {
+        let version_end_date: Option<i64> = conn
+            .query_row(
+                "SELECT end_date FROM game_versions WHERE id = ?",
+                params![item.version_id],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(ved) = version_end_date {
+            if ved > 0 && end_date > ved {
+                return Err("赛季结束时间不能晚于版本结束时间".to_string());
+            }
+        }
+    }
+
+    if let Some(id) = item.id {
+        conn.execute(
+            "UPDATE seasons SET name = ?, version_id = ?, start_date = ?, end_date = ?, sort_order = ? WHERE id = ?",
+            params![item.name, item.version_id, item.start_date, item.end_date, item.sort_order, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    } else {
+        conn.execute(
+            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            params![item.name, item.version_id, item.start_date, item.end_date, item.sort_order, &timestamp],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+}
+
+#[tauri::command]
+pub fn db_delete_season(id: i64) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM seasons WHERE id = ?", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_season_for_date(timestamp: i64) -> Result<Option<Season>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons WHERE start_date <= ? AND (end_date IS NULL OR end_date = 0 OR end_date > ?) ORDER BY sort_order DESC LIMIT 1")
+        .map_err(|e| e.to_string())?;
+
+    let result = stmt
+        .query_row(params![timestamp, timestamp], |row| {
+            Ok(Season {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                version_id: row.get(2)?,
+                start_date: row.get(3)?,
+                end_date: row.get(4)?,
+                sort_order: row.get(5)?,
+            })
+        })
+        .ok();
+
+    Ok(result)
 }
 
 #[tauri::command]
