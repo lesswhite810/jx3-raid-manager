@@ -2463,6 +2463,31 @@ pub fn db_get_season_for_date(timestamp: i64) -> Result<Option<Season>, String> 
     Ok(result)
 }
 
+#[allow(dead_code)]
+#[tauri::command]
+pub fn db_get_current_season() -> Result<Option<Season>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().timestamp();
+    let mut stmt = conn
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons WHERE start_date <= ? AND (end_date IS NULL OR end_date = 0 OR end_date > ?) ORDER BY sort_order DESC LIMIT 1")
+        .map_err(|e| e.to_string())?;
+
+    let result = stmt
+        .query_row(params![now, now], |row| {
+            Ok(Season {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                version_id: row.get(2)?,
+                start_date: row.get(3)?,
+                end_date: row.get(4)?,
+                sort_order: row.get(5)?,
+            })
+        })
+        .ok();
+
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn db_save_raids(raids: String) -> Result<(), String> {
     let mut conn = init_db().map_err(|e| e.to_string())?;

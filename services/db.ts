@@ -304,6 +304,16 @@ class DatabaseService {
     }
   }
 
+  async getCurrentSeason(): Promise<Season | null> {
+    await this.init();
+    try {
+      return await invoke<Season | null>('db_get_current_season');
+    } catch (error) {
+      console.error('Failed to get current season:', error);
+      return null;
+    }
+  }
+
   async saveRaids(raids: any[]): Promise<void> {
     await this.init();
     try {

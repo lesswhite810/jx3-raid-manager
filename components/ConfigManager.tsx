@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus } from '../types';
+import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
 import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor } from 'lucide-react';
 import { isValidGamePath } from '../utils/configUtils';
 import { formatUpdatePubDate } from '../utils/updaterUtils';
@@ -36,6 +36,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [scanningClients, setScanningClients] = useState(false);
   const [scanResults, setScanResults] = useState<Jx3ClientInfo[]>([]);
   const [showScanResults, setShowScanResults] = useState(false);
+  const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
 
   const loadDataDirInfo = useCallback(async () => {
     try {
@@ -46,35 +47,41 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     }
   }, []);
 
-  // 加载数据目录信息
+  const loadCurrentSeason = useCallback(async () => {
+    try {
+      const season = await db.getCurrentSeason();
+      setCurrentSeason(season);
+    } catch (error) {
+      console.error('Failed to load current season:', error);
+    }
+  }, []);
+
   useEffect(() => {
     loadDataDirInfo();
   }, [loadDataDirInfo]);
+
+  useEffect(() => {
+    loadCurrentSeason();
+  }, [loadCurrentSeason]);
 
   useEffect(() => {
     if (!config.game.gameDirectory) {
       setPathValid(null);
       return;
     }
-
     isValidGamePath(config.game.gameDirectory).then(result => {
       setPathValid(result.isValid);
     });
   }, [config.game.gameDirectory]);
 
-  // 扫描已安装的剑网3客户端
   const handleScanClients = useCallback(async () => {
     setScanningClients(true);
     setShowScanResults(false);
-
     try {
       const result = await scanJx3Clients();
-
       if (result.success && result.clients.length > 0) {
         setScanResults(result.clients);
         setShowScanResults(true);
-
-        // 如果只有一个客户端且当前未配置，自动填入
         if (result.clients.length === 1 && !config.game.gameDirectory) {
           const client = result.clients[0];
           handleConfigChange('game', 'gameDirectory', client.workDirectory);
@@ -93,7 +100,6 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     }
   }, [config.game.gameDirectory]);
 
-  // 选择扫描到的客户端
   const handleSelectClient = useCallback((client: Jx3ClientInfo) => {
     handleConfigChange('game', 'gameDirectory', client.workDirectory);
     setShowScanResults(false);
@@ -107,26 +113,17 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
 
   const getUpdateStatusText = () => {
     switch (updateStatus) {
-      case 'checking':
-        return '正在检查更新';
-      case 'available':
-        return '发现新版本';
-      case 'downloading':
-        return '正在下载更新';
-      case 'installing':
-        return '正在安装更新';
-      case 'upToDate':
-        return '当前已是最新版本';
-      case 'portableManualOnly':
-        return '便携版需手动下载更新';
-      case 'error':
-        return '检查更新失败';
-      default:
-        return updateRuntimeInfo?.updaterConfigured ? '尚未检查更新' : '当前构建未启用自动更新';
+      case 'checking': return '正在检查更新';
+      case 'available': return '发现新版本';
+      case 'downloading': return '正在下载更新';
+      case 'installing': return '正在安装更新';
+      case 'upToDate': return '当前已是最新版本';
+      case 'portableManualOnly': return '便携版需手动下载更新';
+      case 'error': return '检查更新失败';
+      default: return updateRuntimeInfo?.updaterConfigured ? '尚未检查更新' : '当前构建未启用自动更新';
     }
   };
 
-  // 选择自定义数据目录
   const handleSelectCustomDataDir = async () => {
     try {
       const selected = await open({
@@ -134,7 +131,6 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         multiple: false,
         title: '选择数据存储目录',
       });
-
       if (typeof selected === 'string') {
         const customPath = selected;
         await db.setCustomDataDir(customPath);
@@ -163,14 +159,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const getDataDirLocationText = () => {
     if (!dataDirInfo) return '加载中...';
     switch (dataDirInfo.location) {
-      case 'custom':
-        return '自定义目录';
-      case 'install':
-        return '安装目录';
-      case 'user_home':
-        return '用户目录';
-      default:
-        return '未知';
+      case 'custom': return '自定义目录';
+      case 'install': return '安装目录';
+      case 'user_home': return '用户目录';
+      default: return '未知';
     }
   };
 
@@ -202,45 +194,29 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           </button>
         </div>
 
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-            <label className="text-sm font-medium text-muted">当前版本</label>
-            <div className="col-span-2 text-sm text-main font-medium">
-              v{updateRuntimeInfo?.currentVersion ?? updateCheckResult?.currentVersion ?? '未知'}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-            <label className="text-sm font-medium text-muted">运行形态</label>
-            <div className="col-span-2 text-sm text-main">
-              {updateRuntimeInfo?.isPortable ? '便携版' : '安装版'}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-            <label className="text-sm font-medium text-muted">更新状态</label>
-            <div className="col-span-2 text-sm text-main">{getUpdateStatusText()}</div>
-          </div>
-
-          {updateCheckResult?.available && updateCheckResult.version && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-              <label className="text-sm font-medium text-muted pt-0.5">最新版本</label>
-              <div className="col-span-2">
-                <div className="text-sm font-medium text-main">v{updateCheckResult.version}</div>
-                {publishedAtText && (
-                  <p className="text-xs text-muted mt-1">
-                    发布时间：{publishedAtText}
-                  </p>
-                )}
-                <p className="text-xs text-muted mt-1">
-                  {updateCheckResult.isPortable
-                    ? '当前为便携版，检测到新版本后会跳转到 GitHub Release 下载页面。'
-                    : '确认更新后将下载安装包，并按当前安装路径执行升级。'}
-                </p>
-              </div>
-            </div>
-          )}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <InfoCard label="当前版本" value={`v${updateRuntimeInfo?.currentVersion ?? updateCheckResult?.currentVersion ?? '未知'}`} />
+          <InfoCard label="运行形态" value={updateRuntimeInfo?.isPortable ? '便携版' : '安装版'} />
+          <InfoCard label="更新状态" value={getUpdateStatusText()} />
         </div>
+
+        {updateCheckResult?.available && updateCheckResult.version && (
+          <div className="mt-4 p-4 bg-base/50 rounded-lg border border-base">
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <span className="text-sm font-medium text-main">发现新版本 v{updateCheckResult.version}</span>
+                {publishedAtText && (
+                  <span className="text-xs text-muted ml-2">发布时间：{publishedAtText}</span>
+                )}
+              </div>
+              <span className="text-xs text-muted">
+                {updateCheckResult.isPortable
+                  ? '便携版检测到新版本后会跳转到 GitHub 下载'
+                  : '确认更新后将下载安装包执行升级'}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
@@ -255,96 +231,86 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         </div>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-            <label className="text-sm font-medium text-muted">游戏安装目录</label>
-            <div className="col-span-2">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={config.game.gameDirectory}
-                  onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
-                  className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
-                  placeholder="输入剑网三安装目录，例如 E:\Game\SeasunGame"
-                />
-                <button
-                  onClick={handleScanClients}
-                  disabled={scanningClients}
-                  className="btn btn-secondary flex items-center gap-2 text-sm whitespace-nowrap"
-                  title="从注册表扫描剑网3客户端"
-                >
-                  {scanningClients ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Search className="w-4 h-4" />
-                  )}
-                  {scanningClients ? '扫描中...' : '扫描'}
-                </button>
-              </div>
-              <p className="mt-2 text-xs text-muted">
-                支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd。
-              </p>
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-muted whitespace-nowrap">当前赛季</label>
+            <span className="text-sm font-medium text-main">{currentSeason ? currentSeason.name : '加载中...'}</span>
+          </div>
 
-              {pathValid === false && (
-                <div className="flex items-center gap-1.5 text-xs text-red-500 mt-2">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>游戏目录路径无效</span>
-                </div>
-              )}
-
-              {pathValid === true && (
-                <div className="flex items-center gap-1.5 text-xs text-emerald-500 mt-2">
-                  <Check className="w-3.5 h-3.5" />
-                  <span>游戏目录路径有效</span>
-                </div>
-              )}
-
-              {/* 扫描结果列表 */}
-              {showScanResults && scanResults.length > 0 && (
-                <div className="mt-3 p-3 bg-base/30 rounded-lg border border-base">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Monitor className="w-4 h-4 text-primary" />
-                    <span className="text-sm font-medium text-main">已检测到的客户端</span>
-                    <button
-                      onClick={() => setShowScanResults(false)}
-                      className="ml-auto text-xs text-muted hover:text-main transition-colors"
-                    >
-                      收起
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {scanResults.map((client, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-2 rounded-lg hover:bg-surface transition-colors cursor-pointer group"
-                        onClick={() => handleSelectClient(client)}
-                      >
-                        <div>
-                          <div className="text-sm font-medium text-main group-hover:text-primary transition-colors">
-                            {client.displayName}
-                          </div>
-                          <div className="text-xs text-muted mt-0.5">
-                            {client.workDirectory}
-                          </div>
-                          {client.version && (
-                            <div className="text-xs text-muted/70">
-                              版本: {client.version}
-                            </div>
-                          )}
-                        </div>
-                        <div className="text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                          点击选择
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-muted whitespace-nowrap">游戏安装目录</label>
+            <div className="flex-1 flex items-center gap-2">
+              <input
+                type="text"
+                value={config.game.gameDirectory}
+                onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
+                className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
+                placeholder="输入剑网三安装目录，例如 E:\Game\SeasunGame"
+              />
+              <button
+                onClick={handleScanClients}
+                disabled={scanningClients}
+                className="btn btn-secondary flex items-center gap-2 text-sm whitespace-nowrap"
+                title="从注册表扫描剑网3客户端"
+              >
+                {scanningClients ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4" />
+                )}
+                {scanningClients ? '扫描中...' : '扫描'}
+              </button>
             </div>
           </div>
+          <div className="flex items-center gap-4 pl-[7.5rem]">
+            {pathValid === false && (
+              <div className="flex items-center gap-1.5 text-xs text-red-500">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>游戏目录路径无效</span>
+              </div>
+            )}
+            {pathValid === true && (
+              <div className="flex items-center gap-1.5 text-xs text-emerald-500">
+                <Check className="w-3.5 h-3.5" />
+                <span>游戏目录路径有效</span>
+              </div>
+            )}
+            <span className="text-xs text-muted">支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd</span>
+          </div>
+
+          {showScanResults && scanResults.length > 0 && (
+            <div className="p-4 bg-base/30 rounded-lg border border-base">
+              <div className="flex items-center gap-2 mb-3">
+                <Monitor className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium text-main">已检测到的客户端</span>
+                <button
+                  onClick={() => setShowScanResults(false)}
+                  className="ml-auto text-xs text-muted hover:text-main transition-colors"
+                >
+                  收起
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {scanResults.map((client, index) => (
+                  <div
+                    key={index}
+                    className="p-3 rounded-lg border border-base hover:border-primary/50 hover:bg-surface/50 transition-all cursor-pointer group"
+                    onClick={() => handleSelectClient(client)}
+                  >
+                    <div className="text-sm font-medium text-main group-hover:text-primary">
+                      {client.displayName}
+                    </div>
+                    <div className="text-xs text-muted truncate mt-0.5">{client.workDirectory}</div>
+                    {client.version && (
+                      <div className="text-xs text-muted/70 mt-0.5">版本: {client.version}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* 数据目录配置 */}
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
@@ -357,9 +323,8 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         </div>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-            <label className="text-sm font-medium text-muted pt-0.5">当前数据目录</label>
-            <div className="col-span-2">
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
               <div className="flex items-center gap-2 mb-2">
                 <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                   dataDirInfo?.location === 'custom'
@@ -372,52 +337,58 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                 </span>
                 {dataDirInfo?.isInstallMode && dataDirInfo?.location === 'install' && (
                   <span className="px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
-                    安装版默认
+                    安装版
                   </span>
                 )}
               </div>
-              <div className="py-1">
-                <p className="text-sm text-main break-all font-mono select-all">
-                  {dataDirInfo?.currentPath ?? '加载中...'}
-                </p>
-              </div>
-              <p className="mt-2 text-xs text-muted">
-                {dataDirInfo?.location === 'install'
-                  ? '当前使用安装目录存储数据，适合安装版用户'
-                  : dataDirInfo?.location === 'custom'
-                  ? '当前使用自定义目录存储数据'
-                  : '当前使用用户目录存储数据'}
+              <p className="text-sm text-main break-all font-mono select-all">
+                {dataDirInfo?.currentPath ?? '加载中...'}
               </p>
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-            <label className="text-sm font-medium text-muted">自定义目录</label>
-            <div className="col-span-2">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSelectCustomDataDir}
+                className="btn btn-secondary flex items-center gap-2 text-sm"
+              >
+                <ExternalLink className="w-4 h-4" />
+                切换目录
+              </button>
+              {dataDirInfo?.customDirConfigured && (
                 <button
-                  onClick={handleSelectCustomDataDir}
-                  className="btn btn-secondary flex items-center gap-2 text-sm"
+                  onClick={handleResetCustomDataDir}
+                  className="btn btn-secondary text-sm"
                 >
-                  <ExternalLink className="w-4 h-4" />
-                  选择其他目录
+                  还原默认
                 </button>
-                {dataDirInfo?.customDirConfigured && (
-                  <button
-                    onClick={handleResetCustomDataDir}
-                    className="btn btn-secondary text-sm"
-                  >
-                    还原默认
-                  </button>
-                )}
-              </div>
-              <p className="mt-2 text-xs text-muted">
-                修改后需要重启应用才能生效。下次启动时会自动将数据库和日志迁移到目标目录。
-              </p>
+              )}
             </div>
           </div>
+          <p className="text-xs text-muted">
+            修改目录后需要重启应用才能生效，重启时会自动迁移数据库和日志文件
+          </p>
         </div>
       </div>
     </div>
   );
 };
+
+interface InfoCardProps {
+  label: string;
+  value: string;
+  badge?: string;
+  badgeClass?: string;
+}
+
+const InfoCard: React.FC<InfoCardProps> = ({ label, value, badge, badgeClass }) => (
+  <div className="p-3 bg-base/50 rounded-lg border border-base">
+    <div className="text-xs text-muted mb-1">{label}</div>
+    <div className="flex items-center gap-2">
+      <span className="text-sm font-medium text-main">{value}</span>
+      {badge && (
+        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badgeClass || 'bg-primary/10 text-primary'}`}>
+          {badge}
+        </span>
+      )}
+    </div>
+  </div>
+);

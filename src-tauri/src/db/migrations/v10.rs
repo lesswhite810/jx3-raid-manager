@@ -1,32 +1,236 @@
 use crate::db::migration::error_to_string;
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 
-/// V10 迁移：引入赛季系统
+/// V10 迁移：引入赛季系统（批量插入优化版）
 ///
-/// 迁移内容：
-/// - 创建 game_versions 表（版本表）
-/// - 创建 seasons 表（赛季表）
-/// - 为 raids 表添加 season_id 外键
-/// - 为 raid_records 表添加 season_id 外键
-/// - 预置版本和赛季数据（从 static_seasons.json 读取）
-/// - 建立索引优化查询性能
+/// 优化点：
+/// - 批量插入版本和赛季，单条 SQL 语句
+/// - 事务包裹所有操作
+/// - HashMap 预加载替代重复查询
 pub fn migrate(conn: &Connection) -> Result<(), String> {
     log::info!("========== V10 迁移开始 ==========");
     log::info!("V10 迁移：引入赛季系统");
 
-    create_tables(conn)?;
-    init_static_seasons(conn)?;
-    add_season_id_to_raids(conn)?;
-    add_season_id_to_records(conn)?;
-    create_indexes(conn)?;
+    // 注意：事务由调用方管理，不需要手动 BEGIN TRANSACTION
+
+    if let Err(e) = do_migrate(conn) {
+        return Err(e);
+    }
 
     log::info!("========== V10 迁移完成 ==========");
     Ok(())
 }
 
-fn create_tables(conn: &Connection) -> Result<(), String> {
-    log::info!("V10 迁移：创建 game_versions 表");
+fn do_migrate(conn: &Connection) -> Result<(), String> {
+    create_tables(conn)?;
 
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    let versions_json = include_str!("../static_versions.json");
+    let seasons_json = include_str!("../static_seasons.json");
+    let raids_json = include_str!("../static_raids.json");
+
+    let versions: Vec<serde_json::Value> =
+        serde_json::from_str(versions_json).map_err(|e| format!("解析预置版本数据失败: {}", e))?;
+    let seasons: Vec<serde_json::Value> =
+        serde_json::from_str(seasons_json).map_err(|e| format!("解析预置赛季数据失败: {}", e))?;
+    let raids: Vec<serde_json::Value> =
+        serde_json::from_str(raids_json).map_err(|e| format!("解析静态副本数据失败: {}", e))?;
+
+    // 预加载已存在的版本
+    let mut version_id_map: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT id, name FROM game_versions")
+        .map_err(error_to_string)?;
+    let iter = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+        .map_err(error_to_string)?;
+    for r in iter.flatten() {
+        version_id_map.insert(r.0, r.1);
+    }
+
+    // 预加载已存在的赛季
+    let mut season_id_map: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT id, name FROM seasons")
+        .map_err(error_to_string)?;
+    let iter = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+        .map_err(error_to_string)?;
+    for r in iter.flatten() {
+        season_id_map.insert(r.0, r.1);
+    }
+
+    // 收集待插入的版本
+    let mut version_names: Vec<String> = Vec::new();
+    let mut version_orders: Vec<i64> = Vec::new();
+    for v in versions.iter() {
+        let name = v["name"].as_str().unwrap_or_default();
+        if !version_id_map.contains_key(name) {
+            version_names.push(name.to_string());
+            version_orders.push(v["sort_order"].as_i64().unwrap_or(0));
+        }
+    }
+
+    // 批量插入版本
+    if !version_names.is_empty() {
+        let count = version_names.len();
+        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?)".to_string()).collect();
+        let sql = format!(
+            "INSERT INTO game_versions (name, sort_order, created_at) VALUES {}",
+            placeholders.join(", ")
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for (i, name) in version_names.iter().enumerate() {
+            params_vec.push(Box::new(name.clone()));
+            params_vec.push(Box::new(version_orders[i]));
+            params_vec.push(Box::new(timestamp.clone()));
+        }
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        conn.execute(&sql, params_refs.as_slice())
+            .map_err(error_to_string)?;
+
+        // 重新加载版本ID
+        let mut stmt = conn
+            .prepare("SELECT id, name FROM game_versions")
+            .map_err(error_to_string)?;
+        let iter = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .map_err(error_to_string)?;
+        version_id_map.clear();
+        for r in iter.flatten() {
+            version_id_map.insert(r.0, r.1);
+        }
+        log::info!("V10 迁移：批量插入 {} 个版本", count);
+    }
+
+    // 收集待插入的赛季
+    let mut season_names: Vec<String> = Vec::new();
+    let mut season_version_ids: Vec<i64> = Vec::new();
+    let mut season_starts: Vec<i64> = Vec::new();
+    let mut season_ends: Vec<i64> = Vec::new();
+    let mut season_orders: Vec<i64> = Vec::new();
+
+    for s in seasons.iter() {
+        let name = s["name"].as_str().unwrap_or_default();
+        if !season_id_map.contains_key(name) {
+            let version_name = s["version_name"].as_str().unwrap_or_default();
+            if let Some(&version_id) = version_id_map.get(version_name) {
+                season_names.push(name.to_string());
+                season_version_ids.push(version_id);
+                season_starts.push(s["start_date"].as_i64().unwrap_or(0));
+                season_ends.push(s["end_date"].as_i64().unwrap_or(0));
+                season_orders.push(s["sort_order"].as_i64().unwrap_or(0));
+            }
+        }
+    }
+
+    // 批量插入赛季
+    if !season_names.is_empty() {
+        let count = season_names.len();
+        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?, ?, ?, ?)".to_string()).collect();
+        let sql = format!(
+            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at) VALUES {}",
+            placeholders.join(", ")
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for i in 0..count {
+            params_vec.push(Box::new(season_names[i].clone()));
+            params_vec.push(Box::new(season_version_ids[i]));
+            params_vec.push(Box::new(season_starts[i]));
+            params_vec.push(Box::new(season_ends[i]));
+            params_vec.push(Box::new(season_orders[i]));
+            params_vec.push(Box::new(timestamp.clone()));
+        }
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        conn.execute(&sql, params_refs.as_slice())
+            .map_err(error_to_string)?;
+
+        // 重新加载赛季ID
+        let mut stmt = conn
+            .prepare("SELECT id, name FROM seasons")
+            .map_err(error_to_string)?;
+        let iter = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .map_err(error_to_string)?;
+        season_id_map.clear();
+        for r in iter.flatten() {
+            season_id_map.insert(r.0, r.1);
+        }
+        log::info!("V10 迁移：批量插入 {} 个赛季", count);
+    }
+
+    // 添加 season_id 列
+    let has_column: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('raids') WHERE name='season_id'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error_to_string)?;
+
+    if has_column == 0 {
+        conn.execute(
+            "ALTER TABLE raids ADD COLUMN season_id INTEGER REFERENCES seasons(id)",
+            [],
+        )
+        .map_err(error_to_string)?;
+    }
+
+    // 构建版本名到第一个赛季名的映射
+    let mut version_first_season: HashMap<String, String> = HashMap::new();
+    for s in seasons.iter() {
+        let name = s["name"].as_str().unwrap_or_default();
+        let version_name = s["version_name"].as_str().unwrap_or_default();
+        version_first_season
+            .entry(version_name.to_string())
+            .or_insert_with(|| name.to_string());
+    }
+
+    // 更新副本的 season_id
+    let mut update_count = 0;
+    for raid in raids.iter() {
+        let raid_name = raid["name"].as_str().unwrap_or_default();
+        let season_name = raid["season"].as_str().unwrap_or_default();
+        let version_name = raid["version"].as_str().unwrap_or_default();
+
+        let target_season = if !season_name.is_empty() {
+            Some(season_name.to_string())
+        } else if !version_name.is_empty() {
+            version_first_season.get(version_name).cloned()
+        } else {
+            None
+        };
+
+        if let Some(season) = target_season {
+            if let Some(&season_id) = season_id_map.get(&season) {
+                let rows = conn.execute(
+                    "UPDATE raids SET season_id = ? WHERE name = ? AND season_id IS NULL",
+                    params![season_id, raid_name],
+                )
+                .map_err(error_to_string)?;
+                update_count += rows;
+            }
+        }
+    }
+    log::info!("V10 迁移：更新 {} 个副本配置的 season_id", update_count);
+
+    // 创建索引
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
+        CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
+        "#,
+    )
+    .map_err(error_to_string)?;
+
+    Ok(())
+}
+
+fn create_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS game_versions (
@@ -49,196 +253,5 @@ fn create_tables(conn: &Connection) -> Result<(), String> {
         "#,
     )
     .map_err(error_to_string)?;
-
-    log::info!("V10 迁移：表结构创建完成");
-    Ok(())
-}
-
-fn init_static_seasons(conn: &Connection) -> Result<(), String> {
-    log::info!("V10 迁移：初始化预置版本和赛季数据");
-
-    let versions_json = include_str!("../static_versions.json");
-    let seasons_json = include_str!("../static_seasons.json");
-
-    let versions: Vec<serde_json::Value> =
-        serde_json::from_str(versions_json).map_err(|e| format!("解析预置版本数据失败: {}", e))?;
-    let seasons: Vec<serde_json::Value> =
-        serde_json::from_str(seasons_json).map_err(|e| format!("解析预置赛季数据失败: {}", e))?;
-
-    let timestamp = chrono::Utc::now().to_rfc3339();
-
-    // 插入版本数据
-    for version_data in versions.iter() {
-        let name = version_data["name"].as_str().unwrap_or_default();
-        let sort_order = version_data["sort_order"].as_i64().unwrap_or(0);
-
-        let existing: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM game_versions WHERE name = ?",
-                params![name],
-                |row| row.get(0),
-            )
-            .ok();
-
-        if existing.is_none() {
-            conn.execute(
-                "INSERT INTO game_versions (name, sort_order, created_at) VALUES (?, ?, ?)",
-                params![name, sort_order, &timestamp],
-            )
-            .map_err(error_to_string)?;
-            log::info!("V10 迁移：插入版本 {} (sort_order: {})", name, sort_order);
-        }
-    }
-
-    // 插入赛季数据
-    for season_data in seasons.iter() {
-        let season_name = season_data["name"].as_str().unwrap_or_default();
-        let version_name = season_data["version_name"].as_str().unwrap_or_default();
-        let start_date = season_data["start_date"].as_i64().unwrap_or(0);
-        let end_date = season_data["end_date"].as_i64().unwrap_or(0);
-        let sort_order = season_data["sort_order"].as_i64().unwrap_or(0);
-
-        let version_id: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM game_versions WHERE name = ?",
-                params![version_name],
-                |row| row.get(0),
-            )
-            .ok();
-
-        let Some(vid) = version_id else {
-            log::warn!("V10 迁移：未找到版本 {}，跳过赛季 {}", version_name, season_name);
-            continue;
-        };
-
-        let existing: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM seasons WHERE name = ?",
-                params![season_name],
-                |row| row.get(0),
-            )
-            .ok();
-
-        if existing.is_none() {
-            conn.execute(
-                "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                params![season_name, vid, start_date, end_date, sort_order, &timestamp],
-            )
-            .map_err(error_to_string)?;
-            log::info!("V10 迁移：插入赛季 {} (version: {})", season_name, version_name);
-        }
-    }
-
-    Ok(())
-}
-
-fn add_season_id_to_raids(conn: &Connection) -> Result<(), String> {
-    log::info!("V10 迁移：为 raids 表添加 season_id 列");
-
-    // 检查列是否存在
-    let has_column: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('raids') WHERE name='season_id'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(error_to_string)?;
-
-    if has_column == 0 {
-        conn.execute(
-            "ALTER TABLE raids ADD COLUMN season_id INTEGER REFERENCES seasons(id)",
-            [],
-        )
-        .map_err(error_to_string)?;
-    }
-
-    // 读取静态副本数据，获取 season 字段
-    let static_json = include_str!("../static_raids.json");
-    let static_raids: Vec<serde_json::Value> =
-        serde_json::from_str(static_json).map_err(|e| format!("解析静态副本数据失败: {}", e))?;
-
-    for raid in static_raids.iter() {
-        let raid_name = raid["name"].as_str().unwrap_or_default();
-        let season_name = raid["season"].as_str();
-        let version_name = raid["version"].as_str();
-
-        let season_to_use = if let Some(season) = season_name {
-            // 直接使用 season 字段
-            Some(season.to_string())
-        } else if let Some(version) = version_name {
-            // 查找版本对应的第一个赛季
-            conn.query_row(
-                "SELECT s.name FROM seasons s JOIN game_versions gv ON s.version_id = gv.id WHERE gv.name = ? ORDER BY s.sort_order LIMIT 1",
-                params![version],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        } else {
-            None
-        };
-
-        if let Some(season) = season_to_use {
-            // 查找赛季 ID
-            let season_id: Option<i64> = conn
-                .query_row(
-                    "SELECT s.id FROM seasons s WHERE s.name = ? LIMIT 1",
-                    params![season],
-                    |row| row.get(0),
-                )
-                .ok();
-
-            if let Some(sid) = season_id {
-                // 更新该副本下所有配置的 season_id
-                conn.execute(
-                    "UPDATE raids SET season_id = ? WHERE name = ? AND season_id IS NULL",
-                    params![sid, raid_name],
-                )
-                .map_err(error_to_string)?;
-            }
-        }
-    }
-
-    log::info!("V10 迁移：raids.season_id 关联完成");
-    Ok(())
-}
-
-fn add_season_id_to_records(conn: &Connection) -> Result<(), String> {
-    log::info!("V10 迁移：为 raid_records 表添加 season_id 列");
-
-    // 检查列是否存在
-    let has_column: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('raid_records') WHERE name='season_id'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(error_to_string)?;
-
-    if has_column == 0 {
-        conn.execute(
-            "ALTER TABLE raid_records ADD COLUMN season_id INTEGER REFERENCES seasons(id)",
-            [],
-        )
-        .map_err(error_to_string)?;
-
-        log::info!("V10 迁移：raid_records.season_id 列已添加");
-    }
-
-    Ok(())
-}
-
-fn create_indexes(conn: &Connection) -> Result<(), String> {
-    log::info!("V10 迁移：创建索引");
-
-    conn.execute_batch(
-        r#"
-        CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
-        CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
-        CREATE INDEX IF NOT EXISTS idx_raid_records_season_id ON raid_records(season_id);
-        "#,
-    )
-    .map_err(error_to_string)?;
-
-    log::info!("V10 迁移：索引创建完成");
     Ok(())
 }

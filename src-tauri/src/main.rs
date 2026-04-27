@@ -191,6 +191,7 @@ fn main() {
             db::db_save_season,
             db::db_delete_season,
             db::db_get_season_for_date,
+            db::db_get_current_season,
             // 配置相关
             db::db_get_config,
             db::db_save_config,
