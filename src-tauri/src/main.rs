@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod db;
+mod equip_sync;
 mod game_directory;
 mod gkp_parser;
 mod kungfu_data;
@@ -107,6 +108,35 @@ fn main() {
     // 先初始化日志
     let log_plugin = init_logging().build();
 
+    // 预先初始化数据库（确保表结构准备好）
+    match db::init_db() {
+        Ok(_) => log::info!("[INIT] 数据库预初始化完成"),
+        Err(e) => log::error!("[INIT] 数据库预初始化失败: {}", e),
+    }
+
+    // 启动后台装备同步任务
+    std::thread::spawn(|| {
+        // 等待 2 秒让应用完全启动
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        rt.block_on(async {
+            log::info!("[EquipSync] 开始后台装备同步...");
+            match equip_sync::EquipSync::sync_if_needed().await {
+                Ok(count) => {
+                    if count > 0 {
+                        log::info!("[EquipSync] 后台同步完成，共 {} 件装备", count);
+                    } else {
+                        log::info!("[EquipSync] 无需同步或已同步");
+                    }
+                }
+                Err(e) => {
+                    log::error!("[EquipSync] 后台同步失败: {}", e);
+                }
+            }
+        });
+    });
+
     // 检查 WebView2 并记录日志
     #[cfg(target_os = "windows")]
     {
@@ -203,6 +233,8 @@ fn main() {
             // 装备相关
             db::db_save_equipments,
             db::db_get_equipments,
+            db::db_clear_equipments,
+            equip_sync::equip_force_sync,
             // 试炼记录
             db::db_add_trial_record,
             db::db_get_trial_records,

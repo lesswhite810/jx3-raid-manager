@@ -504,6 +504,15 @@ class DatabaseService {
     }
   }
 
+  async clearEquipments(): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_clear_equipments');
+    } catch (error) {
+      console.error('Failed to clear equipments:', error);
+    }
+  }
+
   async addTrialRecord(record: any): Promise<void> {
     await this.init();
     try {

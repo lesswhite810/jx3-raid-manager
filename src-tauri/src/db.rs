@@ -1117,23 +1117,36 @@ pub fn db_save_equipments(equipments: String) -> Result<(), String> {
 pub fn db_get_equipments() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT data FROM equipments ORDER BY level DESC")
+        .prepare("SELECT data, type_label FROM equipments ORDER BY level DESC")
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map([], |row| Ok(row.get::<_, String>(0)?))
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))
         .map_err(|e| e.to_string())?;
 
     let mut result = Vec::new();
     for row in rows {
-        if let Ok(json_str) = row {
-            if let Ok(item) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Ok((json_str, type_label)) = row {
+            if let Ok(mut item) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                if let Some(obj) = item.as_object_mut() {
+                    if let Some(label) = type_label {
+                        obj.insert("TypeLabel".to_string(), serde_json::Value::String(label));
+                    }
+                }
                 result.push(item);
             }
         }
     }
 
     serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_clear_equipments() -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM equipments", [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -2279,6 +2292,10 @@ pub struct Season {
     pub start_date: i64,
     pub end_date: Option<i64>,
     pub sort_order: i64,
+    #[allow(dead_code)]
+    pub trial_equip_level_min: Option<i64>,
+    #[allow(dead_code)]
+    pub trial_equip_level_max: Option<i64>,
 }
 
 #[tauri::command]
@@ -2341,7 +2358,7 @@ pub fn db_delete_game_version(id: i64) -> Result<(), String> {
 pub fn db_get_seasons() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons ORDER BY sort_order ASC")
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max FROM seasons ORDER BY sort_order ASC")
         .map_err(|e| e.to_string())?;
 
     let season_iter = stmt
@@ -2353,6 +2370,8 @@ pub fn db_get_seasons() -> Result<String, String> {
                 start_date: row.get(3)?,
                 end_date: row.get(4)?,
                 sort_order: row.get(5)?,
+                trial_equip_level_min: row.get(6)?,
+                trial_equip_level_max: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2369,7 +2388,7 @@ pub fn db_get_seasons() -> Result<String, String> {
 pub fn db_get_seasons_by_version(version_id: i64) -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons WHERE version_id = ? ORDER BY sort_order ASC")
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max FROM seasons WHERE version_id = ? ORDER BY sort_order ASC")
         .map_err(|e| e.to_string())?;
 
     let season_iter = stmt
@@ -2381,6 +2400,8 @@ pub fn db_get_seasons_by_version(version_id: i64) -> Result<String, String> {
                 start_date: row.get(3)?,
                 end_date: row.get(4)?,
                 sort_order: row.get(5)?,
+                trial_equip_level_min: row.get(6)?,
+                trial_equip_level_max: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2417,15 +2438,15 @@ pub fn db_save_season(season: String) -> Result<i64, String> {
 
     if let Some(id) = item.id {
         conn.execute(
-            "UPDATE seasons SET name = ?, version_id = ?, start_date = ?, end_date = ?, sort_order = ? WHERE id = ?",
-            params![item.name, item.version_id, item.start_date, item.end_date, item.sort_order, id],
+            "UPDATE seasons SET name = ?, version_id = ?, start_date = ?, end_date = ?, sort_order = ?, trial_equip_level_min = ?, trial_equip_level_max = ? WHERE id = ?",
+            params![item.name, item.version_id, item.start_date, item.end_date, item.sort_order, item.trial_equip_level_min, item.trial_equip_level_max, id],
         )
         .map_err(|e| e.to_string())?;
         Ok(id)
     } else {
         conn.execute(
-            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            params![item.name, item.version_id, item.start_date, item.end_date, item.sort_order, &timestamp],
+            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![item.name, item.version_id, item.start_date, item.end_date, item.sort_order, item.trial_equip_level_min, item.trial_equip_level_max, &timestamp],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
@@ -2444,7 +2465,7 @@ pub fn db_delete_season(id: i64) -> Result<(), String> {
 pub fn db_get_season_for_date(timestamp: i64) -> Result<Option<Season>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons WHERE start_date <= ? AND (end_date IS NULL OR end_date = 0 OR end_date > ?) ORDER BY sort_order DESC LIMIT 1")
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max FROM seasons WHERE start_date <= ? AND (end_date IS NULL OR end_date = 0 OR end_date > ?) ORDER BY sort_order DESC LIMIT 1")
         .map_err(|e| e.to_string())?;
 
     let result = stmt
@@ -2456,6 +2477,8 @@ pub fn db_get_season_for_date(timestamp: i64) -> Result<Option<Season>, String> 
                 start_date: row.get(3)?,
                 end_date: row.get(4)?,
                 sort_order: row.get(5)?,
+                trial_equip_level_min: row.get(6)?,
+                trial_equip_level_max: row.get(7)?,
             })
         })
         .ok();
@@ -2469,7 +2492,7 @@ pub fn db_get_current_season() -> Result<Option<Season>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().timestamp();
     let mut stmt = conn
-        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order FROM seasons WHERE start_date <= ? AND (end_date IS NULL OR end_date = 0 OR end_date > ?) ORDER BY sort_order DESC LIMIT 1")
+        .prepare("SELECT id, name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max FROM seasons WHERE start_date <= ? AND (end_date IS NULL OR end_date = 0 OR end_date > ?) ORDER BY sort_order DESC LIMIT 1")
         .map_err(|e| e.to_string())?;
 
     let result = stmt
@@ -2481,6 +2504,8 @@ pub fn db_get_current_season() -> Result<Option<Season>, String> {
                 start_date: row.get(3)?,
                 end_date: row.get(4)?,
                 sort_order: row.get(5)?,
+                trial_equip_level_min: row.get(6)?,
+                trial_equip_level_max: row.get(7)?,
             })
         })
         .ok();

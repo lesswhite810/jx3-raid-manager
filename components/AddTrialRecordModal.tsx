@@ -37,58 +37,116 @@ const BOSS_LEVEL_2_3 = ['叶冬辰', '韦柔丝', '濯尘', '藤原樱奈', '方
 
 // --- Helper Functions & Components ---
 
+const ATTR_NAME_MAP: Record<string, string> = {
+    'atVitalityBase': '体质',
+    'atSpiritBase': '根骨',
+    'atStrengthBase': '力道',
+    'atAgilityBase': '身法',
+    'atSpunkBase': '元气',
+    'atPhysicsAttackPowerBase': '外功',
+    'atMagicAttackPowerBase': '内功',
+    'atSolarAttackPowerBase': '内功',
+    'atLunarAttackPowerBase': '内功',
+    'atPoisonAttackPowerBase': '内功',
+    'atNeutralAttackPowerBase': '内功',
+    'atPhysicsCriticalStrike': '会心',
+    'atMagicCriticalStrike': '会心',
+    'atAllTypeCriticalStrike': '会心',
+    'atPhysicsCriticalDamagePowerBase': '会效',
+    'atMagicCriticalDamagePowerBase': '会效',
+    'atPhysicsOvercome': '破防',
+    'atMagicOvercome': '破防',
+    'atSolarOvercomeBase': '破防',
+    'atLunarOvercomeBase': '破防',
+    'atPoisonOvercomeBase': '破防',
+    'atNeutralOvercomeBase': '破防',
+    'atSurplusValueBase': '破招',
+    'atStrainBase': '无双',
+    'atHaste': '加速',
+    'atToughnessBase': '御劲',
+    'atDecriticalDamagePowerBase': '化劲',
+    'atPhysicsShieldBase': '外防',
+    'atMagicShield': '内防',
+    'atDodge': '闪避',
+    'atParry': '招架',
+    'atHit': '命中',
+    'atTherapyPowerBase': '治疗',
+    'atSkillEventHandler': '特效',
+};
+
+const ATTR_LABEL_MAP: Record<string, string> = {
+    'Critical': '会心',
+    'CriticalDamage': '会效',
+    'Overcome': '破防',
+    'Surplus': '破招',
+    'Strain': '无双',
+    'Haste': '加速',
+    'Toughness': '御劲',
+    'Decritical': '化劲',
+    'PhysicsShield': '外防',
+    'MagicShield': '内防',
+    'Dodge': '闪避',
+    'Parry': '招架',
+    'Hit': '命中',
+    'Therapy': '治疗',
+};
+
 /**
  * Enhanced attribute formatting helper
  */
 const getFormattedAttributes = (item: JX3Equip) => {
     const attrs: { label: string, color?: string }[] = [];
+    const seen = new Set<string>();
 
-    // 1. Standard Attributes
-    if (item.attributes && Array.isArray(item.attributes)) {
-        item.attributes.forEach(attr => {
-            // Check for special effect type first
-            if (attr.type === 'atSkillEventHandler') {
-                attrs.push({
-                    label: '特效',
-                    color: '#ffcc00'
-                });
-                return;
-            }
+    const addAttr = (label: string, color?: string) => {
+        if (label && !seen.has(label)) {
+            seen.add(label);
+            attrs.push({ label, color });
+        }
+    };
 
-            // Try AttributeTypes first
-            let name = item.AttributeTypes?.[attr.type];
-
-            // Fallback to parsing label
-            if (!name && attr.label) {
-                // Remove 提高... and numbers
-                name = attr.label.replace(/提高.*$/, '').replace(/[0-9]+$/, '');
-            }
-
-            if (name) {
-                // Simplify suffixes
-                name = name.replace(/等级$|值$/, '');
-
-                // Remove prefixes "外功" and "内功"
-                name = name.replace(/^外功|^内功/, '');
-
-                // Specific mappings
-                if (name === '攻击') name = '攻击';
-                if (name === '会心效果') name = '会效';
-                if (name === '治疗成效') name = '治疗';
-                // "无双等级" -> "无双" (handled by regex)
-                // "外功破防等级" -> "外功破防" -> "破防" (handled by regex)
-
-                attrs.push({
-                    label: name,
-                    color: (attr.color && attr.color.toLowerCase() !== '#ffffff' && attr.color.toLowerCase() !== 'white')
-                        ? attr.color
-                        : undefined // Map white to undefined to use theme text color
-                });
+    // 1. 从 _Attrs 数组获取属性标签
+    if (item._Attrs && Array.isArray(item._Attrs)) {
+        item._Attrs.forEach((attr: string) => {
+            if (ATTR_LABEL_MAP[attr]) {
+                addAttr(ATTR_LABEL_MAP[attr]);
             }
         });
     }
 
-    // 2. Special Effects (atSkillEventHandler) - handled in loop now
+    // 2. 从 _AttrType 数组获取属性类型
+    if (item._AttrType && Array.isArray(item._AttrType)) {
+        item._AttrType.forEach((attr: string) => {
+            if (attr === 'atSkillEventHandler') {
+                addAttr('特效', '#ffcc00');
+            } else if (ATTR_NAME_MAP[attr]) {
+                addAttr(ATTR_NAME_MAP[attr]);
+            }
+        });
+    }
+
+    // 3. Standard Attributes (legacy format)
+    if (item.attributes && Array.isArray(item.attributes)) {
+        item.attributes.forEach(attr => {
+            if (attr.type === 'atSkillEventHandler') {
+                addAttr('特效', '#ffcc00');
+                return;
+            }
+
+            let name = item.AttributeTypes?.[attr.type];
+            if (!name && attr.label) {
+                name = attr.label.replace(/提高.*$/, '').replace(/[0-9]+$/, '');
+            }
+
+            if (name) {
+                name = name.replace(/等级$|值$/, '');
+                name = name.replace(/^外功|^内功/, '');
+                if (name === '会心效果') name = '会效';
+                if (name === '治疗成效') name = '治疗';
+                addAttr(name, attr.color);
+            }
+        });
+    }
 
     return attrs;
 };
@@ -251,8 +309,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
     // Level Filter State
     const [levelBounds, setLevelBounds] = useState({ min: 10000, max: 40000 });
-    const [minLevel, setMinLevel] = useState<number>(27000);
-    const [maxLevel, setMaxLevel] = useState<number>(36000);
+    const [minLevel, setMinLevel] = useState<number>(10000);
+    const [maxLevel, setMaxLevel] = useState<number>(40000);
     const [selectedType, setSelectedType] = useState<string>('全部');
 
 
@@ -372,19 +430,26 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const loadAllEquipments = async () => {
         setIsLoadingEquipments(true);
         try {
+            // 获取当前赛季的装分范围
+            let seasonMinLevel = 25500;
+            let seasonMaxLevel = 41400;
+            try {
+                const season = await db.getCurrentSeason();
+                console.log('[loadAllEquipments] 当前赛季:', season);
+                if (season?.trialEquipLevelMin && season?.trialEquipLevelMax) {
+                    seasonMinLevel = season.trialEquipLevelMin;
+                    seasonMaxLevel = season.trialEquipLevelMax;
+                }
+            } catch (e) {
+                console.error('[loadAllEquipments] 获取赛季范围失败:', e);
+            }
+
             const items = await getEquip('无修');
 
-            // Calculate Min/Max and Update State
-            if (items.length > 0) {
-                const levels = items.map(i => i.Level);
-                const min = Math.min(...levels);
-                const max = Math.max(...levels);
-                setLevelBounds({ min, max });
-
-                // Only update current filter if it's outside valid range or default
-                if (minLevel < min) setMinLevel(min);
-                if (maxLevel > max) setMaxLevel(max);
-            }
+            // 使用赛季装分范围设置筛选器
+            setLevelBounds({ min: seasonMinLevel, max: seasonMaxLevel });
+            setMinLevel(seasonMinLevel);
+            setMaxLevel(seasonMaxLevel);
 
             // Define Sort Order (Using TypeLabel as requested)
             const TYPE_ORDER: Record<string, number> = {
@@ -854,14 +919,16 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <div className="space-y-3">
                                     {/* Level Range Filter (Compact) */}
                                     <div className="flex items-center gap-3 bg-base/30 p-2 rounded-lg border border-base/50">
-                                        <span className="text-xs font-bold text-muted whitespace-nowrap">品质</span>
+                                        <span className="text-xs font-bold text-muted whitespace-nowrap">装分</span>
                                         <DualRangeSlider
                                             min={levelBounds.min}
                                             max={levelBounds.max}
                                             value={{ min: minLevel, max: maxLevel }}
                                             onChange={val => {
-                                                setMinLevel(val.min);
-                                                setMaxLevel(val.max);
+                                                const clampedMin = Math.max(levelBounds.min, Math.min(val.min, levelBounds.max));
+                                                const clampedMax = Math.max(levelBounds.min, Math.min(val.max, levelBounds.max));
+                                                setMinLevel(clampedMin);
+                                                setMaxLevel(clampedMax);
                                             }}
                                             className="flex-1 mx-2"
                                         />
@@ -872,7 +939,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
                                     {/* Type Filters */}
                                     <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mask-gradient-r">
-                                        {['全部', '投掷', '帽子', '鞋子', '项链', '腰坠'].map(type => (
+                                        {['全部', '帽子', '鞋子', '项链', '腰坠', '暗器'].map(type => (
                                             <button
                                                 key={type}
                                                 type="button"

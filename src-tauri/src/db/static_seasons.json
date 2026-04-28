@@ -25,6 +25,8 @@
     "version_name": "丝路风雨",
     "start_date": 1776898800,
     "end_date": 0,
-    "sort_order": 4
+    "sort_order": 4,
+    "trial_equip_level_min": 25500,
+    "trial_equip_level_max": 41400
   }
 ]

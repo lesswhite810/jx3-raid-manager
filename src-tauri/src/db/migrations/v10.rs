@@ -22,6 +22,35 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn create_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS game_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS seasons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            version_id INTEGER NOT NULL,
+            start_date INTEGER NOT NULL,
+            end_date INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            trial_equip_level_min INTEGER DEFAULT 0,
+            trial_equip_level_max INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (version_id) REFERENCES game_versions(id)
+        );
+        "#,
+    )
+    .map_err(error_to_string)?;
+
+    Ok(())
+}
+
 fn do_migrate(conn: &Connection) -> Result<(), String> {
     create_tables(conn)?;
 
@@ -112,6 +141,8 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
     let mut season_starts: Vec<i64> = Vec::new();
     let mut season_ends: Vec<i64> = Vec::new();
     let mut season_orders: Vec<i64> = Vec::new();
+    let mut season_trial_mins: Vec<i64> = Vec::new();
+    let mut season_trial_maxs: Vec<i64> = Vec::new();
 
     for s in seasons.iter() {
         let name = s["name"].as_str().unwrap_or_default();
@@ -123,6 +154,8 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
                 season_starts.push(s["start_date"].as_i64().unwrap_or(0));
                 season_ends.push(s["end_date"].as_i64().unwrap_or(0));
                 season_orders.push(s["sort_order"].as_i64().unwrap_or(0));
+                season_trial_mins.push(s["trial_equip_level_min"].as_i64().unwrap_or(0));
+                season_trial_maxs.push(s["trial_equip_level_max"].as_i64().unwrap_or(0));
             }
         }
     }
@@ -130,9 +163,9 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
     // 批量插入赛季
     if !season_names.is_empty() {
         let count = season_names.len();
-        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?, ?, ?, ?)".to_string()).collect();
+        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string()).collect();
         let sql = format!(
-            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at) VALUES {}",
+            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max, created_at) VALUES {}",
             placeholders.join(", ")
         );
 
@@ -143,6 +176,8 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
             params_vec.push(Box::new(season_starts[i]));
             params_vec.push(Box::new(season_ends[i]));
             params_vec.push(Box::new(season_orders[i]));
+            params_vec.push(Box::new(season_trial_mins[i]));
+            params_vec.push(Box::new(season_trial_maxs[i]));
             params_vec.push(Box::new(timestamp.clone()));
         }
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
@@ -227,31 +262,5 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
     )
     .map_err(error_to_string)?;
 
-    Ok(())
-}
-
-fn create_tables(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS game_versions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS seasons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            version_id INTEGER NOT NULL,
-            start_date INTEGER NOT NULL,
-            end_date INTEGER,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (version_id) REFERENCES game_versions(id)
-        );
-        "#,
-    )
-    .map_err(error_to_string)?;
     Ok(())
 }

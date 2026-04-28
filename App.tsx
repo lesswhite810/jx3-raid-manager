@@ -37,7 +37,6 @@ import { sortAccounts } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
-import { syncEquipment } from './services/jx3BoxApi';
 import { updaterService } from './services/updater';
 import { toast } from './utils/toastManager';
 
@@ -303,9 +302,6 @@ function App() {
 
         setIsInitialized(true);
         console.log('\n✓ 应用初始化完成');
-
-        // Start background sync
-        syncEquipment().catch(console.error);
       } catch (error) {
         console.error('初始化失败:', error);
         setIsInitialized(true);

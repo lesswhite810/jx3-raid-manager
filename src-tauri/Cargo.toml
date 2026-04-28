@@ -30,6 +30,10 @@ tauri-plugin-mcp-bridge = "0.9"
 tauri-plugin-updater = "2"
 winreg = "0.52"
 regex = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+thiserror = "1"
+futures = "0.3"
 
 [features]
 default = ["custom-protocol"]

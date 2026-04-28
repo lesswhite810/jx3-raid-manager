@@ -288,4 +288,6 @@ export interface Season {
   startDate: number;
   endDate?: number;
   sortOrder: number;
+  trialEquipLevelMin?: number;
+  trialEquipLevelMax?: number;
 }
