@@ -242,6 +242,11 @@ impl EquipSync {
 
         for item in all_items {
             let id = item.get("ID").and_then(|v| v.as_i64()).map(|v| v.to_string()).unwrap_or_default();
+            
+            if id.contains('_') {
+                continue;
+            }
+            
             let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let ui_id = item.get("UiID").and_then(|v| v.as_i64()).map(|v| v.to_string()).unwrap_or_default();
             let icon_id = item.get("_IconID")

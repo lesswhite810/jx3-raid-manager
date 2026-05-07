@@ -40,7 +40,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const findEquipmentById = React.useCallback((id: string | undefined) => {
     if (!id || !id.trim()) return null;
-    return equipments.find((e: any) => e.ID?.toString() === id) || null;
+    
+    let equip = equipments.find((e: any) => e.ID?.toString() === id);
+    if (equip) return equip;
+    
+    if (id.includes('_')) {
+      const numericPart = id.split('_')[1];
+      if (numericPart) {
+        equip = equipments.find((e: any) => e.ID?.toString() === numericPart);
+        if (equip) return equip;
+      }
+    }
+    
+    return null;
   }, [equipments]);
 
   const safeRecords = Array.isArray(records) ? records : [];

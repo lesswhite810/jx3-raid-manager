@@ -35,36 +35,86 @@ const formatDate = (dateString: string | number) => {
     });
 };
 
-// 格式化属性的辅助函数
-const getFormattedAttributes = (item: JX3Equip) => {
-    const attrs: { label: string; color?: string }[] = [];
-    if (item.attributes && Array.isArray(item.attributes)) {
-        item.attributes.forEach((attr: any) => {
-            if (attr.type === 'atSkillEventHandler') {
-                attrs.push({
-                    label: '特效',
-                    color: '#ffcc00'
-                });
-                return;
-            }
+const ATTR_NAME_MAP: Record<string, string> = {
+    'atVitalityBase': '体质',
+    'atSpiritBase': '根骨',
+    'atStrengthBase': '力道',
+    'atAgilityBase': '身法',
+    'atSpunkBase': '元气',
+    'atPhysicsAttackPowerBase': '外功',
+    'atMagicAttackPowerBase': '内功',
+    'atSolarAttackPowerBase': '内功',
+    'atLunarAttackPowerBase': '内功',
+    'atPoisonAttackPowerBase': '内功',
+    'atNeutralAttackPowerBase': '内功',
+    'atPhysicsCriticalStrike': '会心',
+    'atMagicCriticalStrike': '会心',
+    'atAllTypeCriticalStrike': '会心',
+    'atPhysicsCriticalDamagePowerBase': '会效',
+    'atMagicCriticalDamagePowerBase': '会效',
+    'atPhysicsOvercome': '破防',
+    'atMagicOvercome': '破防',
+    'atSolarOvercomeBase': '破防',
+    'atLunarOvercomeBase': '破防',
+    'atPoisonOvercomeBase': '破防',
+    'atNeutralOvercomeBase': '破防',
+    'atSurplusValueBase': '破招',
+    'atStrainBase': '无双',
+    'atHaste': '加速',
+    'atToughnessBase': '御劲',
+    'atDecriticalDamagePowerBase': '化劲',
+    'atPhysicsShieldBase': '外防',
+    'atMagicShield': '内防',
+    'atDodge': '闪避',
+    'atParry': '招架',
+    'atHit': '命中',
+    'atTherapyPowerBase': '治疗',
+    'atSkillEventHandler': '特效',
+};
 
-            let name = item.AttributeTypes?.[attr.type];
-            if (!name && attr.label) {
-                name = attr.label.replace(/提高.*$/, '').replace(/[0-9]+$/, '');
+const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
+    const attrs: { label: string; color?: string }[] = [];
+    const seen = new Set<string>();
+
+    const addAttr = (label: string, color?: string) => {
+        if (label && !seen.has(label)) {
+            seen.add(label);
+            attrs.push({ label, color });
+        }
+    };
+
+    for (let i = 1; i <= 16; i++) {
+        const magicType = (item as any)[`_Magic${i}Type`];
+        if (!magicType) continue;
+
+        if (typeof magicType === 'object' && magicType.attr && Array.isArray(magicType.attr)) {
+            const attrType = magicType.attr[0];
+            if (attrType && typeof attrType === 'string') {
+                const label = ATTR_NAME_MAP[attrType];
+                if (label) {
+                    addAttr(label, attrType === 'atSkillEventHandler' ? '#ffcc00' : undefined);
+                }
             }
-            if (name) {
-                name = name.replace(/等级$|值$/, '').replace(/^外功|^内功/, '');
-                if (name === '会心效果') name = '会效';
-                if (name === '治疗成效') name = '治疗';
-                attrs.push({
-                    label: name,
-                    color: (attr.color && attr.color.toLowerCase() !== '#ffffff' && attr.color.toLowerCase() !== 'white')
-                        ? attr.color : undefined
-                });
+        } else if (typeof magicType === 'string' && magicType) {
+            const label = ATTR_NAME_MAP[magicType];
+            if (label) {
+                addAttr(label, magicType === 'atSkillEventHandler' ? '#ffcc00' : undefined);
+            }
+        }
+    }
+
+    if (attrs.length === 0 && item.attributes && Array.isArray(item.attributes)) {
+        item.attributes.forEach((attr: any) => {
+            if (attr.color === 'green' && attr.type) {
+                const label = ATTR_NAME_MAP[attr.type];
+                if (label) {
+                    addAttr(label, attr.type === 'atSkillEventHandler' ? '#ffcc00' : undefined);
+                }
             }
         });
     }
-    return attrs;
+    
+    return attrs.slice(0, maxCount);
 };
 
 // 获取绑定类型标签
@@ -112,7 +162,19 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     // 根据 ID 查找装备
     const findEquipmentById = (id: string | undefined): JX3Equip | null => {
         if (!id || !id.trim()) return null;
-        return equipments.find(e => e.ID?.toString() === id) || null;
+        
+        let equip = equipments.find(e => e.ID?.toString() === id);
+        if (equip) return equip;
+        
+        if (id.includes('_')) {
+            const numericPart = id.split('_')[1];
+            if (numericPart) {
+                equip = equipments.find(e => e.ID?.toString() === numericPart);
+                if (equip) return equip;
+            }
+        }
+        
+        return null;
     };
 
     // Sort records specific to this role
@@ -260,7 +322,8 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                         <div className="space-y-2">
                                                             {equipmentsToDisplay.map(({ equip, cardIndex, isFlipped }, index) => {
                                                                 const attrs = getFormattedAttributes(equip);
-                                                                const iconUrl = equip.IconID ? `https://icon.jx3box.com/icon/${equip.IconID}.png` : null;
+                                                                const iconId = equip._IconID ?? equip.IconID;
+                                                                const iconUrl = iconId ? `https://icon.jx3box.com/icon/${iconId}.png` : null;
                                                                 const bindLabel = getBindTypeLabel(equip.BindType);
 
                                                                 return (

@@ -74,27 +74,7 @@ const ATTR_NAME_MAP: Record<string, string> = {
     'atSkillEventHandler': '特效',
 };
 
-const ATTR_LABEL_MAP: Record<string, string> = {
-    'Critical': '会心',
-    'CriticalDamage': '会效',
-    'Overcome': '破防',
-    'Surplus': '破招',
-    'Strain': '无双',
-    'Haste': '加速',
-    'Toughness': '御劲',
-    'Decritical': '化劲',
-    'PhysicsShield': '外防',
-    'MagicShield': '内防',
-    'Dodge': '闪避',
-    'Parry': '招架',
-    'Hit': '命中',
-    'Therapy': '治疗',
-};
-
-/**
- * Enhanced attribute formatting helper
- */
-const getFormattedAttributes = (item: JX3Equip) => {
+const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     const attrs: { label: string, color?: string }[] = [];
     const seen = new Set<string>();
 
@@ -105,50 +85,38 @@ const getFormattedAttributes = (item: JX3Equip) => {
         }
     };
 
-    // 1. 从 _Attrs 数组获取属性标签
-    if (item._Attrs && Array.isArray(item._Attrs)) {
-        item._Attrs.forEach((attr: string) => {
-            if (ATTR_LABEL_MAP[attr]) {
-                addAttr(ATTR_LABEL_MAP[attr]);
+    for (let i = 1; i <= 16; i++) {
+        const magicType = (item as any)[`_Magic${i}Type`];
+        if (!magicType) continue;
+
+        if (typeof magicType === 'object' && magicType.attr && Array.isArray(magicType.attr)) {
+            const attrType = magicType.attr[0];
+            if (attrType && typeof attrType === 'string') {
+                const label = ATTR_NAME_MAP[attrType];
+                if (label) {
+                    addAttr(label, attrType === 'atSkillEventHandler' ? '#ffcc00' : undefined);
+                }
+            }
+        } else if (typeof magicType === 'string' && magicType) {
+            const label = ATTR_NAME_MAP[magicType];
+            if (label) {
+                addAttr(label, magicType === 'atSkillEventHandler' ? '#ffcc00' : undefined);
+            }
+        }
+    }
+
+    if (attrs.length === 0 && item.attributes && Array.isArray(item.attributes)) {
+        item.attributes.forEach((attr: any) => {
+            if (attr.color === 'green' && attr.type) {
+                const label = ATTR_NAME_MAP[attr.type];
+                if (label) {
+                    addAttr(label, attr.type === 'atSkillEventHandler' ? '#ffcc00' : undefined);
+                }
             }
         });
     }
-
-    // 2. 从 _AttrType 数组获取属性类型
-    if (item._AttrType && Array.isArray(item._AttrType)) {
-        item._AttrType.forEach((attr: string) => {
-            if (attr === 'atSkillEventHandler') {
-                addAttr('特效', '#ffcc00');
-            } else if (ATTR_NAME_MAP[attr]) {
-                addAttr(ATTR_NAME_MAP[attr]);
-            }
-        });
-    }
-
-    // 3. Standard Attributes (legacy format)
-    if (item.attributes && Array.isArray(item.attributes)) {
-        item.attributes.forEach(attr => {
-            if (attr.type === 'atSkillEventHandler') {
-                addAttr('特效', '#ffcc00');
-                return;
-            }
-
-            let name = item.AttributeTypes?.[attr.type];
-            if (!name && attr.label) {
-                name = attr.label.replace(/提高.*$/, '').replace(/[0-9]+$/, '');
-            }
-
-            if (name) {
-                name = name.replace(/等级$|值$/, '');
-                name = name.replace(/^外功|^内功/, '');
-                if (name === '会心效果') name = '会效';
-                if (name === '治疗成效') name = '治疗';
-                addAttr(name, attr.color);
-            }
-        });
-    }
-
-    return attrs;
+    
+    return attrs.slice(0, maxCount);
 };
 
 const hasAttribute = (item: JX3Equip, keyword: string) => {
@@ -162,7 +130,8 @@ const hasAttribute = (item: JX3Equip, keyword: string) => {
  */
 const EquipDisplay: React.FC<{ item: JX3Equip, simple?: boolean }> = ({ item, simple }) => {
     const attributes = getFormattedAttributes(item);
-    const iconUrl = item.IconID ? `https://icon.jx3box.com/icon/${item.IconID}.png` : null;
+    const iconId = item._IconID ?? item.IconID;
+    const iconUrl = iconId ? `https://icon.jx3box.com/icon/${iconId}.png` : null;
 
     const getBindTypeLabel = (val: any) => {
         switch (Number(val)) {
@@ -214,17 +183,16 @@ const EquipDisplay: React.FC<{ item: JX3Equip, simple?: boolean }> = ({ item, si
                     </div>
                 </div>
 
-                {/* Bottom: Attributes */}
                 <div className="w-full mt-1.5 pt-1 border-t border-white/5 flex-shrink-0">
-                    <div className="grid grid-cols-2 gap-x-1 gap-y-0.5 w-full text-left px-0.5 max-h-[60px] overflow-hide">
+                    <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 w-full px-0.5">
                         {attributes.length > 0 ? (
-                            attributes.slice(0, 6).map((attr, idx) => (
-                                <div key={idx} className="text-[10px] leading-tight truncate text-center" style={attr.color ? { color: attr.color } : {}}>
+                            attributes.map((attr, idx) => (
+                                <span key={idx} className="text-[10px] leading-tight whitespace-nowrap" style={attr.color ? { color: attr.color } : {}}>
                                     {attr.label}
-                                </div>
+                                </span>
                             ))
                         ) : (
-                            <div className="col-span-2 text-[10px] text-muted text-center">无属性</div>
+                            <span className="text-[10px] text-muted">无属性</span>
                         )}
                     </div>
                 </div>
@@ -243,7 +211,6 @@ const EquipDisplay: React.FC<{ item: JX3Equip, simple?: boolean }> = ({ item, si
             )}
 
             <div className="flex-1 min-w-0 py-0.5">
-                {/* Header: Name + Level + BindType */}
                 <div className="flex justify-between items-center">
                     <span className="font-bold text-sm text-[#fe2dfe] truncate">
                         {item.Name}
@@ -258,8 +225,7 @@ const EquipDisplay: React.FC<{ item: JX3Equip, simple?: boolean }> = ({ item, si
                     </div>
                 </div>
 
-                {/* Attributes: Single row */}
-                <div className="flex items-center gap-x-2 text-xs mt-0.5">
+                <div className="flex flex-wrap gap-x-2 text-xs mt-1">
                     {attributes.length > 0 ? (
                         attributes.map((attr, idx) => (
                             <span
@@ -413,8 +379,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         { key: '加速', label: '加速' },
         { key: '破招', label: '破招' },
         { key: '无双', label: '无双' },
-        { key: '特效', label: '特效' },
-        { key: '全能', label: '全能' },
     ];
 
     useEffect(() => {
@@ -702,7 +666,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                     type="number"
                                     value={layer}
                                     onChange={e => setLayer(parseInt(e.target.value) || 0)}
-                                    className="w-full pl-9 pr-2 py-2 rounded-lg bg-surface border border-base font-bold text-lg text-main focus:ring-2 focus:ring-primary/20 outline-none text-center"
+                                    className="w-full h-[38px] pl-9 pr-2 rounded-lg bg-surface border border-base font-bold text-sm text-main focus:ring-2 focus:ring-primary/20 outline-none text-center"
                                 />
                             </div>
                         </div>
@@ -714,7 +678,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <select
                                     value={boss1}
                                     onChange={e => setBoss1(e.target.value)}
-                                    className="w-full px-3 py-2 rounded-lg bg-surface border border-base text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20 hover:border-primary/30 transition-colors"
+                                    className="w-full h-[38px] px-3 rounded-lg bg-surface border border-base text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20 hover:border-primary/30 transition-colors"
                                 >
                                     <option value="" className="text-muted">第一关...</option>
                                     {BOSS_LEVEL_1.map(boss => (
@@ -724,7 +688,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <select
                                     value={boss2}
                                     onChange={e => setBoss2(e.target.value)}
-                                    className="w-full px-3 py-2 rounded-lg bg-surface border border-base text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20 hover:border-primary/30 transition-colors"
+                                    className="w-full h-[38px] px-3 rounded-lg bg-surface border border-base text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20 hover:border-primary/30 transition-colors"
                                 >
                                     <option value="" className="text-muted">第二关...</option>
                                     {BOSS_LEVEL_2_3.map(boss => (
@@ -734,7 +698,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <select
                                     value={boss3}
                                     onChange={e => setBoss3(e.target.value)}
-                                    className="w-full px-3 py-2 rounded-lg bg-surface border border-base text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20 hover:border-primary/30 transition-colors"
+                                    className="w-full h-[38px] px-3 rounded-lg bg-surface border border-base text-sm font-medium outline-none focus:ring-2 focus:ring-primary/20 hover:border-primary/30 transition-colors"
                                 >
                                     <option value="" className="text-muted">第三关...</option>
                                     {BOSS_LEVEL_2_3.map(boss => (
