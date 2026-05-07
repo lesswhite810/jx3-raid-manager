@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react';
 import { UpdateCheckResult, UpdateStatus } from '../types';
 import { formatUpdatePubDate } from '../utils/updaterUtils';
+import ReactMarkdown from 'react-markdown';
 
 interface UpdateDialogProps {
   isOpen: boolean;
@@ -76,8 +77,8 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
 
             <div>
               <h3 className="text-sm font-semibold text-main mb-2">更新说明</h3>
-              <div className="max-h-64 overflow-y-auto rounded-lg border border-base bg-base/30 p-4 whitespace-pre-wrap text-sm text-main leading-6">
-                {updateInfo.body}
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-base bg-base/30 p-4 text-sm text-main leading-6 prose prose-sm max-w-none prose-headings:text-main prose-headings:font-bold prose-h1:text-xl prose-h1:mt-4 prose-h1:mb-2 prose-h2:text-lg prose-h2:mt-4 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1 prose-p:mb-2 prose-p:text-main prose-li:text-main prose-strong:font-semibold">
+                <ReactMarkdown>{updateInfo.body || ''}</ReactMarkdown>
               </div>
             </div>
 
