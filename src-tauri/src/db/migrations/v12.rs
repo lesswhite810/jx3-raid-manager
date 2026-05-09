@@ -107,14 +107,11 @@ fn extract_updates_from_rows(conn: &Connection) -> Result<Vec<RecordUpdate>, Str
     Ok(updates)
 }
 
-const BATCH_SIZE: usize = 500;
-
 fn apply_updates_batched(conn: &Connection, updates: &[RecordUpdate]) -> Result<usize, String> {
     if updates.is_empty() {
         return Ok(0);
     }
 
-    let mut total_updated = 0usize;
     let mut update_stmt = conn
         .prepare(
             "UPDATE records
@@ -123,30 +120,20 @@ fn apply_updates_batched(conn: &Connection, updates: &[RecordUpdate]) -> Result<
         )
         .map_err(|e| e.to_string())?;
 
-    for chunk in updates.chunks(BATCH_SIZE) {
-        conn.execute("BEGIN TRANSACTION", [])
+    for record in updates {
+        update_stmt
+            .execute(params![
+                record.id,
+                record.raid_name,
+                record.account_id,
+                record.role_id,
+                record.record_date,
+                record.record_type,
+            ])
             .map_err(|e| e.to_string())?;
-
-        for record in chunk {
-            update_stmt
-                .execute(params![
-                    record.id,
-                    record.raid_name,
-                    record.account_id,
-                    record.role_id,
-                    record.record_date,
-                    record.record_type,
-                ])
-                .map_err(|e| e.to_string())?;
-        }
-
-        conn.execute("COMMIT", [])
-            .map_err(|e| e.to_string())?;
-
-        total_updated += chunk.len();
     }
 
-    Ok(total_updated)
+    Ok(updates.len())
 }
 
 pub fn migrate(conn: &Connection) -> Result<(), String> {
