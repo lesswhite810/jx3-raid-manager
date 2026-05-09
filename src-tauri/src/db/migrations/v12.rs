@@ -50,18 +50,32 @@ fn parse_record_date(value: &serde_json::Value) -> Option<i64> {
     })
 }
 
-pub fn migrate(conn: &Connection) -> Result<(), String> {
-    log::info!("========== V12 迁移开始 ==========");
-    log::info!("V12 迁移：为副本记录补充查询索引字段");
+struct RecordUpdate {
+    id: String,
+    raid_name: Option<String>,
+    account_id: Option<String>,
+    role_id: Option<String>,
+    record_date: Option<i64>,
+    record_type: String,
+}
 
-    add_column_if_missing(conn, "records", "raid_name", "TEXT")?;
-    add_column_if_missing(conn, "records", "account_id", "TEXT")?;
-    add_column_if_missing(conn, "records", "role_id", "TEXT")?;
-    add_column_if_missing(conn, "records", "record_date", "INTEGER")?;
-    add_column_if_missing(conn, "records", "record_type", "TEXT")?;
+fn extract_updates_from_rows(conn: &Connection) -> Result<Vec<RecordUpdate>, String> {
+    let needs_backfill: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM records WHERE raid_name IS NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+
+    if !needs_backfill {
+        log::info!("V12 迁移：所有记录已包含索引字段，跳过回填");
+        return Ok(Vec::new());
+    }
 
     let mut stmt = conn
-        .prepare("SELECT id, data FROM records")
+        .prepare("SELECT id, data FROM records WHERE raid_name IS NULL")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -77,27 +91,81 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
             Err(_) => continue,
         };
 
-        updates.push((
+        updates.push(RecordUpdate {
             id,
-            parsed["raidName"].as_str().map(|value| value.to_string()),
-            parsed["accountId"].as_str().map(|value| value.to_string()),
-            parsed["roleId"].as_str().map(|value| value.to_string()),
-            parse_record_date(&parsed["date"]),
-            parsed["type"]
+            raid_name: parsed["raidName"].as_str().map(|v| v.to_string()),
+            account_id: parsed["accountId"].as_str().map(|v| v.to_string()),
+            role_id: parsed["roleId"].as_str().map(|v| v.to_string()),
+            record_date: parse_record_date(&parsed["date"]),
+            record_type: parsed["type"]
                 .as_str()
-                .map(|value| value.to_string())
+                .map(|v| v.to_string())
                 .unwrap_or_else(|| "raid".to_string()),
-        ));
+        });
     }
 
-    for (id, raid_name, account_id, role_id, record_date, record_type) in updates {
-        conn.execute(
+    Ok(updates)
+}
+
+const BATCH_SIZE: usize = 500;
+
+fn apply_updates_batched(conn: &Connection, updates: &[RecordUpdate]) -> Result<usize, String> {
+    if updates.is_empty() {
+        return Ok(0);
+    }
+
+    let mut total_updated = 0usize;
+    let mut update_stmt = conn
+        .prepare(
             "UPDATE records
              SET raid_name = ?2, account_id = ?3, role_id = ?4, record_date = ?5, record_type = ?6
              WHERE id = ?1",
-            params![id, raid_name, account_id, role_id, record_date, record_type],
         )
         .map_err(|e| e.to_string())?;
+
+    for chunk in updates.chunks(BATCH_SIZE) {
+        conn.execute("BEGIN TRANSACTION", [])
+            .map_err(|e| e.to_string())?;
+
+        for record in chunk {
+            update_stmt
+                .execute(params![
+                    record.id,
+                    record.raid_name,
+                    record.account_id,
+                    record.role_id,
+                    record.record_date,
+                    record.record_type,
+                ])
+                .map_err(|e| e.to_string())?;
+        }
+
+        conn.execute("COMMIT", [])
+            .map_err(|e| e.to_string())?;
+
+        total_updated += chunk.len();
+    }
+
+    Ok(total_updated)
+}
+
+pub fn migrate(conn: &Connection) -> Result<(), String> {
+    log::info!("========== V12 迁移开始 ==========");
+    log::info!("V12 迁移：为副本记录补充查询索引字段");
+
+    add_column_if_missing(conn, "records", "raid_name", "TEXT")?;
+    add_column_if_missing(conn, "records", "account_id", "TEXT")?;
+    add_column_if_missing(conn, "records", "role_id", "TEXT")?;
+    add_column_if_missing(conn, "records", "record_date", "INTEGER")?;
+    add_column_if_missing(conn, "records", "record_type", "TEXT")?;
+
+    let updates = extract_updates_from_rows(conn)?;
+    let total = updates.len();
+
+    if total > 0 {
+        log::info!("V12 迁移：需要回填 {} 条记录", total);
+        let updated = apply_updates_batched(conn, &updates)?;
+        log::info!("V12 迁移：已回填 {} 条记录", updated);
     }
 
     conn.execute_batch(
@@ -344,5 +412,81 @@ mod tests {
         assert_eq!(record3.0, None);
         assert_eq!(record3.1, None);
         assert_eq!(record3.2, None);
+    }
+
+    #[test]
+    fn skips_backfill_when_already_complete() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE records (
+                id TEXT PRIMARY KEY,
+                data TEXT,
+                raid_name TEXT,
+                account_id TEXT,
+                role_id TEXT,
+                record_date INTEGER,
+                record_type TEXT
+            );
+            INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type)
+            VALUES ('record-1', '{}', 'test-raid', 'acc-1', 'role-1', 1710000000000, 'raid');
+            "#,
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let raid_name: String = conn
+            .query_row(
+                "SELECT raid_name FROM records WHERE id = 'record-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raid_name, "test-raid");
+    }
+
+    #[test]
+    fn batched_update_processes_all_records() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
+            [],
+        )
+        .unwrap();
+
+        for i in 0..10 {
+            conn.execute(
+                "INSERT INTO records (id, data) VALUES (?1, ?2)",
+                params![
+                    format!("record-{}", i),
+                    format!(
+                        r#"{{"id":"record-{}","raidName":"副本{}","accountId":"acc-{}","date":{}}}"#,
+                        i, i, i, 1710000000000 + i as i64 * 1000
+                    ),
+                ],
+            )
+            .unwrap();
+        }
+
+        migrate(&conn).unwrap();
+
+        let backfilled: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM records WHERE raid_name IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(backfilled, 10);
+
+        let raid_name: String = conn
+            .query_row(
+                "SELECT raid_name FROM records WHERE id = 'record-5'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raid_name, "副本5");
     }
 }
