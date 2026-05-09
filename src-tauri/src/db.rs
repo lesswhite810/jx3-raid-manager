@@ -366,6 +366,31 @@ fn sync_data_dir_installer_state(config: &DataDirBootstrapConfig) -> Result<(), 
     write_data_dir_installer_state(config, &target_dir, &location)
 }
 
+fn read_previous_effective_data_dir() -> Result<Option<PathBuf>, String> {
+    let state_path = get_data_dir_installer_state_path()?;
+    if !state_path.exists() {
+        return Ok(None);
+    }
+
+    let content =
+        fs::read_to_string(&state_path).map_err(|e| format!("读取安装器状态文件失败: {}", e))?;
+
+    for line in content.lines() {
+        if let Some(value) = line.strip_prefix("effectiveDataDir=") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                let path = PathBuf::from(trimmed);
+                if path.exists() && has_persisted_app_data(&path) {
+                    return Ok(Some(path));
+                }
+            }
+            break;
+        }
+    }
+
+    Ok(None)
+}
+
 fn maybe_migrate_app_data(
     target_dir: &Path,
     config: &mut DataDirBootstrapConfig,
@@ -382,6 +407,13 @@ fn maybe_migrate_app_data(
     let home_dir = get_home_app_dir()?;
     if home_dir != target_dir {
         migration_sources.push(home_dir);
+    }
+
+    if let Some(previous_dir) = read_previous_effective_data_dir()? {
+        if previous_dir != *target_dir && !migration_sources.contains(&previous_dir) {
+            log::info!("检测到历史数据目录 {:?}，加入迁移源", previous_dir);
+            migration_sources.push(previous_dir);
+        }
     }
 
     let mut migrated = false;
