@@ -904,7 +904,8 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             version TEXT,
             notes TEXT,
             is_active INTEGER DEFAULT 1,
-            is_static INTEGER DEFAULT 0
+            is_static INTEGER DEFAULT 0,
+            season_id INTEGER REFERENCES seasons(id)
         );
 
         -- ========== BOSS 表 (V2+) ==========
@@ -988,6 +989,16 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             created_at TEXT NOT NULL,
             FOREIGN KEY (version_id) REFERENCES game_versions(id)
         );
+
+        -- ========== V10 索引 ==========
+        CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
+        CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
+
+        -- ========== V12 索引 ==========
+        CREATE INDEX IF NOT EXISTS idx_records_raid_name ON records(raid_name);
+        CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
+        CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
+        CREATE INDEX IF NOT EXISTS idx_records_record_date ON records(record_date);
     "#,
     )
     .map_err(|e| e.to_string())?;
