@@ -966,6 +966,28 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_rrv_role_id ON raid_role_visibility(role_id);
         CREATE INDEX IF NOT EXISTS idx_rrv_raid_key ON raid_role_visibility(raid_key);
+
+        -- ========== 游戏版本表 (V10+) ==========
+        CREATE TABLE IF NOT EXISTS game_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
+        -- ========== 赛季表 (V10+) ==========
+        CREATE TABLE IF NOT EXISTS seasons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            version_id INTEGER NOT NULL,
+            start_date INTEGER NOT NULL,
+            end_date INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            trial_equip_level_min INTEGER DEFAULT 0,
+            trial_equip_level_max INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (version_id) REFERENCES game_versions(id)
+        );
     "#,
     )
     .map_err(|e| e.to_string())?;
