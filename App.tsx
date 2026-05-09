@@ -50,10 +50,8 @@ function App() {
   const [showTrialFlipDetail, setShowTrialFlipDetail] = useState(false);
 
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [contentKey, setContentKey] = useState(0);
   const [isInitialized, setIsInitialized] = useState(false);
-  const previousTabRef = useRef<string>('dashboard');
+  const initStartedRef = useRef(false);
   const updaterInitializedRef = useRef(false);
 
   // 用于跟踪是否是初始加载，避免首次加载数据时触发保存
@@ -89,6 +87,7 @@ function App() {
       setRecords(loadedRecords);
     } catch (error) {
       console.error('重新加载记录失败:', error);
+      toast.error('重新加载副本记录失败');
     }
   }, []);
 
@@ -100,6 +99,7 @@ function App() {
       setTrialRecords(loadedTrialRecords);
     } catch (error) {
       console.error('重新加载试炼记录失败:', error);
+      toast.error('重新加载试炼记录失败');
     }
   }, []);
 
@@ -111,6 +111,7 @@ function App() {
       setBaizhanRecords(loadedBaizhanRecords);
     } catch (error) {
       console.error('重新加载百战记录失败:', error);
+      toast.error('重新加载百战记录失败');
     }
   }, []);
 
@@ -194,6 +195,11 @@ function App() {
   }, [updateCheckResult]);
 
   useEffect(() => {
+    if (initStartedRef.current) {
+      return;
+    }
+    initStartedRef.current = true;
+
     const initApp = async () => {
       try {
         console.log('正在初始化数据库...');
@@ -225,6 +231,7 @@ function App() {
             }
           } else {
             console.error('✗ localStorage 迁移失败:', result.message);
+            toast.error(`旧数据迁移失败: ${result.message}`);
             if (result.details && result.details.length > 0) {
               result.details.forEach((detail: string) => console.error(`  - ${detail}`));
             }
@@ -285,8 +292,7 @@ function App() {
 
         if (parsedRecords.length > 0) {
           // Filter out any legacy trial records if they exist in standard records
-          // @ts-ignore
-          const raidRecords = parsedRecords.filter((r: any) => r.type !== 'trial') as RaidRecord[];
+          const raidRecords = parsedRecords.filter((record: RaidRecord) => record.type !== 'trial');
           setRecords(raidRecords);
         }
 
@@ -304,6 +310,7 @@ function App() {
         console.log('\n✓ 应用初始化完成');
       } catch (error) {
         console.error('初始化失败:', error);
+        toast.error('初始化失败，请查看日志');
         setIsInitialized(true);
       }
     };
@@ -334,6 +341,7 @@ function App() {
         await db.saveAccounts(accounts);
       } catch (error) {
         console.error('保存账号失败:', error);
+        toast.error('保存账号失败');
       }
     };
     saveData();
@@ -355,6 +363,7 @@ function App() {
         await db.saveRecords(records);
       } catch (error) {
         console.error('保存副本记录失败:', error);
+        toast.error('保存副本记录失败');
       }
     };
     saveData();
@@ -374,6 +383,7 @@ function App() {
         await db.saveRaids(raids);
       } catch (error) {
         console.error('保存副本失败:', error);
+        toast.error('保存副本失败');
       }
     };
     saveData();
@@ -393,6 +403,7 @@ function App() {
         await db.saveConfig(config);
       } catch (error) {
         console.error('保存配置失败:', error);
+        toast.error('保存配置失败');
       }
     };
     saveData();
@@ -420,21 +431,10 @@ function App() {
 
   // 处理标签页切换，添加过渡效果
   const handleTabChange = (tab: typeof activeTab) => {
-    if (tab !== activeTab) {
-      previousTabRef.current = activeTab;
-    }
-
-    setIsTransitioning(true);
     setActiveTab(tab);
     setShowIncomeDetail(false);
     setShowCrystalDetail(false);
     setShowTrialFlipDetail(false);
-
-    setContentKey(prev => prev + 1);
-
-    setTimeout(() => {
-      setIsTransitioning(false);
-    }, 350);
   };
 
   // 仅在浏览器环境中添加PWA相关事件监听
@@ -469,6 +469,7 @@ function App() {
         setTrialRecords(prev => prev.filter(r => r.id !== recordId));
       } catch (error) {
         console.error('删除试炼记录失败:', error);
+        toast.error('删除试炼记录失败');
       }
     } else if (isBaizhan) {
       try {
@@ -476,6 +477,7 @@ function App() {
         setBaizhanRecords(prev => prev.filter(r => r.id !== recordId));
       } catch (error) {
         console.error('删除百战记录失败:', error);
+        toast.error('删除百战记录失败');
       }
     } else {
       try {
@@ -483,6 +485,7 @@ function App() {
         await reloadRecords();
       } catch (error) {
         console.error('删除副本记录失败:', error);
+        toast.error('删除副本记录失败');
       }
     }
   };
@@ -497,6 +500,7 @@ function App() {
       await reloadRecords();
     } catch (error) {
       console.error('更新副本记录失败:', error);
+      toast.error('更新副本记录失败');
     }
 
     setEditingRecord(null);
@@ -551,15 +555,11 @@ function App() {
       </nav>
 
       {/* Main Content */}
-      <main key={contentKey} className="w-full mx-auto p-4 md:p-8 select-text">
-        {isTransitioning ? (
-          <LoadingSpinner size="lg" text="切换中..." />
-        ) : (
-          <>
+      <main className="w-full mx-auto p-4 md:p-8 select-text">
+        <>
             {activeTab === 'dashboard' && (
               showIncomeDetail ? (
                 <IncomeDetail
-                  key={`incomeDetail-${contentKey}`}
                   records={records}
                   baizhanRecords={baizhanRecords}
                   accounts={accounts}
@@ -572,7 +572,6 @@ function App() {
                 />
               ) : showCrystalDetail ? (
                 <CrystalDetail
-                  key={`crystalDetail-${contentKey}`}
                   records={records}
                   accounts={accounts}
                   initialPeriod={dashboardStatsPeriod}
@@ -581,13 +580,11 @@ function App() {
                 />
               ) : showTrialFlipDetail ? (
                 <TrialFlipDetail
-                  key={`trialFlipDetail-${contentKey}`}
                   trialRecords={trialRecords}
                   onBack={() => setShowTrialFlipDetail(false)}
                 />
               ) : (
                 <Dashboard
-                  key={`dashboard-${contentKey}`}
                   records={records}
                   accounts={accounts}
                   baizhanRecords={baizhanRecords}
@@ -601,11 +598,10 @@ function App() {
               )
             )}
             {activeTab === 'accounts' && (
-              <AccountManager key={`accounts-${contentKey}`} accounts={accounts} setAccounts={setAccounts} config={config} instanceTypes={instanceTypes} />
+              <AccountManager accounts={accounts} setAccounts={setAccounts} config={config} instanceTypes={instanceTypes} />
             )}
             {activeTab === 'raidManager' && (
               <RaidManager
-                key={`raidManager-${contentKey}`}
                 raids={raids}
                 setRaids={setRaids}
                 records={records}
@@ -622,7 +618,6 @@ function App() {
             {activeTab === 'config' && (
               <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置模块..." />}>
                 <ConfigManager
-                  key={`config-${contentKey}`}
                   config={config}
                   setConfig={setConfig}
                   updateRuntimeInfo={updateRuntimeInfo}
@@ -632,8 +627,7 @@ function App() {
                 />
               </Suspense>
             )}
-          </>
-        )}
+        </>
       </main>
 
       {/* Mobile Bottom Nav */}

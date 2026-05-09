@@ -6,6 +6,8 @@ import { db } from '../services/db';
 import { getLastMonday } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
+import { getTrialRecordEquipmentEntries } from '../utils/trialRecordUtils';
+import { buildClientAccountIdSet, buildEquipmentLookup, EquipmentLike, getEquipmentById } from '../utils/recordLookupUtils';
 
 interface DashboardProps {
   records: RaidRecord[];
@@ -30,30 +32,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onShowCrystalDetail,
   onShowTrialFlipDetail
 }) => {
-  const [equipments, setEquipments] = useState<any[]>([]);
+  const [equipments, setEquipments] = useState<EquipmentLike[]>([]);
 
   React.useEffect(() => {
-    db.getEquipments().then((data: any[]) => {
-      setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d));
+    db.getEquipments().then((data: unknown[]) => {
+      setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d as EquipmentLike));
     }).catch(console.error);
   }, []);
 
+  const equipmentLookup = useMemo(() => buildEquipmentLookup(equipments), [equipments]);
   const findEquipmentById = React.useCallback((id: string | undefined) => {
-    if (!id || !id.trim()) return null;
-    
-    let equip = equipments.find((e: any) => e.ID?.toString() === id);
-    if (equip) return equip;
-    
-    if (id.includes('_')) {
-      const numericPart = id.split('_')[1];
-      if (numericPart) {
-        equip = equipments.find((e: any) => e.ID?.toString() === numericPart);
-        if (equip) return equip;
-      }
-    }
-    
-    return null;
-  }, [equipments]);
+    return getEquipmentById(equipmentLookup, id);
+  }, [equipmentLookup]);
 
   const safeRecords = Array.isArray(records) ? records : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
@@ -93,7 +83,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const totalTradableEquipCount = useMemo(() => {
     let count = 0;
     safeTrialRecords.forEach(record => {
-      const equipId = (record as any)[`card${record.flippedIndex}`];
+      const equipId = getTrialRecordEquipmentEntries(record).find(entry => entry.isFlipped)?.equipId;
       if (!equipId) {
         return;
       }
@@ -146,20 +136,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const xuanjingCount = filteredRecords.filter(r => r.hasXuanjing).length;
     const dropRate = filteredRecords.length > 0 ? (xuanjingCount / filteredRecords.length) * 100 : 0;
 
-    const clientAccountIds = safeAccounts
-      .filter(a => a.type === AccountType.CLIENT && !a.disabled)
-      .map(a => a.id);
+    const clientAccountIds = buildClientAccountIdSet(safeAccounts);
     const clientRaidIncome = filteredRecords
-      .filter(r => clientAccountIds.includes(r.accountId))
+      .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + r.goldIncome, 0);
     const clientBaizhanIncome = filteredBaizhanRecords
-      .filter(r => clientAccountIds.includes(r.accountId))
+      .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + r.goldIncome, 0);
     const clientIncome = clientRaidIncome + clientBaizhanIncome;
 
     let equipCount = 0;
     filteredTrialRecords.forEach((r) => {
-      const equipId = (r as any)[`card${r.flippedIndex}`];
+      const equipId = getTrialRecordEquipmentEntries(r).find(entry => entry.isFlipped)?.equipId;
       if (equipId) {
         const equip = findEquipmentById(equipId);
         if (equip && (equip.BindType === 1 || equip.BindType === 2)) {

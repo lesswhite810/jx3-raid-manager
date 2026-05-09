@@ -8,9 +8,16 @@ export interface ThemeConfig {
 
 const THEME_FILE = 'theme.json';
 const DEFAULT_THEME: ThemeConfig = { theme: 'minimal' };
+const BROWSER_THEME_KEY = 'jx3_theme_config';
+const isTauriEnv = (): boolean => typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
 
 export const loadThemeConfig = async (): Promise<ThemeConfig> => {
     try {
+        if (!isTauriEnv()) {
+            const storedConfig = localStorage.getItem(BROWSER_THEME_KEY);
+            return storedConfig ? JSON.parse(storedConfig) : DEFAULT_THEME;
+        }
+
         const fileExists = await exists(THEME_FILE, { baseDir: BaseDirectory.AppConfig });
         if (!fileExists) {
             return DEFAULT_THEME;
@@ -26,6 +33,11 @@ export const loadThemeConfig = async (): Promise<ThemeConfig> => {
 
 export const saveThemeConfig = async (config: ThemeConfig): Promise<void> => {
     try {
+        if (!isTauriEnv()) {
+            localStorage.setItem(BROWSER_THEME_KEY, JSON.stringify(config));
+            return;
+        }
+
         // Ensure the directory exists
         const dirExists = await exists('', { baseDir: BaseDirectory.AppConfig });
         if (!dirExists) {

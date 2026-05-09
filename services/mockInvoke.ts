@@ -56,6 +56,8 @@ const MOCK_TRIAL_RECORDS = [
   }
 ];
 
+const mockCache = new Map<string, [string, string]>();
+
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   console.log(`[Mock Invoke] Call: ${cmd}`, args);
   
@@ -111,6 +113,15 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           break;
         case 'db_get_favorite_raids':
           result = [];
+          break;
+        case 'db_get_cache':
+          result = typeof args?.key === 'string' ? mockCache.get(args.key) ?? null : null;
+          break;
+        case 'db_save_cache':
+          if (typeof args?.key === 'string' && typeof args?.value === 'string') {
+            mockCache.set(args.key, [args.value, new Date().toISOString()]);
+          }
+          result = null;
           break;
         case 'db_get_instance_types':
           result = JSON.stringify([]);

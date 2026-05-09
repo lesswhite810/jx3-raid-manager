@@ -11,12 +11,39 @@ const normalizeCheckResult = (result: UpdateCheckResult): UpdateCheckResult => (
   body: normalizeReleaseNotes(result.body)
 });
 
+const isTauriEnv = (): boolean => typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
+
+const browserRuntimeInfo = (): UpdateRuntimeInfo => ({
+  currentVersion: 'dev',
+  executablePath: '',
+  isPortable: true,
+  willInstallInPlace: false,
+  hasUninstallExecutable: false,
+  updaterConfigured: false,
+  releaseUrl: ''
+});
+
 class UpdaterService {
   async getRuntimeInfo(): Promise<UpdateRuntimeInfo> {
+    if (!isTauriEnv()) {
+      return browserRuntimeInfo();
+    }
+
     return invoke<UpdateRuntimeInfo>('updater_get_runtime_info');
   }
 
   async check(): Promise<UpdateCheckResult> {
+    if (!isTauriEnv()) {
+      return {
+        currentVersion: 'dev',
+        available: false,
+        isPortable: true,
+        willInstallInPlace: false,
+        updaterConfigured: false,
+        releaseUrl: ''
+      };
+    }
+
     const result = await invoke<UpdateCheckResult>('updater_check');
     return normalizeCheckResult(result);
   }
@@ -24,6 +51,10 @@ class UpdaterService {
   async downloadAndInstall(
     onProgress?: (payload: UpdateProgressPayload) => void
   ): Promise<void> {
+    if (!isTauriEnv()) {
+      throw new Error('当前构建未启用自动更新');
+    }
+
     const unlisten = await listen<UpdateProgressPayload>(UPDATER_PROGRESS_EVENT, event => {
       onProgress?.(event.payload);
     });
@@ -36,6 +67,11 @@ class UpdaterService {
   }
 
   async openReleasePage(url: string): Promise<void> {
+    if (!isTauriEnv()) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
     await open(url);
   }
 }

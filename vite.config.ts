@@ -26,10 +26,6 @@ export default defineConfig(async () => ({
             return undefined;
           }
 
-          if (id.includes('react') || id.includes('scheduler')) {
-            return 'react-vendor';
-          }
-
           if (id.includes('recharts') || id.includes('d3-')) {
             return 'charts-vendor';
           }

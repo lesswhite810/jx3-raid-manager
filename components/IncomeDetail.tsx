@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
-import { RaidRecord, Account, AccountType, Role, BaizhanRecord } from '../types';
+import { RaidRecord, Account, BaizhanRecord } from '../types';
 import { toast } from '../utils/toastManager';
 import { getLastMonday } from '../utils/cooldownManager';
+import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey, getVisibleRecordRange } from '../utils/recordLookupUtils';
 
 interface IncomeDetailProps {
   records: RaidRecord[];
@@ -48,6 +49,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const [activeTab, setActiveTab] = useState<'all' | 'income' | 'expense'>('all');
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  const [recordListScrollTop, setRecordListScrollTop] = useState(0);
 
   useEffect(() => {
     setPeriod(initialPeriod);
@@ -61,27 +63,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const safeRecords = Array.isArray(records) ? records : [];
   const safeBaizhanRecords = Array.isArray(baizhanRecords) ? baizhanRecords : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
-
-  const findRoleInfo = (accountId: string, roleId: string): { roleName: string; server: string } => {
-    for (const account of safeAccounts) {
-      if (account.id === accountId) {
-        const role = account.roles?.find((r: Role) => r.id === roleId);
-        if (role) {
-          return {
-            roleName: role.name,
-            server: `${role.region} ${role.server}`
-          };
-        }
-      }
-    }
-    return { roleName: '', server: '' };
-  };
+  const roleInfoLookup = useMemo(() => buildRoleInfoLookup(safeAccounts), [safeAccounts]);
 
   const enhancedRecords = useMemo<EnhancedRecord[]>(() => {
     const raidList: EnhancedRecord[] = safeRecords.map(record => {
-      const roleInfo = findRoleInfo(record.accountId, record.roleId);
-      const roleName = record.roleName || roleInfo.roleName || '未知角色';
-      let rawServer = roleInfo.server || record.server || '未知服务器';
+      const roleInfo = roleInfoLookup.get(getRoleInfoKey(record.accountId, record.roleId));
+      const roleName = record.roleName || roleInfo?.roleName || '未知角色';
+      let rawServer = roleInfo?.server || record.server || '未知服务器';
       if (roleName && roleName !== '未知角色') {
         rawServer = rawServer.replace(new RegExp(`\\s*${roleName}\\s*`, 'g'), ' ').trim();
       }
@@ -94,9 +82,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     });
 
     const baizhanList: EnhancedRecord[] = safeBaizhanRecords.map(record => {
-      const roleInfo = findRoleInfo(record.accountId, record.roleId);
-      const roleName = record.roleName || roleInfo.roleName || '未知角色';
-      let rawServer = roleInfo.server || record.server || '未知服务器';
+      const roleInfo = roleInfoLookup.get(getRoleInfoKey(record.accountId, record.roleId));
+      const roleName = record.roleName || roleInfo?.roleName || '未知角色';
+      let rawServer = roleInfo?.server || record.server || '未知服务器';
       if (roleName && roleName !== '未知角色') {
         rawServer = rawServer.replace(new RegExp(`\\s*${roleName}\\s*`, 'g'), ' ').trim();
       }
@@ -110,7 +98,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     });
 
     return [...raidList, ...baizhanList].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [safeRecords, safeBaizhanRecords, safeAccounts]);
+  }, [safeRecords, safeBaizhanRecords, roleInfoLookup]);
 
   const filteredRecords = useMemo(() => {
     const now = new Date();
@@ -153,15 +141,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     const netIncome = totalIncome - totalExpense;
     const xuanjingCount = filteredRecords.filter(r => r.hasXuanjing).length;
 
-    const clientAccountIds = safeAccounts
-      .filter(a => a.type === AccountType.CLIENT && !a.disabled)
-      .map(a => a.id);
+    const clientAccountIds = buildClientAccountIdSet(safeAccounts);
     const clientIncome = filteredRecords
-      .filter(r => clientAccountIds.includes(r.accountId))
+      .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + r.goldIncome, 0);
 
     const clientExpense = filteredRecords
-      .filter(r => clientAccountIds.includes(r.accountId))
+      .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + (r.goldExpense || 0), 0);
 
     return {
@@ -185,6 +171,22 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       .map(k => ({ name: k, value: grouped[k] }))
       .sort((a, b) => b.value - a.value);
   }, [filteredRecords]);
+
+  useEffect(() => {
+    setRecordListScrollTop(0);
+  }, [period, searchTerm, activeTab]);
+
+  const virtualRange = useMemo(() => getVisibleRecordRange({
+    totalCount: tabFilteredRecords.length,
+    scrollTop: recordListScrollTop,
+    viewportHeight: 500,
+    rowHeight: 88,
+    overscan: 6
+  }), [tabFilteredRecords.length, recordListScrollTop]);
+
+  const visibleRecords = useMemo(() => {
+    return tabFilteredRecords.slice(virtualRange.startIndex, virtualRange.endIndex);
+  }, [tabFilteredRecords, virtualRange.startIndex, virtualRange.endIndex]);
 
   const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
@@ -429,7 +431,10 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           </div>
         </div>
 
-        <div className="max-h-[500px] overflow-y-auto">
+        <div
+          className="max-h-[500px] overflow-y-auto"
+          onScroll={event => setRecordListScrollTop(event.currentTarget.scrollTop)}
+        >
           {tabFilteredRecords.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted">
               <Coins className="w-12 h-12 text-muted/30 mb-3" />
@@ -437,7 +442,10 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             </div>
           ) : (
             <div className="divide-y divide-base">
-              {tabFilteredRecords.map((record) => {
+              {virtualRange.topPadding > 0 && (
+                <div style={{ height: virtualRange.topPadding }} aria-hidden="true" />
+              )}
+              {visibleRecords.map((record) => {
                 const netIncome = record.goldIncome - (record.goldExpense || 0);
                 const isExpanded = expandedRecordId === record.id;
 
@@ -617,6 +625,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   </div>
                 );
               })}
+              {virtualRange.bottomPadding > 0 && (
+                <div style={{ height: virtualRange.bottomPadding }} aria-hidden="true" />
+              )}
             </div>
           )}
         </div>

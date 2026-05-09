@@ -17,7 +17,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 11;
+pub const CURRENT_SCHEMA_VERSION: i32 = 12;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -456,6 +456,52 @@ fn format_directory_delete_message(target_type: &str, display_path: &str, delete
     }
 }
 
+#[derive(Debug)]
+struct RecordLookupMetadata {
+    raid_name: Option<String>,
+    account_id: Option<String>,
+    role_id: Option<String>,
+    record_date: Option<i64>,
+    record_type: String,
+}
+
+fn record_lookup_metadata_from_json(record: &serde_json::Value) -> RecordLookupMetadata {
+    RecordLookupMetadata {
+        raid_name: record["raidName"].as_str().map(|value| value.to_string()),
+        account_id: record["accountId"].as_str().map(|value| value.to_string()),
+        role_id: record["roleId"].as_str().map(|value| value.to_string()),
+        record_date: parse_record_date(&record["date"]),
+        record_type: record["type"]
+            .as_str()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "raid".to_string()),
+    }
+}
+
+fn parse_record_date(value: &serde_json::Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        value.as_str().and_then(|date| {
+            date.parse::<i64>().ok().or_else(|| {
+                chrono::DateTime::parse_from_rfc3339(date)
+                    .ok()
+                    .map(|parsed| parsed.timestamp_millis())
+            })
+        })
+    })
+}
+
+fn filter_record_json_by_raid_name(records: Vec<String>, raid_name: &str) -> Vec<String> {
+    records
+        .into_iter()
+        .filter(|record| {
+            serde_json::from_str::<serde_json::Value>(record)
+                .ok()
+                .and_then(|value| value["raidName"].as_str().map(|name| name == raid_name))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub fn db_delete_directory(
     path: String,
@@ -729,7 +775,12 @@ fn ensure_base_tables(conn: &Connection) -> Result<(), String> {
         r#"
         CREATE TABLE IF NOT EXISTS records (
             id TEXT PRIMARY KEY,
-            data TEXT
+            data TEXT,
+            raid_name TEXT,
+            account_id TEXT,
+            role_id TEXT,
+            record_date INTEGER,
+            record_type TEXT
         );
 
         CREATE TABLE IF NOT EXISTS config (
@@ -2136,7 +2187,7 @@ pub fn db_delete_role_structured(role_id: String) -> Result<(), String> {
 pub fn db_get_records() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT data FROM records")
+        .prepare("SELECT data FROM records ORDER BY record_date DESC")
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
     let mut records = Vec::new();
@@ -2162,10 +2213,26 @@ pub fn db_save_records(records: String) -> Result<(), String> {
         if id.is_empty() {
             continue;
         }
+        let metadata = record_lookup_metadata_from_json(&record);
         tx.execute(
-            "INSERT INTO records (id, data) VALUES (?, ?)
-             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-            params![id, record.to_string()],
+            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                data = excluded.data,
+                raid_name = excluded.raid_name,
+                account_id = excluded.account_id,
+                role_id = excluded.role_id,
+                record_date = excluded.record_date,
+                record_type = excluded.record_type",
+            params![
+                id,
+                record.to_string(),
+                metadata.raid_name,
+                metadata.account_id,
+                metadata.role_id,
+                metadata.record_date,
+                metadata.record_type
+            ],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -2723,10 +2790,27 @@ pub fn db_add_record(record: String) -> Result<(), String> {
 
     let id = parsed["id"].as_str().unwrap_or_default().to_string();
 
+    let metadata = record_lookup_metadata_from_json(&parsed);
+
     conn.execute(
-        "INSERT INTO records (id, data) VALUES (?, ?)
-         ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-        params![id, record],
+        "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            data = excluded.data,
+            raid_name = excluded.raid_name,
+            account_id = excluded.account_id,
+            role_id = excluded.role_id,
+            record_date = excluded.record_date,
+            record_type = excluded.record_type",
+        params![
+            id,
+            record,
+            metadata.raid_name,
+            metadata.account_id,
+            metadata.role_id,
+            metadata.record_date,
+            metadata.record_type
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -2742,19 +2826,23 @@ pub fn db_delete_record(record_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn db_get_records_by_raid(_raid_id: String) -> Result<Vec<String>, String> {
+pub fn db_get_records_by_raid(raid_id: String) -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT data FROM records")
+        .prepare(
+            "SELECT data FROM records
+             WHERE raid_name = ?
+             ORDER BY record_date DESC",
+        )
         .map_err(|e| e.to_string())?;
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    let mut rows = stmt.query(params![&raid_id]).map_err(|e| e.to_string())?;
     let mut records = Vec::new();
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
         if let Ok(data) = row.get(0) {
             records.push(data);
         }
     }
-    Ok(records)
+    Ok(filter_record_json_by_raid_name(records, &raid_id))
 }
 
 #[allow(dead_code)]
@@ -3590,5 +3678,19 @@ mod tests {
             source_dir.join(DATABASE_NAME).exists(),
             "source file should remain in place when target is the same directory"
         );
+    }
+
+    #[test]
+    fn filters_record_json_by_raid_name() {
+        let records = vec![
+            r#"{"id":"1","raidName":"25人英雄阕风悬城"}"#.to_string(),
+            r#"{"id":"2","raidName":"百战异闻录"}"#.to_string(),
+            r#"{"id":"3","raidName":"25人英雄阕风悬城"}"#.to_string(),
+        ];
+
+        let filtered = filter_record_json_by_raid_name(records, "25人英雄阕风悬城");
+
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|record| record.contains("阕风悬城")));
     }
 }

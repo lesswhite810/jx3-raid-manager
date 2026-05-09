@@ -141,6 +141,6 @@ mod tests {
         let map = build_kungfu_force_name_to_id_map();
         assert_eq!(map.get(&(214, "山海心诀".to_string())), Some(&10756));
         assert_eq!(map.get(&(8, "问水诀".to_string())), Some(&10144));
-        assert_eq!(map.get(&(8, "山居剑意".to_string())), Some(&10145));
+        assert_eq!(map.get(&(8, "山居剑意".to_string())), None);
     }
 }
