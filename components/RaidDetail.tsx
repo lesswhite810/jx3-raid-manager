@@ -260,7 +260,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     thisWeekRecords.forEach(record => {
       if (processedRoleIds.has(record.roleId)) return;
 
-      let roleName = '未知角色';
+      let roleName = record.roleName || '未知角色';
       let sect = '';
       let martial = '';
       let region = '';
@@ -281,7 +281,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           isClientAccount = account.type === AccountType.CLIENT;
           const role = account.roles?.find(r => r.id === record.roleId);
           if (role) {
-            // 可见性过滤：raid 为 false 时跳过
             if (role.visibility?.raid === false) {
               return;
             }
