@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 12;
+pub const CURRENT_SCHEMA_VERSION: i32 = 13;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -522,18 +523,6 @@ fn parse_record_date(value: &serde_json::Value) -> Option<i64> {
     })
 }
 
-fn filter_record_json_by_raid_name(records: Vec<String>, raid_name: &str) -> Vec<String> {
-    records
-        .into_iter()
-        .filter(|record| {
-            serde_json::from_str::<serde_json::Value>(record)
-                .ok()
-                .and_then(|value| value["raidName"].as_str().map(|name| name == raid_name))
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
 #[tauri::command]
 pub fn db_delete_directory(
     path: String,
@@ -603,7 +592,7 @@ pub fn init_db() -> Result<Connection, String> {
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
 
     // 配置数据库为安全模式，确保数据真正写入磁盘
-    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE;")
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
         .ok();
 
     // 创建 schema_versions 表（用于记录版本）和 migration_flags 表
@@ -852,12 +841,127 @@ fn ensure_base_tables(conn: &Connection) -> Result<(), String> {
 
 /// 创建最新版本的数据库结构
 fn create_latest_schema(conn: &Connection) -> Result<(), String> {
-    // 先创建基础表
     ensure_base_tables(conn)?;
 
     conn.execute_batch(
         r#"
-        -- ========== 试炼记录表 ==========
+        CREATE TABLE IF NOT EXISTS accounts (
+            id TEXT PRIMARY KEY,
+            account_name TEXT NOT NULL,
+            account_type TEXT NOT NULL DEFAULT 'OWN',
+            sort_order INTEGER DEFAULT 0,
+            password TEXT,
+            notes TEXT,
+            hidden INTEGER DEFAULT 0,
+            disabled INTEGER DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS roles (
+            id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            server TEXT,
+            region TEXT,
+            sect TEXT,
+            martial TEXT,
+            equipment_score INTEGER,
+            disabled INTEGER DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
+        CREATE INDEX IF NOT EXISTS idx_accounts_sort_order ON accounts(sort_order);
+
+        CREATE TABLE IF NOT EXISTS game_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS seasons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            version_id INTEGER NOT NULL,
+            start_date INTEGER NOT NULL,
+            end_date INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            trial_equip_level_min INTEGER DEFAULT 0,
+            trial_equip_level_max INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (version_id) REFERENCES game_versions(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS raids (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            difficulty TEXT NOT NULL DEFAULT '普通',
+            player_count INTEGER NOT NULL DEFAULT 25,
+            version TEXT,
+            notes TEXT,
+            is_active INTEGER DEFAULT 1,
+            is_static INTEGER DEFAULT 0,
+            season_id INTEGER REFERENCES seasons(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS raid_bosses (
+            id TEXT PRIMARY KEY,
+            raid_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            boss_order INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS raid_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS favorite_raids (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raid_name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS instance_types (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS role_instance_visibility (
+            id TEXT PRIMARY KEY,
+            role_id TEXT NOT NULL,
+            instance_type_id INTEGER NOT NULL,
+            visible INTEGER DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            FOREIGN KEY (instance_type_id) REFERENCES instance_types(id) ON DELETE CASCADE,
+            UNIQUE(role_id, instance_type_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_riv_role_id ON role_instance_visibility(role_id);
+        CREATE INDEX IF NOT EXISTS idx_riv_instance_type_id ON role_instance_visibility(instance_type_id);
+
+        CREATE TABLE IF NOT EXISTS raid_role_visibility (
+            id TEXT PRIMARY KEY,
+            role_id TEXT NOT NULL,
+            raid_key TEXT NOT NULL,
+            visible INTEGER DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            UNIQUE(role_id, raid_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rrv_role_id ON raid_role_visibility(role_id);
+        CREATE INDEX IF NOT EXISTS idx_rrv_raid_key ON raid_role_visibility(raid_key);
+
         CREATE TABLE IF NOT EXISTS trial_records (
             id TEXT PRIMARY KEY,
             account_id TEXT,
@@ -878,7 +982,6 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             updated_at TEXT
         );
 
-        -- ========== 百战记录表 ==========
         CREATE TABLE IF NOT EXISTS baizhan_records (
             id TEXT PRIMARY KEY,
             account_id TEXT NOT NULL,
@@ -893,140 +996,8 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             updated_at TEXT
         );
 
-        -- ========== 账号表 (V1+ 结构化格式) ==========
-        CREATE TABLE IF NOT EXISTS accounts (
-            id TEXT PRIMARY KEY,
-            account_name TEXT NOT NULL,
-            account_type TEXT NOT NULL DEFAULT 'OWN',
-            sort_order INTEGER DEFAULT 0,
-            password TEXT,
-            notes TEXT,
-            hidden INTEGER DEFAULT 0,
-            disabled INTEGER DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT
-        );
-
-        -- ========== 角色表 (V1+ 结构化格式) ==========
-        CREATE TABLE IF NOT EXISTS roles (
-            id TEXT PRIMARY KEY,
-            account_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            server TEXT,
-            region TEXT,
-            sect TEXT,
-            martial TEXT,
-            equipment_score INTEGER,
-            disabled INTEGER DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT,
-            FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
-        CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
-        CREATE INDEX IF NOT EXISTS idx_accounts_sort_order ON accounts(sort_order);
-
-        -- ========== 副本表 (V2+ 结构化格式) ==========
-        CREATE TABLE IF NOT EXISTS raids (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            difficulty TEXT NOT NULL DEFAULT '普通',
-            player_count INTEGER NOT NULL DEFAULT 25,
-            version TEXT,
-            notes TEXT,
-            is_active INTEGER DEFAULT 1,
-            is_static INTEGER DEFAULT 0,
-            season_id INTEGER REFERENCES seasons(id)
-        );
-
-        -- ========== BOSS 表 (V2+) ==========
-        CREATE TABLE IF NOT EXISTS raid_bosses (
-            id TEXT PRIMARY KEY,
-            raid_name TEXT NOT NULL,
-            name TEXT NOT NULL,
-            boss_order INTEGER NOT NULL
-        );
-
-        -- ========== 副本版本表 (V2+) ==========
-        CREATE TABLE IF NOT EXISTS raid_versions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL
-        );
-
-        -- ========== 副本收藏表 (V4+) ==========
-        CREATE TABLE IF NOT EXISTS favorite_raids (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            raid_name TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL
-        );
-
-        -- ========== 副本类型表 (V5+) ==========
-        CREATE TABLE IF NOT EXISTS instance_types (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL UNIQUE,
-            name TEXT NOT NULL
-        );
-
-        -- ========== 角色副本可见性表 (V5+) ==========
-        CREATE TABLE IF NOT EXISTS role_instance_visibility (
-            id TEXT PRIMARY KEY,
-            role_id TEXT NOT NULL,
-            instance_type_id INTEGER NOT NULL,
-            visible INTEGER DEFAULT 1,
-            created_at TEXT,
-            updated_at TEXT,
-            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-            FOREIGN KEY (instance_type_id) REFERENCES instance_types(id) ON DELETE CASCADE,
-            UNIQUE(role_id, instance_type_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_riv_role_id ON role_instance_visibility(role_id);
-        CREATE INDEX IF NOT EXISTS idx_riv_instance_type_id ON role_instance_visibility(instance_type_id);
-
-        -- ========== 团队副本角色可见性表 (V6+) ==========
-        -- 专门用于存储团队副本级别的角色禁用/启用配置，与 instance_types 分离
-        CREATE TABLE IF NOT EXISTS raid_role_visibility (
-            id TEXT PRIMARY KEY,
-            role_id TEXT NOT NULL,
-            raid_key TEXT NOT NULL,
-            visible INTEGER DEFAULT 1,
-            created_at TEXT,
-            updated_at TEXT,
-            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-            UNIQUE(role_id, raid_key)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_rrv_role_id ON raid_role_visibility(role_id);
-        CREATE INDEX IF NOT EXISTS idx_rrv_raid_key ON raid_role_visibility(raid_key);
-
-        -- ========== 游戏版本表 (V10+) ==========
-        CREATE TABLE IF NOT EXISTS game_versions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-
-        -- ========== 赛季表 (V10+) ==========
-        CREATE TABLE IF NOT EXISTS seasons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            version_id INTEGER NOT NULL,
-            start_date INTEGER NOT NULL,
-            end_date INTEGER,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            trial_equip_level_min INTEGER DEFAULT 0,
-            trial_equip_level_max INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (version_id) REFERENCES game_versions(id)
-        );
-
-        -- ========== V10 索引 ==========
         CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
         CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
-
-        -- ========== V12 索引 ==========
         CREATE INDEX IF NOT EXISTS idx_records_raid_name ON records(raid_name);
         CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
         CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
@@ -1035,7 +1006,6 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    // ==== 插入默认的 instance_types 数据 ====
     conn.execute_batch(
         r#"
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
@@ -1565,22 +1535,6 @@ pub fn db_init() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn db_get_accounts() -> Result<Vec<String>, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT data FROM accounts")
-        .map_err(|e| e.to_string())?;
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-    let mut accounts = Vec::new();
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        if let Ok(data) = row.get(0) {
-            accounts.push(data);
-        }
-    }
-    Ok(accounts)
-}
-
-#[tauri::command]
 pub fn db_save_accounts(accounts: String) -> Result<(), String> {
     let mut conn = init_db().map_err(|e| e.to_string())?;
     let parsed: Vec<serde_json::Value> =
@@ -1628,17 +1582,39 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
         }
     }
 
-    // 4. 删除不在传入数据中的账号（会级联删除角色和可见性配置）
+    let incoming_account_set: HashSet<String> = incoming_account_ids.into_iter().collect();
+    let incoming_role_set: HashSet<String> = incoming_role_ids.into_iter().collect();
+
+    // 4. 删除不在传入数据中的账号及其关联数据（保留历史记录）
     for account_id in &existing_account_ids {
-        if !incoming_account_ids.contains(account_id) {
+        if !incoming_account_set.contains(account_id) {
+            let roles_to_delete: Vec<String> = {
+                let mut stmt = tx
+                    .prepare("SELECT id FROM roles WHERE account_id = ?")
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt.query_map(params![account_id], |row| row.get(0)).map_err(|e| e.to_string())?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+            for role_id in &roles_to_delete {
+                tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
+                    .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
+                    .map_err(|e| e.to_string())?;
+            }
+            tx.execute("DELETE FROM roles WHERE account_id = ?", params![account_id])
+                .map_err(|e| e.to_string())?;
             tx.execute("DELETE FROM accounts WHERE id = ?", params![account_id])
                 .map_err(|e| e.to_string())?;
         }
     }
 
-    // 5. 删除不在传入数据中的角色（会级联删除可见性配置）
+    // 5. 删除不在传入数据中的角色及其关联数据（保留历史记录）
     for role_id in &existing_role_ids {
-        if !incoming_role_ids.contains(role_id) {
+        if !incoming_role_set.contains(role_id) {
+            tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
+                .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
+                .map_err(|e| e.to_string())?;
             tx.execute("DELETE FROM roles WHERE id = ?", params![role_id])
                 .map_err(|e| e.to_string())?;
         }
@@ -2234,17 +2210,46 @@ fn create_default_visibility(conn: &Connection, role_id: &str) -> Result<(), Str
 
 #[tauri::command]
 pub fn db_delete_account_structured(account_id: String) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM accounts WHERE id = ?", params![account_id])
+    let mut conn = init_db().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let role_ids: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT id FROM roles WHERE account_id = ?")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![&account_id], |row| row.get(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    for role_id in &role_ids {
+        tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
+            .map_err(|e| e.to_string())?;
+    }
+
+    tx.execute("DELETE FROM roles WHERE account_id = ?", params![account_id])
         .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM accounts WHERE id = ?", params![account_id])
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn db_delete_role_structured(role_id: String) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM roles WHERE id = ?", params![role_id])
+    let mut conn = init_db().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
         .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM roles WHERE id = ?", params![role_id])
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -2310,17 +2315,15 @@ pub fn db_save_records(records: String) -> Result<(), String> {
 pub fn db_get_raids() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
-    // 从 raids 读取结构化数据
     let mut stmt = conn
         .prepare("SELECT id, name, difficulty, player_count, version, notes, is_active, is_static FROM raids")
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
 
     let mut raids: Vec<serde_json::Value> = Vec::new();
-    let mut raid_ids: Vec<String> = Vec::new();
 
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let id: String = row.get(0).map_err(|e| e.to_string())?;
+        let _id: String = row.get(0).map_err(|e| e.to_string())?;
         let name: String = row.get(1).map_err(|e| e.to_string())?;
         let difficulty: String = row.get(2).map_err(|e| e.to_string())?;
         let player_count: i64 = row.get(3).map_err(|e| e.to_string())?;
@@ -2349,39 +2352,44 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
         }
 
         raids.push(raid);
-        raid_ids.push(id);
     }
     drop(rows);
     drop(stmt);
 
-    // 为每个副本加载 BOSS 列表（按副本名称关联）
-    for (i, _raid_id) in raid_ids.iter().enumerate() {
-        let raid_name = raids[i]["name"].as_str().unwrap_or_default().to_string();
+    let mut boss_map: std::collections::HashMap<String, Vec<serde_json::Value>> = std::collections::HashMap::new();
+    {
         let mut boss_stmt = conn
-            .prepare("SELECT id, name, boss_order FROM raid_bosses WHERE raid_name = ? ORDER BY boss_order")
+            .prepare("SELECT raid_name, id, name, boss_order FROM raid_bosses ORDER BY boss_order")
             .map_err(|e| e.to_string())?;
-        let mut boss_rows = boss_stmt
-            .query(params![raid_name])
-            .map_err(|e| e.to_string())?;
-        let mut bosses: Vec<serde_json::Value> = Vec::new();
+        let mut boss_rows = boss_stmt.query([]).map_err(|e| e.to_string())?;
 
         while let Some(boss_row) = boss_rows.next().map_err(|e| e.to_string())? {
-            let boss_id: String = boss_row.get(0).map_err(|e| e.to_string())?;
-            let boss_name: String = boss_row.get(1).map_err(|e| e.to_string())?;
-            let boss_order: i64 = boss_row.get(2).map_err(|e| e.to_string())?;
-            bosses.push(serde_json::json!({
-                "id": boss_id,
-                "name": boss_name,
-                "order": boss_order
-            }));
-        }
+            let raid_name: String = boss_row.get(0).map_err(|e| e.to_string())?;
+            let boss_id: String = boss_row.get(1).map_err(|e| e.to_string())?;
+            let boss_name: String = boss_row.get(2).map_err(|e| e.to_string())?;
+            let boss_order: i64 = boss_row.get(3).map_err(|e| e.to_string())?;
 
-        if !bosses.is_empty() {
-            raids[i]["bosses"] = serde_json::json!(bosses);
+            boss_map
+                .entry(raid_name)
+                .or_insert_with(Vec::new)
+                .push(serde_json::json!({
+                    "id": boss_id,
+                    "name": boss_name,
+                    "order": boss_order
+                }));
         }
     }
 
-    // 序列化为 JSON 字符串数组（兼容前端解析方式）
+    for raid in &mut raids {
+        if let Some(name) = raid["name"].as_str() {
+            if let Some(bosses) = boss_map.remove(name) {
+                if !bosses.is_empty() {
+                    raid["bosses"] = serde_json::json!(bosses);
+                }
+            }
+        }
+    }
+
     let result: Vec<String> = raids.iter().map(|r| r.to_string()).collect();
     Ok(result)
 }
@@ -2476,14 +2484,6 @@ pub fn db_save_game_version(version: String) -> Result<i64, String> {
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
     }
-}
-
-#[tauri::command]
-pub fn db_delete_game_version(id: i64) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM game_versions WHERE id = ?", params![id])
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -2583,14 +2583,6 @@ pub fn db_save_season(season: String) -> Result<i64, String> {
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
     }
-}
-
-#[tauri::command]
-pub fn db_delete_season(id: i64) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM seasons WHERE id = ?", params![id])
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -2907,7 +2899,7 @@ pub fn db_get_records_by_raid(raid_id: String) -> Result<Vec<String>, String> {
             records.push(data);
         }
     }
-    Ok(filter_record_json_by_raid_name(records, &raid_id))
+    Ok(records)
 }
 
 #[allow(dead_code)]
@@ -3030,136 +3022,6 @@ pub fn db_analyze_duplicates() -> Result<String, String> {
 
 #[allow(dead_code)]
 #[tauri::command]
-pub fn db_deduplicate_accounts() -> Result<String, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-
-    // 读取所有账号
-    let mut rows: Vec<(String, String)> = Vec::new();
-    let mut stmt = conn
-        .prepare("SELECT id, data FROM accounts")
-        .map_err(|e| e.to_string())?;
-    let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
-    while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
-        if let (Ok(id), Ok(data)) = (row.get(0), row.get(1)) {
-            rows.push((id, data));
-        }
-    }
-
-    let total_before = rows.len();
-
-    // 去重：保留每个 id 的第一条记录
-    let mut seen = std::collections::HashSet::new();
-    let mut accounts_to_keep: Vec<(String, String)> = Vec::new();
-    let mut removed = 0;
-
-    for (id, data) in rows {
-        if seen.insert(id.clone()) {
-            accounts_to_keep.push((id, data));
-        } else {
-            removed += 1;
-        }
-    }
-
-    // 重新打开连接执行写入操作
-    {
-        let mut conn = init_db().map_err(|e| e.to_string())?;
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-
-        tx.execute("DELETE FROM accounts", [])
-            .map_err(|e| e.to_string())?;
-
-        for (id, data) in &accounts_to_keep {
-            tx.execute(
-                "INSERT INTO accounts (id, data) VALUES (?, ?)",
-                params![id, data],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        tx.commit().map_err(|e| e.to_string())?;
-    }
-
-    Ok(format!(
-        "✓ 账号去重完成！\n  处理前: {} 条\n  删除: {} 条\n  保留: {} 条",
-        total_before,
-        removed,
-        accounts_to_keep.len()
-    ))
-}
-
-#[allow(dead_code)]
-#[tauri::command]
-pub fn db_deduplicate_raids() -> Result<String, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-
-    // 读取所有副本
-    let mut rows: Vec<(String, String)> = Vec::new();
-    let mut stmt = conn
-        .prepare("SELECT id, data FROM raids")
-        .map_err(|e| e.to_string())?;
-    let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
-    while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
-        if let (Ok(id), Ok(data)) = (row.get(0), row.get(1)) {
-            rows.push((id, data));
-        }
-    }
-
-    let total_before = rows.len();
-
-    // 去重逻辑：对于同名的副本，保留最新日期的
-    let mut raids_by_name: std::collections::HashMap<String, (String, String)> =
-        std::collections::HashMap::new();
-
-    for (id, data) in rows {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
-            let date = json["date"].as_str().unwrap_or("").to_string();
-            let existing = raids_by_name.get(&id);
-            if existing.is_none() {
-                raids_by_name.insert(id.clone(), (date, data));
-            } else {
-                let existing_date = existing.as_ref().unwrap().0.clone();
-                if date > existing_date {
-                    raids_by_name.insert(id.clone(), (date, data));
-                }
-            }
-        } else {
-            if !raids_by_name.contains_key(&id) {
-                raids_by_name.insert(id.clone(), (String::new(), data));
-            }
-        }
-    }
-
-    let removed = total_before - raids_by_name.len();
-
-    // 重新打开连接执行写入操作
-    {
-        let mut conn = init_db().map_err(|e| e.to_string())?;
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-
-        tx.execute("DELETE FROM raids", [])
-            .map_err(|e| e.to_string())?;
-
-        for (id, (_, data)) in &raids_by_name {
-            tx.execute(
-                "INSERT INTO raids (id, data) VALUES (?, ?)",
-                params![id, data],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        tx.commit().map_err(|e| e.to_string())?;
-    }
-
-    Ok(format!(
-        "✓ 副本去重完成！\n  处理前: {} 条\n  删除: {} 条\n  保留: {} 条",
-        total_before,
-        removed,
-        raids_by_name.len()
-    ))
-}
-
-#[allow(dead_code)]
-#[tauri::command]
 pub fn db_add_unique_constraint_raids() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
@@ -3182,31 +3044,51 @@ pub fn db_add_unique_constraint_raids() -> Result<String, String> {
 #[tauri::command]
 pub fn db_backup(backup_path: String) -> Result<(), String> {
     let src_path = get_db_path()?;
-    let dest_path = PathBuf::from(backup_path);
-
-    if src_path.exists() {
-        std::fs::copy(&src_path, &dest_path).map_err(|e| e.to_string())?;
+    if !src_path.exists() {
+        return Err("数据库文件不存在".to_string());
     }
 
+    let dest_path = PathBuf::from(&backup_path);
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建备份目录失败: {}", e))?;
+    }
+
+    let src_conn = init_db().map_err(|e| e.to_string())?;
+
+    src_conn
+        .backup(rusqlite::DatabaseName::Main, &dest_path, None)
+        .map_err(|e| format!("备份数据库失败: {}", e))?;
+
+    log::info!("数据库备份完成: {:?}", backup_path);
     Ok(())
 }
 
 #[tauri::command]
 pub fn db_restore(restore_path: String) -> Result<(), String> {
     let dest_path = get_db_path()?;
-    let src_path = PathBuf::from(restore_path);
+    let src_path = PathBuf::from(&restore_path);
 
-    if src_path.exists() {
-        std::fs::create_dir_all(
-            dest_path
-                .parent()
-                .ok_or_else(|| "无法获取父目录".to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-
-        std::fs::copy(&src_path, &dest_path).map_err(|e| e.to_string())?;
+    if !src_path.exists() {
+        return Err("恢复文件不存在".to_string());
     }
 
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+
+    let src_conn = rusqlite::Connection::open(&src_path)
+        .map_err(|e| format!("打开恢复数据库失败: {}", e))?;
+
+    src_conn
+        .backup(rusqlite::DatabaseName::Main, &dest_path, None)
+        .map_err(|e| format!("恢复数据库失败: {}", e))?;
+
+    {
+        let mut initialized = DB_INITIALIZED.lock().unwrap();
+        *initialized = false;
+    }
+
+    log::info!("数据库恢复完成，请重启应用以加载新数据");
     Ok(())
 }
 

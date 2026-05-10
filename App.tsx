@@ -610,6 +610,7 @@ function App() {
                 trialRecords={trialRecords}
                 baizhanRecords={baizhanRecords}
                 accounts={accounts}
+                config={config}
                 onRefreshRecords={reloadRecords}
                 onRefreshTrialRecords={reloadTrialRecords}
                 onRefreshBaizhanRecords={reloadBaizhanRecords}

@@ -197,9 +197,14 @@ export interface GameConfig {
   autoDetectEnabled: boolean;
 }
 
+export interface TrialConfig {
+  autoFillEnabled: boolean;
+}
+
 export interface Config {
   ai: AIConfig;
   game: GameConfig;
+  trial?: TrialConfig;
 }
 
 // Toast 通知类型定义

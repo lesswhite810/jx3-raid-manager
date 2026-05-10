@@ -192,7 +192,6 @@ fn main() {
             db::db_is_local_storage_migrated,
             db::db_set_local_storage_migrated,
             // 账号相关
-            db::db_get_accounts,
             db::db_save_accounts,
             db::db_get_accounts_structured,
             db::db_get_accounts_with_roles,
@@ -215,11 +214,9 @@ fn main() {
             // 赛季相关
             db::db_get_game_versions,
             db::db_save_game_version,
-            db::db_delete_game_version,
             db::db_get_seasons,
             db::db_get_seasons_by_version,
             db::db_save_season,
-            db::db_delete_season,
             db::db_get_season_for_date,
             db::db_get_current_season,
             // 配置相关

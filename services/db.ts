@@ -242,16 +242,6 @@ class DatabaseService {
     }
   }
 
-  async deleteGameVersion(id: number): Promise<void> {
-    await this.init();
-    try {
-      await invoke('db_delete_game_version', { id });
-    } catch (error) {
-      console.error('Failed to delete game version:', error);
-      throw error;
-    }
-  }
-
   async getSeasons(): Promise<Season[]> {
     await this.init();
     try {
@@ -280,16 +270,6 @@ class DatabaseService {
       return await invoke<number>('db_save_season', { season: JSON.stringify(season) });
     } catch (error) {
       console.error('Failed to save season:', error);
-      throw error;
-    }
-  }
-
-  async deleteSeason(id: number): Promise<void> {
-    await this.init();
-    try {
-      await invoke('db_delete_season', { id });
-    } catch (error) {
-      console.error('Failed to delete season:', error);
       throw error;
     }
   }
@@ -396,46 +376,6 @@ class DatabaseService {
     } catch (error) {
       console.error('Failed to restore database:', error);
       throw error;
-    }
-  }
-
-  async analyzeDuplicates(): Promise<string> {
-    await this.init();
-    try {
-      return await invoke<string>('db_analyze_duplicates');
-    } catch (error) {
-      console.error('Failed to analyze duplicates:', error);
-      return '分析失败: ' + String(error);
-    }
-  }
-
-  async deduplicateAccounts(): Promise<string> {
-    await this.init();
-    try {
-      return await invoke<string>('db_deduplicate_accounts');
-    } catch (error) {
-      console.error('Failed to deduplicate accounts:', error);
-      return '去重失败: ' + String(error);
-    }
-  }
-
-  async deduplicateRaids(): Promise<string> {
-    await this.init();
-    try {
-      return await invoke<string>('db_deduplicate_raids');
-    } catch (error) {
-      console.error('Failed to deduplicate raids:', error);
-      return '去重失败: ' + String(error);
-    }
-  }
-
-  async addUniqueConstraintRaids(): Promise<string> {
-    await this.init();
-    try {
-      return await invoke<string>('db_add_unique_constraint_raids');
-    } catch (error) {
-      console.error('Failed to add unique constraint:', error);
-      return '添加约束失败: ' + String(error);
     }
   }
 
@@ -578,9 +518,7 @@ class DatabaseService {
   async updateBaizhanRecord(record: any): Promise<void> {
     await this.init();
     try {
-      // 先删除旧记录，再添加更新后的记录（复用现有 Tauri 命令）
-      await invoke('db_delete_baizhan_record', { id: record.id });
-      await invoke('db_add_baizhan_record', { record: JSON.stringify(record) });
+      await invoke('db_update_baizhan_record', { record: JSON.stringify(record) });
     } catch (error) {
       console.error('Failed to update baizhan record:', error);
       throw error;

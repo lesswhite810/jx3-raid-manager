@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
-import { TrialPlaceRecord, Account } from '../types';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { TrialPlaceRecord, Account, Config } from '../types';
 import { Trophy, Check, Copy, Target, Search, X, BarChart3 } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
@@ -14,12 +14,14 @@ import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
     accounts: Account[];
+    config?: Config;
     onRefreshRecords?: () => void;
 }
 
 export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     records,
     accounts,
+    config,
     onRefreshRecords
 }) => {
     const [isAdding, setIsAdding] = useState(false);
@@ -27,6 +29,27 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const [viewFlipStatsRole, setViewFlipStatsRole] = useState<any>(null);
     const [roleSearchTerm, setRoleSearchTerm] = useState('');
     const [autoFillEnabled, setAutoFillEnabled] = useState(false);
+
+    useEffect(() => {
+        if (config?.trial?.autoFillEnabled !== undefined) {
+            setAutoFillEnabled(config.trial.autoFillEnabled);
+        }
+    }, [config?.trial?.autoFillEnabled]);
+
+    const handleToggleAutoFill = useCallback(async (enabled: boolean) => {
+        setAutoFillEnabled(enabled);
+        try {
+            const currentConfig = await db.getConfig();
+            const configData = typeof currentConfig === 'string' ? JSON.parse(currentConfig) : currentConfig || {};
+            configData.trial = {
+                ...configData.trial,
+                autoFillEnabled: enabled
+            };
+            await db.saveConfig(configData);
+        } catch (error) {
+            console.error('Failed to save autoFillEnabled config:', error);
+        }
+    }, []);
 
     const allRoles = useMemo(() => {
         return accounts
@@ -202,7 +225,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                         <span className="text-xs text-muted">自动填充</span>
                         <div
                             className={`relative w-10 h-5 rounded-full transition-colors ${autoFillEnabled ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}
-                            onClick={() => setAutoFillEnabled(!autoFillEnabled)}
+                            onClick={() => handleToggleAutoFill(!autoFillEnabled)}
                         >
                             <div
                                 className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${autoFillEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}

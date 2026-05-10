@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Raid } from '../types';
+import { Raid, Config } from '../types';
 import { Trash2, Shield, Filter, Power, Star } from 'lucide-react';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
@@ -19,6 +19,7 @@ interface RaidManagerProps {
   trialRecords: TrialPlaceRecord[];
   baizhanRecords: BaizhanRecord[];
   accounts: Account[];
+  config?: Config;
   onRefreshRecords?: () => void;
   onRefreshTrialRecords?: () => void;
   onRefreshBaizhanRecords?: () => void;
@@ -57,6 +58,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   trialRecords,
   baizhanRecords,
   accounts,
+  config,
   onRefreshRecords,
   onRefreshTrialRecords,
   onRefreshBaizhanRecords
@@ -426,6 +428,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         <TrialPlaceManager
           records={trialRecords}
           accounts={accounts}
+          config={config}
           onRefreshRecords={onRefreshTrialRecords}
         />
       ) : selectedRaid ? (
