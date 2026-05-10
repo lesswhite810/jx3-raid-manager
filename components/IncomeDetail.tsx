@@ -1,17 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
-import { RaidRecord, Account, BaizhanRecord } from '../types';
+import { RaidRecord, Account, BaizhanRecord, Season } from '../types';
 import { toast } from '../utils/toastManager';
 import { getLastMonday } from '../utils/cooldownManager';
 import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey, getVisibleRecordRange } from '../utils/recordLookupUtils';
+import { db } from '../services/db';
 
 interface IncomeDetailProps {
   records: RaidRecord[];
   baizhanRecords: BaizhanRecord[];
   accounts: Account[];
-  initialPeriod: 'week' | 'month' | 'all';
-  onPeriodChange: (period: 'week' | 'month' | 'all') => void;
+  initialPeriod: 'week' | 'season' | 'all';
+  onPeriodChange: (period: 'week' | 'season' | 'all') => void;
   onBack: () => void;
   onDeleteRecord: (recordId: string, isBaizhan?: boolean, isTrial?: boolean) => void;
   onEditRecord: (record: RaidRecord) => void;
@@ -44,18 +45,35 @@ interface EnhancedRecord {
 }
 
 export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanRecords, accounts, initialPeriod, onPeriodChange, onBack, onDeleteRecord, onEditRecord, onEditBaizhanRecord }) => {
-  const [period, setPeriod] = useState<'week' | 'month' | 'all'>(initialPeriod);
+  const [period, setPeriod] = useState<'week' | 'season' | 'all'>(initialPeriod);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'income' | 'expense'>('all');
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [recordListScrollTop, setRecordListScrollTop] = useState(0);
+  const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+  const [seasonLoaded, setSeasonLoaded] = useState(false);
 
   useEffect(() => {
     setPeriod(initialPeriod);
   }, [initialPeriod]);
 
-  const handlePeriodChange = (nextPeriod: 'week' | 'month' | 'all') => {
+  useEffect(() => {
+    db.getCurrentSeason().then((s) => {
+      setCurrentSeason(s);
+      setSeasonLoaded(true);
+    }).catch(() => {
+      setSeasonLoaded(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (seasonLoaded && !currentSeason && period === 'season') {
+      handlePeriodChange('week');
+    }
+  }, [seasonLoaded, currentSeason, period]);
+
+  const handlePeriodChange = (nextPeriod: 'week' | 'season' | 'all') => {
     setPeriod(nextPeriod);
     onPeriodChange(nextPeriod);
   };
@@ -106,8 +124,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
     if (period === 'week') {
       startOfPeriod = getLastMonday(now);
-    } else if (period === 'month') {
-      startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (period === 'season') {
+      if (currentSeason?.startDate) {
+        const sd = currentSeason.startDate;
+        startOfPeriod = new Date(sd > 1e12 ? sd : sd * 1000);
+      } else {
+        startOfPeriod = new Date(0);
+      }
     } else {
       startOfPeriod = new Date(now.getFullYear() - 10, 0, 1);
     }
@@ -117,7 +140,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
       return recordTime >= startTime;
     });
-  }, [enhancedRecords, period]);
+  }, [enhancedRecords, period, currentSeason]);
 
   const searchedRecords = useMemo(() => {
     return filteredRecords.filter(r =>
@@ -242,35 +265,37 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           <div>
             <h2 className="text-2xl font-bold text-main">收益概览</h2>
             <p className="text-sm text-muted mt-1">
-              {period === 'week' ? '本周' : period === 'month' ? '本月' : '全部'}共记录 {filteredRecords.length} 条收益与支出数据
+              {period === 'week' ? '本周' : period === 'season' ? '本赛季' : '全部'}共记录 {filteredRecords.length} 条收益与支出数据
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base w-fit">
+        <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base">
           <button
             onClick={() => handlePeriodChange('week')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'week'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-base'
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${period === 'week'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
               }`}
           >
             本周
           </button>
-          <button
-            onClick={() => handlePeriodChange('month')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'month'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-base'
-              }`}
-          >
-            本月
-          </button>
+          {currentSeason && (
+            <button
+              onClick={() => handlePeriodChange('season')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${period === 'season'
+                ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+                : 'text-muted hover:text-main'
+                }`}
+            >
+              本赛季
+            </button>
+          )}
           <button
             onClick={() => handlePeriodChange('all')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${period === 'all'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-base'
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${period === 'all'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
               }`}
           >
             全部
@@ -320,7 +345,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-main">副本收益分布</h3>
           <span className="text-sm text-muted">
-            {period === 'week' ? '本周' : period === 'month' ? '本月' : '全部'}数据
+            {period === 'week' ? '本周' : period === 'season' ? '本赛季' : '全部'}数据
           </span>
         </div>
         {chartData.length > 0 ? (

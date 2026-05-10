@@ -43,7 +43,7 @@ import { toast } from './utils/toastManager';
 const ConfigManager = lazy(async () => import('./components/ConfigManager').then(module => ({ default: module.ConfigManager })));
 
 function App() {
-  const [dashboardStatsPeriod, setDashboardStatsPeriod] = useState<'week' | 'month' | 'all'>('week');
+  const [dashboardStatsPeriod, setDashboardStatsPeriod] = useState<'week' | 'season' | 'all'>('week');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
   const [showIncomeDetail, setShowIncomeDetail] = useState(false);
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);

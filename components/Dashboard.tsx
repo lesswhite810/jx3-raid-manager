@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 
-import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialPlaceRecord } from '../types';
+import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialPlaceRecord, Season } from '../types';
 import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
 import { getLastMonday } from '../utils/cooldownManager';
@@ -14,8 +14,8 @@ interface DashboardProps {
   accounts: Account[];
   baizhanRecords: BaizhanRecord[];
   trialRecords: TrialPlaceRecord[];
-  statsPeriod: 'week' | 'month' | 'all';
-  onStatsPeriodChange: (period: 'week' | 'month' | 'all') => void;
+  statsPeriod: 'week' | 'season' | 'all';
+  onStatsPeriodChange: (period: 'week' | 'season' | 'all') => void;
   onShowIncomeDetail: () => void;
   onShowCrystalDetail: () => void;
   onShowTrialFlipDetail: () => void;
@@ -48,7 +48,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const safeRecords = Array.isArray(records) ? records : [];
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
-  const getPeriodStartTime = React.useCallback((period: 'week' | 'month' | 'all') => {
+  const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+  const [seasonLoaded, setSeasonLoaded] = useState(false);
+
+  React.useEffect(() => {
+    db.getCurrentSeason().then((s) => {
+      setCurrentSeason(s);
+      setSeasonLoaded(true);
+    }).catch(() => {
+      setSeasonLoaded(true);
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (seasonLoaded && !currentSeason && statsPeriod === 'season') {
+      onStatsPeriodChange('week');
+    }
+  }, [seasonLoaded, currentSeason, statsPeriod, onStatsPeriodChange]);
+
+  const getPeriodStartTime = React.useCallback((period: 'week' | 'season' | 'all') => {
     if (period === 'all') return null;
 
     const now = new Date();
@@ -56,11 +74,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return getLastMonday(now).getTime();
     }
 
-    return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  }, []);
+    if (currentSeason?.startDate) {
+      const startDate = currentSeason.startDate;
+      return startDate > 1e12 ? startDate : startDate * 1000;
+    }
+
+    return null;
+  }, [currentSeason]);
 
   const periodStartTime = getPeriodStartTime(statsPeriod);
-  const periodLabel = statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部';
+  const periodLabel = statsPeriod === 'week' ? '本周' : statsPeriod === 'season' ? '本赛季' : '全部';
 
   const filteredRecords = useMemo(() => {
     return safeRecords.filter(r => {
@@ -286,15 +309,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
           >
             本周
           </button>
-          <button
-            onClick={() => onStatsPeriodChange('month')}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
-              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
-              : 'text-muted hover:text-main'
-              }`}
-          >
-            本月
-          </button>
+          {currentSeason && (
+            <button
+              onClick={() => onStatsPeriodChange('season')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'season'
+                ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+                : 'text-muted hover:text-main'
+                }`}
+            >
+              本赛季
+            </button>
+          )}
           <button
             onClick={() => onStatsPeriodChange('all')}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'

@@ -1,14 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { RaidRecord, Account } from '../types';
+import { RaidRecord, Account, Season } from '../types';
 import { getLastMonday } from '../utils/cooldownManager';
 import { buildSpecialDropRecords, SpecialDropRecord, SpecialDropType } from '../utils/rareDropUtils';
+import { db } from '../services/db';
 
 interface CrystalDetailProps {
   records: RaidRecord[];
   accounts: Account[];
-  initialPeriod: 'week' | 'month' | 'all';
-  onPeriodChange: (period: 'week' | 'month' | 'all') => void;
+  initialPeriod: 'week' | 'season' | 'all';
+  onPeriodChange: (period: 'week' | 'season' | 'all') => void;
   onBack: () => void;
 }
 
@@ -18,16 +19,35 @@ interface CrystalRoleStats {
   server: string;
   totalCount: number;
   records: SpecialDropRecord[];
+  dropTypeCounts: Map<SpecialDropType, number>;
 }
 
 export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts, initialPeriod, onPeriodChange, onBack }) => {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
-  const [statsPeriod, setStatsPeriod] = useState<'week' | 'month' | 'all'>(initialPeriod);
+  const [statsPeriod, setStatsPeriod] = useState<'week' | 'season' | 'all'>(initialPeriod);
+  const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+  const [seasonLoaded, setSeasonLoaded] = useState(false);
+
   React.useEffect(() => {
     setStatsPeriod(initialPeriod);
   }, [initialPeriod]);
 
-  const handleStatsPeriodChange = (nextPeriod: 'week' | 'month' | 'all') => {
+  React.useEffect(() => {
+    db.getCurrentSeason().then((s) => {
+      setCurrentSeason(s);
+      setSeasonLoaded(true);
+    }).catch(() => {
+      setSeasonLoaded(true);
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (seasonLoaded && !currentSeason && statsPeriod === 'season') {
+      handleStatsPeriodChange('week');
+    }
+  }, [seasonLoaded, currentSeason, statsPeriod]);
+
+  const handleStatsPeriodChange = (nextPeriod: 'week' | 'season' | 'all') => {
     setStatsPeriod(nextPeriod);
     onPeriodChange(nextPeriod);
   };
@@ -58,7 +78,11 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     if (statsPeriod === 'week') {
       return getLastMonday(now).getTime();
     } else {
-      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      if (currentSeason?.startDate) {
+        const sd = currentSeason.startDate;
+        return sd > 1e12 ? sd : sd * 1000;
+      }
+      return 0;
     }
   };
 
@@ -82,13 +106,15 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
           roleName: record.roleName || roleInfo.roleName || '未知角色',
           server: record.server || roleInfo.server || '未知服务器',
           totalCount: 0,
-          records: []
+          records: [],
+          dropTypeCounts: new Map<SpecialDropType, number>()
         });
       }
 
       const stats = roleMap.get(roleId)!;
       stats.totalCount++;
       stats.records.push(record);
+      stats.dropTypeCounts.set(record.type, (stats.dropTypeCounts.get(record.type) || 0) + 1);
     });
 
     return Array.from(roleMap.values()).sort((a, b) => b.totalCount - a.totalCount);
@@ -104,6 +130,14 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     }
 
     return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700';
+  };
+
+  const DROP_TYPE_ORDER: SpecialDropType[] = ['玄晶', '外观', '坐骑', '称号', '宠物', '马具', '挂件', '秘籍'];
+
+  const getOrderedDropTypes = (dropTypeCounts: Map<SpecialDropType, number>): { type: SpecialDropType; count: number }[] => {
+    return DROP_TYPE_ORDER
+      .filter(type => (dropTypeCounts.get(type) || 0) > 0)
+      .map(type => ({ type, count: dropTypeCounts.get(type)! }));
   };
 
   const toggleExpand = (roleId: string) => {
@@ -127,34 +161,36 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
           <div>
             <h2 className="text-2xl font-bold text-main">稀有掉落统计</h2>
             <p className="text-sm text-muted mt-1">
-              {statsPeriod === 'week' ? '本周' : statsPeriod === 'month' ? '本月' : '全部'}共获取 {totalDrops} 次特殊掉落，来自 {totalRoles} 个角色
+              {statsPeriod === 'week' ? '本周' : statsPeriod === 'season' ? '本赛季' : '全部'}共获取 {totalDrops} 次特殊掉落，来自 {totalRoles} 个角色
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 bg-surface rounded-lg p-1 shadow-sm border border-base w-fit">
+        <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base">
           <button
             onClick={() => handleStatsPeriodChange('week')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-base'
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'week'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
               }`}
           >
             本周
           </button>
-          <button
-            onClick={() => handleStatsPeriodChange('month')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'month'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-base'
-              }`}
-          >
-            本月
-          </button>
+          {currentSeason && (
+            <button
+              onClick={() => handleStatsPeriodChange('season')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'season'
+                ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+                : 'text-muted hover:text-main'
+                }`}
+            >
+              本赛季
+            </button>
+          )}
           <button
             onClick={() => handleStatsPeriodChange('all')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-base'
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${statsPeriod === 'all'
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
               }`}
           >
             全部
@@ -204,10 +240,10 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                     onClick={() => toggleExpand(stat.roleId)}
                     className="w-full flex items-center gap-4 p-4 hover:bg-base/50 transition-colors text-left"
                   >
-                    <div className="flex items-center justify-center w-8 h-8 bg-base rounded-lg font-bold text-sm text-main">
+                    <div className="flex items-center justify-center w-8 h-8 bg-base rounded-lg font-bold text-sm text-main flex-shrink-0">
                       {index + 1}
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-shrink-0">
                       <div className="flex items-center gap-2">
                         <h4 className="font-semibold text-main truncate">{stat.roleName}</h4>
                         {index === 0 && stat.totalCount > 0 && (
@@ -216,7 +252,17 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                       </div>
                       <p className="text-sm text-muted truncate">{stat.server}</p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5 justify-center min-w-0">
+                      {getOrderedDropTypes(stat.dropTypeCounts).map(({ type, count }) => (
+                        <span
+                          key={type}
+                          className={`px-1.5 py-0.5 rounded text-[11px] font-medium border whitespace-nowrap ${getBadgeClassName(type)}`}
+                        >
+                          {type}×{count}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-sm text-muted mr-1">掉落</span>
                       <span className="text-lg font-bold text-main">{stat.totalCount}</span>
                       <span className="text-xs text-muted">次</span>
