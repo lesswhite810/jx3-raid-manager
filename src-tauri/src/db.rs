@@ -641,7 +641,7 @@ pub fn init_db() -> Result<Connection, String> {
         // ========== 从旧版本升级场景 ==========
         log::info!("[INIT] 场景判定：从旧版本升级（current_version=0），执行所有迁移脚本");
 
-        // 确保基础表存在（升级路径不会调用 create_latest_schema）
+        // 确保基础表存在
         ensure_base_tables(&conn)?;
 
         // 执行所有迁移（V1 到当前版本）
@@ -788,6 +788,23 @@ fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Res
     .map_err(|e| e.to_string())?;
     log::debug!("[DEBUG] set_schema_version: version={} 写入成功", version);
     Ok(())
+}
+
+fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({})", table_name))
+        .map_err(|e| e.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+
+    for column in columns {
+        if column.map_err(|e| e.to_string())? == column_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// 创建基础表（升级路径中也需要确保这些表存在）
@@ -998,13 +1015,21 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
         CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
-        CREATE INDEX IF NOT EXISTS idx_records_raid_name ON records(raid_name);
-        CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
-        CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
-        CREATE INDEX IF NOT EXISTS idx_records_record_date ON records(record_date);
     "#,
     )
     .map_err(|e| e.to_string())?;
+
+    if column_exists(conn, "records", "raid_name")? {
+        conn.execute_batch(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_records_raid_name ON records(raid_name);
+            CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
+            CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
+            CREATE INDEX IF NOT EXISTS idx_records_record_date ON records(record_date);
+            "#,
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     conn.execute_batch(
         r#"

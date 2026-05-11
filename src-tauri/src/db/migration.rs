@@ -55,6 +55,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
     }
 
     let mut version_first_season: HashMap<String, String> = HashMap::new();
+    let mut season_to_version: HashMap<String, String> = HashMap::new();
     let seasons_json = include_str!("static_seasons.json");
     let seasons: Vec<serde_json::Value> =
         serde_json::from_str(seasons_json).map_err(|e| format!("解析预置赛季数据失败: {}", e))?;
@@ -64,6 +65,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
         version_first_season
             .entry(version_name.to_string())
             .or_insert_with(|| name.to_string());
+        season_to_version.insert(name.to_string(), version_name.to_string());
     }
 
     let mut inserted_count = 0;
@@ -85,13 +87,21 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
 
         let season_id: Option<i64> = target_season.as_ref().and_then(|s| season_id_map.get(s)).copied();
 
-        if !version.is_empty() && !version_inserted_names.contains(version) {
+        let effective_version = if !version.is_empty() {
+            version.to_string()
+        } else if !season_name.is_empty() {
+            season_to_version.get(season_name).cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        if !effective_version.is_empty() && !version_inserted_names.contains(&effective_version) {
             conn.execute(
                 "INSERT OR IGNORE INTO raid_versions (name) VALUES (?)",
-                params![version],
+                params![&effective_version],
             )
             .map_err(error_to_string)?;
-            version_inserted_names.insert(version.to_string());
+            version_inserted_names.insert(effective_version.clone());
         }
 
         if let Some(configs) = raid["configurations"].as_array() {
@@ -108,7 +118,7 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
                 let changes = conn
                     .execute(
                         "INSERT OR IGNORE INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static, season_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                        params![&id, name, difficulty, player_count, version, "", is_active, season_id],
+                        params![&id, name, difficulty, player_count, &effective_version, "", is_active, season_id],
                     )
                     .map_err(error_to_string)?;
 

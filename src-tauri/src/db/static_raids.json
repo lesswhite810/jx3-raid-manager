@@ -231,7 +231,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "大明宫",
@@ -248,7 +248,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "血战天策",
@@ -265,7 +265,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "风雪稻香村",
@@ -282,7 +282,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "秦皇陵",
@@ -299,7 +299,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "太原之战·夜守孤城",
@@ -326,7 +326,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "太原之战·逐虎驱狼",
@@ -353,7 +353,7 @@
         "isActive": false
       }
     ],
-    "version": "风起稻香"
+    "version": "安史之乱"
   },
   {
     "name": "永王行宫·仙侣庭园",
@@ -380,7 +380,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "永王行宫·花月别院",
@@ -407,7 +407,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "上阳宫·观风殿",
@@ -424,7 +424,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "上阳宫·双曜亭",
@@ -441,7 +441,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "风雷刀谷·锻刀厅",
@@ -458,7 +458,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "风雷刀谷·千雷殿",
@@ -475,7 +475,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "狼牙堡·战兽山",
@@ -492,7 +492,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "狼牙堡·燕然峰",
@@ -509,7 +509,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "狼牙堡·辉天堑",
@@ -526,7 +526,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "狼牙堡·狼神殿",
@@ -543,7 +543,7 @@
         "isActive": false
       }
     ],
-    "version": "安史之乱"
+    "version": "剑胆琴心"
   },
   {
     "name": "冰火岛·荒血路",
@@ -565,7 +565,7 @@
         "isActive": false
       }
     ],
-    "version": "剑胆琴心"
+    "version": "世外蓬莱"
   },
   {
     "name": "冰火岛·青莲狱",
@@ -587,7 +587,7 @@
         "isActive": false
       }
     ],
-    "version": "剑胆琴心"
+    "version": "世外蓬莱"
   },
   {
     "name": "尘归海·巨冥湾",
@@ -609,7 +609,7 @@
         "isActive": false
       }
     ],
-    "version": "剑胆琴心"
+    "version": "世外蓬莱"
   },
   {
     "name": "尘归海·饕餮洞",
@@ -631,7 +631,7 @@
         "isActive": false
       }
     ],
-    "version": "剑胆琴心"
+    "version": "世外蓬莱"
   },
   {
     "name": "敖龙岛",
@@ -653,7 +653,7 @@
         "isActive": false
       }
     ],
-    "version": "剑胆琴心"
+    "version": "世外蓬莱"
   },
   {
     "name": "范阳夜变",
@@ -675,7 +675,7 @@
         "isActive": false
       }
     ],
-    "version": "剑胆琴心"
+    "version": "世外蓬莱"
   },
   {
     "name": "达摩洞",
@@ -697,7 +697,7 @@
         "isActive": false
       }
     ],
-    "version": "世外蓬莱"
+    "version": "奉天证道"
   },
   {
     "name": "白帝江关",
@@ -719,7 +719,7 @@
         "isActive": false
       }
     ],
-    "version": "世外蓬莱"
+    "version": "奉天证道"
   },
   {
     "name": "雷域大泽",
@@ -741,7 +741,7 @@
         "isActive": false
       }
     ],
-    "version": "世外蓬莱"
+    "version": "奉天证道"
   },
   {
     "name": "河阳之战",
@@ -763,7 +763,7 @@
         "isActive": false
       }
     ],
-    "version": "世外蓬莱"
+    "version": "奉天证道"
   },
   {
     "name": "西津渡",
@@ -785,7 +785,7 @@
         "isActive": false
       }
     ],
-    "version": "奉天证道"
+    "version": "横刀断浪"
   },
   {
     "name": "武狱黑牢",
@@ -807,7 +807,7 @@
         "isActive": false
       }
     ],
-    "version": "奉天证道"
+    "version": "横刀断浪"
   },
   {
     "name": "九老洞",
@@ -829,7 +829,7 @@
         "isActive": false
       }
     ],
-    "version": "奉天证道"
+    "version": "横刀断浪"
   },
   {
     "name": "冷龙峰",
@@ -851,11 +851,12 @@
         "isActive": false
       }
     ],
-    "version": "奉天证道"
+    "version": "横刀断浪"
   },
   {
     "name": "一之窟",
     "level": 130,
+    "version": "丝路风雨",
     "season": "丝路风语",
     "configurations": [
       {
@@ -878,6 +879,7 @@
   {
     "name": "太极宫",
     "level": 130,
+    "version": "丝路风雨",
     "season": "太极秘录",
     "configurations": [
       {
@@ -900,6 +902,7 @@
   {
     "name": "空城殿·上",
     "level": 130,
+    "version": "丝路风雨",
     "season": "太极秘录",
     "configurations": [
       {
@@ -912,6 +915,7 @@
   {
     "name": "空城殿·下",
     "level": 130,
+    "version": "丝路风雨",
     "season": "太极秘录",
     "configurations": [
       {
@@ -924,6 +928,7 @@
   {
     "name": "会战弓月城",
     "level": 130,
+    "version": "丝路风雨",
     "season": "山海源流",
     "configurations": [
       {
@@ -973,6 +978,7 @@
   {
     "name": "缚罪之渊",
     "level": 130,
+    "version": "丝路风雨",
     "season": "山海源流",
     "configurations": [
       {
@@ -997,6 +1003,7 @@
   {
     "name": "阆风悬城",
     "level": 130,
+    "version": "丝路风雨",
     "season": "暗影千机",
     "configurations": [
       {
