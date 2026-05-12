@@ -9,6 +9,21 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     log::info!("========== V11 迁移开始 ==========");
     log::info!("V11 迁移：清理重复的旧格式装备数据");
 
+    // 检查 equipments 表是否存在
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='equipments'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        log::info!("V11 迁移：equipments 表不存在，跳过迁移");
+        log::info!("========== V11 迁移完成 ==========");
+        return Ok(());
+    }
+
     conn.execute_batch(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS temp_old_format_duplicates AS

@@ -235,6 +235,20 @@ fn convert_utc_string_to_local(utc_str: &str) -> Option<String> {
 
 /// 更新 records 表中 data JSON 字段
 fn migrate_records_data(conn: &Connection) -> Result<(), String> {
+    // 检查 records 表是否存在
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='records'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        log::info!("V6 迁移：records 表不存在，跳过迁移");
+        return Ok(());
+    }
+
     let records: Vec<(String, String)> = conn
         .prepare("SELECT id, data FROM records WHERE data LIKE '%弓月城%' OR data LIKE '%+00:00%'")
         .map_err(error_to_string)?

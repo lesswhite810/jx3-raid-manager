@@ -566,9 +566,11 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             onSubmit(record); // UI update callback
             toast.success('试炼记录添加成功');
             onClose();
-        } catch (err) {
+        } catch (err: any) {
             console.error(err);
-            setError('添加失败，请重试');
+            const errorMessage = err?.message || err?.toString() || '添加失败，请重试';
+            setError(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setIsSubmitting(false);
         }

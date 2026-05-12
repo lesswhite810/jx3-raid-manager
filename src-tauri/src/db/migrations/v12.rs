@@ -140,6 +140,21 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
     log::info!("========== V12 迁移开始 ==========");
     log::info!("V12 迁移：为副本记录补充查询索引字段");
 
+    // 检查 records 表是否存在
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='records'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !table_exists {
+        log::info!("V12 迁移：records 表不存在，跳过迁移");
+        log::info!("========== V12 迁移完成 ==========");
+        return Ok(());
+    }
+
     add_column_if_missing(conn, "records", "raid_name", "TEXT")?;
     add_column_if_missing(conn, "records", "account_id", "TEXT")?;
     add_column_if_missing(conn, "records", "role_id", "TEXT")?;

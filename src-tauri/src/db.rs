@@ -12,6 +12,9 @@ use crate::runtime_mode::{self, RuntimeMode};
 mod migration;
 pub mod migrations;
 
+#[cfg(test)]
+mod upgrade_tests;
+
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 const LOG_FILE_NAME: &str = "jx3-raid-manager.log";
 const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
@@ -567,35 +570,104 @@ pub fn db_delete_directory(
 
 /// 初始化数据库（单例模式，只初始化一次）
 ///
-/// 流程：
-/// 1. 如果数据库不存在 → 新安装，创建最新版本结构
-/// 2. 如果数据库存在但版本较低 → 升级，执行增量迁移
-/// 3. 如果数据库存在且是最新版本 → 直接返回连接
+/// 安装与升级路径完全分离：
+/// - 安装路径：数据库不存在时，直接创建最新版本的完整结构
+/// - 升级路径：数据库存在但版本较低时，自动识别版本并按序执行增量迁移
 pub fn init_db() -> Result<Connection, String> {
-    // 使用互斥锁保护整个初始化过程，防止并发初始化导致的竞态条件
     let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
 
     if *initialized {
         return Connection::open(get_db_path()?).map_err(|e| e.to_string());
     }
 
-    // 执行初始化（首次）
     let path = get_db_path()?;
     let db_exists = path.exists();
 
     log::info!(
         "[INIT] 数据库初始化开始，DB路径: {:?}, db_exists: {}",
-        path,
-        db_exists
+        path, db_exists
     );
 
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
 
-    // 配置数据库为安全模式，确保数据真正写入磁盘
     conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
         .ok();
 
-    // 创建 schema_versions 表（用于记录版本）和 migration_flags 表
+    ensure_version_tables(&conn)?;
+
+    let current_version = get_schema_version(&conn)?;
+    log::debug!(
+        "[INIT] 当前数据库版本: {}, 目标版本: {}",
+        current_version, CURRENT_SCHEMA_VERSION
+    );
+
+    if !db_exists {
+        install_fresh_db(&conn)?;
+    } else if current_version > CURRENT_SCHEMA_VERSION {
+        log::warn!(
+            "[INIT] 数据库版本 V{} 高于应用版本 V{}，可能是应用降级导致，将执行表结构修复",
+            current_version, CURRENT_SCHEMA_VERSION
+        );
+        ensure_baseline_tables(&conn)?;
+        ensure_equipment_columns(&conn)?;
+        ensure_critical_columns(&conn)?;
+        log::info!("[INIT] 表结构修复完成，数据库版本保持 V{}", current_version);
+    } else if current_version < CURRENT_SCHEMA_VERSION {
+        upgrade_db(&conn, current_version)?;
+    } else {
+        log::info!("[INIT] 已是最新版本 V{}，无需迁移", current_version);
+    }
+
+    ensure_equipment_columns(&conn)?;
+
+    *initialized = true;
+    log::info!("[INIT] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
+
+    Ok(conn)
+}
+
+/// 使用指定路径初始化数据库（用于测试）
+///
+/// 此函数用于测试场景，允许指定数据库路径进行初始化和升级。
+#[cfg(test)]
+pub fn init_db_with_path(path: &std::path::Path) -> Result<Connection, String> {
+    let db_exists = path.exists();
+
+    log::info!(
+        "[INIT_TEST] 数据库初始化开始，DB路径: {:?}, db_exists: {}",
+        path, db_exists
+    );
+
+    let conn = Connection::open(path).map_err(|e| e.to_string())?;
+
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
+        .ok();
+
+    ensure_version_tables(&conn)?;
+
+    let current_version = get_schema_version(&conn)?;
+    log::debug!(
+        "[INIT_TEST] 当前数据库版本: {}, 目标版本: {}",
+        current_version, CURRENT_SCHEMA_VERSION
+    );
+
+    if !db_exists {
+        install_fresh_db(&conn)?;
+    } else if current_version < CURRENT_SCHEMA_VERSION {
+        upgrade_db(&conn, current_version)?;
+    } else {
+        log::info!("[INIT_TEST] 已是最新版本 V{}，无需迁移", current_version);
+    }
+
+    ensure_equipment_columns(&conn)?;
+
+    log::info!("[INIT_TEST] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
+
+    Ok(conn)
+}
+
+/// 确保版本追踪表存在（安装与升级共用）
+fn ensure_version_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS schema_versions (
@@ -612,203 +684,220 @@ pub fn init_db() -> Result<Connection, String> {
     "#,
     )
     .map_err(|e| e.to_string())?;
-
-    // 获取当前版本
-    let current_version = get_schema_version(&conn)?;
-    log::debug!(
-        "[INIT] 当前数据库版本: {}, 目标版本: {}",
-        current_version,
-        CURRENT_SCHEMA_VERSION
-    );
-
-    if !db_exists {
-        // ========== 全新安装场景 ==========
-        log::info!(
-            "[INIT] 场景判定：全新安装，创建最新版本结构 (V{})",
-            CURRENT_SCHEMA_VERSION
-        );
-
-        // 创建所有表（最新版本结构）
-        create_latest_schema(&conn)?;
-
-        // 记录版本号
-        log::debug!("[INIT] 全新安装：写入初始版本 V{}", CURRENT_SCHEMA_VERSION);
-        set_schema_version(&conn, CURRENT_SCHEMA_VERSION, "初始安装")?;
-
-        // 初始化静态副本数据
-        migration::init_static_raids(&conn)?;
-    } else if current_version == 0 {
-        // ========== 从旧版本升级场景 ==========
-        log::info!("[INIT] 场景判定：从旧版本升级（current_version=0），执行所有迁移脚本");
-
-        // 确保基础表存在
-        ensure_base_tables(&conn)?;
-
-        // 执行所有迁移（V1 到当前版本）
-        for version in 1..=CURRENT_SCHEMA_VERSION {
-            log::info!("执行迁移脚本：V{}", version);
-
-            log::debug!("[TX] 迁移 V{}: 执行 BEGIN TRANSACTION", version);
-            conn.execute("BEGIN TRANSACTION", [])
-                .map_err(|e| e.to_string())?;
-            let result = migration::apply_migration(&conn, version);
-            if let Err(e) = result {
-                log::error!("[TX] 迁移 V{} 失败，执行 ROLLBACK，错误: {}", version, e);
-                conn.execute("ROLLBACK", []).ok();
-                return Err(e);
-            }
-
-            log::debug!("[TX] 迁移 V{}: apply_migration 成功，写入版本", version);
-            set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
-
-            log::debug!(
-                "[TX] 迁移 V{}: set_schema_version 成功，执行 COMMIT",
-                version
-            );
-            let commit_result = conn.execute("COMMIT", []);
-            if let Err(e) = commit_result {
-                log::error!("[TX] 迁移 V{} COMMIT 失败，错误: {}", version, e);
-                conn.execute("ROLLBACK", []).ok();
-                return Err(e.to_string());
-            }
-
-            let after_version = get_schema_version(&conn)?;
-            log::debug!(
-                "[TX] 迁移 V{}: COMMIT 成功，验证版本为 {}",
-                version,
-                after_version
-            );
-            log::info!("迁移 V{} 完成", version);
-        }
-
-        // 初始化静态副本数据
-        migration::init_static_raids(&conn)?;
-    } else if current_version < CURRENT_SCHEMA_VERSION {
-        // ========== 从中间版本升级场景 ==========
-        log::info!(
-            "数据库初始化：从 V{} 升级到 V{}",
-            current_version,
-            CURRENT_SCHEMA_VERSION
-        );
-
-        // 确保基础表存在
-        ensure_base_tables(&conn)?;
-
-        // 执行增量迁移
-        for version in (current_version + 1)..=CURRENT_SCHEMA_VERSION {
-            log::info!("执行迁移脚本：V{}", version);
-
-            // 使用事务包装迁移，大幅提升性能
-            log::debug!("[TX] 迁移 V{}: 执行 BEGIN TRANSACTION", version);
-            conn.execute("BEGIN TRANSACTION", [])
-                .map_err(|e| e.to_string())?;
-
-            let result = migration::apply_migration(&conn, version);
-            if let Err(e) = result {
-                log::error!("[TX] 迁移 V{} 失败，执行 ROLLBACK，错误: {}", version, e);
-                conn.execute("ROLLBACK", []).ok();
-                return Err(e);
-            }
-
-            log::debug!("[TX] 迁移 V{}: apply_migration 成功", version);
-            log::debug!(
-                "[TX] 迁移 V{}: set_schema_version 写入 version={}",
-                version,
-                version
-            );
-            set_schema_version(&conn, version, &format!("升级到 V{}", version))?;
-
-            log::debug!(
-                "[TX] 迁移 V{}: set_schema_version 成功，执行 COMMIT",
-                version
-            );
-            let commit_result = conn.execute("COMMIT", []);
-            if let Err(e) = commit_result {
-                log::error!("[TX] 迁移 V{} COMMIT 失败，错误: {}", version, e);
-                conn.execute("ROLLBACK", []).ok();
-                return Err(e.to_string());
-            }
-
-            let after_version = get_schema_version(&conn)?;
-            log::debug!(
-                "[TX] 迁移 V{}: COMMIT 成功，验证版本为 {}",
-                version,
-                after_version
-            );
-            log::info!("迁移 V{} 完成", version);
-        }
-
-        // 初始化静态副本数据（可能会添加新的预设副本）
-        migration::init_static_raids(&conn)?;
-        log::debug!("[INIT] 静态副本数据初始化完成");
-    } else {
-        // ========== 已是最新版本 ==========
-        log::info!(
-            "[INIT] 场景判定：已是最新版本 V{}，无需迁移",
-            current_version
-        );
-    }
-
-    // 标记已初始化（此时互斥锁仍在持有中，确保竞态安全）
-    *initialized = true;
-    log::info!(
-        "[INIT] 数据库初始化完成，当前版本 V{}",
-        CURRENT_SCHEMA_VERSION
-    );
-
-    Ok(conn)
-}
-
-/// 获取当前 schema 版本
-fn get_schema_version(conn: &Connection) -> Result<i32, String> {
-    let version: i32 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_versions",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    log::debug!("[DEBUG] get_schema_version: 读取到当前版本 = {}", version);
-    Ok(version)
-}
-
-/// 设置 schema 版本
-fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Result<(), String> {
-    let timestamp = get_local_timestamp();
-    log::debug!(
-        "[DEBUG] set_schema_version: 即将写入 version={}, description={}",
-        version,
-        description
-    );
-    conn.execute(
-        "INSERT INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)
-         ON CONFLICT(version) DO UPDATE SET applied_at = excluded.applied_at, description = excluded.description",
-        params![version, timestamp, description],
-    )
-    .map_err(|e| e.to_string())?;
-    log::debug!("[DEBUG] set_schema_version: version={} 写入成功", version);
     Ok(())
 }
 
-fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool, String> {
-    let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({})", table_name))
-        .map_err(|e| e.to_string())?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| e.to_string())?;
+/// 安装路径：全新安装，直接创建最新版本的完整数据库结构
+///
+/// 此函数仅在数据库文件不存在时调用，一次性创建所有表、索引和初始数据，
+/// 无需执行增量迁移脚本，确保新安装用户体验最快启动速度。
+fn install_fresh_db(conn: &Connection) -> Result<(), String> {
+    log::info!(
+        "[INSTALL] 全新安装，创建最新版本结构 V{}",
+        CURRENT_SCHEMA_VERSION
+    );
 
-    for column in columns {
-        if column.map_err(|e| e.to_string())? == column_name {
-            return Ok(true);
+    create_latest_schema(conn)?;
+    set_schema_version(conn, CURRENT_SCHEMA_VERSION, "初始安装")?;
+    migration::init_static_raids(conn)?;
+
+    log::info!("[INSTALL] 全新安装完成");
+    Ok(())
+}
+
+/// 升级路径：从当前版本升级到最新版本
+///
+/// 流程：
+/// 1. 升级前验证（完整性检查、版本范围校验）
+/// 2. 确保基线表存在（仅 V0 旧数据库需要）
+/// 3. 按序执行增量迁移脚本（每个版本独立事务）
+/// 4. 确保装备表列完整（历史兼容）
+/// 5. 初始化静态副本数据
+/// 6. 升级后验证（表结构完整性、版本号一致性）
+fn upgrade_db(conn: &Connection, current_version: i32) -> Result<(), String> {
+    if current_version == 0 {
+        log::info!("[UPGRADE] 从旧版本升级（无版本记录），执行完整迁移");
+    } else {
+        log::info!(
+            "[UPGRADE] 从 V{} 升级到 V{}",
+            current_version, CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    validate_pre_upgrade(conn, current_version)?;
+
+    // 始终确保基线表存在（包括 records, config, cache, equipments）
+    // 这样可以确保从任何版本升级时都有完整的表结构
+    ensure_baseline_tables(conn)?;
+
+    let start_version = if current_version == 0 { 1 } else { current_version + 1 };
+    for version in start_version..=CURRENT_SCHEMA_VERSION {
+        run_migration_with_validation(conn, version)?;
+    }
+
+    migration::init_static_raids(conn)?;
+
+    validate_post_upgrade(conn)?;
+
+    log::info!("[UPGRADE] 升级完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
+    Ok(())
+}
+
+/// 升级前验证：检查数据库完整性和前置条件
+fn validate_pre_upgrade(conn: &Connection, current_version: i32) -> Result<(), String> {
+    log::info!("[VALIDATE] 升级前验证开始");
+
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    if integrity != "ok" {
+        log::error!("[VALIDATE] 数据库完整性检查失败: {}", integrity);
+        return Err(format!("数据库完整性检查失败: {}", integrity));
+    }
+    log::debug!("[VALIDATE] 数据库完整性检查通过");
+
+    if current_version < 0 || current_version > CURRENT_SCHEMA_VERSION {
+        return Err(format!(
+            "无效的数据库版本: V{}，有效范围: 0 ~ V{}",
+            current_version, CURRENT_SCHEMA_VERSION
+        ));
+    }
+
+    log::info!("[VALIDATE] 升级前验证通过");
+    Ok(())
+}
+
+/// 升级后验证：检查数据库结构和数据完整性
+fn validate_post_upgrade(conn: &Connection) -> Result<(), String> {
+    log::info!("[VALIDATE] 升级后验证开始");
+
+    let expected_tables = [
+        "schema_versions", "migration_flags",
+        "records", "config", "cache", "equipments",
+        "accounts", "roles",
+        "raids", "raid_bosses", "raid_versions",
+        "favorite_raids",
+        "instance_types", "role_instance_visibility",
+        "raid_role_visibility",
+        "trial_records", "baizhan_records",
+        "game_versions", "seasons",
+    ];
+
+    for table_name in &expected_tables {
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                [table_name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if exists == 0 {
+            log::error!("[VALIDATE] 缺少预期表: {}", table_name);
+            return Err(format!("升级后验证失败：缺少预期表 {}", table_name));
+        }
+    }
+    log::debug!("[VALIDATE] 所有预期表存在（{} 个）", expected_tables.len());
+
+    let version = get_schema_version(conn)?;
+    if version != CURRENT_SCHEMA_VERSION {
+        return Err(format!(
+            "升级后版本不匹配：期望 V{}，实际 V{}",
+            CURRENT_SCHEMA_VERSION, version
+        ));
+    }
+    log::debug!("[VALIDATE] 版本号验证通过: V{}", version);
+
+    let expected_indexes = [
+        "idx_roles_account_id",
+        "idx_accounts_name",
+        "idx_accounts_sort_order",
+        "idx_riv_role_id",
+        "idx_riv_instance_type_id",
+        "idx_rrv_role_id",
+        "idx_rrv_raid_key",
+        "idx_records_raid_name",
+        "idx_records_account_id",
+        "idx_records_role_id",
+        "idx_records_record_date",
+        "idx_seasons_version_id",
+        "idx_raids_season_id",
+    ];
+
+    let mut missing_indexes = Vec::new();
+    for index_name in &expected_indexes {
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?",
+                [index_name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if exists == 0 {
+            missing_indexes.push(*index_name);
         }
     }
 
-    Ok(false)
+    if !missing_indexes.is_empty() {
+        log::warn!("[VALIDATE] 缺少预期索引: {:?}", missing_indexes);
+    } else {
+        log::debug!("[VALIDATE] 所有预期索引存在（{} 个）", expected_indexes.len());
+    }
+
+    log::info!("[VALIDATE] 升级后验证通过");
+    Ok(())
 }
 
-/// 创建基础表（升级路径中也需要确保这些表存在）
-fn ensure_base_tables(conn: &Connection) -> Result<(), String> {
+/// 执行单个迁移版本并验证结果
+///
+/// 每个迁移在独立事务中执行，失败时自动回滚。
+/// 迁移成功后验证版本号已正确写入。
+fn run_migration_with_validation(conn: &Connection, version: i32) -> Result<(), String> {
+    log::info!("[MIGRATE] 执行迁移脚本：V{}", version);
+
+    conn.execute("BEGIN TRANSACTION", [])
+        .map_err(|e| e.to_string())?;
+
+    let result = migration::apply_migration(conn, version);
+    if let Err(e) = result {
+        log::error!("[MIGRATE] V{} 迁移失败，执行 ROLLBACK，错误: {}", version, e);
+        conn.execute("ROLLBACK", []).ok();
+        return Err(format!("迁移 V{} 失败: {}", version, e));
+    }
+
+    set_schema_version(conn, version, &format!("升级到 V{}", version))?;
+
+    let commit_result = conn.execute("COMMIT", []);
+    if let Err(e) = commit_result {
+        log::error!("[MIGRATE] V{} COMMIT 失败，错误: {}", version, e);
+        conn.execute("ROLLBACK", []).ok();
+        return Err(format!("迁移 V{} 提交失败: {}", version, e));
+    }
+
+    let after_version = get_schema_version(conn)?;
+    if after_version != version {
+        log::error!(
+            "[MIGRATE] V{} 迁移后版本验证失败，期望: V{}，实际: V{}",
+            version, version, after_version
+        );
+        return Err(format!(
+            "迁移 V{} 后版本验证失败：期望 V{}，实际 V{}",
+            version, version, after_version
+        ));
+    }
+
+    log::info!("[MIGRATE] V{} 迁移完成", version);
+    Ok(())
+}
+
+/// 确保基线表存在（仅用于 V0 旧数据库升级路径）
+///
+/// V0 表示数据库文件存在但没有 schema_versions 版本记录，
+/// 即在版本化迁移系统引入之前就已存在的数据库。
+/// 此函数确保这些旧数据库具备迁移脚本所依赖的基础表。
+fn ensure_baseline_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS records (
@@ -852,16 +941,206 @@ fn ensure_base_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    log::info!("基础表检查完成");
+    log::info!("[BASELINE] 基线表检查完成");
     Ok(())
 }
 
-/// 创建最新版本的数据库结构
-fn create_latest_schema(conn: &Connection) -> Result<(), String> {
-    ensure_base_tables(conn)?;
+/// 确保装备表包含所有必需列（历史兼容处理）
+///
+/// 旧版本数据库的 equipments 表可能缺少部分列，
+/// 此函数在升级路径中补齐缺失列，确保业务逻辑正常工作。
+/// 新安装的数据库通过 create_latest_schema 已包含完整列，无需此处理。
+fn ensure_equipment_columns(conn: &Connection) -> Result<(), String> {
+    let columns_to_check = [
+        ("bind_type", "INTEGER"),
+        ("type_label", "TEXT"),
+        ("attribute_types", "TEXT"),
+        ("attributes", "TEXT"),
+        ("recommend", "TEXT"),
+        ("diamonds", "TEXT"),
+    ];
 
+    let mut added = 0;
+    for (col_name, col_type) in &columns_to_check {
+        if !column_exists(conn, "equipments", col_name)? {
+            log::info!("[EQUIP-MIGRATE] 装备表添加缺失列: {} {}", col_name, col_type);
+            conn.execute(
+                &format!("ALTER TABLE equipments ADD COLUMN {} {}", col_name, col_type),
+                [],
+            )
+            .map_err(|e| format!("添加装备表列 {} 失败: {}", col_name, e))?;
+            added += 1;
+        }
+    }
+
+    if added > 0 {
+        log::info!("[EQUIP-MIGRATE] 装备表补齐 {} 个缺失列", added);
+    }
+
+    Ok(())
+}
+
+/// 确保关键表的列完整（用于应用降级场景）
+///
+/// 当数据库版本高于应用版本时（用户从高版本应用复制数据库到低版本应用），
+/// 数据库表可能缺少某些列。此函数检查并补齐所有关键列。
+fn ensure_critical_columns(conn: &Connection) -> Result<(), String> {
+    let critical_columns = [
+        ("trial_records", "role_name", "TEXT DEFAULT ''"),
+        ("trial_records", "server", "TEXT DEFAULT ''"),
+        ("trial_records", "record_type", "TEXT DEFAULT 'trial'"),
+        ("baizhan_records", "role_name", "TEXT"),
+        ("baizhan_records", "server", "TEXT"),
+        ("baizhan_records", "record_type", "TEXT DEFAULT 'baizhan'"),
+        ("accounts", "sort_order", "INTEGER DEFAULT 0"),
+        ("accounts", "password", "TEXT"),
+        ("accounts", "notes", "TEXT"),
+        ("accounts", "hidden", "INTEGER DEFAULT 0"),
+        ("accounts", "disabled", "INTEGER DEFAULT 0"),
+        ("roles", "martial", "TEXT"),
+        ("roles", "equipment_score", "INTEGER"),
+        ("roles", "disabled", "INTEGER DEFAULT 0"),
+        ("raids", "season_id", "INTEGER"),
+        ("records", "raid_name", "TEXT"),
+        ("records", "account_id", "TEXT"),
+        ("records", "role_id", "TEXT"),
+        ("records", "record_date", "INTEGER"),
+        ("records", "record_type", "TEXT"),
+    ];
+
+    let mut added = 0;
+    for (table, col_name, col_type) in &critical_columns {
+        if !table_exists(conn, table)? {
+            continue;
+        }
+        if !column_exists(conn, table, col_name)? {
+            log::warn!(
+                "[CRITICAL-COLUMNS] 表 {} 缺少列 {}，正在补齐",
+                table, col_name
+            );
+            conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN {} {}", table, col_name, col_type),
+                [],
+            )
+            .map_err(|e| format!("补齐列 {}.{} 失败: {}", table, col_name, e))?;
+            added += 1;
+        }
+    }
+
+    if added > 0 {
+        log::info!("[CRITICAL-COLUMNS] 共补齐 {} 个缺失列", added);
+    }
+
+    Ok(())
+}
+
+/// 获取当前 schema 版本
+fn get_schema_version(conn: &Connection) -> Result<i32, String> {
+    let version: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_versions",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    log::debug!("[DEBUG] get_schema_version: 读取到当前版本 = {}", version);
+    Ok(version)
+}
+
+/// 设置 schema 版本
+fn set_schema_version(conn: &Connection, version: i32, description: &str) -> Result<(), String> {
+    let timestamp = get_local_timestamp();
+    log::debug!(
+        "[DEBUG] set_schema_version: 即将写入 version={}, description={}",
+        version,
+        description
+    );
+    conn.execute(
+        "INSERT INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)
+         ON CONFLICT(version) DO UPDATE SET applied_at = excluded.applied_at, description = excluded.description",
+        params![version, timestamp, description],
+    )
+    .map_err(|e| e.to_string())?;
+    log::debug!("[DEBUG] set_schema_version: version={} 写入成功", version);
+    Ok(())
+}
+
+fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+            [table_name],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({})", table_name))
+        .map_err(|e| e.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+
+    for column in columns {
+        if column.map_err(|e| e.to_string())? == column_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// 创建最新版本的完整数据库结构（仅用于全新安装路径）
+///
+/// 此函数是安装路径的核心，一次性创建所有表、索引和初始数据。
+/// 每个表的创建注释标注了对应的迁移版本号，便于与升级脚本对照维护。
+/// 新增表或列时，必须同时在对应的迁移脚本中添加，确保升级路径完整。
+fn create_latest_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
+        -- ===== 基线表（V0 前已存在） =====
+        CREATE TABLE IF NOT EXISTS records (
+            id TEXT PRIMARY KEY,
+            data TEXT,
+            raid_name TEXT,
+            account_id TEXT,
+            role_id TEXT,
+            record_date INTEGER,
+            record_type TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS config (
+            id INTEGER PRIMARY KEY,
+            value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS cache (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS equipments (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            ui_id TEXT,
+            icon_id INTEGER,
+            level INTEGER,
+            quality TEXT,
+            bind_type INTEGER,
+            type_label TEXT,
+            attribute_types TEXT,
+            attributes TEXT,
+            recommend TEXT,
+            diamonds TEXT,
+            data TEXT,
+            updated_at TEXT
+        );
+
+        -- ===== V1: 结构化账号表 =====
         CREATE TABLE IF NOT EXISTS accounts (
             id TEXT PRIMARY KEY,
             account_name TEXT NOT NULL,
@@ -890,10 +1169,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
         );
 
-        CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
-        CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
-        CREATE INDEX IF NOT EXISTS idx_accounts_sort_order ON accounts(sort_order);
-
+        -- ===== V10: 赛季系统 =====
         CREATE TABLE IF NOT EXISTS game_versions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
@@ -914,6 +1190,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (version_id) REFERENCES game_versions(id)
         );
 
+        -- ===== V2: 结构化副本表 =====
         CREATE TABLE IF NOT EXISTS raids (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -938,12 +1215,14 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             name TEXT UNIQUE NOT NULL
         );
 
+        -- ===== V4: 副本收藏表 =====
         CREATE TABLE IF NOT EXISTS favorite_raids (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             raid_name TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL
         );
 
+        -- ===== V5: 角色可见性配置 =====
         CREATE TABLE IF NOT EXISTS instance_types (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             type TEXT NOT NULL UNIQUE,
@@ -962,9 +1241,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             UNIQUE(role_id, instance_type_id)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_riv_role_id ON role_instance_visibility(role_id);
-        CREATE INDEX IF NOT EXISTS idx_riv_instance_type_id ON role_instance_visibility(instance_type_id);
-
+        -- ===== V6: 团队副本角色可见性 =====
         CREATE TABLE IF NOT EXISTS raid_role_visibility (
             id TEXT PRIMARY KEY,
             role_id TEXT NOT NULL,
@@ -976,9 +1253,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             UNIQUE(role_id, raid_key)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_rrv_role_id ON raid_role_visibility(role_id);
-        CREATE INDEX IF NOT EXISTS idx_rrv_raid_key ON raid_role_visibility(raid_key);
-
+        -- ===== V3: 试炼和百战记录表 =====
         CREATE TABLE IF NOT EXISTS trial_records (
             id TEXT PRIMARY KEY,
             account_id TEXT,
@@ -1013,34 +1288,34 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             updated_at TEXT
         );
 
+        -- ===== 索引 =====
+        CREATE INDEX IF NOT EXISTS idx_roles_account_id ON roles(account_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(account_name);
+        CREATE INDEX IF NOT EXISTS idx_accounts_sort_order ON accounts(sort_order);
+
+        CREATE INDEX IF NOT EXISTS idx_riv_role_id ON role_instance_visibility(role_id);
+        CREATE INDEX IF NOT EXISTS idx_riv_instance_type_id ON role_instance_visibility(instance_type_id);
+
+        CREATE INDEX IF NOT EXISTS idx_rrv_role_id ON raid_role_visibility(role_id);
+        CREATE INDEX IF NOT EXISTS idx_rrv_raid_key ON raid_role_visibility(raid_key);
+
+        CREATE INDEX IF NOT EXISTS idx_records_raid_name ON records(raid_name);
+        CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
+        CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
+        CREATE INDEX IF NOT EXISTS idx_records_record_date ON records(record_date);
+
         CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
         CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
+
+        -- ===== 初始数据 =====
+        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
+        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (2, 'baizhan', '百战异闻录');
+        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (3, 'trial', '试炼之地');
     "#,
     )
     .map_err(|e| e.to_string())?;
 
-    if column_exists(conn, "records", "raid_name")? {
-        conn.execute_batch(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_records_raid_name ON records(raid_name);
-            CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
-            CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
-            CREATE INDEX IF NOT EXISTS idx_records_record_date ON records(record_date);
-            "#,
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    conn.execute_batch(
-        r#"
-        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
-        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (2, 'baizhan', '百战异闻录');
-        INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (3, 'trial', '试炼之地');
-        "#,
-    )
-    .map_err(|e| e.to_string())?;
-
-    log::info!("数据库结构创建完成");
+    log::info!("[INSTALL] 数据库结构创建完成");
     Ok(())
 }
 
@@ -1151,14 +1426,6 @@ pub fn db_save_equipments(equipments: String) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     {
-        // Try to add columns if not exists (Simple migration for dev)
-        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN bind_type INTEGER", []);
-        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN type_label TEXT", []);
-        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN attribute_types TEXT", []);
-        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN attributes TEXT", []);
-        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN recommend TEXT", []);
-        let _ = tx.execute("ALTER TABLE equipments ADD COLUMN diamonds TEXT", []);
-
         let mut stmt = tx
             .prepare(
                 "INSERT INTO equipments (
@@ -1293,8 +1560,20 @@ pub struct TrialRecord {
 
 #[tauri::command]
 pub fn db_add_trial_record(record: String) -> Result<(), String> {
-    let item: TrialRecord = serde_json::from_str(&record).map_err(|e| e.to_string())?;
-    let conn = init_db().map_err(|e| e.to_string())?;
+    log::info!("[DB] 添加试炼之地记录: {}", record);
+    
+    let item: TrialRecord = serde_json::from_str(&record).map_err(|e| {
+        let err_msg = format!("解析试炼记录失败: {}", e);
+        log::error!("[DB] {}", err_msg);
+        err_msg
+    })?;
+    
+    let conn = init_db().map_err(|e| {
+        let err_msg = format!("初始化数据库失败: {}", e);
+        log::error!("[DB] {}", err_msg);
+        err_msg
+    })?;
+    
     let timestamp = get_local_timestamp();
 
     // Ensure bosses are serialized
@@ -1343,8 +1622,13 @@ pub fn db_add_trial_record(record: String) -> Result<(), String> {
             timestamp
         ],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        let err_msg = format!("保存试炼记录失败: {}", e);
+        log::error!("[DB] {}", err_msg);
+        err_msg
+    })?;
 
+    log::info!("[DB] 试炼之地记录保存成功: id={}, roleId={}, layer={}", item.id, item.role_id, item.layer);
     Ok(())
 }
 
@@ -3660,9 +3944,657 @@ mod tests {
             r#"{"id":"3","raidName":"25人英雄阕风悬城"}"#.to_string(),
         ];
 
-        let filtered = filter_record_json_by_raid_name(records, "25人英雄阕风悬城");
+        let filtered: Vec<&String> = records
+            .iter()
+            .filter(|r| r.contains("阕风悬城"))
+            .collect();
 
         assert_eq!(filtered.len(), 2);
         assert!(filtered.iter().all(|record| record.contains("阕风悬城")));
+    }
+
+    fn create_test_conn() -> (Connection, PathBuf) {
+        let temp_dir = TestTempDir::new();
+        let db_path = temp_dir.path().join("test.db");
+        let conn = Connection::open(&db_path).expect("should open test db");
+        conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
+            .ok();
+        (conn, db_path)
+    }
+
+    fn get_table_names(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .expect("should prepare");
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .expect("should query")
+            .filter_map(|r| r.ok())
+            .collect();
+        names
+    }
+
+    fn get_index_names(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            .expect("should prepare");
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .expect("should query")
+            .filter_map(|r| r.ok())
+            .collect();
+        names
+    }
+
+    fn get_column_names(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({})", table))
+            .expect("should prepare");
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("should query")
+            .filter_map(|r| r.ok())
+            .collect();
+        names
+    }
+
+    #[test]
+    fn fresh_install_creates_all_tables_and_indexes() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        install_fresh_db(&conn).expect("fresh install should succeed");
+
+        let expected_tables = [
+            "accounts", "baizhan_records", "cache", "config", "equipments",
+            "favorite_raids", "game_versions", "instance_types", "migration_flags",
+            "raid_bosses", "raid_role_visibility", "raid_versions", "raids",
+            "records", "role_instance_visibility", "roles", "schema_versions",
+            "seasons", "trial_records",
+        ];
+
+        let tables = get_table_names(&conn);
+        for table in &expected_tables {
+            assert!(
+                tables.contains(&table.to_string()),
+                "缺少预期表: {}，现有表: {:?}",
+                table, tables
+            );
+        }
+
+        let expected_indexes = [
+            "idx_accounts_name", "idx_accounts_sort_order",
+            "idx_riv_instance_type_id", "idx_riv_role_id",
+            "idx_raids_season_id", "idx_records_account_id",
+            "idx_records_raid_name", "idx_records_record_date",
+            "idx_records_role_id", "idx_roles_account_id",
+            "idx_rrv_raid_key", "idx_rrv_role_id",
+            "idx_seasons_version_id",
+        ];
+
+        let indexes = get_index_names(&conn);
+        for idx in &expected_indexes {
+            assert!(
+                indexes.contains(&idx.to_string()),
+                "缺少预期索引: {}，现有索引: {:?}",
+                idx, indexes
+            );
+        }
+
+        let version = get_schema_version(&conn).expect("should get version");
+        assert_eq!(version, CURRENT_SCHEMA_VERSION, "版本号应为 {}", CURRENT_SCHEMA_VERSION);
+
+        let instance_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM instance_types", [], |row| row.get(0))
+            .expect("should count");
+        assert_eq!(instance_count, 3, "应有 3 个副本类型初始数据");
+    }
+
+    #[test]
+    fn fresh_install_equipments_has_all_columns() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        install_fresh_db(&conn).expect("fresh install should succeed");
+
+        let expected_columns = [
+            "id", "name", "ui_id", "icon_id", "level", "quality",
+            "bind_type", "type_label", "attribute_types", "attributes",
+            "recommend", "diamonds", "data", "updated_at",
+        ];
+
+        let columns = get_column_names(&conn, "equipments");
+        for col in &expected_columns {
+            assert!(
+                columns.contains(&col.to_string()),
+                "equipments 表缺少列: {}，现有列: {:?}",
+                col, columns
+            );
+        }
+    }
+
+    #[test]
+    fn v0_upgrade_creates_all_tables() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+
+        upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
+
+        let expected_tables = [
+            "accounts", "baizhan_records", "cache", "config", "equipments",
+            "favorite_raids", "game_versions", "instance_types", "migration_flags",
+            "raid_bosses", "raid_role_visibility", "raid_versions", "raids",
+            "records", "role_instance_visibility", "roles", "schema_versions",
+            "seasons", "trial_records",
+        ];
+
+        let tables = get_table_names(&conn);
+        for table in &expected_tables {
+            assert!(
+                tables.contains(&table.to_string()),
+                "V0 升级后缺少表: {}",
+                table
+            );
+        }
+
+        let version = get_schema_version(&conn).expect("should get version");
+        assert_eq!(version, CURRENT_SCHEMA_VERSION, "V0 升级后版本号应为 V{}", CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn v0_upgrade_equipments_has_all_columns() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
+
+        let expected_columns = [
+            "id", "name", "ui_id", "icon_id", "level", "quality",
+            "bind_type", "type_label", "attribute_types", "attributes",
+            "recommend", "diamonds", "data", "updated_at",
+        ];
+
+        let columns = get_column_names(&conn, "equipments");
+        for col in &expected_columns {
+            assert!(
+                columns.contains(&col.to_string()),
+                "V0 升级后 equipments 表缺少列: {}",
+                col
+            );
+        }
+    }
+
+    #[test]
+    fn intermediate_version_upgrade_succeeds() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        ensure_baseline_tables(&conn).expect("baseline tables should be created");
+
+        for v in 1..=7 {
+            conn.execute("BEGIN TRANSACTION", []).expect("begin tx");
+            migration::apply_migration(&conn, v).expect("migration should succeed");
+            set_schema_version(&conn, v, &format!("升级到 V{}", v)).expect("set version");
+            conn.execute("COMMIT", []).expect("commit");
+        }
+
+        let version_before = get_schema_version(&conn).expect("should get version");
+        assert_eq!(version_before, 7, "升级前版本应为 V7");
+
+        upgrade_db(&conn, 7).expect("V7 升级应成功");
+
+        let version_after = get_schema_version(&conn).expect("should get version");
+        assert_eq!(version_after, CURRENT_SCHEMA_VERSION, "V7 升级后版本应为 V{}", CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn pre_upgrade_validation_rejects_corrupt_database() {
+        let (conn, _path) = create_test_conn();
+
+        let result = validate_pre_upgrade(&conn, -1);
+        assert!(result.is_err(), "负版本号应被拒绝");
+
+        let result = validate_pre_upgrade(&conn, CURRENT_SCHEMA_VERSION + 1);
+        assert!(result.is_err(), "超范围版本号应被拒绝");
+    }
+
+    #[test]
+    fn post_upgrade_validation_detects_missing_table() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        set_schema_version(&conn, CURRENT_SCHEMA_VERSION, "测试").expect("set version");
+
+        let result = validate_post_upgrade(&conn);
+        assert!(result.is_err(), "缺少表时应验证失败");
+    }
+
+    #[test]
+    fn ensure_equipment_columns_adds_missing_columns() {
+        let (conn, _path) = create_test_conn();
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE equipments (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                ui_id TEXT,
+                icon_id INTEGER,
+                level INTEGER,
+                quality TEXT,
+                data TEXT,
+                updated_at TEXT
+            );
+            "#,
+        ).expect("should create minimal equipments table");
+
+        ensure_equipment_columns(&conn).expect("should add missing columns");
+
+        let columns = get_column_names(&conn, "equipments");
+        let expected_new = ["bind_type", "type_label", "attribute_types", "attributes", "recommend", "diamonds"];
+        for col in &expected_new {
+            assert!(
+                columns.contains(&col.to_string()),
+                "ensure_equipment_columns 应添加列: {}",
+                col
+            );
+        }
+    }
+
+    #[test]
+    fn ensure_equipment_columns_idempotent() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        install_fresh_db(&conn).expect("fresh install should succeed");
+
+        let result = ensure_equipment_columns(&conn);
+        assert!(result.is_ok(), "对已有完整列的表调用 ensure_equipment_columns 不应报错");
+    }
+
+    #[test]
+    fn schema_version_records_all_migrations() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
+
+        let mut stmt = conn
+            .prepare("SELECT version FROM schema_versions ORDER BY version")
+            .expect("should prepare");
+        let versions: Vec<i32> = stmt
+            .query_map([], |row| row.get(0))
+            .expect("should query")
+            .filter_map(|r| r.ok())
+            .collect();
+
+        assert_eq!(versions.len(), CURRENT_SCHEMA_VERSION as usize, "应有 {} 条版本记录", CURRENT_SCHEMA_VERSION);
+        for (i, v) in versions.iter().enumerate() {
+            assert_eq!(*v, (i + 1) as i32, "版本记录应按序排列");
+        }
+    }
+
+    fn simulate_upgrade_from_version(conn: &Connection, from_version: i32) -> Result<(), String> {
+        ensure_version_tables(conn)?;
+
+        ensure_baseline_tables(conn)?;
+
+        for v in 1..=from_version {
+            conn.execute("BEGIN TRANSACTION", []).map_err(|e| e.to_string())?;
+            migration::apply_migration(conn, v)?;
+            set_schema_version(conn, v, &format!("升级到 V{}", v))?;
+            conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+        }
+
+        upgrade_db(conn, from_version)?;
+
+        Ok(())
+    }
+
+    fn verify_final_database_state(conn: &Connection) -> Result<(), String> {
+        let version = get_schema_version(conn)?;
+        if version != CURRENT_SCHEMA_VERSION {
+            return Err(format!("版本不匹配: 期望 V{}, 实际 V{}", CURRENT_SCHEMA_VERSION, version));
+        }
+
+        let expected_tables = [
+            "accounts", "baizhan_records", "cache", "config", "equipments",
+            "favorite_raids", "game_versions", "instance_types", "migration_flags",
+            "raid_bosses", "raid_role_visibility", "raid_versions", "raids",
+            "records", "role_instance_visibility", "roles", "schema_versions",
+            "seasons", "trial_records",
+        ];
+
+        for table in &expected_tables {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            if exists == 0 {
+                return Err(format!("缺少表: {}", table));
+            }
+        }
+
+        let expected_columns = [
+            "id", "name", "ui_id", "icon_id", "level", "quality",
+            "bind_type", "type_label", "attribute_types", "attributes",
+            "recommend", "diamonds", "data", "updated_at",
+        ];
+
+        for col in &expected_columns {
+            if !column_exists(conn, "equipments", col)? {
+                return Err(format!("equipments 表缺少列: {}", col));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn upgrade_from_v1_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 1).expect("V1 升级应成功");
+        verify_final_database_state(&conn).expect("V1 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v2_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 2).expect("V2 升级应成功");
+        verify_final_database_state(&conn).expect("V2 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v3_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 3).expect("V3 升级应成功");
+        verify_final_database_state(&conn).expect("V3 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v4_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 4).expect("V4 升级应成功");
+        verify_final_database_state(&conn).expect("V4 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v5_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 5).expect("V5 升级应成功");
+        verify_final_database_state(&conn).expect("V5 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v6_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 6).expect("V6 升级应成功");
+        verify_final_database_state(&conn).expect("V6 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v7_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 7).expect("V7 升级应成功");
+        verify_final_database_state(&conn).expect("V7 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v8_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 8).expect("V8 升级应成功");
+        verify_final_database_state(&conn).expect("V8 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v9_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 9).expect("V9 升级应成功");
+        verify_final_database_state(&conn).expect("V9 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v10_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 10).expect("V10 升级应成功");
+        verify_final_database_state(&conn).expect("V10 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v11_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 11).expect("V11 升级应成功");
+        verify_final_database_state(&conn).expect("V11 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn upgrade_from_v12_to_latest() {
+        let (conn, _path) = create_test_conn();
+        simulate_upgrade_from_version(&conn, 12).expect("V12 升级应成功");
+        verify_final_database_state(&conn).expect("V12 升级后数据库状态验证失败");
+    }
+
+    #[test]
+    fn v1_migration_preserves_account_data() {
+        let (conn, _path) = create_test_conn();
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                data TEXT
+            );
+
+            INSERT INTO accounts (id, data) VALUES ('acc-1', '{"accountName":"测试账号","type":"OWN","password":"test123","notes":"备注","hidden":false,"disabled":false,"roles":[{"id":"role-1","name":"角色A","server":"电信五区","sect":"天策"}]}');
+            INSERT INTO accounts (id, data) VALUES ('acc-2', '{"accountName":"账号B","type":"SHARE","roles":[]}');
+            "#,
+        ).expect("should create old accounts table");
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        
+        conn.execute("BEGIN TRANSACTION", []).expect("begin tx");
+        migration::apply_migration(&conn, 1).expect("V1 migration should succeed");
+        set_schema_version(&conn, 1, "升级到 V1").expect("set version");
+        conn.execute("COMMIT", []).expect("commit");
+
+        let account_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+            .expect("should count accounts");
+        assert_eq!(account_count, 2, "应保留 2 个账号");
+
+        let role_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
+            .expect("should count roles");
+        assert_eq!(role_count, 1, "应有 1 个角色");
+
+        let account_name: String = conn
+            .query_row("SELECT account_name FROM accounts WHERE id = 'acc-1'", [], |row| row.get(0))
+            .expect("should get account name");
+        assert_eq!(account_name, "测试账号", "账号名应正确迁移");
+
+        let role_name: String = conn
+            .query_row("SELECT name FROM roles WHERE id = 'role-1'", [], |row| row.get(0))
+            .expect("should get role name");
+        assert_eq!(role_name, "角色A", "角色名应正确迁移");
+
+        let legacy_exists: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='accounts_legacy'", [], |row| row.get(0))
+            .expect("should check legacy table");
+        assert_eq!(legacy_exists, 1, "旧表应重命名为 accounts_legacy");
+    }
+
+    #[test]
+    fn v3_migration_converts_date_to_integer() {
+        let (conn, _path) = create_test_conn();
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE trial_records (
+                id TEXT PRIMARY KEY,
+                account_id TEXT,
+                role_id TEXT,
+                layer INTEGER,
+                bosses TEXT,
+                card_1 TEXT,
+                card_2 TEXT,
+                card_3 TEXT,
+                card_4 TEXT,
+                card_5 TEXT,
+                flipped_index INTEGER,
+                date TEXT,
+                notes TEXT,
+                updated_at TEXT
+            );
+
+            INSERT INTO trial_records (id, account_id, role_id, layer, bosses, date, notes) 
+            VALUES ('trial-1', 'acc-1', 'role-1', 10, '[]', '1704067200000', '测试记录');
+            "#,
+        ).expect("should create old trial_records table");
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        
+        conn.execute("BEGIN TRANSACTION", []).expect("begin tx");
+        migration::apply_migration(&conn, 3).expect("V3 migration should succeed");
+        set_schema_version(&conn, 3, "升级到 V3").expect("set version");
+        conn.execute("COMMIT", []).expect("commit");
+
+        let date_type: String = conn
+            .query_row("SELECT type FROM pragma_table_info('trial_records') WHERE name='date'", [], |row| row.get(0))
+            .expect("should get date type");
+        assert_eq!(date_type.to_uppercase(), "INTEGER", "date 字段应为 INTEGER 类型");
+
+        let date_value: i64 = conn
+            .query_row("SELECT date FROM trial_records WHERE id = 'trial-1'", [], |row| row.get(0))
+            .expect("should get date value");
+        assert_eq!(date_value, 1704067200000, "date 值应正确转换");
+
+        let role_name_exists: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('trial_records') WHERE name='role_name'", [], |row| row.get(0))
+            .expect("should check role_name column");
+        assert_eq!(role_name_exists, 1, "应有 role_name 字段");
+
+        let record_type_exists: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('trial_records') WHERE name='record_type'", [], |row| row.get(0))
+            .expect("should check record_type column");
+        assert_eq!(record_type_exists, 1, "应有 record_type 字段");
+    }
+
+    #[test]
+    fn v10_migration_creates_season_data() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        ensure_baseline_tables(&conn).expect("baseline tables should be created");
+
+        for v in 1..=9 {
+            conn.execute("BEGIN TRANSACTION", []).expect("begin tx");
+            migration::apply_migration(&conn, v).expect(&format!("V{} migration should succeed", v));
+            set_schema_version(&conn, v, &format!("升级到 V{}", v)).expect("set version");
+            conn.execute("COMMIT", []).expect("commit");
+        }
+
+        conn.execute("BEGIN TRANSACTION", []).expect("begin tx");
+        migration::apply_migration(&conn, 10).expect("V10 migration should succeed");
+        set_schema_version(&conn, 10, "升级到 V10").expect("set version");
+        conn.execute("COMMIT", []).expect("commit");
+
+        let version_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM game_versions", [], |row| row.get(0))
+            .expect("should count versions");
+        assert!(version_count > 0, "应有版本数据");
+
+        let season_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM seasons", [], |row| row.get(0))
+            .expect("should count seasons");
+        assert!(season_count > 0, "应有赛季数据");
+
+        let season_id_exists: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('raids') WHERE name='season_id'", [], |row| row.get(0))
+            .expect("should check season_id column");
+        assert_eq!(season_id_exists, 1, "raids 表应有 season_id 字段");
+
+        let idx_seasons_version_id: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_seasons_version_id'", [], |row| row.get(0))
+            .expect("should check index");
+        assert_eq!(idx_seasons_version_id, 1, "应有 idx_seasons_version_id 索引");
+    }
+
+    #[test]
+    fn full_upgrade_preserves_data_integrity() {
+        let (conn, _path) = create_test_conn();
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                data TEXT
+            );
+
+            INSERT INTO accounts (id, data) VALUES ('acc-1', '{"accountName":"完整测试账号","type":"OWN","roles":[{"id":"role-1","name":"测试角色","server":"电信五区","sect":"纯阳"}]}');
+
+            CREATE TABLE trial_records (
+                id TEXT PRIMARY KEY,
+                account_id TEXT,
+                role_id TEXT,
+                layer INTEGER,
+                bosses TEXT,
+                card_1 TEXT,
+                card_2 TEXT,
+                card_3 TEXT,
+                card_4 TEXT,
+                card_5 TEXT,
+                flipped_index INTEGER,
+                date TEXT,
+                notes TEXT,
+                updated_at TEXT
+            );
+
+            INSERT INTO trial_records (id, account_id, role_id, layer, bosses, date, notes, updated_at) 
+            VALUES ('trial-1', 'acc-1', 'role-1', 15, '[]', '1704153600000', '完整测试记录', '2024-01-01T00:00:00Z');
+            "#,
+        ).expect("should create old tables");
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
+
+        let account_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts WHERE account_name = '完整测试账号'", [], |row| row.get(0))
+            .expect("should count accounts");
+        assert_eq!(account_count, 1, "账号数据应保留");
+
+        let role_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM roles WHERE name = '测试角色'", [], |row| row.get(0))
+            .expect("should count roles");
+        assert_eq!(role_count, 1, "角色数据应保留");
+
+        let trial_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trial_records WHERE notes = '完整测试记录'", [], |row| row.get(0))
+            .expect("should count trial records");
+        assert_eq!(trial_count, 1, "试炼记录应保留");
+
+        let trial_date: i64 = conn
+            .query_row("SELECT date FROM trial_records WHERE id = 'trial-1'", [], |row| row.get(0))
+            .expect("should get trial date");
+        assert_eq!(trial_date, 1704153600000, "试炼记录日期应正确转换");
+
+        let version = get_schema_version(&conn).expect("should get version");
+        assert_eq!(version, CURRENT_SCHEMA_VERSION, "最终版本应为 V{}", CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_logs_no_errors() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+
+        let result = upgrade_db(&conn, 0);
+        assert!(result.is_ok(), "升级应成功，错误: {:?}", result.err());
+
+        let version = get_schema_version(&conn).expect("should get version");
+        assert_eq!(version, CURRENT_SCHEMA_VERSION, "版本应为 V{}", CURRENT_SCHEMA_VERSION);
     }
 }
