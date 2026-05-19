@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { TrialPlaceRecord, Account, Config } from '../types';
+import { TrialPlaceRecord, Account, Config, Season } from '../types';
 import { Trophy, Check, Copy, Target, Search, X, BarChart3 } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
@@ -68,29 +68,41 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
     const [selectedRole, setSelectedRole] = useState<any>(null); // For passing to modal
 
+    const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+
+    useEffect(() => {
+        db.getCurrentSeason().then(s => {
+            setCurrentSeason(s);
+        }).catch(() => {});
+    }, []);
+
     // Statistics per role
     const roleStats = useMemo(() => {
         const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string, lastLayer?: number }>();
 
-        // 统计本周数据，使用周一 7:00
         const now = new Date();
         const startOfWeek = getLastMonday(now);
 
-        // 辅助函数：兼容时间戳和ISO字符串
         const getRecordTime = (date: string | number): number => {
             return typeof date === 'number' ? date : new Date(date).getTime();
         };
 
+        const seasonStartTime = currentSeason?.startDate
+            ? (currentSeason.startDate > 1e12 ? currentSeason.startDate : currentSeason.startDate * 1000)
+            : null;
+
         allRoles.forEach(role => {
             const roleRecords = records.filter(r => r.roleId === role.id);
             const thisWeekRecords = roleRecords.filter(r => getRecordTime(r.date) >= startOfWeek.getTime());
-            const maxLayer = roleRecords.length > 0 ? Math.max(...roleRecords.map(r => r.layer)) : 0;
 
-            // Find last run date
+            const seasonRecords = seasonStartTime !== null
+                ? roleRecords.filter(r => getRecordTime(r.date) >= seasonStartTime)
+                : [];
+            const maxLayer = seasonRecords.length > 0 ? Math.max(...seasonRecords.map(r => r.layer)) : 0;
+
             const lastRunRecord = [...roleRecords].sort((a, b) => getRecordTime(b.date) - getRecordTime(a.date))[0];
             const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
 
-            // 历史最新层数
             const lastLayer = lastRunRecord ? lastRunRecord.layer : undefined;
 
             stats.set(role.id, {
@@ -101,7 +113,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             });
         });
         return stats;
-    }, [allRoles, records]);
+    }, [allRoles, records, currentSeason]);
 
     const roleFlipStats = useMemo(() => {
         const stats = new Map<string, ReturnType<typeof calculateTrialFlipStats>>();
@@ -360,7 +372,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                         <div className="flex items-center gap-2">
                                             <Trophy className={`w-3.5 h-3.5 flex-shrink-0 ${stats.maxLayer > 0 ? 'text-amber-500' : 'text-muted'}`} />
                                             <span className="text-xs text-muted">
-                                                最高层数: <span className="font-medium text-main">{stats.maxLayer > 0 ? `${stats.maxLayer}层` : '-'}</span>
+                                                本赛季最高: <span className="font-medium text-main">{stats.maxLayer > 0 ? `${stats.maxLayer}层` : '-'}</span>
                                             </span>
                                         </div>
 

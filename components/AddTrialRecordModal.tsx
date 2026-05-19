@@ -55,7 +55,9 @@ const ATTR_NAME_MAP: Record<string, string> = {
     'atPhysicsCriticalDamagePowerBase': '会效',
     'atMagicCriticalDamagePowerBase': '会效',
     'atPhysicsOvercome': '破防',
+    'atPhysicsOvercomeBase': '破防',
     'atMagicOvercome': '破防',
+    'atMagicOvercomeBase': '破防',
     'atSolarOvercomeBase': '破防',
     'atLunarOvercomeBase': '破防',
     'atPoisonOvercomeBase': '破防',
@@ -278,6 +280,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [minLevel, setMinLevel] = useState<number>(10000);
     const [maxLevel, setMaxLevel] = useState<number>(40000);
     const [selectedType, setSelectedType] = useState<string>('全部');
+    const [selectedBindType, setSelectedBindType] = useState<number | null>(null);
 
 
     const [notes, setNotes] = useState<string>('');
@@ -323,6 +326,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setIsSubmitting(false);
             setRecordDate(formatDateForInput(new Date()));
             setAttrFilters(new Set());
+            setSelectedBindType(null);
 
             // 自动填充逻辑：查找本周最新记录
             if (autoFillEnabled && initialRole?.id) {
@@ -373,6 +377,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     }, [isOpen]);
 
     const ATTR_FILTERS = [
+        { key: '外功', label: '外功' },
+        { key: '内功', label: '内功' },
         { key: '会心', label: '会心' },
         { key: '会效', label: '会效' },
         { key: '破防', label: '破防' },
@@ -507,10 +513,14 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         // Type Filter
         if (selectedType !== '全部') {
             items = items.filter(item => {
-                // 处理特殊的类型映射
                 if (selectedType === '武器') return item.TypeLabel === '武器' || item.TypeLabel === '投掷';
                 return item.TypeLabel === selectedType;
             });
+        }
+
+        // Bind Type Filter
+        if (selectedBindType !== null) {
+            items = items.filter(item => Number(item.BindType) === selectedBindType);
         }
 
         return items;
@@ -919,6 +929,30 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             `}
                                             >
                                                 {type}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Bind Type Filters */}
+                                    <div className="flex items-center gap-2">
+                                        {[
+                                            { value: null, label: '全部绑定' },
+                                            { value: 2, label: '装备后绑定' },
+                                            { value: 3, label: '拾取后绑定' },
+                                        ].map(opt => (
+                                            <button
+                                                key={opt.label}
+                                                type="button"
+                                                onClick={() => setSelectedBindType(opt.value)}
+                                                className={`
+                                                px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border
+                                                ${selectedBindType === opt.value
+                                                        ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
+                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-primary/50'
+                                                    }
+                                            `}
+                                            >
+                                                {opt.label}
                                             </button>
                                         ))}
                                     </div>
