@@ -117,11 +117,27 @@ export interface TrialFlipPositionStats {
   appearanceRate: number;
 }
 
+export interface TrialBossEquipmentPositionStats {
+  position: number;
+  appearanceCount: number;
+  appearanceRate: number;
+}
+
+export interface TrialBossEquipmentStats {
+  bossKey: string;
+  bosses: [string, string, string];
+  totalRecords: number;
+  equipmentCount: number;
+  positions: TrialBossEquipmentPositionStats[];
+  bestEquipmentPosition: TrialBossEquipmentPositionStats | null;
+}
+
 export interface TrialFlipStatsSummary {
   totalRecords: number;
   positions: TrialFlipPositionStats[];
   bestFlipPosition: TrialFlipPositionStats | null;
   bestAppearancePosition: TrialFlipPositionStats | null;
+  bossEquipmentStats: TrialBossEquipmentStats[];
 }
 
 export type AnyRecord = RaidRecord | TrialPlaceRecord | BaizhanRecord;

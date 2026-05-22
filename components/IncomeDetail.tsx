@@ -229,9 +229,6 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   };
 
   const formatGold = (amount: number) => {
-    if (amount >= 10000) {
-      return `${(amount / 10000).toFixed(1)}w`;
-    }
     return amount.toLocaleString();
   };
 
@@ -369,7 +366,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   tickLine={false}
                   axisLine={false}
                   tick={{ fill: 'rgb(var(--text-muted))' }}
-                  tickFormatter={(val) => val >= 10000 ? `${(val / 10000).toFixed(1)}w` : val}
+                  tickFormatter={(val) => Number(val).toLocaleString()}
                 />
                 <Tooltip
                   cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
@@ -447,7 +444,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             <button
               onClick={() => setActiveTab('expense')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'expense'
-                ? 'bg-surface text-rose-700 dark:text-rose-400 shadow-sm'
+                ? 'bg-surface text-amber-700 dark:text-amber-400 shadow-sm'
                 : 'text-muted hover:text-main'
                 }`}
             >
@@ -472,6 +469,28 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
               )}
               {visibleRecords.map((record) => {
                 const netIncome = record.goldIncome - (record.goldExpense || 0);
+                const summaryAmount = activeTab === 'income'
+                  ? record.goldIncome
+                  : activeTab === 'expense'
+                    ? record.goldExpense || 0
+                    : netIncome;
+                const summaryLabel = activeTab === 'income'
+                  ? '收入'
+                  : activeTab === 'expense'
+                    ? '支出'
+                    : '净收入';
+                const summaryColorClass = activeTab === 'income'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : activeTab === 'expense'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : netIncome > 0
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : netIncome < 0
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-muted';
+                const summaryPrefix = activeTab === 'income' || (activeTab === 'all' && summaryAmount > 0)
+                  ? '+'
+                  : '';
                 const isExpanded = expandedRecordId === record.id;
 
                 return (
@@ -558,12 +577,12 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                       <div className="flex items-center gap-4 flex-shrink-0">
                         {/* Net Income */}
                         <div className="text-right flex flex-col items-end w-24">
-                          <span className={`font-bold text-[1rem] tabular-nums ${netIncome > 0 ? 'text-emerald-600 dark:text-emerald-400' :
-                            netIncome < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted'
-                            }`}>
-                            {netIncome > 0 ? '+' : ''}{formatGold(netIncome)}
+                          <span className={`font-bold text-[1rem] tabular-nums ${summaryColorClass}`}>
+                            {summaryPrefix}{formatGold(summaryAmount)}
                           </span>
                           <span className="text-xs text-muted flex items-center gap-1">
+                            <span>{summaryLabel}</span>
+                            <span className="text-muted/40">·</span>
                             {formatDate(record.date).split(' ')[0]}
                           </span>
                         </div>

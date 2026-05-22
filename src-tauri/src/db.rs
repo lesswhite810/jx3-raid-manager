@@ -618,6 +618,7 @@ pub fn init_db() -> Result<Connection, String> {
         log::info!("[INIT] 已是最新版本 V{}，无需迁移", current_version);
     }
 
+    migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
 
     *initialized = true;
@@ -659,6 +660,7 @@ pub fn init_db_with_path(path: &std::path::Path) -> Result<Connection, String> {
         log::info!("[INIT_TEST] 已是最新版本 V{}，无需迁移", current_version);
     }
 
+    migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
 
     log::info!("[INIT_TEST] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
@@ -4048,6 +4050,34 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM instance_types", [], |row| row.get(0))
             .expect("should count");
         assert_eq!(instance_count, 3, "应有 3 个副本类型初始数据");
+    }
+
+    #[test]
+    fn static_sync_restores_gongyuecheng_25_normal() {
+        let (conn, _path) = create_test_conn();
+
+        ensure_version_tables(&conn).expect("version tables should be created");
+        install_fresh_db(&conn).expect("fresh install should succeed");
+
+        conn.execute("DELETE FROM raids WHERE id = '25人普通会战弓月城'", [])
+            .expect("should delete test raid");
+
+        let before_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM raids WHERE id = '25人普通会战弓月城'", [], |row| row.get(0))
+            .expect("should count before sync");
+        assert_eq!(before_count, 0);
+
+        migration::init_static_raids(&conn).expect("static sync should succeed");
+
+        let restored: (String, i64, String, i64) = conn
+            .query_row(
+                "SELECT name, player_count, difficulty, is_active FROM raids WHERE id = '25人普通会战弓月城'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("should restore raid");
+
+        assert_eq!(restored, ("会战弓月城".to_string(), 25, "普通".to_string(), 1));
     }
 
     #[test]

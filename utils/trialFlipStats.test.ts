@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TrialPlaceRecord } from '../types';
-import { calculateTrialFlipStats } from './trialFlipStats';
+import { calculateTrialFlipStats, findTrialBossEquipmentStats } from './trialFlipStats';
 
 const createTrialRecord = (overrides: Partial<TrialPlaceRecord> = {}): TrialPlaceRecord => ({
   id: 'record-1',
@@ -107,6 +107,7 @@ describe('calculateTrialFlipStats', () => {
     expect(stats.positions.every(position => position.flipCount === 0 && position.appearanceCount === 0)).toBe(true);
     expect(stats.bestFlipPosition).toBeNull();
     expect(stats.bestAppearancePosition).toBeNull();
+    expect(stats.bossEquipmentStats).toEqual([]);
   });
 
   it('reads legacy snake_case card fields via shared trial record utils', () => {
@@ -137,5 +138,61 @@ describe('calculateTrialFlipStats', () => {
       position: 4,
       appearanceCount: 1
     });
+  });
+
+  it('counts equipment positions by ordered boss sequence', () => {
+    const records = [
+      createTrialRecord({
+        id: 'boss-1',
+        bosses: ['寅', '叶冬辰', '韦柔丝'],
+        card2: 'equip-a',
+        card4: 'equip-b',
+        flippedIndex: 2
+      }),
+      createTrialRecord({
+        id: 'boss-2',
+        bosses: ['寅', '叶冬辰', '韦柔丝'],
+        card2: 'equip-c',
+        flippedIndex: 1
+      }),
+      createTrialRecord({
+        id: 'boss-3',
+        bosses: ['雷神', '叶冬辰', '韦柔丝'],
+        card5: 'equip-d',
+        flippedIndex: 5
+      })
+    ];
+
+    const stats = calculateTrialFlipStats(records);
+    const bossStats = findTrialBossEquipmentStats(records, ['寅', '叶冬辰', '韦柔丝']);
+
+    expect(stats.bossEquipmentStats).toHaveLength(2);
+    expect(bossStats?.totalRecords).toBe(2);
+    expect(bossStats?.equipmentCount).toBe(3);
+    expect(bossStats?.bestEquipmentPosition?.position).toBe(2);
+    expect(bossStats?.positions.find(position => position.position === 2)?.appearanceCount).toBe(2);
+  });
+
+  it('keeps boss order as part of the grouping key', () => {
+    const records = [
+      createTrialRecord({
+        id: 'order-1',
+        bosses: ['寅', '叶冬辰', '韦柔丝'],
+        card2: 'equip-a',
+        flippedIndex: 2
+      }),
+      createTrialRecord({
+        id: 'order-2',
+        bosses: ['寅', '韦柔丝', '叶冬辰'],
+        card3: 'equip-b',
+        flippedIndex: 3
+      })
+    ];
+
+    const firstOrder = findTrialBossEquipmentStats(records, ['寅', '叶冬辰', '韦柔丝']);
+    const secondOrder = findTrialBossEquipmentStats(records, ['寅', '韦柔丝', '叶冬辰']);
+
+    expect(firstOrder?.bestEquipmentPosition?.position).toBe(2);
+    expect(secondOrder?.bestEquipmentPosition?.position).toBe(3);
   });
 });

@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 import { TrialPlaceRecord } from '../types';
 import { db } from '../services/db';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
+import { TrialBossEquipmentStatsSection } from './TrialBossEquipmentStatsSection';
 
 interface TrialFlipDetailProps {
   trialRecords: TrialPlaceRecord[];
@@ -66,7 +67,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           <div>
             <h2 className="text-2xl font-bold text-main">试炼翻牌统计</h2>
             <p className="mt-1 text-sm text-muted">
-              全部历史共 {stats.totalRecords} 条记录，统计 1-5 号位翻牌次数、翻中装备率和位置出现率
+              全部历史共 {stats.totalRecords} 条记录，统计 1-5 号位翻牌次数、翻中装备率、位置出现率与 Boss 出装备位置
             </p>
           </div>
         </div>
@@ -177,6 +178,8 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           </>
         )}
       </div>
+
+      <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
     </div>
   );
 };

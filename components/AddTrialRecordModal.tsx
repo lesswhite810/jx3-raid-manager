@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Account, TrialPlaceRecord } from '../types';
 import { Package, Check, X, AlertCircle, Layers, Trophy, Save, HelpCircle } from 'lucide-react';
@@ -10,6 +10,7 @@ import { getEquip, JX3Equip } from '../services/jx3BoxApi';
 import { db } from '../services/db';
 import { DateTimePicker } from './DateTimePicker';
 import { getBaseServerName } from '../utils/serverUtils';
+import { findTrialBossEquipmentStats } from '../utils/trialFlipStats';
 
 interface RoleWithStatus {
     id: string;
@@ -586,6 +587,15 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         }
     };
 
+    const selectedBossEquipmentStats = useMemo(() => {
+        if (!boss1 || !boss2 || !boss3) {
+            return null;
+        }
+
+        return findTrialBossEquipmentStats(records, [boss1, boss2, boss3]);
+    }, [records, boss1, boss2, boss3]);
+    const suggestedEquipmentPosition = selectedBossEquipmentStats?.bestEquipmentPosition?.position ?? null;
+
     if (!isOpen) return null;
 
     const filteredEquipments = getFilteredEquipments();
@@ -740,6 +750,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 const isFlipped = flipIndex === idx;
                                 const hasItem = itemId && itemId.trim().length > 0;
                                 const equipData = hasItem ? getEquipForCard(itemId) : null;
+                                const isSuggestedEquipmentPosition = suggestedEquipmentPosition === idx;
 
                                 return (
                                     <div key={idx} className="flex flex-col gap-2 group/card">
@@ -747,12 +758,15 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                         <button
                                             type="button"
                                             onClick={() => handleCardClick(idx)}
+                                            title={isSuggestedEquipmentPosition ? `该 Boss 顺序历史出装备最多：${idx}号位` : undefined}
                                             className={`
                                                 relative w-full aspect-[3/4] rounded-xl border-2 p-0 flex flex-col items-center justify-start overflow-hidden
                                                 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl
-                                                ${hasItem
-                                                    ? 'bg-surface border-slate-200 dark:border-slate-700 shadow-sm'
-                                                    : 'bg-surface border-dashed border-base/60 hover:border-primary/50 hover:bg-base/30'
+                                                ${isSuggestedEquipmentPosition
+                                                    ? 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-400 dark:border-emerald-600 border-solid shadow-sm'
+                                                    : hasItem
+                                                        ? 'bg-surface border-slate-200 dark:border-slate-700 shadow-sm'
+                                                        : 'bg-surface border-dashed border-base/60 hover:border-primary/50 hover:bg-base/30'
                                                 }
                                                 ${isFlipped
                                                     ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-surface shadow-lg shadow-primary/10'
@@ -764,6 +778,12 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             <div className="absolute -bottom-4 -right-2 text-[60px] font-black text-muted/40 pointer-events-none select-none z-0">
                                                 {idx}
                                             </div>
+
+                                            {isSuggestedEquipmentPosition && (
+                                                <div className="absolute left-1.5 top-1.5 z-30 rounded border border-emerald-200 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/70 dark:text-emerald-300">
+                                                    高发
+                                                </div>
+                                            )}
 
                                             {/* Equipment Display (Z-index to sit above watermark) */}
                                             <div className="relative z-10 w-full h-full p-1.5">

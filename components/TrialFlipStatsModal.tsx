@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { TrialFlipStatsSummary } from '../types';
+import { TrialBossEquipmentStatsSection } from './TrialBossEquipmentStatsSection';
 
 interface TrialFlipStatsModalProps {
   isOpen: boolean;
@@ -141,6 +142,8 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                   </div>
                 ))}
               </div>
+
+              <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
             </>
           )}
         </div>

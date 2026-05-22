@@ -7,9 +7,6 @@ import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 
 // 格式化金币显示（对齐 RoleRecordsModal 风格）
 const formatGoldAmount = (amount: number): string => {
-    if (amount >= 10000) {
-        return `${(amount / 10000).toFixed(1)}w`;
-    }
     return amount.toLocaleString();
 };
 

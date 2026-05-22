@@ -157,8 +157,5 @@ export const calculateRecordTotal = (record: RaidRecord): number => {
 };
 
 export const formatGoldAmount = (amount: number): string => {
-  if (Math.abs(amount) >= 10000) {
-    return `${(amount / 10000).toFixed(2)}w`;
-  }
   return amount.toLocaleString();
 };
