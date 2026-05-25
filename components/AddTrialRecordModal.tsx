@@ -596,6 +596,20 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     }, [records, boss1, boss2, boss3]);
     const suggestedEquipmentPosition = selectedBossEquipmentStats?.bestEquipmentPosition?.position ?? null;
 
+    const roleRecords = useMemo(() => {
+        const roleId = initialRole?.id || selectedRoleId;
+        if (!roleId) return [];
+        return records.filter(r => r.roleId === roleId);
+    }, [records, initialRole?.id, selectedRoleId]);
+
+    const selectedBossEquipmentStatsForRole = useMemo(() => {
+        const roleId = initialRole?.id || selectedRoleId;
+        if (!boss1 || !boss2 || !boss3 || !roleId) return null;
+        return findTrialBossEquipmentStats(roleRecords, [boss1, boss2, boss3]);
+    }, [roleRecords, boss1, boss2, boss3, initialRole?.id, selectedRoleId]);
+
+    const suggestedEquipmentPositionForRole = selectedBossEquipmentStatsForRole?.bestEquipmentPosition?.position ?? null;
+
     if (!isOpen) return null;
 
     const filteredEquipments = getFilteredEquipments();
@@ -751,6 +765,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 const hasItem = itemId && itemId.trim().length > 0;
                                 const equipData = hasItem ? getEquipForCard(itemId) : null;
                                 const isSuggestedEquipmentPosition = suggestedEquipmentPosition === idx;
+                                const isSuggestedEquipmentPositionForRole = suggestedEquipmentPositionForRole === idx;
 
                                 return (
                                     <div key={idx} className="flex flex-col gap-2 group/card">
@@ -758,15 +773,25 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                         <button
                                             type="button"
                                             onClick={() => handleCardClick(idx)}
-                                            title={isSuggestedEquipmentPosition ? `该 Boss 顺序历史出装备最多：${idx}号位` : undefined}
+                                            title={
+                                                isSuggestedEquipmentPosition && isSuggestedEquipmentPositionForRole
+                                                    ? `全部记录与当前角色该 Boss 顺序出装备最多：${idx}号位`
+                                                    : isSuggestedEquipmentPosition
+                                                        ? `全部记录中该 Boss 顺序出装备最多：${idx}号位`
+                                                        : isSuggestedEquipmentPositionForRole
+                                                            ? `当前角色该 Boss 顺序出装备最多：${idx}号位`
+                                                            : undefined
+                                            }
                                             className={`
                                                 relative w-full aspect-[3/4] rounded-xl border-2 p-0 flex flex-col items-center justify-start overflow-hidden
                                                 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl
                                                 ${isSuggestedEquipmentPosition
                                                     ? 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-400 dark:border-emerald-600 border-solid shadow-sm'
-                                                    : hasItem
-                                                        ? 'bg-surface border-slate-200 dark:border-slate-700 shadow-sm'
-                                                        : 'bg-surface border-dashed border-base/60 hover:border-primary/50 hover:bg-base/30'
+                                                    : isSuggestedEquipmentPositionForRole
+                                                        ? 'bg-sky-50/80 dark:bg-sky-900/20 border-sky-400 dark:border-sky-600 border-solid shadow-sm'
+                                                        : hasItem
+                                                            ? 'bg-surface border-slate-200 dark:border-slate-700 shadow-sm'
+                                                            : 'bg-surface border-dashed border-base/60 hover:border-primary/50 hover:bg-base/30'
                                                 }
                                                 ${isFlipped
                                                     ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-surface shadow-lg shadow-primary/10'
@@ -782,6 +807,11 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             {isSuggestedEquipmentPosition && (
                                                 <div className="absolute left-1.5 top-1.5 z-30 rounded border border-emerald-200 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/70 dark:text-emerald-300">
                                                     高发
+                                                </div>
+                                            )}
+                                            {isSuggestedEquipmentPositionForRole && (
+                                                <div className={`absolute z-30 rounded border border-sky-200 bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700 dark:border-sky-700 dark:bg-sky-900/70 dark:text-sky-300 ${isSuggestedEquipmentPosition ? 'left-1.5 top-6' : 'left-1.5 top-1.5'}`}>
+                                                    角色
                                                 </div>
                                             )}
 
