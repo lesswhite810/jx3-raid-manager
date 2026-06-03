@@ -1049,5 +1049,30 @@
         "order": 5
       }
     ]
+  },
+  {
+    "name": "阆风悬城·元心殿",
+    "level": 130,
+    "version": "丝路风雨",
+    "season": "暗影千机",
+    "configurations": [
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
+        "isActive": true
+      }
+    ],
+    "bosses": [
+      {
+        "id": "langfengxuancheng_yuanxindian_1",
+        "name": "鲁念雪",
+        "order": 1
+      },
+      {
+        "id": "langfengxuancheng_yuanxindian_2",
+        "name": "千机源枢",
+        "order": 2
+      }
+    ]
   }
 ]
