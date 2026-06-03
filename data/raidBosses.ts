@@ -20,6 +20,10 @@ const DEFAULT_BOSSES: Record<string, Boss[]> = {
     { id: 'langfengxuancheng_4', name: '阿史', order: 4 },
     { id: 'langfengxuancheng_5', name: '唐怀仁', order: 5 },
   ],
+  '阆风悬城·元心殿': [
+    { id: 'langfengxuancheng_yuanxindian_1', name: '鲁念雪', order: 1 },
+    { id: 'langfengxuancheng_yuanxindian_2', name: '千机源枢', order: 2 },
+  ],
 };
 
 // 获取副本的默认 BOSS 列表

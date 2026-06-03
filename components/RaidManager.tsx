@@ -66,6 +66,32 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
 
+  // 检查是否有角色启用了试炼之地 / 百战
+  const hasTrialEnabled = useMemo(() => {
+    return accounts.some(acc =>
+      !acc.disabled && acc.roles.some(role =>
+        !role.disabled && !role.isClient && role.visibility?.trial !== false
+      )
+    );
+  }, [accounts]);
+
+  const hasBaizhanEnabled = useMemo(() => {
+    return accounts.some(acc =>
+      !acc.disabled && acc.roles.some(role =>
+        !role.disabled && !role.isClient && role.visibility?.baizhan !== false
+      )
+    );
+  }, [accounts]);
+
+  // 当当前页签因没有启用角色而被隐藏时，自动切回团队副本
+  useEffect(() => {
+    if (activeTab === 'trial' && !hasTrialEnabled) {
+      setActiveTab('raid');
+    } else if (activeTab === 'baizhan' && !hasBaizhanEnabled) {
+      setActiveTab('raid');
+    }
+  }, [hasTrialEnabled, hasBaizhanEnabled, activeTab]);
+
   const [versionOrderMap, setVersionOrderMap] = useState<Record<string, number>>({});
   const [isOrderLoaded, setIsOrderLoaded] = useState(false);
 
@@ -397,24 +423,28 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         >
           团队副本
         </button>
-        <button
-          onClick={() => { setActiveTab('trial'); setSelectedRaid(null); }}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'trial'
-            ? 'bg-base text-primary border border-base border-b-transparent'
-            : 'text-muted hover:text-main hover:bg-base/50'
-            }`}
-        >
-          试炼之地
-        </button>
-        <button
-          onClick={() => { setActiveTab('baizhan'); setSelectedRaid(null); }}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'baizhan'
-            ? 'bg-base text-primary border border-base border-b-transparent'
-            : 'text-muted hover:text-main hover:bg-base/50'
-            }`}
-        >
-          百战
-        </button>
+        {hasTrialEnabled && (
+          <button
+            onClick={() => { setActiveTab('trial'); setSelectedRaid(null); }}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'trial'
+              ? 'bg-base text-primary border border-base border-b-transparent'
+              : 'text-muted hover:text-main hover:bg-base/50'
+              }`}
+          >
+            试炼之地
+          </button>
+        )}
+        {hasBaizhanEnabled && (
+          <button
+            onClick={() => { setActiveTab('baizhan'); setSelectedRaid(null); }}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'baizhan'
+              ? 'bg-base text-primary border border-base border-b-transparent'
+              : 'text-muted hover:text-main hover:bg-base/50'
+              }`}
+          >
+            百战
+          </button>
+        )}
       </div>
 
       {activeTab === 'baizhan' ? (
