@@ -25,6 +25,11 @@
         --text-on-primary: 255 255 255;
         /* white */
 
+        --chart-income: 5 150 105;
+        /* emerald-600 */
+        --chart-expense: 217 119 6;
+        /* amber-600 */
+
         --radius: 0.5rem;
     }
 
@@ -49,6 +54,11 @@
         /* indigo-400 */
         --text-on-primary: 255 255 255;
         /* white */
+
+        --chart-income: 52 211 153;
+        /* emerald-400 */
+        --chart-expense: 251 191 36;
+        /* amber-400 */
     }
 
     body {

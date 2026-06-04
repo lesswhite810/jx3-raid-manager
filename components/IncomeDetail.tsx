@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend, LabelList } from 'recharts';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
 import { RaidRecord, Account, BaizhanRecord, Season } from '../types';
 import { toast } from '../utils/toastManager';
@@ -53,6 +53,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const [recordListScrollTop, setRecordListScrollTop] = useState(0);
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
   const [seasonLoaded, setSeasonLoaded] = useState(false);
+  const [chartView, setChartView] = useState<'raid' | 'role'>('role');
 
   useEffect(() => {
     setPeriod(initialPeriod);
@@ -193,6 +194,23 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     return Object.keys(grouped)
       .map(k => ({ name: k, value: grouped[k] }))
       .sort((a, b) => b.value - a.value);
+  }, [filteredRecords]);
+
+  // 角色收支图表数据
+  const roleChartData = useMemo(() => {
+    const grouped: Record<string, { income: number; expense: number; name: string }> = {};
+    filteredRecords.forEach(r => {
+      const key = r.roleId;
+      if (!grouped[key]) {
+        grouped[key] = { income: 0, expense: 0, name: r.displayRoleName };
+      }
+      grouped[key].income += r.goldIncome;
+      grouped[key].expense += (r.goldExpense || 0);
+    });
+    return Object.values(grouped)
+      .map(d => ({ name: d.name, 收入: d.income, 支出: d.expense, netIncome: d.income - d.expense }))
+      .filter(d => d.收入 > 0 || d.支出 > 0)
+      .sort((a, b) => b.收入 - a.收入);
   }, [filteredRecords]);
 
   useEffect(() => {
@@ -337,62 +355,138 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
         </div>
       </div>
 
-      {/* 副本收益分布图表 */}
+      {/* 收益分布图表 */}
       <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-main">副本收益分布</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-lg font-semibold text-main">收益分布</h3>
+            <div className="flex items-center gap-1 bg-base rounded-lg p-0.5">
+              <button
+                onClick={() => setChartView('raid')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${chartView === 'raid'
+                  ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+                  : 'text-muted hover:text-main'
+                  }`}
+              >
+                按副本
+              </button>
+              <button
+                onClick={() => setChartView('role')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${chartView === 'role'
+                  ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+                  : 'text-muted hover:text-main'
+                  }`}
+              >
+                按角色
+              </button>
+            </div>
+          </div>
           <span className="text-sm text-muted">
             {period === 'week' ? '本周' : period === 'season' ? '本赛季' : '全部'}数据
           </span>
         </div>
-        {chartData.length > 0 ? (
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
-                <XAxis
-                  dataKey="name"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: 'rgb(var(--text-muted))' }}
-                  interval={0}
-                  angle={-20}
-                  textAnchor="end"
-                  height={50}
-                />
-                <YAxis
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: 'rgb(var(--text-muted))' }}
-                  tickFormatter={(val) => Number(val).toLocaleString()}
-                />
-                <Tooltip
-                  cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
-                  contentStyle={{
-                    backgroundColor: 'rgb(var(--bg-surface))',
-                    borderColor: 'rgb(var(--border-base))',
-                    borderRadius: '0.5rem',
-                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                    color: 'rgb(var(--text-main))'
-                  }}
-                  itemStyle={{ color: 'rgb(var(--text-main))' }}
-                  formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
-                />
-                <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
-                  {chartData.map((_entry: any, index: number) => (
-                    <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${0.7 - index * 0.05})`} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        {chartView === 'raid' ? (
+          chartData.length > 0 ? (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
+                  <XAxis
+                    dataKey="name"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: 'rgb(var(--text-muted))' }}
+                    interval={0}
+                    angle={-20}
+                    textAnchor="end"
+                    height={50}
+                  />
+                  <YAxis
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: 'rgb(var(--text-muted))' }}
+                    tickFormatter={(val) => Number(val).toLocaleString()}
+                  />
+                  <Tooltip
+                    cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
+                    contentStyle={{
+                      backgroundColor: 'rgb(var(--bg-surface))',
+                      borderColor: 'rgb(var(--border-base))',
+                      borderRadius: '0.5rem',
+                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                      color: 'rgb(var(--text-main))'
+                    }}
+                    itemStyle={{ color: 'rgb(var(--text-main))' }}
+                    formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
+                  />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
+                    {chartData.map((_entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={`rgb(var(--primary-base) / ${0.7 - index * 0.05})`} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-muted">
+              <Coins className="w-10 h-10 text-muted/30 mb-2" />
+              <p className="text-sm">暂无收益数据</p>
+            </div>
+          )
         ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-muted">
-            <Coins className="w-10 h-10 text-muted/30 mb-2" />
-            <p className="text-sm">暂无收益数据</p>
-          </div>
+          roleChartData.length > 0 ? (
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={roleChartData} margin={{ top: 20, right: 20, left: -10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
+                  <XAxis
+                    dataKey="name"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: 'rgb(var(--text-muted))' }}
+                    interval={0}
+                    angle={-20}
+                    textAnchor="end"
+                    height={50}
+                  />
+                  <YAxis
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fill: 'rgb(var(--text-muted))' }}
+                    tickFormatter={(val) => Number(val).toLocaleString()}
+                  />
+                  <Tooltip
+                    cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
+                    contentStyle={{
+                      backgroundColor: 'rgb(var(--bg-surface))',
+                      borderColor: 'rgb(var(--border-base))',
+                      borderRadius: '0.5rem',
+                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                      color: 'rgb(var(--text-main))'
+                    }}
+                    itemStyle={{ color: 'rgb(var(--text-main))' }}
+                    formatter={(value: number, name: string) => [`${value.toLocaleString()} 金`, name]}
+                  />
+                  <Bar dataKey="收入" fill="rgb(var(--chart-income))" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                    <LabelList dataKey="收入" position="top" formatter={(val: number) => val.toLocaleString()} style={{ fill: 'rgb(var(--chart-income))', fontSize: 10 }} />
+                  </Bar>
+                  <Bar dataKey="支出" fill="rgb(var(--chart-expense))" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                    <LabelList dataKey="支出" position="top" formatter={(val: number) => val.toLocaleString()} style={{ fill: 'rgb(var(--chart-expense))', fontSize: 10 }} />
+                  </Bar>
+                  <Legend />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-muted">
+              <Coins className="w-10 h-10 text-muted/30 mb-2" />
+              <p className="text-sm">暂无角色数据</p>
+            </div>
+          )
         )}
       </div>
 
