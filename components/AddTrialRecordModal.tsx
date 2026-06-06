@@ -55,6 +55,7 @@ const ATTR_NAME_MAP: Record<string, string> = {
     'atAllTypeCriticalStrike': '会心',
     'atPhysicsCriticalDamagePowerBase': '会效',
     'atMagicCriticalDamagePowerBase': '会效',
+    'atAllTypeCriticalDamagePowerBase': '会效',
     'atPhysicsOvercome': '破防',
     'atPhysicsOvercomeBase': '破防',
     'atMagicOvercome': '破防',
