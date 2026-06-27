@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Raid, Config } from '../types';
 import { Trash2, Shield, Filter, Power, Star } from 'lucide-react';
 import { getRaidKey } from '../utils/raidUtils';
@@ -45,6 +45,9 @@ const DIFFICULTY_COLORS: Record<string, string> = {
   '英雄': 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800',
   '挑战': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
 };
+
+// 用于在下拉框中标识"收藏"视图，避免与真实赛季名冲突
+const FAVORITE_VIEW = '__favorite__';
 
 
 
@@ -97,6 +100,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
   // 收藏状态
   const [favoriteRaids, setFavoriteRaids] = useState<Set<string>>(new Set());
+  // 标记收藏是否已加载完成，避免在 selectedVersion 初始化时被空状态误导
+  const favoritesLoadedRef = useRef(false);
 
   // 加载收藏列表
   useEffect(() => {
@@ -106,6 +111,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         setFavoriteRaids(new Set(favorites));
       } catch (err) {
         console.error('Failed to load favorite raids:', err);
+      } finally {
+        favoritesLoadedRef.current = true;
       }
     };
     loadFavorites();
@@ -203,18 +210,6 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   // 默认选择最新版本（由于需要等待后端字典加载完毕，故初始化为空/降级值，随后通过效应重置）
   const [selectedVersion, setSelectedVersion] = useState<string>('all');
 
-  useEffect(() => {
-    if (isOrderLoaded && versions.length > 0) {
-      setSelectedVersion((prev) => {
-        // 如果当前是无意义的 all 或已不在现存列表里，则推诿到数组首位（即最新版本）
-        if (prev === 'all' || !versions.includes(prev)) {
-          return versions[0];
-        }
-        return prev;
-      });
-    }
-  }, [versions, isOrderLoaded]);
-
   const isStaticRaid = (raid: Raid) => {
     return !!raid.static;
   };
@@ -278,6 +273,30 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
     return favoriteList;
   }, [raids, favoriteRaids]);
+
+  // 初始化 / 校正 selectedVersion：等收藏与版本字典都加载完后再决定默认视图
+  useEffect(() => {
+    if (!favoritesLoadedRef.current || !isOrderLoaded || versions.length === 0) {
+      return;
+    }
+
+    setSelectedVersion((prev) => {
+      // 收藏视图但收藏已清空：回退到最新版本
+      if (prev === FAVORITE_VIEW && favoriteMergedRaids.length === 0) {
+        return versions[0];
+      }
+      // 收藏视图且有收藏：保留
+      if (prev === FAVORITE_VIEW) {
+        return prev;
+      }
+      // 用户已主动选择一个真实赛季：保留
+      if (versions.includes(prev)) {
+        return prev;
+      }
+      // 初始值 'all' 或不在现存列表里：有收藏则默认进入收藏视图，否则推到数组首位（最新版本）
+      return favoriteMergedRaids.length > 0 ? FAVORITE_VIEW : versions[0];
+    });
+  }, [versions, isOrderLoaded, favoriteMergedRaids]);
 
   const filteredRaids = useMemo(() => {
     return raids.filter(raid => raid.version === selectedVersion);
@@ -485,6 +504,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                     value={selectedVersion}
                     onChange={e => setSelectedVersion(e.target.value)}
                   >
+                    {favoriteMergedRaids.length > 0 && (
+                      <option value={FAVORITE_VIEW}>收藏</option>
+                    )}
                     {versions.map(version => (
                       <option key={version} value={version}>{version}</option>
                     ))}
@@ -498,8 +520,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             右键难度框可单独禁用/启用
           </div>
 
-          {/* 有收藏时只显示收藏列表，无收藏时按版本分组显示 */}
-          {favoriteMergedRaids.length > 0 ? (
+          {/* 选中收藏视图且有收藏时显示收藏列表，否则按版本分组显示当前赛季 */}
+          {selectedVersion === FAVORITE_VIEW && favoriteMergedRaids.length > 0 ? (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="h-px bg-amber-200 flex-1"></div>
