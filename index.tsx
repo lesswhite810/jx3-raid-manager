@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { AppConfigProvider } from './contexts/AppConfigContext';
+import { ActivePollerProvider } from './contexts/ActivePollerContext';
 import './index.css';
 
 // 添加全局错误捕获
@@ -27,7 +29,11 @@ root.render(
   <React.StrictMode>
     <ErrorBoundary>
       <ThemeProvider>
-        <App />
+        <AppConfigProvider>
+          <ActivePollerProvider>
+            <App />
+          </ActivePollerProvider>
+        </AppConfigProvider>
       </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>

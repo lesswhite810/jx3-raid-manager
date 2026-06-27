@@ -1,8 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Account, AccountType, Role, Config, InstanceType } from '../types';
-import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { Account, AccountType, Role, Config, InstanceType, RoleActiveState, AccountActiveLevel } from '../types';
+import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download } from 'lucide-react';
 import {
   canStartAccountDrag,
   getAccountReorderAnimationDuration,
@@ -13,12 +12,13 @@ import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
+import { ImportRolesModal } from './ImportRolesModal';
 import { SectIcon } from './SectIcon';
 import { SectSelect } from './SectSelect';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
-import { getClientAccountNote } from '../utils/raidRoleUtils';
 import { getBaseServerName } from '../utils/serverUtils';
+import { useActivePoller } from '../contexts/ActivePollerContext';
 
 
 interface AccountManagerProps {
@@ -42,8 +42,58 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const ACCOUNT_REORDER_EASING = 'cubic-bezier(0.22, 0.8, 0.2, 1)';
   const ACCOUNT_DRAG_SURFACE_EASING = 'cubic-bezier(0.2, 0.85, 0.2, 1)';
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
+
+  // 活跃检测：从全局轮询 Context 获取最新结果
+  // 后端返回角色级活跃状态（按茗伊 uid），需通过 roleName + server 匹配数据库角色，
+  // 再聚合到账号级别（取账号下所有角色的最高活跃等级）
+  const { result: activeResult } = useActivePoller();
+
+  // 角色 → 活跃状态映射（key: `${roleName}@${server}`）
+  const roleActiveMap = useMemo(() => {
+    const map = new Map<string, RoleActiveState>();
+    if (activeResult?.roles) {
+      activeResult.roles.forEach(r => {
+        if (r.roleName && r.server) {
+          map.set(`${r.roleName}@${r.server}`, r);
+        }
+      });
+    }
+    return map;
+  }, [activeResult]);
+
+  // 账号 → 聚合活跃等级（取账号下所有角色的最高活跃等级）
+  const accountActiveLevelMap = useMemo(() => {
+    const map = new Map<string, AccountActiveLevel>();
+    if (!activeResult?.roles || safeAccounts.length === 0) return map;
+
+    // 活跃等级优先级：active > recent > idle > offline
+    const levelPriority: Record<AccountActiveLevel, number> = {
+      active: 4,
+      recent: 3,
+      idle: 2,
+      offline: 1,
+    };
+
+    for (const account of safeAccounts) {
+      let bestLevel: AccountActiveLevel | null = null;
+      for (const role of account.roles) {
+        const key = `${role.name}@${role.server}`;
+        const roleState = roleActiveMap.get(key);
+        if (roleState) {
+          if (!bestLevel || levelPriority[roleState.activeLevel] > levelPriority[bestLevel]) {
+            bestLevel = roleState.activeLevel;
+          }
+        }
+      }
+      if (bestLevel) {
+        map.set(account.id, bestLevel);
+      }
+    }
+    return map;
+  }, [activeResult, roleActiveMap, safeAccounts]);
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
+  const [isImportRolesModalOpen, setIsImportRolesModalOpen] = useState(false);
   const [addingRoleToAccountId, setAddingRoleToAccountId] = useState<string | null>(null);
   const [expandedAccountIds, setExpandedAccountIds] = useState<Set<string>>(new Set());
 
@@ -65,10 +115,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
   const [isAllSelected, setIsAllSelected] = useState(false);
-
-  // 解析相关状态
-  const [isScanning, setIsScanning] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
 
   // Dialog State
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
@@ -260,6 +306,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     equipmentScore: number | undefined;
   } | null>(null);
 
+  // 编辑账号信息弹窗（密码、备注）
+  const [editAccountModal, setEditAccountModal] = useState<{
+    open: boolean;
+    accountId: string;
+    password: string;
+    notes: string;
+  } | null>(null);
+
   // 角色信息表单验证状态
   const [roleFormErrors, setRoleFormErrors] = useState<{
     sect?: string;
@@ -390,6 +444,40 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setRoleFormErrors({});
   };
 
+  // 打开编辑账号信息弹窗
+  const handleOpenEditAccountModal = (account: Account) => {
+    setEditAccountModal({
+      open: true,
+      accountId: account.id,
+      password: account.password || '',
+      notes: account.notes || '',
+    });
+  };
+
+  // 关闭编辑账号信息弹窗
+  const handleCloseEditAccountModal = () => {
+    setEditAccountModal(null);
+  };
+
+  // 保存账号信息（密码、备注）
+  const handleSaveAccountInfo = () => {
+    if (!editAccountModal) return;
+
+    const { accountId, password, notes } = editAccountModal;
+
+    setAccounts(prev => prev.map(account => {
+      if (account.id !== accountId) return account;
+      return {
+        ...account,
+        password: password.trim(),
+        notes: notes.trim(),
+      };
+    }));
+
+    toast.success('账号信息更新成功');
+    handleCloseEditAccountModal();
+  };
+
   // 验证角色信息表单
   const validateRoleForm = (sect: string, equipmentScore: number | undefined): boolean => {
     const errors: { sect?: string; equipmentScore?: string } = {};
@@ -509,88 +597,19 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
 
 
-  // 角色分析 - 从茗伊数据库分析角色的门派、心法、装分并更新
-  const handleAnalyzeRoles = async () => {
-    if (!config?.game?.gameDirectory) {
-      toast.error('请先在配置页面设置游戏目录');
-      return;
-    }
-
-    setIsScanning(true);
-    setParseError(null);
-
-    try {
-      const result = await invoke<{
-        success: boolean;
-        newAccounts: number;
-        updatedAccounts: number;
-        newRoles: number;
-        updatedRoles: number;
-        error: string | null;
-      }>('analyze_roles', { gameDirectory: config.game.gameDirectory });
-
-      if (result.success) {
-        // 后端入库成功，重新从数据库查询账号数据
-        const accountsFromDb = await db.getAccounts();
-        setAccounts(accountsFromDb);
-
-        if (result.updatedRoles === 0) {
-          toast.info('角色分析完成，所有角色已是最新状态。');
-        } else {
-          toast.success(`角色分析完成：更新了 ${result.updatedRoles} 个角色的门派、心法、装分`);
-        }
-      } else {
-        setParseError(result.error || '角色分析失败，请检查游戏目录配置。');
-      }
-    } catch (error) {
-      console.error('角色分析失败:', error);
-      setParseError(`解析失败: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setIsScanning(false);
-    }
+  // 导入本地角色成功后的刷新回调
+  const handleImportedRoles = async () => {
+    const accountsFromDb = await db.getAccounts();
+    setAccounts(accountsFromDb);
   };
 
-  // 导入本地账号 - 从 userdata 目录导入账号和角色基本信息
-  const handleImportLocalAccounts = async () => {
+  // 打开导入本地角色弹窗
+  const handleOpenImportRolesModal = () => {
     if (!config?.game?.gameDirectory) {
       toast.error('请先在配置页面设置游戏目录');
       return;
     }
-
-    setIsScanning(true);
-    setParseError(null);
-
-    try {
-      const result = await invoke<{
-        success: boolean;
-        newAccounts: number;
-        updatedAccounts: number;
-        newRoles: number;
-        updatedRoles: number;
-        error: string | null;
-      }>('import_local_accounts', { gameDirectory: config.game.gameDirectory });
-
-      if (result.success) {
-        // 后端入库成功，重新从数据库查询账号数据
-        const accountsFromDb = await db.getAccounts();
-        setAccounts(accountsFromDb);
-
-        if (result.newAccounts === 0 && result.newRoles === 0) {
-          toast.info('导入完成，所有账号和角色已是最新状态。');
-        } else {
-          toast.success(
-            `导入完成：新增 ${result.newAccounts} 个账号，新增 ${result.newRoles} 个角色`
-          );
-        }
-      } else {
-        setParseError(result.error || '导入失败，请检查游戏目录配置。');
-      }
-    } catch (error) {
-      console.error('导入本地账号失败:', error);
-      setParseError(`解析失败: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setIsScanning(false);
-    }
+    setIsImportRolesModalOpen(true);
   };
 
   const handleAddAccountSubmit = (data: { accountName: string; type: AccountType; password?: string; notes?: string }) => {
@@ -1039,51 +1058,25 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   return (
     <div className="space-y-6">
+      {activeResult?.multiInstanceDetected && activeResult?.multiInstanceHint && (
+        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0" />
+          <span>{activeResult.multiInstanceHint}</span>
+        </div>
+      )}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <h2 className="text-xl font-bold text-main">账号管理</h2>
           <div className="flex items-center gap-2">
-            {/* 角色分析按钮 */}
+            {/* 导入本地角色按钮 */}
             {
               config?.game?.gameDirectory && (
                 <button
-                  onClick={handleAnalyzeRoles}
+                  onClick={handleOpenImportRolesModal}
                   className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
-                  disabled={isScanning}
                 >
-                  {isScanning ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>解析中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Loader2 className="w-4 h-4" />
-                      <span>角色分析</span>
-                    </>
-                  )}
-                </button>
-              )
-            }
-            {/* 导入本地账号按钮 */}
-            {
-              config?.game?.gameDirectory && (
-                <button
-                  onClick={handleImportLocalAccounts}
-                  className="bg-surface border border-base text-amber-600 hover:border-amber-500 hover:text-amber-700 hover:bg-amber-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
-                  disabled={isScanning}
-                >
-                  {isScanning ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>导入中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Loader2 className="w-4 h-4" />
-                      <span>导入本地账号</span>
-                    </>
-                  )}
+                  <Download className="w-4 h-4" />
+                  <span>导入本地角色</span>
                 </button>
               )
             }
@@ -1213,49 +1206,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         }
       </div>
 
-      {/* 解析错误弹窗 */}
-      {
-        parseError && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-surface border border-base rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
-              <div className="px-6 py-4 flex items-center justify-between border-b border-base">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-red-600" />
-                  <h2 className="text-lg font-semibold text-main">解析错误</h2>
-                </div>
-                <button
-                  onClick={() => setParseError(null)}
-                  className="text-muted hover:text-main hover:bg-base p-1.5 rounded-lg transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="p-6">
-                <p className="text-sm text-red-600 whitespace-pre-wrap">{parseError}</p>
-              </div>
-              <div className="px-6 py-4 bg-base/50 flex justify-end gap-2">
-                <button
-                  onClick={() => setParseError(null)}
-                  className="text-sm bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg transition-colors"
-                >
-                  确定
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
-
-      {/* 扫描加载提示 */}
-      {
-        isScanning && (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-center gap-3">
-            <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-            <p className="font-medium text-emerald-800">自动解析中，请稍候...</p>
-          </div>
-        )
-      }
-
 
 
       {/* 无筛选结果提示 */}
@@ -1300,7 +1250,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       <div className="space-y-6">
         {filteredAccounts.map(account => {
-          const clientNote = getClientAccountNote(account.type, account.notes);
           const isExpanded = expandedAccountIds.has(account.id);
           const isDragging = isAccountDragActive && draggedAccountId === account.id;
           const isDragTarget = isAccountDragActive && dragOverAccountId === account.id && draggedAccountId !== account.id;
@@ -1326,7 +1275,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 }
               }}
               style={cardStyle}
-              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-md' : 'border-base'} ${isDragTarget ? '' : ''}`}
+              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-md' : (accountActiveLevelMap.get(account.id) === 'active' ? 'border-emerald-400' : 'border-base')} ${isDragTarget ? '' : ''}`}
             >
               {/* 可点击的头部区域 */}
               <div
@@ -1390,28 +1339,27 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         </button>
                       )}
                     </div>
-                    {!isExpanded && (
-                      <div className="flex items-center gap-1.5 mt-1 min-w-0 text-xs text-muted">
-                        <span className="shrink-0">{Array.isArray(account.roles) ? account.roles.length : 0} 个角色</span>
-                        {account.username && account.username !== account.accountName && (
-                          <>
-                            <span className="text-muted/50 shrink-0">·</span>
-                            <span className="truncate">{account.username}</span>
-                          </>
-                        )}
-                        {clientNote && (
-                          <>
-                            <span className="text-muted/50 shrink-0">·</span>
-                            <span className="truncate text-emerald-700">备注：{clientNote}</span>
-                          </>
-                        )}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-1.5 mt-1 min-w-0 text-xs text-muted">
+                      <span className="shrink-0">{Array.isArray(account.roles) ? account.roles.length : 0} 个角色</span>
+                      {account.notes?.trim() && (
+                        <>
+                          <span className="text-muted/50 shrink-0">·</span>
+                          <span className="truncate text-emerald-700">备注：{account.notes.trim()}</span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* 操作按钮区域 - 阻止冒泡 */}
                 <div className="flex gap-1 shrink-0 ml-2" onClick={e => e.stopPropagation()} data-no-account-drag="true">
+                  <button
+                    onClick={() => handleOpenEditAccountModal(account)}
+                    className="p-2 rounded-xl text-muted hover:text-primary hover:bg-base/80 active:scale-95 transition-all duration-200"
+                    title="编辑账号信息"
+                  >
+                    <Pencil size={16} />
+                  </button>
                   <button
                     onClick={() => {
                       setAccounts(prev => prev.map(a => {
@@ -1456,81 +1404,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               {isExpanded && (
                 <div className="p-4 border-t border-base animate-in slide-in-from-top-2 duration-200 fade-in cursor-default">
                   <div className="space-y-4">
-                  {/* 账号信息编辑区域 */}
-                  <div className="bg-surface rounded-xl border border-base p-4">
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <span className="w-9 h-9 rounded-xl bg-base/60 border border-base flex items-center justify-center shrink-0">
-                          <User className="w-4 h-4 text-primary" />
-                        </span>
-                        <div className="min-w-0">
-                          <h4 className="text-[1rem] font-semibold text-main">账号信息</h4>
-                        </div>
-                      </div>
-                      <span className="text-[11px] text-muted bg-base/60 border border-base rounded-full px-2.5 py-1 shrink-0">
-                        {account.type === AccountType.CLIENT ? '代清账号' : '本人账号'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-4">
-
-
-                      {/* 密码 */}
-                      <div className="flex items-start gap-4">
-                        <label className="text-sm font-medium text-muted w-20 flex-shrink-0 pt-3">
-                          密码
-                        </label>
-                        <div className="flex-1 flex gap-2">
-                          <div className="relative flex-1">
-                            <input
-                              type={visiblePasswords.has(account.id) ? 'text' : 'password'}
-                              value={account.password || ''}
-                              onChange={(e) => {
-                                setAccounts(prev => prev.map(a => {
-                                  if (a.id === account.id) {
-                                    return { ...a, password: e.target.value };
-                                  }
-                                  return a;
-                                }));
-                              }}
-                              className="w-full px-4 py-3 pr-10 border border-base bg-base/40 rounded-lg text-main text-sm focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted"
-                              placeholder="输入游戏密码"
-                            />
-                            <button
-                              onClick={() => togglePasswordVisibility(account.id)}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-primary transition-colors active:scale-95 rounded-lg"
-                              title={visiblePasswords.has(account.id) ? '隐藏密码' : '显示密码'}
-                            >
-                              {visiblePasswords.has(account.id) ? <EyeOff size={16} /> : <Eye size={16} />}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-start gap-4">
-                        <label className="text-sm font-medium text-muted w-20 flex-shrink-0 pt-3">
-                          备注
-                        </label>
-                        <div className="flex-1 relative">
-                          <FileText className="absolute left-3 top-3.5 w-4 h-4 text-muted" />
-                          <textarea
-                            value={account.notes || ''}
-                            onChange={(e) => {
-                              setAccounts(prev => prev.map(a => {
-                                if (a.id === account.id) {
-                                  return { ...a, notes: e.target.value };
-                                }
-                                return a;
-                              }));
-                            }}
-                            className="w-full min-h-[88px] pl-10 pr-4 py-3 border border-base bg-base/40 rounded-lg text-main text-sm leading-6 focus:ring-1 focus:ring-primary focus:border-primary transition-all resize-y placeholder:text-muted"
-                            placeholder={account.type === AccountType.CLIENT ? '可填写老板、代清要求等备注' : '可填写账号备注'}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
                   {/* Roles Section */}
                   <div className="bg-surface rounded-xl border border-base p-4">
                     <div className="flex justify-between items-start gap-3 mb-4">
@@ -1569,6 +1442,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                               <div className="flex justify-between items-start gap-3">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
+                                    <ActiveDot activeLevel={roleActiveMap.get(`${role.name}@${role.server}`)?.activeLevel} />
                                     <span className={`text-sm font-medium text-main truncate ${role.disabled ? 'line-through text-muted' : ''}`}>
                                       {role.name}·{getBaseServerName(role.server)}
                                     </span>
@@ -1857,6 +1731,114 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         document.body
       )}
 
+      {/* Edit Account Info Modal */}
+      {editAccountModal && editAccountModal.open && createPortal(
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] overflow-hidden"
+          onClick={handleCloseEditAccountModal}
+        >
+          <div
+            className="bg-surface rounded-xl shadow-xl border border-base max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 flex items-center justify-between border-b border-base">
+              <div className="flex items-center gap-2 min-w-0">
+                <Pencil className="w-5 h-5 text-primary shrink-0" />
+                <h3 className="text-lg font-semibold text-main truncate">编辑账号信息</h3>
+              </div>
+              <button
+                onClick={handleCloseEditAccountModal}
+                className="text-muted hover:text-main hover:bg-base p-1.5 rounded-lg transition-colors shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {(() => {
+                const editingAccount = safeAccounts.find(a => a.id === editAccountModal.accountId);
+                return editingAccount ? (
+                  <div className="text-sm text-muted bg-base/40 border border-base rounded-lg px-3 py-2 flex items-center gap-2 min-w-0">
+                    <User className="w-4 h-4 text-primary shrink-0" />
+                    <span className="truncate">{editingAccount.accountName}</span>
+                    {editingAccount.type === AccountType.CLIENT && (
+                      <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 shrink-0">代清</span>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
+              {/* 密码 */}
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-main ml-1">
+                  游戏密码 <span className="text-xs font-normal text-muted ml-1">(本地加密存储)</span>
+                </label>
+                <div className="relative group">
+                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
+                  <input
+                    type={visiblePasswords.has(editAccountModal.accountId) ? 'text' : 'password'}
+                    value={editAccountModal.password}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setEditAccountModal(prev => prev ? { ...prev, password: value } : null);
+                    }}
+                    className="w-full pl-10 pr-10 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all placeholder:text-muted text-main"
+                    placeholder="可选"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => togglePasswordVisibility(editAccountModal.accountId)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-primary transition-colors active:scale-95 rounded-lg"
+                    title={visiblePasswords.has(editAccountModal.accountId) ? '隐藏密码' : '显示密码'}
+                  >
+                    {visiblePasswords.has(editAccountModal.accountId) ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              {/* 备注 */}
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-main ml-1">
+                  备注信息
+                </label>
+                <div className="relative group">
+                  <FileText className="absolute left-3 top-3 w-4 h-4 text-muted group-focus-within:text-primary transition-colors" />
+                  <textarea
+                    value={editAccountModal.notes}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setEditAccountModal(prev => prev ? { ...prev, notes: value } : null);
+                    }}
+                    className="w-full pl-10 pr-4 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all resize-none placeholder:text-muted text-main"
+                    rows={3}
+                    placeholder={(() => {
+                      const acc = safeAccounts.find(a => a.id === editAccountModal.accountId);
+                      return acc?.type === AccountType.CLIENT ? '可填写老板、代清要求等备注' : '可填写账号备注';
+                    })()}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-base/50 flex justify-end gap-3 border-t border-base">
+              <button
+                onClick={handleCloseEditAccountModal}
+                className="px-4 py-2 bg-surface hover:bg-base border border-base text-main hover:border-primary hover:text-primary active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveAccountInfo}
+                className="px-4 py-2 bg-primary hover:bg-primary-hover text-white shadow-sm hover:shadow active:scale-[0.98] rounded-lg transition-all duration-200 font-medium"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
 
 
       {/* Add Account Modal */}
@@ -1865,6 +1847,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         onClose={() => setIsAddAccountModalOpen(false)}
         onSubmit={handleAddAccountSubmit}
         existingAccountNames={safeAccounts.map(a => a.accountName)}
+      />
+
+      {/* Import Roles Modal */}
+      <ImportRolesModal
+        isOpen={isImportRolesModalOpen}
+        onClose={() => setIsImportRolesModalOpen(false)}
+        gameDirectory={config?.game?.gameDirectory || ''}
+        onImported={handleImportedRoles}
       />
 
       {/* Add Role Modal */}
@@ -1879,5 +1869,31 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         }
       />
     </div>
+  );
+};
+
+/**
+ * 活跃指示灯：根据账号聚合后的活跃等级显示不同颜色的小圆点
+ *
+ * - active（绿）：当前正在操作（5 分钟内有活动）
+ * - recent（黄）：本次会话登录过（超过 5 分钟）
+ * - idle（灰）：本次会话未登录此账号
+ * - offline（浅灰）：JX3 进程未运行
+ */
+const ActiveDot: React.FC<{ activeLevel?: AccountActiveLevel }> = ({ activeLevel }) => {
+  const dotColor = activeLevel === 'active' ? 'bg-emerald-500'
+    : activeLevel === 'recent' ? 'bg-amber-500'
+    : activeLevel === 'idle' ? 'bg-slate-400'
+    : 'bg-slate-300';
+
+  const tooltip = activeLevel
+    ? { active: '在线 · 活跃中', recent: '在线 · 最近活跃', idle: '在线 · 未活跃', offline: '离线' }[activeLevel]
+    : '未知';
+
+  return (
+    <span
+      className={`inline-block w-2 h-2 rounded-full ${dotColor} shrink-0`}
+      title={tooltip}
+    />
   );
 };

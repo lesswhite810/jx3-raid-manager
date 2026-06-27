@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { TrialPlaceRecord, Account, Config, Season } from '../types';
+import { TrialPlaceRecord, Account, Config, Season, AccountActiveLevel } from '../types';
 import { Trophy, Check, Copy, Target, Search, X, BarChart3 } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
@@ -10,6 +10,15 @@ import { toast } from '../utils/toastManager';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
+import { useActivePoller } from '../contexts/ActivePollerContext';
+
+// 活跃等级权重：在线（active/recent/idle）优先，离线（offline）靠后
+const ACTIVE_LEVEL_WEIGHT: Record<AccountActiveLevel, number> = {
+  active: 0,
+  recent: 0,
+  idle: 0,
+  offline: 1
+};
 
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
@@ -69,6 +78,20 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const [selectedRole, setSelectedRole] = useState<any>(null); // For passing to modal
 
     const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+
+    // 活跃检测：从全局轮询 Context 获取最新结果（用于排序时优先展示活跃角色）
+    const { result: activeResult } = useActivePoller();
+    const roleActiveLevelMap = useMemo(() => {
+        const map = new Map<string, AccountActiveLevel>();
+        if (activeResult?.roles) {
+            activeResult.roles.forEach(r => {
+                if (r.roleName && r.server) {
+                    map.set(`${r.roleName}@${r.server}`, r.activeLevel);
+                }
+            });
+        }
+        return map;
+    }, [activeResult]);
 
     useEffect(() => {
         db.getCurrentSeason().then(s => {
@@ -132,6 +155,13 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             const statsA = roleStats.get(a.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
             const statsB = roleStats.get(b.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
 
+            // 0. 活跃等级优先：active > recent > idle > offline（未匹配到时按 offline 处理）
+            const aActive = roleActiveLevelMap.get(`${a.name}@${a.server}`);
+            const bActive = roleActiveLevelMap.get(`${b.name}@${b.server}`);
+            const aWeight = aActive ? ACTIVE_LEVEL_WEIGHT[aActive] : ACTIVE_LEVEL_WEIGHT.offline;
+            const bWeight = bActive ? ACTIVE_LEVEL_WEIGHT[bActive] : ACTIVE_LEVEL_WEIGHT.offline;
+            if (aWeight !== bWeight) return aWeight - bWeight;
+
             // 1. 三态排序：未清(0) > 部分清(1-2次) > 完全清(3次)
             const getStatus = (count: number): number => {
                 if (count === 0) return 0; // 未清
@@ -159,7 +189,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             return a.name.localeCompare(b.name);
         });
         return sorted;
-    }, [allRoles, roleStats]);
+    }, [allRoles, roleStats, roleActiveLevelMap]);
 
     const filteredRoles = useMemo(() => {
         return filterRaidRoles(sortedRoles, roleSearchTerm);

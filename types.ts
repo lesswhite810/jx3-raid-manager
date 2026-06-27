@@ -312,3 +312,66 @@ export interface Season {
   trialEquipLevelMin?: number;
   trialEquipLevelMax?: number;
 }
+
+// ==================== 活跃检测（C 阶段） ====================
+
+/** 活跃等级（与后端 enum 对应，使用 lowercase） */
+export type AccountActiveLevel = 'active' | 'recent' | 'idle' | 'offline';
+
+/** 单个角色的活跃状态（来自茗伊目录扫描 + info.jx3dat 解析） */
+export interface RoleActiveState {
+  /** 茗伊 uid（目录名中的数字 ID） */
+  uid: string;
+  /** 角色名（从 info.jx3dat 解析） */
+  roleName: string;
+  /** 服务器（从 info.jx3dat 解析） */
+  server: string;
+  /** 大区（从 info.jx3dat 解析） */
+  region: string;
+  activeLevel: AccountActiveLevel;
+  isOnline: boolean;
+  isRecentlyActive: boolean;
+  lastActivityTime: string | null;
+  lastActivitySource: string | null;
+}
+
+/** JX3 进程信息 */
+export interface Jx3ProcessInfo {
+  pid: number;
+  name: string;
+  startTime: string;
+  startTimeUnix: number;
+  exePath: string;
+  workDirectory: string;
+}
+
+/** JX3 运行时状态 */
+export interface Jx3RuntimeStatus {
+  isRunning: boolean;
+  matchedProcess: Jx3ProcessInfo | null;
+  allProcesses: Jx3ProcessInfo[];
+  /** 匹配配置游戏目录的进程数量（多开时每个进程对应一个当前在线角色） */
+  matchedProcessCount: number;
+  multiInstanceDetected: boolean;
+  multiInstanceHint: string | null;
+}
+
+/** 批量活跃检测结果 */
+export interface BatchActiveResult {
+  jx3Running: boolean;
+  jx3StartTime: string | null;
+  jx3EndTime: string | null;
+  jx3ProcessCount: number;
+  multiInstanceDetected: boolean;
+  multiInstanceHint: string | null;
+  roles: RoleActiveState[];
+  scanDurationMs: number;
+}
+
+/** 应用配置（来自 app_config 表） */
+export interface AppConfig {
+  gameDirectory: string | null;
+  setupCompleted: boolean;
+  lastScanMingyiAt: string | null;
+  accountIds: string[];
+}

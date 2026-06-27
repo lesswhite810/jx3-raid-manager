@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { LayoutDashboard, Users, Download, Shield, Settings, Sun, Moon } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
+import { useAppConfig } from './contexts/AppConfigContext';
 import { Dashboard } from './components/Dashboard';
 import { IncomeDetail } from './components/IncomeDetail';
 import { AccountManager } from './components/AccountManager';
 import { RaidManager } from './components/RaidManager';
+import { SetupGuide } from './components/SetupGuide';
 
 import { CrystalDetail } from './components/CrystalDetail';
 import { TrialFlipDetail } from './components/TrialFlipDetail';
@@ -53,6 +55,9 @@ function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const initStartedRef = useRef(false);
   const updaterInitializedRef = useRef(false);
+
+  // 应用配置（引导流程与活跃检测依赖）
+  const { appConfig, isLoading: appConfigLoading } = useAppConfig();
 
   // 用于跟踪是否是初始加载，避免首次加载数据时触发保存
   const initialSaveSkipped = useRef({
@@ -327,6 +332,19 @@ function App() {
     });
   }, [isInitialized, handleCheckForUpdates]);
 
+  // 同步 app_config 表中的 gameDirectory 到旧 config 表（保持双轨制一致）
+  // 仅当 AppConfigContext 中的 gameDirectory 与当前 config 不同时同步
+  useEffect(() => {
+    if (!isInitialized || !appConfig?.gameDirectory) return;
+    if (config.game.gameDirectory === appConfig.gameDirectory) return;
+
+    setConfig(prev => ({
+      ...prev,
+      game: { ...prev.game, gameDirectory: appConfig.gameDirectory! },
+    }));
+    // 注意：setConfig 会触发下方 config 的 useEffect 自动写入 db.saveConfig
+  }, [appConfig?.gameDirectory, isInitialized]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!isInitialized) return;
 
@@ -505,6 +523,21 @@ function App() {
 
     setEditingRecord(null);
   };
+
+  // AppConfig 加载中：显示 loading
+  if (appConfigLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <LoadingSpinner size="lg" text="正在加载应用配置..." />
+      </div>
+    );
+  }
+
+  // 引导未完成：显示 SetupGuide
+  // 注意：仅当 setupCompleted=false 或 gameDirectory 为空时显示
+  if (appConfig && (!appConfig.setupCompleted || !appConfig.gameDirectory)) {
+    return <SetupGuide />;
+  }
 
   if (!isInitialized) {
     return (

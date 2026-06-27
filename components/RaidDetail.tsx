@@ -11,6 +11,16 @@ import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
+import { useActivePoller } from '../contexts/ActivePollerContext';
+import type { AccountActiveLevel } from '../types';
+
+// 活跃等级权重：在线（active/recent/idle）优先，离线（offline）靠后
+const ACTIVE_LEVEL_WEIGHT: Record<AccountActiveLevel, number> = {
+  active: 0,
+  recent: 0,
+  idle: 0,
+  offline: 1
+};
 
 interface RaidDetailProps {
   raid: Raid;
@@ -123,6 +133,20 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   // 角色启用/禁用切换状态
   const [showDisabled, setShowDisabled] = useState(false);
   const [roleVisibilityMap, setRoleVisibilityMap] = useState<Record<string, boolean>>({});
+
+  // 活跃检测：从全局轮询 Context 获取最新结果（用于排序时优先展示活跃角色）
+  const { result: activeResult } = useActivePoller();
+  const roleActiveLevelMap = useMemo(() => {
+    const map = new Map<string, AccountActiveLevel>();
+    if (activeResult?.roles) {
+      activeResult.roles.forEach(r => {
+        if (r.roleName && r.server) {
+          map.set(`${r.roleName}@${r.server}`, r.activeLevel);
+        }
+      });
+    }
+    return map;
+  }, [activeResult]);
 
   // 生成副本实例的唯一键（与 raids 表的 id 格式一致）
   const getRaidInstanceKey = (raidInfo: Raid): string => {
@@ -431,6 +455,13 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     const sorted = [...rolesWithStatus];
 
     sorted.sort((a, b) => {
+      // 0. 活跃等级优先：active > recent > idle > offline（未匹配到时按 offline 处理）
+      const aActive = roleActiveLevelMap.get(`${a.name}@${a.server}`);
+      const bActive = roleActiveLevelMap.get(`${b.name}@${b.server}`);
+      const aWeight = aActive ? ACTIVE_LEVEL_WEIGHT[aActive] : ACTIVE_LEVEL_WEIGHT.offline;
+      const bWeight = bActive ? ACTIVE_LEVEL_WEIGHT[bActive] : ACTIVE_LEVEL_WEIGHT.offline;
+      if (aWeight !== bWeight) return aWeight - bWeight;
+
       // 1. BOSS 完成状态优先（未清 > 部分清完 > 完全清完）
       const getBossStatus = (role: RoleWithStatus): number => {
         if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
@@ -466,7 +497,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     });
 
     return sorted;
-  }, [rolesWithStatus]);
+  }, [rolesWithStatus, roleActiveLevelMap]);
 
   // 根据启用/禁用状态过滤角色
   const filteredRoles = useMemo(() => {

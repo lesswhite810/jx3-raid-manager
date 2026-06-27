@@ -21,7 +21,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub const CURRENT_SCHEMA_VERSION: i32 = 14;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -620,6 +620,7 @@ pub fn init_db() -> Result<Connection, String> {
 
     migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
+    ensure_app_config_table(&conn)?;
 
     *initialized = true;
     log::info!("[INIT] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
@@ -944,6 +945,39 @@ fn ensure_baseline_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     log::info!("[BASELINE] 基线表检查完成");
+    Ok(())
+}
+
+/// 确保 app_config 表存在（历史数据库兼容处理）
+///
+/// 部分历史数据库版本号已升级到 V14 但 app_config 表缺失，
+/// 此函数在 init_db 末尾兜底创建表并插入默认值，避免 set_game_directory 等命令失败。
+fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS app_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        "#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let now = chrono::Local::now().to_rfc3339();
+    for (key, default_value) in [
+        ("game_directory", ""),
+        ("setup_completed", "false"),
+        ("account_ids", "[]"),
+        ("last_scan_mingyi_at", ""),
+    ] {
+        conn.execute(
+            "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES (?1, ?2, ?3)",
+            params![key, default_value, &now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -1309,11 +1343,41 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
         CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
 
+        -- ===== V14: 应用配置表（key-value 存储） =====
+        CREATE TABLE IF NOT EXISTS app_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         -- ===== 初始数据 =====
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (2, 'baizhan', '百战异闻录');
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (3, 'trial', '试炼之地');
     "#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // V14: 插入 app_config 默认值（与迁移脚本保持一致）
+    let now = chrono::Local::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('game_directory', '', ?1)",
+        params![&now],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('setup_completed', 'false', ?1)",
+        params![&now],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('account_ids', '[]', ?1)",
+        params![&now],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('last_scan_mingyi_at', '', ?1)",
+        params![&now],
     )
     .map_err(|e| e.to_string())?;
 

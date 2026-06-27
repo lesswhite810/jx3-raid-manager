@@ -1,10 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_config;
 mod db;
 mod equip_sync;
 mod game_directory;
 mod gkp_parser;
+mod jx3_process;
 mod kungfu_data;
+mod mingyi;
 mod runtime_mode;
 mod updater;
 
@@ -184,6 +187,8 @@ fn main() {
             game_directory::auto_parse_game_directory,
             game_directory::import_local_accounts,
             game_directory::analyze_roles,
+            game_directory::preview_importable_roles,
+            game_directory::import_selected_roles,
             game_directory::validate_game_directory,
             game_directory::scan_jx3_clients,
             db::db_init,
@@ -224,6 +229,16 @@ fn main() {
             db::db_save_config,
             db::db_get_config_debug,
             db::db_reset_config,
+            // 应用配置（V14+，引导与活跃检测专用 key-value 存储）
+            app_config::get_app_config,
+            app_config::set_game_directory,
+            app_config::set_account_ids,
+            app_config::complete_setup,
+            app_config::reset_setup,
+            // JX3 进程检测（C 阶段）
+            jx3_process::get_jx3_runtime_status,
+            // 活跃检测（C 阶段）
+            mingyi::active_detector::detect_accounts_active,
             // 缓存相关
             db::db_get_cache,
             db::db_save_cache,

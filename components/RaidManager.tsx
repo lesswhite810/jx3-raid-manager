@@ -498,8 +498,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             右键难度框可单独禁用/启用
           </div>
 
-          {/* 收藏副本区域 */}
-          {favoriteMergedRaids.length > 0 && (
+          {/* 有收藏时只显示收藏列表，无收藏时按版本分组显示 */}
+          {favoriteMergedRaids.length > 0 ? (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="h-px bg-amber-200 flex-1"></div>
@@ -597,9 +597,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 })}
               </div>
             </div>
-          )}
-
-          {Object.keys(mergedGroupedRaids).length > 0 ? (
+          ) : Object.keys(mergedGroupedRaids).length > 0 ? (
             versions.map(version => {
               const versionRaids = mergedGroupedRaids[version];
               if (!versionRaids) return null;

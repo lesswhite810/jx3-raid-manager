@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
-import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor } from 'lucide-react';
+import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor, RotateCcw } from 'lucide-react';
 import { isValidGamePath } from '../utils/configUtils';
 import { formatUpdatePubDate } from '../utils/updaterUtils';
 import { db } from '../services/db';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from '../utils/toastManager';
 import { scanJx3Clients, Jx3ClientInfo } from '../services/gameDirectoryScanner';
+import { useAppConfig } from '../contexts/AppConfigContext';
 
 interface ConfigManagerProps {
   config: Config;
@@ -37,6 +38,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [scanResults, setScanResults] = useState<Jx3ClientInfo[]>([]);
   const [showScanResults, setShowScanResults] = useState(false);
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const { updateGameDirectory, resetAll } = useAppConfig();
 
   const loadDataDirInfo = useCallback(async () => {
     try {
@@ -84,7 +89,9 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         setShowScanResults(true);
         if (result.clients.length === 1 && !config.game.gameDirectory) {
           const client = result.clients[0];
-          handleConfigChange('game', 'gameDirectory', client.workDirectory);
+          // 同时写入 app_config 表和旧 config 表
+          await updateGameDirectory(client.workDirectory);
+          // updateGameDirectory 已写入 app_config，App.tsx 的 useEffect 会同步到 config state
           toast.success(`已自动填入 ${client.displayName} 的安装目录`);
         } else if (result.clients.length > 1) {
           toast.info(`检测到 ${result.clients.length} 个客户端，请选择`);
@@ -98,17 +105,25 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     } finally {
       setScanningClients(false);
     }
-  }, [config.game.gameDirectory]);
+  }, [config.game.gameDirectory, updateGameDirectory]);
 
-  const handleSelectClient = useCallback((client: Jx3ClientInfo) => {
-    handleConfigChange('game', 'gameDirectory', client.workDirectory);
+  const handleSelectClient = useCallback(async (client: Jx3ClientInfo) => {
+    // 同时写入 app_config 表和旧 config 表
+    await updateGameDirectory(client.workDirectory);
     setShowScanResults(false);
     toast.success(`已选择 ${client.displayName}`);
-  }, []);
+  }, [updateGameDirectory]);
 
   const handleConfigChange = (section: keyof Config, key: string, value: unknown) => {
     const nextConfig = { ...config, [section]: { ...config[section], [key]: value } };
     setConfig(nextConfig);
+
+    // 游戏目录变更时同步到 app_config 表（保持双轨制一致）
+    if (section === 'game' && key === 'gameDirectory' && typeof value === 'string') {
+      updateGameDirectory(value).catch(error => {
+        console.error('[ConfigManager] 同步游戏目录到 app_config 失败:', error);
+      });
+    }
   };
 
   const getUpdateStatusText = () => {
@@ -366,6 +381,69 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           <p className="text-xs text-muted">
             修改目录后需要重启应用才能生效，重启时会自动迁移数据库和日志文件
           </p>
+        </div>
+      </div>
+
+      {/* 重新初始化（危险操作） */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 rounded-lg flex items-center justify-center">
+              <RotateCcw className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-main">重新初始化</h3>
+              <p className="text-xs text-muted">清空游戏目录、账号列表，回到引导界面</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-sm text-muted">
+            重新初始化会清空应用配置（游戏目录、账号 ID 列表、引导完成标记），应用将重载并显示引导界面。
+            <span className="text-amber-600 dark:text-amber-400">副本记录、AI 配置等数据不会删除</span>，仅影响引导流程与活跃检测。
+          </p>
+
+          {showResetConfirm ? (
+            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg space-y-3">
+              <div className="text-sm text-amber-800 dark:text-amber-200">
+                确认重新初始化？应用将立即重载，未保存的数据可能丢失。
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    setResetting(true);
+                    try {
+                      await resetAll();
+                    } catch (error) {
+                      console.error('重新初始化失败:', error);
+                      setResetting(false);
+                      setShowResetConfirm(false);
+                    }
+                  }}
+                  disabled={resetting}
+                  className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {resetting ? '正在重置...' : '确认重新初始化'}
+                </button>
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  disabled={resetting}
+                  className="px-4 py-2 text-sm bg-base border border-base text-main rounded-lg hover:bg-surface transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowResetConfirm(true)}
+              className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              重新初始化应用
+            </button>
+          )}
         </div>
       </div>
     </div>

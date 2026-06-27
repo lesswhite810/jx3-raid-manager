@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { BaizhanRecord, Account } from '../types';
+import { BaizhanRecord, Account, AccountActiveLevel } from '../types';
 import { Swords, Check, Copy, Search, X } from 'lucide-react';
 import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
@@ -8,6 +8,15 @@ import { db } from '../services/db';
 import { toast } from '../utils/toastManager';
 import { SectIcon } from './SectIcon';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
+import { useActivePoller } from '../contexts/ActivePollerContext';
+
+// 活跃等级权重：在线（active/recent/idle）优先，离线（offline）靠后
+const ACTIVE_LEVEL_WEIGHT: Record<AccountActiveLevel, number> = {
+  active: 0,
+  recent: 0,
+  idle: 0,
+  offline: 1
+};
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
@@ -42,6 +51,20 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     }, [accounts]);
 
     const [selectedRole, setSelectedRole] = useState<any>(null);
+
+    // 活跃检测：从全局轮询 Context 获取最新结果（用于排序时优先展示活跃角色）
+    const { result: activeResult } = useActivePoller();
+    const roleActiveLevelMap = useMemo(() => {
+        const map = new Map<string, AccountActiveLevel>();
+        if (activeResult?.roles) {
+            activeResult.roles.forEach(r => {
+                if (r.roleName && r.server) {
+                    map.set(`${r.roleName}@${r.server}`, r.activeLevel);
+                }
+            });
+        }
+        return map;
+    }, [activeResult]);
 
     // Statistics per role
     const roleStats = useMemo(() => {
@@ -82,6 +105,13 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
             const statsA = roleStats.get(a.id) || { weeklyCount: 0, weeklyIncome: 0, lastRunDate: undefined };
             const statsB = roleStats.get(b.id) || { weeklyCount: 0, weeklyIncome: 0, lastRunDate: undefined };
 
+            // 0. 活跃等级优先：active > recent > idle > offline（未匹配到时按 offline 处理）
+            const aActive = roleActiveLevelMap.get(`${a.name}@${a.server}`);
+            const bActive = roleActiveLevelMap.get(`${b.name}@${b.server}`);
+            const aWeight = aActive ? ACTIVE_LEVEL_WEIGHT[aActive] : ACTIVE_LEVEL_WEIGHT.offline;
+            const bWeight = bActive ? ACTIVE_LEVEL_WEIGHT[bActive] : ACTIVE_LEVEL_WEIGHT.offline;
+            if (aWeight !== bWeight) return aWeight - bWeight;
+
             // 1. Availability - haven't run this week first
             const aCanRun = statsA.weeklyCount === 0 ? 0 : 1;
             const bCanRun = statsB.weeklyCount === 0 ? 0 : 1;
@@ -104,7 +134,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
             return a.name.localeCompare(b.name);
         });
         return sorted;
-    }, [allRoles, roleStats]);
+    }, [allRoles, roleStats, roleActiveLevelMap]);
 
     const filteredRoles = useMemo(() => {
         return filterRaidRoles(sortedRoles, roleSearchTerm);

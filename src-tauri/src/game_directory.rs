@@ -18,6 +18,9 @@ const GKP_BASE_PATH: &str = r"interface\my#data";
 const USERDATA_BASE_PATH: &str = "userdata";
 const GAME_RUNTIME_SUFFIX: [&str; 4] = ["Game", "JX3", "bin", "zhcn_hd"];
 
+/// 茗伊账号目录基础路径（pub 以供 mingyi::active_detector 复用）
+pub const MINGYI_ACCOUNTS_BASE_PATH: &str = GKP_BASE_PATH;
+
 // 茗伊数据库路径常量
 const MING_YI_DB_PATH: &str =
     r"Interface\MY#DATA\!all-users@zhcn_hd\userdata\role_statistics\equip_stat.v4.db";
@@ -570,18 +573,45 @@ fn scan_userdata_directory(
                             (None, None, None, None, None, None, None)
                         };
 
-                    roles.push(ParsedRole {
-                        name: role_name,
-                        region: region_name.clone(),
-                        server: server_name.clone(),
-                        force_id,
-                        force_name,
-                        kungfu_id,
-                        kungfu_name,
-                        level,
-                        score,
-                        scores,
-                    });
+                    // 同账号同服务器下按角色名（trim 归一化）去重
+                    // 避免目录名含不可见字符或历史残留导致同一角色重复显示
+                    let normalized_name = role_name.trim();
+                    let duplicate_idx = roles
+                        .iter()
+                        .position(|r: &ParsedRole| r.server == server_name && r.name.trim() == normalized_name);
+
+                    if let Some(idx) = duplicate_idx {
+                        // 已存在同名角色，保留装分更高的
+                        let existing_score = roles[idx].score.unwrap_or(0);
+                        let new_score = score.unwrap_or(0);
+                        if new_score > existing_score {
+                            roles[idx].force_id = force_id;
+                            roles[idx].force_name = force_name;
+                            roles[idx].kungfu_id = kungfu_id;
+                            roles[idx].kungfu_name = kungfu_name;
+                            roles[idx].level = level;
+                            roles[idx].score = score;
+                            roles[idx].scores = scores;
+                        }
+                        log::warn!(
+                            "扫描角色目录：发现重复角色 {}/{}，已合并保留装分更高项",
+                            server_name,
+                            role_name
+                        );
+                    } else {
+                        roles.push(ParsedRole {
+                            name: role_name,
+                            region: region_name.clone(),
+                            server: server_name.clone(),
+                            force_id,
+                            force_name,
+                            kungfu_id,
+                            kungfu_name,
+                            level,
+                            score,
+                            scores,
+                        });
+                    }
                 }
             }
         }
@@ -1193,6 +1223,336 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
         success: true,
         new_accounts: 0,
         updated_accounts,
+        new_roles,
+        updated_roles,
+        error: None,
+    })
+}
+
+// ========== 导入本地角色（预览 + 选择性导入）==========
+
+/// 可导入的角色预览项
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewableRole {
+    pub name: String,
+    pub region: String,
+    pub server: String,
+    pub force_name: Option<String>,    // 门派名称
+    pub kungfu_name: Option<String>,   // 心法名称
+    pub equipment_score: i32,          // 装分（当前有效套装）
+    pub already_imported: bool,        // 是否已在应用中导入
+}
+
+/// 可导入的账号预览项（按账号分组）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewableAccount {
+    pub account_name: String,
+    pub roles: Vec<PreviewableRole>,
+}
+
+/// 预览结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewImportableRolesResult {
+    pub success: bool,
+    pub accounts: Vec<PreviewableAccount>,
+    pub error: Option<String>,
+}
+
+/// 预览可导入的本地角色（不写库，仅扫描+合并茗伊信息+标记已导入）
+#[tauri::command]
+pub fn preview_importable_roles(
+    game_directory: String,
+) -> Result<PreviewImportableRolesResult, String> {
+    let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
+    let runtime_path = PathBuf::from(&runtime_game_directory);
+
+    if runtime_path.to_string_lossy().is_empty() {
+        return Ok(PreviewImportableRolesResult {
+            success: false,
+            accounts: Vec::new(),
+            error: Some("非剑网三目录".to_string()),
+        });
+    }
+
+    // 读取茗伊数据库
+    let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
+        Ok(roles) => {
+            log::info!("预览导入：从茗伊数据库读取到 {} 个角色信息", roles.len());
+            roles
+        }
+        Err(e) => {
+            log::warn!("预览导入：读取茗伊数据库失败: {}", e);
+            Vec::new()
+        }
+    };
+
+    // 扫描 userdata 目录（含茗伊信息合并）
+    let parsed_accounts = match scan_userdata_directory(&runtime_path, &mingyi_roles) {
+        Ok(accounts) => accounts,
+        Err(e) => {
+            return Ok(PreviewImportableRolesResult {
+                success: false,
+                accounts: Vec::new(),
+                error: Some(format!("扫描目录失败: {}", e)),
+            });
+        }
+    };
+
+    // 查询数据库，构建已导入角色信息映射（按 name@server 唯一）
+    // 含 sect/martial/equipment_score，用于已导入角色在实时扫描缺失时回退显示
+    let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
+    let mut imported_info: std::collections::HashMap<String, (Option<String>, Option<String>, Option<i32>)> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT name, server, sect, martial, equipment_score FROM roles")
+            .map_err(|e| format!("查询角色失败: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let name: String = row.get(0)?;
+                let server: String = row.get(1)?;
+                let sect: Option<String> = row.get(2)?;
+                let martial: Option<String> = row.get(3)?;
+                let equipment_score: Option<i32> = row.get(4)?;
+                Ok((format!("{}@{}", name, server), sect, martial, equipment_score))
+            })
+            .map_err(|e| format!("查询角色失败: {}", e))?;
+        for row in rows {
+            if let Ok((key, sect, martial, equipment_score)) = row {
+                imported_info.insert(key, (sect, martial, equipment_score));
+            }
+        }
+    }
+
+    // 构建预览结果
+    let mut accounts = Vec::new();
+    for parsed_account in &parsed_accounts {
+        let mut roles = Vec::new();
+        for parsed_role in &parsed_account.roles {
+            let key = format!("{}@{}", parsed_role.name, parsed_role.server);
+            let db_info = imported_info.get(&key);
+            let already_imported = db_info.is_some();
+
+            // 实时扫描优先；已导入角色在实时扫描缺失时回退数据库已保存信息
+            let force_name = parsed_role
+                .force_name
+                .clone()
+                .or_else(|| db_info.and_then(|(sect, _, _)| sect.clone()));
+            let kungfu_name = parsed_role
+                .kungfu_name
+                .clone()
+                .or_else(|| db_info.and_then(|(_, martial, _)| martial.clone()));
+            let equipment_score = {
+                let live = parsed_role.score.unwrap_or(0);
+                if live > 0 {
+                    live
+                } else {
+                    db_info.and_then(|(_, _, es)| *es).unwrap_or(0)
+                }
+            };
+
+            roles.push(PreviewableRole {
+                name: parsed_role.name.clone(),
+                region: parsed_role.region.clone(),
+                server: parsed_role.server.clone(),
+                force_name,
+                kungfu_name,
+                equipment_score,
+                already_imported,
+            });
+        }
+        if !roles.is_empty() {
+            accounts.push(PreviewableAccount {
+                account_name: parsed_account.account_name.clone(),
+                roles,
+            });
+        }
+    }
+
+    log::info!("预览导入：扫描到 {} 个账号", accounts.len());
+
+    Ok(PreviewImportableRolesResult {
+        success: true,
+        accounts,
+        error: None,
+    })
+}
+
+/// 用户选中的导入项
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRoleItem {
+    pub account_name: String,
+    pub role_name: String,
+    pub region: String,
+    pub server: String,
+}
+
+/// 按用户选择导入角色（含账号自动创建 + 角色门派/心法/装分写入）
+#[tauri::command]
+pub fn import_selected_roles(
+    game_directory: String,
+    roles: Vec<ImportRoleItem>,
+) -> Result<AutoParseResult, String> {
+    if roles.is_empty() {
+        return Ok(AutoParseResult {
+            success: true,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: Some("未选择任何角色".to_string()),
+        });
+    }
+
+    let runtime_game_directory = resolve_game_runtime_directory(&game_directory);
+    let runtime_path = PathBuf::from(&runtime_game_directory);
+
+    if runtime_path.to_string_lossy().is_empty() {
+        return Ok(AutoParseResult {
+            success: false,
+            new_accounts: 0,
+            updated_accounts: 0,
+            new_roles: 0,
+            updated_roles: 0,
+            error: Some("非剑网三目录".to_string()),
+        });
+    }
+
+    // 读取茗伊数据库获取门派/心法/装分
+    let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
+        Ok(roles) => {
+            log::info!("选择性导入：从茗伊数据库读取到 {} 个角色信息", roles.len());
+            roles
+        }
+        Err(e) => {
+            log::warn!("选择性导入：读取茗伊数据库失败: {}", e);
+            Vec::new()
+        }
+    };
+
+    let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
+    let timestamp = db::get_local_timestamp();
+
+    let mut new_accounts = 0;
+    let mut new_roles = 0;
+    let mut updated_roles = 0;
+
+    // 按账号分组处理
+    use std::collections::HashMap;
+    let mut grouped: HashMap<String, Vec<&ImportRoleItem>> = HashMap::new();
+    for item in &roles {
+        grouped.entry(item.account_name.clone()).or_default().push(item);
+    }
+
+    for (account_name, role_items) in grouped {
+        let account_id = generate_uuid_from_key(&format!("account:{}", account_name));
+
+        // 检查账号是否存在
+        let old_account_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM accounts WHERE account_name = ?",
+                params![account_name],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let account_id_to_use = match old_account_id {
+            Some(existing_id) => existing_id,
+            None => {
+                conn.execute(
+                    "INSERT INTO accounts (id, account_name, account_type, sort_order, created_at, updated_at)
+                     VALUES (?, ?, 'OWN', 0, ?, ?)",
+                    params![account_id, account_name, timestamp, timestamp],
+                )
+                .map_err(|e| format!("插入账号失败: {}", e))?;
+                new_accounts += 1;
+                account_id
+            }
+        };
+
+        for role_item in role_items {
+            let role_id = generate_uuid_from_key(&format!(
+                "role:{}:{}:{}:{}",
+                account_name, role_item.role_name, role_item.region, role_item.server
+            ));
+
+            // 从茗伊信息中查找门派/心法/装分
+            let mingyi_info =
+                find_mingyi_role(&mingyi_roles, &role_item.role_name, &role_item.server);
+            let force_name = mingyi_info.and_then(|info| kungfu_data::get_force_name(info.force_id));
+            let kungfu_name = mingyi_info.and_then(|info| info.kungfu_name.clone());
+            let equipment_score = mingyi_info
+                .and_then(|info| info.scores.get((info.effective_suit - 1) as usize).copied())
+                .unwrap_or(0);
+
+            // 检查角色是否已存在
+            let old_role_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM roles WHERE account_id = ? AND name = ? AND server = ? AND region = ?",
+                    params![
+                        account_id_to_use,
+                        role_item.role_name,
+                        role_item.server,
+                        role_item.region
+                    ],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match old_role_id {
+                Some(existing_role_id) => {
+                    // 更新已有角色的门派/心法/装分
+                    conn.execute(
+                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                        params![
+                            force_name.unwrap_or_default(),
+                            kungfu_name.unwrap_or_default(),
+                            equipment_score as i64,
+                            timestamp,
+                            existing_role_id,
+                        ],
+                    )
+                    .map_err(|e| format!("更新角色信息失败: {}", e))?;
+                    updated_roles += 1;
+                }
+                None => {
+                    // 插入新角色（含门派/心法/装分）
+                    conn.execute(
+                        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        params![
+                            role_id,
+                            account_id_to_use,
+                            role_item.role_name,
+                            role_item.server,
+                            role_item.region,
+                            force_name.unwrap_or_default(),
+                            kungfu_name.unwrap_or_default(),
+                            equipment_score as i64,
+                            timestamp,
+                            timestamp,
+                        ],
+                    )
+                    .map_err(|e| format!("插入角色失败: {}", e))?;
+                    new_roles += 1;
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "选择性导入完成：新增 {} 个账号，新增 {} 个角色，更新 {} 个角色",
+        new_accounts, new_roles, updated_roles
+    );
+
+    Ok(AutoParseResult {
+        success: true,
+        new_accounts,
+        updated_accounts: 0,
         new_roles,
         updated_roles,
         error: None,

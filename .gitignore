@@ -58,3 +58,4 @@ tmp/
 
 # 临时目录
 MY_temp/
+.tmp_luadata_probe/
