@@ -8,8 +8,6 @@ interface AppConfigContextType {
   isLoading: boolean;
   /** 设置游戏目录：写入 app_config 表（旧 config 表的同步由 App.tsx 监听 appConfig.gameDirectory 完成） */
   updateGameDirectory: (path: string) => Promise<void>;
-  /** 扫描完成后更新账号 ID 列表 */
-  updateAccountIds: (ids: string[]) => Promise<void>;
   /** 标记引导流程完成 */
   markSetupCompleted: () => Promise<void>;
   /** 重新初始化（清空配置后重载应用） */
@@ -22,7 +20,6 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   gameDirectory: null,
   setupCompleted: false,
   lastScanMingyiAt: null,
-  accountIds: [],
 };
 
 export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -66,17 +63,6 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  const updateAccountIds = useCallback(async (ids: string[]) => {
-    try {
-      await appConfigService.setAccountIds(ids);
-      setAppConfig(prev => (prev ? { ...prev, accountIds: ids } : { ...DEFAULT_APP_CONFIG, accountIds: ids }));
-    } catch (error) {
-      console.error('[AppConfig] 保存账号 ID 列表失败:', error);
-      toast.error('保存账号列表失败');
-      throw error;
-    }
-  }, []);
-
   const markSetupCompleted = useCallback(async () => {
     try {
       await appConfigService.completeSetup();
@@ -107,7 +93,6 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         appConfig,
         isLoading,
         updateGameDirectory,
-        updateAccountIds,
         markSetupCompleted,
         resetAll,
       }}

@@ -14,7 +14,7 @@ interface StepStatus {
 }
 
 export const SetupGuide: React.FC = () => {
-  const { appConfig, updateGameDirectory, updateAccountIds, markSetupCompleted } = useAppConfig();
+  const { appConfig, updateGameDirectory, markSetupCompleted } = useAppConfig();
 
   const [gameDirectory, setGameDirectory] = useState<string>(appConfig?.gameDirectory ?? '');
   const [pathValidation, setPathValidation] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
@@ -133,14 +133,10 @@ export const SetupGuide: React.FC = () => {
     setIsImportRolesModalOpen(true);
   }, [appConfig, gameDirectory, updateGameDirectory]);
 
-  // 导入完成后回调：刷新账号列表与 app_config
+  // 导入完成后回调：统计账号与角色总数用于展示
   const handleImportedRoles = useCallback(async () => {
     try {
       const accounts = await db.getAccounts();
-      const accountIds = accounts
-        .map(a => a.id)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0);
-      await updateAccountIds(accountIds);
 
       // 统计账号与角色总数用于展示
       let roleCount = 0;
@@ -155,7 +151,7 @@ export const SetupGuide: React.FC = () => {
       setScanStatus({ state: 'error', message });
       toast.error('刷新账号列表失败: ' + message);
     }
-  }, [updateAccountIds]);
+  }, []);
 
   const handleComplete = useCallback(async () => {
     setCompleting(true);
@@ -170,7 +166,8 @@ export const SetupGuide: React.FC = () => {
   }, [markSetupCompleted]);
 
   const directorySaved = (appConfig?.gameDirectory ?? '') === gameDirectory && pathValidation === 'valid';
-  const canComplete = directorySaved && scanStatus.state === 'success';
+  // 导入角色是可选步骤：只要游戏目录已保存即可完成引导
+  const canComplete = directorySaved;
 
   return (
     <div className="min-h-screen bg-base flex items-center justify-center p-4">
@@ -275,11 +272,11 @@ export const SetupGuide: React.FC = () => {
             </div>
           </section>
 
-          {/* 步骤 2：导入本地角色 */}
+          {/* 步骤 2：导入本地角色（可选） */}
           <section>
             <div className="flex items-center gap-2 mb-3">
               <StepBadge number={2} active={directorySaved && scanStatus.state !== 'success'} done={scanStatus.state === 'success'} />
-              <h2 className="text-base font-semibold text-main">导入本地角色</h2>
+              <h2 className="text-base font-semibold text-main">导入本地角色 <span className="text-xs font-normal text-muted">（可选）</span></h2>
             </div>
             <div className="space-y-2">
               <button
@@ -321,7 +318,7 @@ export const SetupGuide: React.FC = () => {
               进入应用
             </button>
             {!canComplete && (
-              <p className="text-xs text-muted mt-2">请先完成前两步</p>
+              <p className="text-xs text-muted mt-2">请先保存游戏目录</p>
             )}
           </section>
         </div>

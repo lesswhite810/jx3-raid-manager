@@ -10,10 +10,6 @@ export const appConfigService = {
     await invoke('set_game_directory', { path });
   },
 
-  async setAccountIds(accountIds: string[]): Promise<void> {
-    await invoke('set_account_ids', { accountIds });
-  },
-
   async completeSetup(): Promise<void> {
     await invoke('complete_setup');
   },

@@ -8,12 +8,14 @@ import { BaizhanManager } from './BaizhanManager';
 import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
 import { RaidDetail } from './RaidDetail';
+import { PendingRecordsPanel } from './PendingRecordsPanel';
 
 interface RaidManagerProps {
   raids: Raid[];
   setRaids: React.Dispatch<React.SetStateAction<Raid[]>>;
   records: RaidRecord[];
   setRecords: React.Dispatch<React.SetStateAction<RaidRecord[]>>;
+  pendingRecords?: RaidRecord[];
   onEditRecord?: (record: RaidRecord) => void;
   onEditBaizhanRecord?: (record: BaizhanRecord) => void;
   trialRecords: TrialPlaceRecord[];
@@ -56,6 +58,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   setRaids,
   records,
   setRecords,
+  pendingRecords,
   onEditRecord,
   onEditBaizhanRecord,
   trialRecords,
@@ -495,7 +498,12 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         <>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <h2 className="text-xl font-bold text-main">副本管理</h2>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              <PendingRecordsPanel
+                records={pendingRecords ?? []}
+                accounts={accounts}
+                onRefreshRecords={onRefreshRecords}
+              />
               {versions.length > 0 && (
                 <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-lg border border-base shadow-sm">
                   <Filter className="w-4 h-4 text-muted" />

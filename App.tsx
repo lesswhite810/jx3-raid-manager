@@ -17,6 +17,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
 import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
+import { useDropScanner } from './hooks/useDropScanner';
 import {
   Account,
   RaidRecord,
@@ -71,6 +72,7 @@ function App() {
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<RaidRecord[]>([]);
+  const [pendingRecords, setPendingRecords] = useState<RaidRecord[]>([]);
   const [trialRecords, setTrialRecords] = useState<TrialPlaceRecord[]>([]);
   const [baizhanRecords, setBaizhanRecords] = useState<BaizhanRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
@@ -87,14 +89,26 @@ function App() {
   // 重新从数据库加载记录
   const reloadRecords = useCallback(async () => {
     try {
-      const loadedRecords = await db.getRecords();
-      console.log(`重新加载记录: ${loadedRecords.length} 条`);
+      const [loadedRecords, loadedPending] = await Promise.all([
+        db.getRecords(),
+        db.getPendingRecords(),
+      ]);
+      console.log(`重新加载记录: ${loadedRecords.length} 条，待确认: ${loadedPending.length} 条`);
       setRecords(loadedRecords);
+      setPendingRecords(loadedPending);
     } catch (error) {
       console.error('重新加载记录失败:', error);
       toast.error('重新加载副本记录失败');
     }
   }, []);
+
+  // 副本掉落自动扫描（B 阶段）：JX3 在线时全局自动扫描 pending 记录
+  // 扫描到新记录后自动重新加载 records
+  useDropScanner({
+    onRecordsUpdated: () => {
+      void reloadRecords();
+    },
+  });
 
   // 重新从数据库加载试炼记录
   const reloadTrialRecords = useCallback(async () => {
@@ -246,9 +260,10 @@ function App() {
         }
 
         console.log('\n正在加载数据库数据...');
-        const [loadedAccounts, loadedRecords, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords, loadedInstanceTypes, loadedRoleVisibility] = await Promise.all([
+        const [loadedAccounts, loadedRecords, loadedPending, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords, loadedInstanceTypes, loadedRoleVisibility] = await Promise.all([
           db.getAccounts(),
           db.getRecords(),
+          db.getPendingRecords(),
           db.getRaids(),
           db.getConfig(),
           db.getTrialRecords(),
@@ -257,7 +272,7 @@ function App() {
           db.getAllRoleVisibility()
         ]);
 
-        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}, 百战 ${loadedBaizhanRecords.length}`);
+        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 待确认 ${loadedPending.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}, 百战 ${loadedBaizhanRecords.length}`);
 
         // 保存副本类型
         setInstanceTypes(loadedInstanceTypes);
@@ -300,6 +315,9 @@ function App() {
           const raidRecords = parsedRecords.filter((record: RaidRecord) => record.type !== 'trial');
           setRecords(raidRecords);
         }
+
+        // 加载待确认记录（来自 scan_records 表，与 records 分离存储）
+        setPendingRecords(loadedPending);
 
         // Set trial records from the dedicated table source
         if (loadedTrialRecords && loadedTrialRecords.length > 0) {
@@ -639,6 +657,7 @@ function App() {
                 setRaids={setRaids}
                 records={records}
                 setRecords={setRecords}
+                pendingRecords={pendingRecords}
                 onEditRecord={setEditingRecord}
                 trialRecords={trialRecords}
                 baizhanRecords={baizhanRecords}

@@ -444,7 +444,6 @@ fn maybe_migrate_app_data(
 
     if should_clear_pending {
         config.pending_migration_from = None;
-        write_data_dir_bootstrap_config(config)?;
     } else if migrated && config.pending_migration_from.is_some() {
         log::warn!("数据迁移后源目录仍保留文件，保留待迁移状态以便后续继续处理");
     }
@@ -456,6 +455,7 @@ pub fn get_app_dir() -> Result<PathBuf, String> {
     let (target_dir, location, _) = resolve_target_app_dir(&config)?;
     ensure_directory_exists(&target_dir)?;
     maybe_migrate_app_data(&target_dir, &mut config)?;
+    write_data_dir_bootstrap_config(&config)?;
     write_data_dir_installer_state(&config, &target_dir, &location)?;
     Ok(target_dir)
 }
@@ -499,6 +499,14 @@ struct RecordLookupMetadata {
     role_id: Option<String>,
     record_date: Option<i64>,
     record_type: String,
+    #[allow(dead_code)]
+    source: String,
+    #[allow(dead_code)]
+    status: String,
+    #[allow(dead_code)]
+    drops: Option<String>,
+    #[allow(dead_code)]
+    jcl_files: Option<String>,
 }
 
 fn record_lookup_metadata_from_json(record: &serde_json::Value) -> RecordLookupMetadata {
@@ -511,6 +519,20 @@ fn record_lookup_metadata_from_json(record: &serde_json::Value) -> RecordLookupM
             .as_str()
             .map(|value| value.to_string())
             .unwrap_or_else(|| "raid".to_string()),
+        source: record["source"]
+            .as_str()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "manual".to_string()),
+        status: record["status"]
+            .as_str()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "confirmed".to_string()),
+        drops: record.get("drops")
+            .filter(|v| !v.is_null())
+            .map(|v| v.to_string()),
+        jcl_files: record.get("jclFiles")
+            .filter(|v| !v.is_null())
+            .map(|v| v.to_string()),
     }
 }
 
@@ -590,7 +612,7 @@ pub fn init_db() -> Result<Connection, String> {
 
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
 
-    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
         .ok();
 
     ensure_version_tables(&conn)?;
@@ -618,9 +640,15 @@ pub fn init_db() -> Result<Connection, String> {
         log::info!("[INIT] 已是最新版本 V{}，无需迁移", current_version);
     }
 
+    // 补救：确保 V14 的表结构变更已应用（开发期可能 schema_versions 标记为 V14 但表结构未更新）
+    ensure_raid_bosses_table(&conn)?;
+    ensure_scan_records_table(&conn)?;
+    ensure_critical_columns(&conn)?;
     migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
     ensure_app_config_table(&conn)?;
+    // V14 新增引导功能：历史用户已配置游戏目录且有账号数据时，自动标记引导完成
+    auto_complete_setup_for_legacy_users(&conn)?;
 
     *initialized = true;
     log::info!("[INIT] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
@@ -642,7 +670,7 @@ pub fn init_db_with_path(path: &std::path::Path) -> Result<Connection, String> {
 
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
 
-    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
         .ok();
 
     ensure_version_tables(&conn)?;
@@ -910,7 +938,26 @@ fn ensure_baseline_tables(conn: &Connection) -> Result<(), String> {
             account_id TEXT,
             role_id TEXT,
             record_date INTEGER,
-            record_type TEXT
+            record_type TEXT,
+            source TEXT DEFAULT 'manual',
+            status TEXT DEFAULT 'confirmed',
+            drops TEXT,
+            jcl_files TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS scan_records (
+            id TEXT PRIMARY KEY,
+            data TEXT,
+            raid_name TEXT,
+            account_id TEXT,
+            role_id TEXT,
+            record_date INTEGER,
+            record_type TEXT,
+            drops TEXT,
+            jcl_files TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT,
+            updated_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS config (
@@ -948,6 +995,100 @@ fn ensure_baseline_tables(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// 确保 raid_bosses 表为 V14 新结构（联合主键 raid_name + boss_id）
+///
+/// 开发期间 schema_versions 可能已标记 V14，但 V14 迁移代码后续修改增加了
+/// raid_bosses 重构逻辑，导致旧数据库标记已迁移但表结构未更新。
+/// 此函数检测旧结构（有 id 列无 boss_id 列）并执行重构。
+fn ensure_raid_bosses_table(conn: &Connection) -> Result<(), String> {
+    let has_id_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('raid_bosses') WHERE name='id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !has_id_column {
+        return Ok(());
+    }
+
+    log::warn!("[ensure_raid_bosses_table] 检测到旧结构 raid_bosses 表（id 列），执行重构");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS raid_bosses_new (
+            raid_name TEXT NOT NULL,
+            boss_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            boss_order INTEGER NOT NULL,
+            PRIMARY KEY (raid_name, boss_id)
+        );
+        "#,
+    )
+    .map_err(|e| format!("创建 raid_bosses_new 失败: {}", e))?;
+
+    let migrated = conn
+        .execute(
+            r#"
+            INSERT OR IGNORE INTO raid_bosses_new (raid_name, boss_id, name, boss_order)
+            SELECT
+                COALESCE(r.name, old.raid_name) AS raid_name,
+                old.id AS boss_id,
+                old.name,
+                old.boss_order
+            FROM raid_bosses old
+            LEFT JOIN raids r ON r.id = old.raid_name
+            "#,
+            [],
+        )
+        .map_err(|e| format!("迁移 raid_bosses 数据失败: {}", e))?;
+
+    conn.execute(
+        "UPDATE raid_bosses_new SET name = '阿史那承庆' WHERE name = '阿史'",
+        [],
+    )
+    .ok();
+
+    conn.execute_batch(
+        r#"
+        DROP TABLE raid_bosses;
+        ALTER TABLE raid_bosses_new RENAME TO raid_bosses;
+        "#,
+    )
+    .map_err(|e| format!("重命名 raid_bosses_new 失败: {}", e))?;
+
+    log::info!("[ensure_raid_bosses_table] raid_bosses 表重构完成，迁移 {} 条记录", migrated);
+    Ok(())
+}
+
+/// 确保 scan_records 表存在（V14 新增，自动扫描待确认记录）
+fn ensure_scan_records_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS scan_records (
+            id TEXT PRIMARY KEY,
+            data TEXT,
+            raid_name TEXT,
+            account_id TEXT,
+            role_id TEXT,
+            record_date INTEGER,
+            record_type TEXT,
+            drops TEXT,
+            jcl_files TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT,
+            updated_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_scan_records_status ON scan_records(status);
+        CREATE INDEX IF NOT EXISTS idx_scan_records_account ON scan_records(account_id);
+        "#,
+    )
+    .map_err(|e| format!("创建 scan_records 表失败: {}", e))?;
+    Ok(())
+}
+
 /// 确保 app_config 表存在（历史数据库兼容处理）
 ///
 /// 部分历史数据库版本号已升级到 V14 但 app_config 表缺失，
@@ -968,7 +1109,6 @@ fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
     for (key, default_value) in [
         ("game_directory", ""),
         ("setup_completed", "false"),
-        ("account_ids", "[]"),
         ("last_scan_mingyi_at", ""),
     ] {
         conn.execute(
@@ -977,6 +1117,118 @@ fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     }
+
+    // 从旧 config 表迁移 game_directory
+    let config_table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='config'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if config_table_exists {
+        if let Some(json_str) = conn
+            .query_row::<String, _, _>("SELECT value FROM config WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .ok()
+        {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                let game_dir = parsed
+                    .get("game")
+                    .and_then(|g| g.get("gameDirectory"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !game_dir.is_empty() {
+                    conn.execute(
+                        "UPDATE app_config SET value = ?1, updated_at = ?2 WHERE key = 'game_directory' AND value = ''",
+                        params![game_dir, &now],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    log::info!("[ensure_app_config_table] 从旧 config 表迁移 game_directory={}", game_dir);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// V14 引导功能历史用户兼容处理
+///
+/// V14 新增了 SetupGuide 引导流程，要求用户配置游戏目录并导入角色。
+/// 但历史用户已经在旧版本中配置过游戏目录（存在 config 表或 app_config 表），
+/// 并且已经在账号管理中导入过角色（accounts 表有数据）。
+/// 这类用户升级到 V14 后不应该再次走引导流程。
+///
+/// 判定条件（同时满足才自动标记完成）：
+/// 1. setup_completed 当前不为 'true'（避免重复处理）
+/// 2. app_config.game_directory 非空
+/// 3. accounts 表存在且至少有 1 条数据
+///
+/// 满足条件时，将 setup_completed 设为 'true'，使前端 App.tsx 跳过引导界面。
+fn auto_complete_setup_for_legacy_users(conn: &Connection) -> Result<(), String> {
+    // 1. 检查 setup_completed 当前值，已为 true 则跳过
+    let setup_completed: String = conn
+        .query_row(
+            "SELECT value FROM app_config WHERE key = 'setup_completed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "false".to_string());
+
+    if setup_completed.eq_ignore_ascii_case("true") {
+        return Ok(());
+    }
+
+    // 2. 检查 game_directory 是否非空
+    let game_directory: String = conn
+        .query_row(
+            "SELECT value FROM app_config WHERE key = 'game_directory'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    if game_directory.trim().is_empty() {
+        return Ok(());
+    }
+
+    // 3. 检查 accounts 表是否存在且有数据
+    let accounts_table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='accounts'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if !accounts_table_exists {
+        return Ok(());
+    }
+
+    let account_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    if account_count == 0 {
+        return Ok(());
+    }
+
+    // 4. 满足全部条件，自动标记引导完成
+    let now = chrono::Local::now().to_rfc3339();
+    conn.execute(
+        "UPDATE app_config SET value = 'true', updated_at = ?1 WHERE key = 'setup_completed'",
+        params![&now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    log::info!(
+        "[auto_complete_setup_for_legacy_users] 检测到历史用户已配置游戏目录且存在 {} 个账号，自动标记引导完成",
+        account_count
+    );
 
     Ok(())
 }
@@ -1042,6 +1294,10 @@ fn ensure_critical_columns(conn: &Connection) -> Result<(), String> {
         ("records", "role_id", "TEXT"),
         ("records", "record_date", "INTEGER"),
         ("records", "record_type", "TEXT"),
+        ("records", "source", "TEXT DEFAULT 'manual'"),
+        ("records", "status", "TEXT DEFAULT 'confirmed'"),
+        ("records", "drops", "TEXT"),
+        ("records", "jcl_files", "TEXT"),
     ];
 
     let mut added = 0;
@@ -1145,7 +1401,26 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             account_id TEXT,
             role_id TEXT,
             record_date INTEGER,
-            record_type TEXT
+            record_type TEXT,
+            source TEXT DEFAULT 'manual',
+            status TEXT DEFAULT 'confirmed',
+            drops TEXT,
+            jcl_files TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS scan_records (
+            id TEXT PRIMARY KEY,
+            data TEXT,
+            raid_name TEXT,
+            account_id TEXT,
+            role_id TEXT,
+            record_date INTEGER,
+            record_type TEXT,
+            drops TEXT,
+            jcl_files TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT,
+            updated_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS config (
@@ -1240,10 +1515,11 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
         );
 
         CREATE TABLE IF NOT EXISTS raid_bosses (
-            id TEXT PRIMARY KEY,
             raid_name TEXT NOT NULL,
+            boss_id TEXT NOT NULL,
             name TEXT NOT NULL,
-            boss_order INTEGER NOT NULL
+            boss_order INTEGER NOT NULL,
+            PRIMARY KEY (raid_name, boss_id)
         );
 
         CREATE TABLE IF NOT EXISTS raid_versions (
@@ -2645,6 +2921,24 @@ pub fn db_get_records() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+pub fn db_get_pending_records() -> Result<Vec<String>, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    // 返回 pending（可确认）和 scanning（副本进行中，UI 锁定不可确认）记录
+    // 排除已 confirmed / rejected 的记录
+    let mut stmt = conn
+        .prepare("SELECT data FROM scan_records WHERE status IN ('pending', 'scanning') ORDER BY record_date DESC")
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    let mut records = Vec::new();
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        if let Ok(data) = row.get(0) {
+            records.push(data);
+        }
+    }
+    Ok(records)
+}
+
+#[tauri::command]
 pub fn db_save_records(records: String) -> Result<(), String> {
     let mut conn = init_db().map_err(|e| e.to_string())?;
     let parsed: Vec<serde_json::Value> =
@@ -2664,7 +2958,6 @@ pub fn db_save_records(records: String) -> Result<(), String> {
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 data = excluded.data,
-                raid_name = excluded.raid_name,
                 account_id = excluded.account_id,
                 role_id = excluded.role_id,
                 record_date = excluded.record_date,
@@ -2676,7 +2969,7 @@ pub fn db_save_records(records: String) -> Result<(), String> {
                 metadata.account_id,
                 metadata.role_id,
                 metadata.record_date,
-                metadata.record_type
+                metadata.record_type,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -2734,7 +3027,7 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
     let mut boss_map: std::collections::HashMap<String, Vec<serde_json::Value>> = std::collections::HashMap::new();
     {
         let mut boss_stmt = conn
-            .prepare("SELECT raid_name, id, name, boss_order FROM raid_bosses ORDER BY boss_order")
+            .prepare("SELECT raid_name, boss_id, name, boss_order FROM raid_bosses ORDER BY boss_order")
             .map_err(|e| e.to_string())?;
         let mut boss_rows = boss_stmt.query([]).map_err(|e| e.to_string())?;
 
@@ -2755,6 +3048,8 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
         }
     }
 
+    // raid_bosses 表 raid_name 列存的是 raids.name（副本基础名），
+    // 同名副本天然共享同一组 BOSS 记录。
     for raid in &mut raids {
         if let Some(name) = raid["name"].as_str() {
             if let Some(bosses) = boss_map.remove(name) {
@@ -3047,7 +3342,9 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
     }
 
     // 4. 插入或更新 raids
-    let mut boss_saved_names = std::collections::HashSet::new();
+    // raid_bosses 按 (raid_name, boss_id) 联合主键去重，raid_name 列存 raids.name，
+    // 同名副本（不同难度/人数）天然共享同一组 BOSS 记录。
+    let mut boss_saved_keys: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for raid in &parsed {
         let name = raid["name"].as_str().unwrap_or_default();
         let difficulty = raid["difficulty"].as_str().unwrap_or("普通");
@@ -3081,23 +3378,22 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
             params![id, name, difficulty, player_count, version, notes, is_active, is_static],
         ).map_err(|e| e.to_string())?;
 
-        // 处理 raid_bosses
+        // 处理 raid_bosses（raid_name 列存 raids.name，同名副本共享 BOSS）
         if let Some(bosses) = raid["bosses"].as_array() {
             for boss in bosses {
                 let boss_id = boss["id"].as_str().unwrap_or_default();
                 let boss_name = boss["name"].as_str().unwrap_or_default();
                 let boss_order = boss["order"].as_i64().unwrap_or(0);
-                // 只保留不重复的 boss
-                if !boss_saved_names.contains(boss_id) {
-                    boss_saved_names.insert(boss_id);
+                let key = (name.to_string(), boss_id.to_string());
+                if !boss_saved_keys.contains(&key) {
+                    boss_saved_keys.insert(key);
                     tx.execute(
-                        "INSERT INTO raid_bosses (id, raid_name, name, boss_order)
+                        "INSERT INTO raid_bosses (raid_name, boss_id, name, boss_order)
                          VALUES (?, ?, ?, ?)
-                         ON CONFLICT(id) DO UPDATE SET
-                            raid_name = excluded.raid_name,
+                         ON CONFLICT(raid_name, boss_id) DO UPDATE SET
                             name = excluded.name,
                             boss_order = excluded.boss_order",
-                        params![boss_id, id, boss_name, boss_order],
+                        params![name, boss_id, boss_name, boss_order],
                     )
                     .map_err(|e| e.to_string())?;
                 }
@@ -3229,7 +3525,6 @@ pub fn db_add_record(record: String) -> Result<(), String> {
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             data = excluded.data,
-            raid_name = excluded.raid_name,
             account_id = excluded.account_id,
             role_id = excluded.role_id,
             record_date = excluded.record_date,
@@ -3241,7 +3536,7 @@ pub fn db_add_record(record: String) -> Result<(), String> {
             metadata.account_id,
             metadata.role_id,
             metadata.record_date,
-            metadata.record_type
+            metadata.record_type,
         ],
     )
     .map_err(|e| e.to_string())?;

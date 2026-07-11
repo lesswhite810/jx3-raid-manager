@@ -1,6 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { mockInvoke } from './mockInvoke';
-import type { GameVersion, Season } from '../types';
+import type { GameVersion, Season, RaidRecord } from '../types';
 
 // 环境检测：如果没有注入 __TAURI_INTERNALS__ ，说明是在纯浏览器环境运行
 declare global {
@@ -184,6 +184,17 @@ class DatabaseService {
       return data.map(item => JSON.parse(item));
     } catch (error) {
       console.error('Failed to get records:', error);
+      return [];
+    }
+  }
+
+  async getPendingRecords(): Promise<RaidRecord[]> {
+    await this.init();
+    try {
+      const data = await invoke<string[]>('db_get_pending_records');
+      return data.map(item => JSON.parse(item) as RaidRecord);
+    } catch (error) {
+      console.error('Failed to get pending records:', error);
       return [];
     }
   }

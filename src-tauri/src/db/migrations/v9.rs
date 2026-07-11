@@ -71,8 +71,8 @@ fn init_static_raids(conn: &Connection) -> Result<(), String> {
                     let boss_order = boss["order"].as_i64().unwrap_or(0);
 
                     conn.execute(
-                        "INSERT OR IGNORE INTO raid_bosses (id, raid_name, name, boss_order) VALUES (?, ?, ?, ?)",
-                        rusqlite::params![boss_id, name, boss_name, boss_order],
+                        "INSERT OR IGNORE INTO raid_bosses (raid_name, id, name, boss_order) VALUES (?, ?, ?, ?)",
+                        rusqlite::params![name, boss_id, boss_name, boss_order],
                     )
                     .map_err(error_to_string)?;
                 }

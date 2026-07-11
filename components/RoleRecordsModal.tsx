@@ -1,13 +1,14 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
 import { getBaseServerName } from '../utils/serverUtils';
 import { db } from '../services/db';
+import { dropScannerService } from '../services/dropScanner';
 
 interface RoleWithStatus {
   id: string;
@@ -50,6 +51,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  // pending 记录确认/拒绝的处理中状态
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
 
   const isTenPerson = raid.playerCount === 10;
   const maxRecords = isTenPerson ? 2 : 1;
@@ -180,6 +183,42 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     setRecordToDelete(null);
   }, []);
 
+  // 确认 pending 记录：status -> 'confirmed'，与手动记录完全等价
+  const handleConfirmRecord = useCallback(async (record: RaidRecord) => {
+    setPendingActionId(record.id);
+    try {
+      await dropScannerService.confirmRecord(record.id);
+      onRefreshRecords?.();
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 2000);
+    } catch (error) {
+      console.error('确认记录失败:', error);
+      setErrorMessage('确认失败，请重试');
+      setShowError(true);
+      setTimeout(() => setShowError(false), 3000);
+    } finally {
+      setPendingActionId(null);
+    }
+  }, [onRefreshRecords]);
+
+  // 拒绝 pending 记录：status -> 'rejected'，不参与 CD 计算
+  const handleRejectRecord = useCallback(async (record: RaidRecord) => {
+    setPendingActionId(record.id);
+    try {
+      await dropScannerService.rejectRecord(record.id);
+      onRefreshRecords?.();
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 2000);
+    } catch (error) {
+      console.error('拒绝记录失败:', error);
+      setErrorMessage('拒绝失败，请重试');
+      setShowError(true);
+      setTimeout(() => setShowError(false), 3000);
+    } finally {
+      setPendingActionId(null);
+    }
+  }, [onRefreshRecords]);
+
   const handleClose = useCallback(() => {
     if (deletingRecordId) return;
     onClose();
@@ -256,11 +295,28 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
             </div>
           ) : (
             <div className="space-y-3">
-              {roleRecords.map((record) => (
+              {roleRecords.map((record) => {
+                const isPending = record.source === 'auto' && record.status === 'pending';
+                const isScanning = record.source === 'auto' && record.status === 'scanning';
+                const isRejected = record.status === 'rejected';
+                const isAutoRecord = record.source === 'auto';
+
+                return (
                 <div
                   key={record.id}
-                  className={`p-4 rounded-xl border-2 transition-all duration-200 hover:shadow-md ${deletingRecordId === record.id ? 'opacity-50' : ''
-                    } ${record.hasXuanjing ? 'border-amber-200 dark:border-amber-800 bg-gradient-to-br from-amber-50 to-white dark:from-amber-900/20 dark:to-surface' : 'border-base bg-surface'}`}
+                  className={`p-4 rounded-xl border-2 transition-all duration-200 hover:shadow-md ${
+                    deletingRecordId === record.id || pendingActionId === record.id ? 'opacity-50' : ''
+                  } ${
+                    isRejected
+                      ? 'border-base bg-base/30 dark:bg-base/10'
+                      : isScanning
+                        ? 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/10'
+                        : isPending
+                          ? 'border-amber-200 dark:border-amber-800 bg-gradient-to-br from-amber-50 to-white dark:from-amber-900/10 dark:to-surface'
+                          : record.hasXuanjing
+                            ? 'border-amber-200 dark:border-amber-800 bg-gradient-to-br from-amber-50 to-white dark:from-amber-900/20 dark:to-surface'
+                            : 'border-base bg-surface'
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
@@ -270,6 +326,28 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
                           <span className="font-medium">{formatDate(record.date)}</span>
                         </div>
+
+                        {/* pending / scanning / rejected 状态标记 */}
+                        {isScanning && (
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 text-xs rounded font-medium flex items-center gap-1" title="副本进行中，扫描未完成">
+                            <Clock className="w-3 h-3" />扫描中
+                          </span>
+                        )}
+                        {isPending && (
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs rounded font-medium flex items-center gap-1" title="自动扫描记录，等待确认">
+                            <Clock className="w-3 h-3" />待确认
+                          </span>
+                        )}
+                        {isRejected && (
+                          <span className="px-2 py-0.5 bg-slate-200 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400 text-xs rounded font-medium" title="已拒绝，不参与 CD 计算">
+                            已拒绝
+                          </span>
+                        )}
+                        {isAutoRecord && record.status === 'confirmed' && (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 text-xs rounded font-medium" title="自动扫描已确认">
+                            自动
+                          </span>
+                        )}
 
                         {record.goldIncome > 0 && (
                           <div className="flex items-center gap-1" title="收入">
@@ -331,6 +409,23 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           </div>
                         )}
 
+                        {/* 自动扫描记录的掉落物列表 */}
+                        {isAutoRecord && record.drops && record.drops.length > 0 && (
+                          <div className="flex items-start gap-1.5 text-xs bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-2 rounded-lg">
+                            <Package className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-muted text-[11px] mb-1">掉落物品（来自聊天记录自动扫描）</div>
+                              <div className="flex flex-wrap gap-1">
+                                {record.drops.map((drop, idx) => (
+                                  <span key={`${drop}-${idx}`} className="px-1.5 py-0.5 bg-surface border border-base text-main rounded text-[11px]">
+                                    {drop}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {record.notes && (
                           <div className="flex items-start gap-1.5 text-xs text-muted bg-base/50 p-2 rounded-lg">
                             <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-muted/70" />
@@ -341,7 +436,36 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                     </div>
 
                     <div className="flex flex-row items-center gap-1.5 flex-shrink-0">
-                      {setRecords && (
+                      {/* pending 记录的确认/拒绝按钮 */}
+                      {isPending && (
+                        <>
+                          <button
+                            onClick={() => handleConfirmRecord(record)}
+                            disabled={pendingActionId === record.id}
+                            className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="确认记录"
+                            aria-label="确认记录"
+                          >
+                            {pendingActionId === record.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Check className="w-4 h-4" />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleRejectRecord(record)}
+                            disabled={pendingActionId === record.id}
+                            className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="拒绝记录（不参与 CD 计算）"
+                            aria-label="拒绝记录"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+
+                      {/* 非.pending 记录的编辑/删除按钮 */}
+                      {!isPending && setRecords && (
                         <>
                           <button
                             onClick={() => onEditRecord?.(record)}
@@ -371,7 +495,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

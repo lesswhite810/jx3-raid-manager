@@ -452,7 +452,7 @@ fn split_windows_path(path: &str) -> Vec<&str> {
         .collect()
 }
 
-fn resolve_game_runtime_directory(path: &str) -> String {
+pub fn resolve_game_runtime_directory(path: &str) -> String {
     let trimmed = trim_trailing_separators(path.trim());
     if trimmed.is_empty() {
         return String::new();

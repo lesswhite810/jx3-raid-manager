@@ -68,6 +68,11 @@ fn init_logging() -> tauri_plugin_log::Builder {
         .level_for("reqwest", log::LevelFilter::Info)
         .level_for("h2", log::LevelFilter::Info)
         .level_for("hyper", log::LevelFilter::Info)
+        // MCP Bridge 的 WebSocket 底层 I/O TRACE 日志非常噪音，过滤到 Info 级别
+        .level_for("tungstenite", log::LevelFilter::Info)
+        .level_for("tokio_tungstenite", log::LevelFilter::Info)
+        // 日志时间戳使用本地时区（默认 UTC，导致显示时间与北京时间差 8 小时）
+        .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
         .target(tauri_plugin_log::Target::new(
             tauri_plugin_log::TargetKind::Stdout,
         ))
@@ -208,6 +213,7 @@ fn main() {
             db::db_delete_role_structured,
             // 记录相关
             db::db_get_records,
+            db::db_get_pending_records,
             db::db_save_records,
             db::db_add_record,
             db::db_delete_record,
@@ -232,13 +238,18 @@ fn main() {
             // 应用配置（V14+，引导与活跃检测专用 key-value 存储）
             app_config::get_app_config,
             app_config::set_game_directory,
-            app_config::set_account_ids,
             app_config::complete_setup,
             app_config::reset_setup,
             // JX3 进程检测（C 阶段）
             jx3_process::get_jx3_runtime_status,
             // 活跃检测（C 阶段）
             mingyi::active_detector::detect_accounts_active,
+            // 副本掉落自动扫描（B 阶段）
+            mingyi::drop_scanner::scan_raid_drops,
+            mingyi::drop_scanner::scan_all_active_raid_drops,
+            mingyi::drop_scanner::scan_raids_in_range,
+            mingyi::drop_scanner::confirm_record,
+            mingyi::drop_scanner::reject_record,
             // 缓存相关
             db::db_get_cache,
             db::db_save_cache,

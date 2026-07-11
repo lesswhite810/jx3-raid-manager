@@ -52,6 +52,13 @@ test-screenshots/
 temp*.json
 debug_*.js
 
+# 一次性调试脚本（check-/cleanup-/compare- 前缀，不纳入版本控制）
+scripts/check-*.py
+scripts/check-*.cjs
+scripts/cleanup-*.py
+scripts/compare-*.py
+scripts/delete-*.py
+
 # Design system outputs
 design_system_output.txt
 tmp/

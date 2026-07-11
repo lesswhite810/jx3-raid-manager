@@ -124,7 +124,7 @@ export const getTenPersonCycle = (date: Date): { start: Date, end: Date } => {
 
 export const calculateCooldown = (
   raid: Raid,
-  records: { date: string | number; bossIds?: string[]; bossId?: string }[],
+  records: { date: string | number; bossIds?: string[]; bossId?: string; status?: string }[],
   now: Date = getServerStandardTime()
 ): CooldownInfo => {
   const isTenPerson = raid.playerCount === 10;
@@ -144,8 +144,9 @@ export const calculateCooldown = (
   }
 
   // 2. 检查窗口内是否有记录
-  // 过滤出所有在 [windowStart, windowEnd) 区间内的记录
+  // 过滤出所有在 [windowStart, windowEnd) 区间内的记录，排除已拒绝记录
   const recordsInWindow = records.filter(r => {
+    if (r.status === 'rejected') return false; // 排除已拒绝记录
     const rDate = new Date(r.date);
     return rDate >= windowStart && rDate < windowEnd;
   });

@@ -28,6 +28,7 @@ export const calculateBossCooldowns = (
 
   const roleBossRecords = bossRecords.filter(record => {
     if (record.roleId !== roleId) return false;
+    if (record.status === 'rejected') return false; // 排除已拒绝记录
     const rDate = new Date(record.date);
     return rDate >= windowStart && rDate < windowEnd;
   });

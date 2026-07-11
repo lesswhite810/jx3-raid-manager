@@ -17,7 +17,7 @@ const DEFAULT_BOSSES: Record<string, Boss[]> = {
     { id: 'langfengxuancheng_1', name: '笑妆娘', order: 1 },
     { id: 'langfengxuancheng_2', name: '唐醉', order: 2 },
     { id: 'langfengxuancheng_3', name: '柳公子', order: 3 },
-    { id: 'langfengxuancheng_4', name: '阿史', order: 4 },
+    { id: 'langfengxuancheng_4', name: '阿史那承庆', order: 4 },
     { id: 'langfengxuancheng_5', name: '唐怀仁', order: 5 },
   ],
   '阆风悬城·元心殿': [

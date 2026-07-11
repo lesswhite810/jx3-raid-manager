@@ -10,12 +10,10 @@ pub struct AppConfig {
     pub game_directory: Option<String>,
     pub setup_completed: bool,
     pub last_scan_mingyi_at: Option<String>,
-    pub account_ids: Vec<String>,
 }
 
 const KEY_GAME_DIRECTORY: &str = "game_directory";
 const KEY_SETUP_COMPLETED: &str = "setup_completed";
-const KEY_ACCOUNT_IDS: &str = "account_ids";
 const KEY_LAST_SCAN_MINGYI_AT: &str = "last_scan_mingyi_at";
 
 /// 从 app_config 表读取指定 key 的值
@@ -56,15 +54,10 @@ pub fn get_app_config_internal() -> Result<AppConfig, String> {
     let setup_completed = setup_completed_str.eq_ignore_ascii_case("true");
     let last_scan_mingyi_at = non_empty(read_value(&conn, KEY_LAST_SCAN_MINGYI_AT)?);
 
-    let account_ids_str = read_value(&conn, KEY_ACCOUNT_IDS)?.unwrap_or_else(|| "[]".to_string());
-    let account_ids: Vec<String> = serde_json::from_str(&account_ids_str)
-        .unwrap_or_default();
-
     Ok(AppConfig {
         game_directory,
         setup_completed,
         last_scan_mingyi_at,
-        account_ids,
     })
 }
 
@@ -83,16 +76,6 @@ pub fn set_game_directory(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 设置账号 ID 列表（Tauri 命令）
-#[tauri::command]
-pub fn set_account_ids(account_ids: Vec<String>) -> Result<(), String> {
-    let conn = db::init_db()?;
-    let value = serde_json::to_string(&account_ids).map_err(|e| e.to_string())?;
-    upsert_value(&conn, KEY_ACCOUNT_IDS, &value)?;
-    log::info!("[AppConfig] 账号 ID 列表已更新，共 {} 个账号", account_ids.len());
-    Ok(())
-}
-
 /// 标记引导流程完成（Tauri 命令）
 #[tauri::command]
 pub fn complete_setup() -> Result<(), String> {
@@ -108,7 +91,6 @@ pub fn reset_setup() -> Result<(), String> {
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_GAME_DIRECTORY, "")?;
     upsert_value(&conn, KEY_SETUP_COMPLETED, "false")?;
-    upsert_value(&conn, KEY_ACCOUNT_IDS, "[]")?;
     upsert_value(&conn, KEY_LAST_SCAN_MINGYI_AT, "")?;
     log::info!("[AppConfig] 应用配置已重置，将回到引导界面");
     Ok(())
@@ -135,12 +117,10 @@ mod tests {
         for key in [
             KEY_GAME_DIRECTORY,
             KEY_SETUP_COMPLETED,
-            KEY_ACCOUNT_IDS,
             KEY_LAST_SCAN_MINGYI_AT,
         ] {
             let default_value = match key {
                 KEY_SETUP_COMPLETED => "false",
-                KEY_ACCOUNT_IDS => "[]",
                 _ => "",
             };
             conn.execute(
@@ -167,12 +147,4 @@ mod tests {
         assert_eq!(non_empty(None), None);
     }
 
-    #[test]
-    fn test_account_ids_serialization() {
-        let ids = vec!["acc1".to_string(), "acc2".to_string()];
-        let serialized = serde_json::to_string(&ids).unwrap();
-        assert_eq!(serialized, r#"["acc1","acc2"]"#);
-        let deserialized: Vec<String> = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized, ids);
-    }
 }

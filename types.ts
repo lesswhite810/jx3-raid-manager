@@ -86,6 +86,10 @@ export interface RaidRecord {
   bossName?: string;
   bossIds?: string[]; // 多选BOSS ID列表（25人本）
   bossNames?: string[]; // 多选BOSS名称列表（25人本）
+  source?: 'auto' | 'manual'; // 记录来源，默认 'manual'
+  status?: 'pending' | 'confirmed' | 'rejected' | 'scanning'; // 确认状态，默认 'confirmed'；'scanning' 表示副本进行中，UI 锁定不可确认
+  drops?: string[]; // 掉落物原始物品名列表（自动扫描）
+  jclFiles?: string[]; // 关联 JCL 文件名列表（自动扫描溯源）
 }
 
 export interface TrialPlaceRecord {
@@ -188,6 +192,7 @@ export interface BossRecord {
   accountId: string;
   bossIds?: string[]; // 多选BOSS ID列表（25人本）
   bossNames?: string[]; // 多选BOSS名称列表（25人本）
+  status?: 'pending' | 'confirmed' | 'rejected' | 'scanning'; // 确认状态，rejected 不参与 CD 计算；'scanning' 表示副本进行中
 }
 
 export interface BossCooldownInfo {
@@ -373,5 +378,4 @@ export interface AppConfig {
   gameDirectory: string | null;
   setupCompleted: boolean;
   lastScanMingyiAt: string | null;
-  accountIds: string[];
 }

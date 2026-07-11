@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Account, AccountType, Role, Config, InstanceType, RoleActiveState, AccountActiveLevel } from '../types';
-import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, AlertCircle, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download } from 'lucide-react';
+import { Account, AccountType, Role, Config, InstanceType } from '../types';
+import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download } from 'lucide-react';
 import {
   canStartAccountDrag,
   getAccountReorderAnimationDuration,
@@ -18,7 +18,7 @@ import { SectSelect } from './SectSelect';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
 import { getBaseServerName } from '../utils/serverUtils';
-import { useActivePoller } from '../contexts/ActivePollerContext';
+
 
 
 interface AccountManagerProps {
@@ -43,54 +43,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const ACCOUNT_DRAG_SURFACE_EASING = 'cubic-bezier(0.2, 0.85, 0.2, 1)';
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
-  // 活跃检测：从全局轮询 Context 获取最新结果
-  // 后端返回角色级活跃状态（按茗伊 uid），需通过 roleName + server 匹配数据库角色，
-  // 再聚合到账号级别（取账号下所有角色的最高活跃等级）
-  const { result: activeResult } = useActivePoller();
-
-  // 角色 → 活跃状态映射（key: `${roleName}@${server}`）
-  const roleActiveMap = useMemo(() => {
-    const map = new Map<string, RoleActiveState>();
-    if (activeResult?.roles) {
-      activeResult.roles.forEach(r => {
-        if (r.roleName && r.server) {
-          map.set(`${r.roleName}@${r.server}`, r);
-        }
-      });
-    }
-    return map;
-  }, [activeResult]);
-
-  // 账号 → 聚合活跃等级（取账号下所有角色的最高活跃等级）
-  const accountActiveLevelMap = useMemo(() => {
-    const map = new Map<string, AccountActiveLevel>();
-    if (!activeResult?.roles || safeAccounts.length === 0) return map;
-
-    // 活跃等级优先级：active > recent > idle > offline
-    const levelPriority: Record<AccountActiveLevel, number> = {
-      active: 4,
-      recent: 3,
-      idle: 2,
-      offline: 1,
-    };
-
-    for (const account of safeAccounts) {
-      let bestLevel: AccountActiveLevel | null = null;
-      for (const role of account.roles) {
-        const key = `${role.name}@${role.server}`;
-        const roleState = roleActiveMap.get(key);
-        if (roleState) {
-          if (!bestLevel || levelPriority[roleState.activeLevel] > levelPriority[bestLevel]) {
-            bestLevel = roleState.activeLevel;
-          }
-        }
-      }
-      if (bestLevel) {
-        map.set(account.id, bestLevel);
-      }
-    }
-    return map;
-  }, [activeResult, roleActiveMap, safeAccounts]);
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
   const [isImportRolesModalOpen, setIsImportRolesModalOpen] = useState(false);
@@ -1058,12 +1010,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   return (
     <div className="space-y-6">
-      {activeResult?.multiInstanceDetected && activeResult?.multiInstanceHint && (
-        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-center gap-2">
-          <AlertCircle size={16} className="shrink-0" />
-          <span>{activeResult.multiInstanceHint}</span>
-        </div>
-      )}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <h2 className="text-xl font-bold text-main">账号管理</h2>
@@ -1275,7 +1221,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 }
               }}
               style={cardStyle}
-              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-md' : (accountActiveLevelMap.get(account.id) === 'active' ? 'border-emerald-400' : 'border-base')} ${isDragTarget ? '' : ''}`}
+              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-md' : 'border-base'} ${isDragTarget ? '' : ''}`}
             >
               {/* 可点击的头部区域 */}
               <div
@@ -1442,7 +1388,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                               <div className="flex justify-between items-start gap-3">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <ActiveDot activeLevel={roleActiveMap.get(`${role.name}@${role.server}`)?.activeLevel} />
                                     <span className={`text-sm font-medium text-main truncate ${role.disabled ? 'line-through text-muted' : ''}`}>
                                       {role.name}·{getBaseServerName(role.server)}
                                     </span>
@@ -1872,28 +1817,4 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   );
 };
 
-/**
- * 活跃指示灯：根据账号聚合后的活跃等级显示不同颜色的小圆点
- *
- * - active（绿）：当前正在操作（5 分钟内有活动）
- * - recent（黄）：本次会话登录过（超过 5 分钟）
- * - idle（灰）：本次会话未登录此账号
- * - offline（浅灰）：JX3 进程未运行
- */
-const ActiveDot: React.FC<{ activeLevel?: AccountActiveLevel }> = ({ activeLevel }) => {
-  const dotColor = activeLevel === 'active' ? 'bg-emerald-500'
-    : activeLevel === 'recent' ? 'bg-amber-500'
-    : activeLevel === 'idle' ? 'bg-slate-400'
-    : 'bg-slate-300';
 
-  const tooltip = activeLevel
-    ? { active: '在线 · 活跃中', recent: '在线 · 最近活跃', idle: '在线 · 未活跃', offline: '离线' }[activeLevel]
-    : '未知';
-
-  return (
-    <span
-      className={`inline-block w-2 h-2 rounded-full ${dotColor} shrink-0`}
-      title={tooltip}
-    />
-  );
-};

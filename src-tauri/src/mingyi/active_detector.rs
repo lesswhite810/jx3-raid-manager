@@ -284,7 +284,7 @@ fn extract_lua_string_field(text: &str, key: &str) -> Option<String> {
 /// 解析 info.jx3dat 文件，提取角色身份信息
 ///
 /// info.jx3dat 为 GBK 编码的 Lua return 语句（XOR key 全0，明文可读）
-fn parse_info_jx3dat(path: &Path) -> Option<MingyiRoleIdentity> {
+pub fn parse_info_jx3dat(path: &Path) -> Option<MingyiRoleIdentity> {
     let bytes = std::fs::read(path).ok()?;
     // GBK 解码（茗伊文件使用 GBK 编码）
     let (text, _, had_errors) = encoding_rs::GBK.decode(&bytes);
@@ -523,10 +523,12 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
                 .map(|m| m >= threshold)
                 .unwrap_or(false);
             if !is_active && role.active_level == AccountActiveLevel::Active {
-                // 不是最新 N 个的角色，降级为 idle（已切换走或已退出）
-                role.active_level = AccountActiveLevel::Idle;
+                // 不是最新 N 个的角色，降级为 Recent（已切换走或已退出，但本次会话登录过）
+                // 注意：降级为 Recent 而非 Idle，保留 is_recently_active = true，
+                // 这样扫描器仍会扫描这些角色的 JCL 文件（用户可能在切换角色前打了本）
+                role.active_level = AccountActiveLevel::Recent;
                 role.is_online = false;
-                role.is_recently_active = false;
+                // is_recently_active 保持 true（Recent.is_recently_active() = true）
             }
         }
     }
@@ -579,6 +581,8 @@ const CACHE_TTL_SECS: u64 = 25;
 /// 调用方通过角色名+服务器匹配数据库角色，聚合到账号级别。
 #[tauri::command]
 pub async fn detect_accounts_active(game_directory: String) -> Result<BatchActiveResult, String> {
+    // 补全路径（如 E:\Game\SeasunGame → E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd）
+    let game_directory = crate::game_directory::resolve_game_runtime_directory(&game_directory);
     // 1. 检查缓存是否有效
     {
         let cache = get_cache().lock().unwrap();
