@@ -89,9 +89,8 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         setShowScanResults(true);
         if (result.clients.length === 1 && !config.game.gameDirectory) {
           const client = result.clients[0];
-          // 同时写入 app_config 表和旧 config 表
+          // updateGameDirectory 同时写入 app_config.game_directory 和 config_json
           await updateGameDirectory(client.workDirectory);
-          // updateGameDirectory 已写入 app_config，App.tsx 的 useEffect 会同步到 config state
           toast.success(`已自动填入 ${client.displayName} 的安装目录`);
         } else if (result.clients.length > 1) {
           toast.info(`检测到 ${result.clients.length} 个客户端，请选择`);
@@ -108,7 +107,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   }, [config.game.gameDirectory, updateGameDirectory]);
 
   const handleSelectClient = useCallback(async (client: Jx3ClientInfo) => {
-    // 同时写入 app_config 表和旧 config 表
+    // updateGameDirectory 同时写入 app_config.game_directory 和 config_json
     await updateGameDirectory(client.workDirectory);
     setShowScanResults(false);
     toast.success(`已选择 ${client.displayName}`);
@@ -118,7 +117,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     const nextConfig = { ...config, [section]: { ...config[section], [key]: value } };
     setConfig(nextConfig);
 
-    // 游戏目录变更时同步到 app_config 表（保持双轨制一致）
+    // 游戏目录变更时同步到 app_config（set_game_directory 内部会同时更新 config_json）
     if (section === 'game' && key === 'gameDirectory' && typeof value === 'string') {
       updateGameDirectory(value).catch(error => {
         console.error('[ConfigManager] 同步游戏目录到 app_config 失败:', error);

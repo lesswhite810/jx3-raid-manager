@@ -350,19 +350,6 @@ function App() {
     });
   }, [isInitialized, handleCheckForUpdates]);
 
-  // 同步 app_config 表中的 gameDirectory 到旧 config 表（保持双轨制一致）
-  // 仅当 AppConfigContext 中的 gameDirectory 与当前 config 不同时同步
-  useEffect(() => {
-    if (!isInitialized || !appConfig?.gameDirectory) return;
-    if (config.game.gameDirectory === appConfig.gameDirectory) return;
-
-    setConfig(prev => ({
-      ...prev,
-      game: { ...prev.game, gameDirectory: appConfig.gameDirectory! },
-    }));
-    // 注意：setConfig 会触发下方 config 的 useEffect 自动写入 db.saveConfig
-  }, [appConfig?.gameDirectory, isInitialized]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     if (!isInitialized) return;
 
@@ -695,6 +682,10 @@ function App() {
 
       {/* Edit Record Modal */}
       {editingRecord && (() => {
+        // 从 accounts 中查找角色信息，避免自动扫描记录缺失 roleName/server 时回退到"未知角色"
+        const editAccount = accounts.find(a => a.id === editingRecord.accountId);
+        const editRole = editAccount?.roles.find(r => r.id === editingRecord.roleId);
+
         // 从 raidName 解析副本信息，格式如 "25人英雄会战弓月城"
         const raidName = editingRecord.raidName;
         let playerCount: 10 | 25 = 25;
@@ -741,12 +732,12 @@ function App() {
             initialData={editingRecord}
             role={{
               id: editingRecord.roleId,
-              name: editingRecord.roleName || '未知角色',
-              server: editingRecord.server?.split(' ')[1] || '未知服务器',
-              region: editingRecord.server?.split(' ')[0] || '未知大区',
-              sect: '未知',
+              name: editRole?.name || editingRecord.roleName || '未知角色',
+              server: editRole?.server || editingRecord.server?.split(' ')[1] || '未知服务器',
+              region: editRole?.region || editingRecord.server?.split(' ')[0] || '未知大区',
+              sect: editRole?.sect || '未知',
               accountId: editingRecord.accountId,
-              accountName: ''
+              accountName: editAccount?.accountName || ''
             }}
             raid={raidForEdit}
           />

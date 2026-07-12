@@ -71,7 +71,6 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
 
     let mut inserted_count = 0;
     let mut boss_inserted_names: HashSet<String> = HashSet::new();
-    let mut version_inserted_names: HashSet<String> = HashSet::new();
 
     for raid in static_raids.iter() {
         let name = raid["name"].as_str().unwrap_or_default();
@@ -95,15 +94,6 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
         } else {
             String::new()
         };
-
-        if !effective_version.is_empty() && !version_inserted_names.contains(&effective_version) {
-            conn.execute(
-                "INSERT OR IGNORE INTO raid_versions (name) VALUES (?)",
-                params![&effective_version],
-            )
-            .map_err(error_to_string)?;
-            version_inserted_names.insert(effective_version.clone());
-        }
 
         if let Some(configs) = raid["configurations"].as_array() {
             for config in configs {

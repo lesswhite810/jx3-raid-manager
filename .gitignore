@@ -59,6 +59,16 @@ scripts/cleanup-*.py
 scripts/compare-*.py
 scripts/delete-*.py
 
+# 临时查询/调试脚本
+scripts/list_*.py
+scripts/query_*.py
+scripts/verify_*.py
+scripts/deep_*.cjs
+scripts/check_all_*.cjs
+scripts/check_perf.ps1
+tmp_*.ps1
+tmp_*.sql
+
 # Design system outputs
 design_system_output.txt
 tmp/

@@ -381,18 +381,44 @@ mod tests {
                 assert_eq!(count, 1, "app_config 缺少默认键: {}", key);
             }
 
-            // 2. scan_records 表与索引必须存在
+            // 2. records 表应有 created_at / updated_at 列和索引
+            let has_created_at: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('records') WHERE name='created_at'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            assert!(has_created_at, "records 表缺少 created_at 列");
+
+            let has_updated_at: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('records') WHERE name='updated_at'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            assert!(has_updated_at, "records 表缺少 updated_at 列");
+
             assert!(
-                verify_table_exists(&conn, "scan_records").unwrap_or(false),
-                "scan_records 表不存在"
+                verify_index_exists(&conn, "idx_records_status").unwrap_or(false),
+                "idx_records_status 索引不存在"
             );
             assert!(
-                verify_index_exists(&conn, "idx_scan_records_status").unwrap_or(false),
-                "idx_scan_records_status 索引不存在"
+                verify_index_exists(&conn, "idx_records_source").unwrap_or(false),
+                "idx_records_source 索引不存在"
             );
+
+            // 2b. jcl_cache 表应存在
             assert!(
-                verify_index_exists(&conn, "idx_scan_records_account").unwrap_or(false),
-                "idx_scan_records_account 索引不存在"
+                verify_table_exists(&conn, "jcl_cache").unwrap_or(false),
+                "jcl_cache 表不存在"
+            );
+
+            // 2c. scan_records 表不应存在（已合并到 records）
+            assert!(
+                !verify_table_exists(&conn, "scan_records").unwrap_or(false),
+                "scan_records 表不应存在（已合并到 records）"
             );
 
             // 3. raid_bosses 表必须为新结构（无 id 列，主键为 raid_name + boss_id）
@@ -471,6 +497,6 @@ mod tests {
         remove_with_retry(&db_path).expect("删除测试数据库失败");
         remove_with_retry(&backup_path).expect("删除备份失败");
 
-        println!("V13 -> V14 专项验证通过：app_config / scan_records / raid_bosses 重构均符合预期");
+        println!("V13 -> V14 专项验证通过：app_config / records 时间戳 / jcl_cache / raid_bosses 重构均符合预期");
     }
 }

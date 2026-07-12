@@ -368,7 +368,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             roleId: r.roleId,
             accountId: r.accountId
           }];
-        }), record.roleId)
+        }), record.roleId, new Date(), true)
       });
 
       processedRoleIds.add(record.roleId);
@@ -419,7 +419,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           lastRunIncome: undefined,
           lastRunExpense: undefined,
           cooldownDays,
-          bossCooldowns: calculateBossCooldowns(raid, [], role.id)
+          bossCooldowns: calculateBossCooldowns(raid, [], role.id, new Date(), true)
         });
       });
     });

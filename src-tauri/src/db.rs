@@ -642,7 +642,8 @@ pub fn init_db() -> Result<Connection, String> {
 
     // 补救：确保 V14 的表结构变更已应用（开发期可能 schema_versions 标记为 V14 但表结构未更新）
     ensure_raid_bosses_table(&conn)?;
-    ensure_scan_records_table(&conn)?;
+    ensure_records_columns(&conn)?;
+    ensure_jcl_cache_table(&conn)?;
     ensure_critical_columns(&conn)?;
     migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
@@ -705,12 +706,6 @@ fn ensure_version_tables(conn: &Connection) -> Result<(), String> {
             version INTEGER PRIMARY KEY,
             applied_at TEXT NOT NULL,
             description TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS migration_flags (
-            key TEXT PRIMARY KEY,
-            value TEXT,
-            updated_at TEXT
         );
     "#,
     )
@@ -804,10 +799,10 @@ fn validate_post_upgrade(conn: &Connection) -> Result<(), String> {
     log::info!("[VALIDATE] 升级后验证开始");
 
     let expected_tables = [
-        "schema_versions", "migration_flags",
-        "records", "config", "cache", "equipments",
+        "schema_versions",
+        "records", "app_config", "cache", "equipments",
         "accounts", "roles",
-        "raids", "raid_bosses", "raid_versions",
+        "raids", "raid_bosses",
         "favorite_raids",
         "instance_types", "role_instance_visibility",
         "raid_role_visibility",
@@ -942,20 +937,7 @@ fn ensure_baseline_tables(conn: &Connection) -> Result<(), String> {
             source TEXT DEFAULT 'manual',
             status TEXT DEFAULT 'confirmed',
             drops TEXT,
-            jcl_files TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS scan_records (
-            id TEXT PRIMARY KEY,
-            data TEXT,
-            raid_name TEXT,
-            account_id TEXT,
-            role_id TEXT,
-            record_date INTEGER,
-            record_type TEXT,
-            drops TEXT,
             jcl_files TEXT,
-            status TEXT DEFAULT 'pending',
             created_at TEXT,
             updated_at TEXT
         );
@@ -965,10 +947,27 @@ fn ensure_baseline_tables(conn: &Connection) -> Result<(), String> {
             value TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS app_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS cache (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TEXT
+        );
+
+        -- JCL 解析缓存表（跨会话复用，避免重复解析 GBK 编码的 JCL 文件）
+        CREATE TABLE IF NOT EXISTS jcl_cache (
+            file_path TEXT PRIMARY KEY,
+            file_mtime INTEGER NOT NULL,
+            boss_name TEXT,
+            fight_start_ms INTEGER NOT NULL,
+            fight_end_ms INTEGER NOT NULL,
+            is_kill INTEGER NOT NULL,
+            cached_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS equipments (
@@ -1062,30 +1061,67 @@ fn ensure_raid_bosses_table(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// 确保 scan_records 表存在（V14 新增，自动扫描待确认记录）
-fn ensure_scan_records_table(conn: &Connection) -> Result<(), String> {
+/// 确保 records 表有 source / status / drops / jcl_files / created_at / updated_at 列和索引（V14 新增）
+fn ensure_records_columns(conn: &Connection) -> Result<(), String> {
+    let columns_to_add = [
+        ("source", "TEXT DEFAULT 'manual'"),
+        ("status", "TEXT DEFAULT 'confirmed'"),
+        ("drops", "TEXT"),
+        ("jcl_files", "TEXT"),
+        ("created_at", "TEXT"),
+        ("updated_at", "TEXT"),
+    ];
+
+    for (col_name, col_type) in &columns_to_add {
+        let has_col: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('records') WHERE name='{}'",
+                    col_name
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if !has_col {
+            conn.execute(
+                &format!("ALTER TABLE records ADD COLUMN {} {}", col_name, col_type),
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            log::info!("[ensure_records_columns] 已添加 records.{} 列", col_name);
+        }
+    }
+
+    // 创建索引
     conn.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS scan_records (
-            id TEXT PRIMARY KEY,
-            data TEXT,
-            raid_name TEXT,
-            account_id TEXT,
-            role_id TEXT,
-            record_date INTEGER,
-            record_type TEXT,
-            drops TEXT,
-            jcl_files TEXT,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT,
-            updated_at TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_scan_records_status ON scan_records(status);
-        CREATE INDEX IF NOT EXISTS idx_scan_records_account ON scan_records(account_id);
+        CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+        CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
         "#,
     )
-    .map_err(|e| format!("创建 scan_records 表失败: {}", e))?;
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 确保 jcl_cache 表存在（V14 新增，JCL 解析缓存）
+fn ensure_jcl_cache_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS jcl_cache (
+            file_path TEXT PRIMARY KEY,
+            file_mtime INTEGER NOT NULL,
+            boss_name TEXT,
+            fight_start_ms INTEGER NOT NULL,
+            fight_end_ms INTEGER NOT NULL,
+            is_kill INTEGER NOT NULL,
+            cached_at TEXT NOT NULL
+        );
+        "#,
+    )
+    .map_err(|e| format!("创建 jcl_cache 表失败: {}", e))?;
     Ok(())
 }
 
@@ -1110,6 +1146,8 @@ fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
         ("game_directory", ""),
         ("setup_completed", "false"),
         ("last_scan_mingyi_at", ""),
+        ("config_json", ""),
+        ("local_storage_migrated", "false"),
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES (?1, ?2, ?3)",
@@ -1118,7 +1156,8 @@ fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     }
 
-    // 从旧 config 表迁移 game_directory
+    // 补救：如果旧 config 表仍存在（开发期 V14 标记已写入但合并未执行），
+    // 执行与 V14 迁移相同的合并逻辑
     let config_table_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='config'",
@@ -1134,6 +1173,14 @@ fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
             })
             .ok()
         {
+            // 迁移完整 JSON blob 到 config_json
+            conn.execute(
+                "UPDATE app_config SET value = ?1, updated_at = ?2 WHERE key = 'config_json' AND value = ''",
+                params![json_str, &now],
+            )
+            .map_err(|e| e.to_string())?;
+
+            // 提取 game_directory
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
                 let game_dir = parsed
                     .get("game")
@@ -1151,6 +1198,42 @@ fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
                 }
             }
         }
+        // 删除旧 config 表
+        conn.execute("DROP TABLE IF EXISTS config", [])
+            .map_err(|e| e.to_string())?;
+        log::info!("[ensure_app_config_table] 已删除旧 config 表，配置统一到 app_config");
+    }
+
+    // 补救：如果旧 migration_flags 表仍存在，迁移 local_storage_migrated
+    let flags_table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='migration_flags'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if flags_table_exists {
+        if let Some(val) = conn
+            .query_row::<String, _, _>(
+                "SELECT value FROM migration_flags WHERE key = 'local_storage_migrated'",
+                [],
+                |row| row.get(0),
+            )
+            .ok()
+        {
+            if val == "true" {
+                conn.execute(
+                    "UPDATE app_config SET value = 'true', updated_at = ?1 WHERE key = 'local_storage_migrated'",
+                    params![&now],
+                )
+                .map_err(|e| e.to_string())?;
+                log::info!("[ensure_app_config_table] 从旧 migration_flags 表迁移 local_storage_migrated=true");
+            }
+        }
+        conn.execute("DROP TABLE IF EXISTS migration_flags", [])
+            .map_err(|e| e.to_string())?;
+        log::info!("[ensure_app_config_table] 已删除旧 migration_flags 表");
     }
 
     Ok(())
@@ -1408,30 +1491,32 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             jcl_files TEXT
         );
 
-        CREATE TABLE IF NOT EXISTS scan_records (
-            id TEXT PRIMARY KEY,
-            data TEXT,
-            raid_name TEXT,
-            account_id TEXT,
-            role_id TEXT,
-            record_date INTEGER,
-            record_type TEXT,
-            drops TEXT,
-            jcl_files TEXT,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT,
-            updated_at TEXT
-        );
-
         CREATE TABLE IF NOT EXISTS config (
             id INTEGER PRIMARY KEY,
             value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS app_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS cache (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TEXT
+        );
+
+        -- JCL 解析缓存表（跨会话复用，避免重复解析 GBK 编码的 JCL 文件）
+        CREATE TABLE IF NOT EXISTS jcl_cache (
+            file_path TEXT PRIMARY KEY,
+            file_mtime INTEGER NOT NULL,
+            boss_name TEXT,
+            fight_start_ms INTEGER NOT NULL,
+            fight_end_ms INTEGER NOT NULL,
+            is_kill INTEGER NOT NULL,
+            cached_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS equipments (
@@ -1520,11 +1605,6 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             name TEXT NOT NULL,
             boss_order INTEGER NOT NULL,
             PRIMARY KEY (raid_name, boss_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS raid_versions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL
         );
 
         -- ===== V4: 副本收藏表 =====
@@ -1636,26 +1716,19 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
 
     // V14: 插入 app_config 默认值（与迁移脚本保持一致）
     let now = chrono::Local::now().to_rfc3339();
-    conn.execute(
-        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('game_directory', '', ?1)",
-        params![&now],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('setup_completed', 'false', ?1)",
-        params![&now],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('account_ids', '[]', ?1)",
-        params![&now],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES ('last_scan_mingyi_at', '', ?1)",
-        params![&now],
-    )
-    .map_err(|e| e.to_string())?;
+    for (key, default_value) in [
+        ("game_directory", ""),
+        ("setup_completed", "false"),
+        ("last_scan_mingyi_at", ""),
+        ("config_json", ""),
+        ("local_storage_migrated", "false"),
+    ] {
+        conn.execute(
+            "INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES (?1, ?2, ?3)",
+            params![key, default_value, &now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     log::info!("[INSTALL] 数据库结构创建完成");
     Ok(())
@@ -1668,7 +1741,7 @@ pub fn db_is_local_storage_migrated() -> Result<bool, String> {
 
     let migrated: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM migration_flags WHERE key = 'local_storage_migrated' AND value = 'true'",
+            "SELECT COUNT(*) FROM app_config WHERE key = 'local_storage_migrated' AND value = 'true'",
             [],
             |row| row.get(0),
         )
@@ -1681,12 +1754,12 @@ pub fn db_is_local_storage_migrated() -> Result<bool, String> {
 #[tauri::command]
 pub fn db_set_local_storage_migrated() -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
-    let timestamp = get_local_timestamp();
+    let now = chrono::Local::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO migration_flags (key, value, updated_at) VALUES ('local_storage_migrated', 'true', ?)
+        "INSERT INTO app_config (key, value, updated_at) VALUES ('local_storage_migrated', 'true', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        params![timestamp],
+        params![now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -1709,7 +1782,7 @@ pub fn db_get_version_info() -> Result<serde_json::Value, String> {
 
     let local_storage_migrated: bool = conn
         .query_row(
-            "SELECT COUNT(*) FROM migration_flags WHERE key = 'local_storage_migrated' AND value = 'true'",
+            "SELECT COUNT(*) FROM app_config WHERE key = 'local_storage_migrated' AND value = 'true'",
             [],
             |row| {
                 let count: i64 = row.get(0)?;
@@ -2926,7 +2999,7 @@ pub fn db_get_pending_records() -> Result<Vec<String>, String> {
     // 返回 pending（可确认）和 scanning（副本进行中，UI 锁定不可确认）记录
     // 排除已 confirmed / rejected 的记录
     let mut stmt = conn
-        .prepare("SELECT data FROM scan_records WHERE status IN ('pending', 'scanning') ORDER BY record_date DESC")
+        .prepare("SELECT data FROM records WHERE status IN ('pending', 'scanning') ORDER BY record_date DESC")
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
     let mut records = Vec::new();
@@ -3068,7 +3141,7 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
 pub fn db_get_raid_versions() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT name FROM raid_versions ORDER BY id DESC")
+        .prepare("SELECT name FROM game_versions ORDER BY sort_order DESC")
         .map_err(|e| e.to_string())?;
 
     let version_iter = stmt
@@ -3402,17 +3475,26 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
     }
 
     tx.commit().map_err(|e| e.to_string())?;
+
+    // 副本配置已变更，清空 drop_scanner 的副本配置缓存，
+    // 避免扫描中使用旧配置直到应用重启
+    crate::mingyi::drop_scanner::invalidate_raids_cache();
+
     Ok(())
 }
 
 #[tauri::command]
 pub fn db_get_config() -> Result<Option<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT value FROM config WHERE id = 1")
-        .map_err(|e| e.to_string())?;
-    let config: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
-    Ok(config)
+    let config: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_config WHERE key = 'config_json'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    // 空字符串视为无配置
+    Ok(config.filter(|s| !s.is_empty()))
 }
 
 #[tauri::command]
@@ -3422,43 +3504,39 @@ pub fn db_get_config_debug() -> Result<String, String> {
     let mut result = String::new();
     result.push_str("=== 配置数据调试报告 ===\n\n");
 
-    // 检查配置表是否存在
+    // 检查 app_config 表
     let table_exists: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='config'",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='app_config'",
             [],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
     result.push_str(&format!(
-        "配置表存在: {}\n",
+        "app_config 表存在: {}\n",
         if table_exists > 0 { "是" } else { "否" }
     ));
 
-    // 检查是否有配置记录
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM config WHERE id = 1", [], |row| {
-            row.get(0)
-        })
-        .map_err(|e| e.to_string())?;
-    result.push_str(&format!("配置记录数: {}\n", count));
+    // 检查 config_json 键
+    let config_value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_config WHERE key = 'config_json'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
 
-    if count > 0 {
-        let config: Option<String> = conn
-            .query_row("SELECT value FROM config WHERE id = 1", [], |row| {
-                row.get(0)
-            })
-            .ok();
-
-        if let Some(config_str) = &config {
+    if let Some(config_str) = &config_value {
+        if config_str.is_empty() {
+            result.push_str("config_json: 为空\n");
+        } else {
             result.push_str(&format!("配置数据长度: {} bytes\n", config_str.len()));
             result.push_str(&format!(
                 "配置数据预览: {}\n",
                 &config_str[..std::cmp::min(config_str.len(), 200)]
             ));
 
-            // 尝试解析 JSON
-            match serde_json::from_str::<serde_json::Value>(&config_str) {
+            match serde_json::from_str::<serde_json::Value>(config_str) {
                 Ok(json) => {
                     result.push_str("JSON解析: 成功\n");
                     result.push_str(&format!(
@@ -3470,9 +3548,33 @@ pub fn db_get_config_debug() -> Result<String, String> {
                     result.push_str(&format!("JSON解析: 失败 - {}\n", e));
                 }
             }
-        } else {
-            result.push_str("配置数据: 为空\n");
         }
+    } else {
+        result.push_str("config_json: 不存在\n");
+    }
+
+    // 显示所有 app_config 键值
+    result.push_str("\n--- app_config 全部键值 ---\n");
+    let mut stmt = conn
+        .prepare("SELECT key, value, updated_at FROM app_config ORDER BY key")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (key, value, updated_at) = row.map_err(|e| e.to_string())?;
+        let preview = if value.len() > 100 {
+            format!("{}...", &value[..100])
+        } else {
+            value.clone()
+        };
+        result.push_str(&format!("  {} = {} ({})\n", key, preview, updated_at));
     }
 
     Ok(result)
@@ -3481,17 +3583,28 @@ pub fn db_get_config_debug() -> Result<String, String> {
 #[tauri::command]
 pub fn db_reset_config(default_config: String) -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
+    let now = chrono::Local::now().to_rfc3339();
 
-    // 删除旧配置
-    conn.execute("DELETE FROM config WHERE id = 1", [])
-        .map_err(|e| e.to_string())?;
-
-    // 插入新配置
+    // 重置 config_json
     conn.execute(
-        "INSERT INTO config (id, value) VALUES (1, ?)",
-        params![default_config],
+        "UPDATE app_config SET value = ?1, updated_at = ?2 WHERE key = 'config_json'",
+        params![default_config, &now],
     )
     .map_err(|e| e.to_string())?;
+
+    // 同步 game_directory
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&default_config) {
+        let game_dir = parsed
+            .get("game")
+            .and_then(|g| g.get("gameDirectory"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        conn.execute(
+            "UPDATE app_config SET value = ?1, updated_at = ?2 WHERE key = 'game_directory'",
+            params![game_dir, &now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     Ok(format!(
         "✓ 配置已重置\n  新配置长度: {} bytes",
@@ -3502,12 +3615,30 @@ pub fn db_reset_config(default_config: String) -> Result<String, String> {
 #[tauri::command]
 pub fn db_save_config(config: String) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;
+    let now = chrono::Local::now().to_rfc3339();
+
+    // 更新 config_json
     conn.execute(
-        "INSERT INTO config (id, value) VALUES (1, ?)
-         ON CONFLICT(id) DO UPDATE SET value = excluded.value",
-        params![config],
+        "INSERT INTO app_config (key, value, updated_at) VALUES ('config_json', ?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params![config, &now],
     )
     .map_err(|e| e.to_string())?;
+
+    // 同步 game_directory（从 JSON 中提取）
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&config) {
+        let game_dir = parsed
+            .get("game")
+            .and_then(|g| g.get("gameDirectory"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        conn.execute(
+            "UPDATE app_config SET value = ?1, updated_at = ?2 WHERE key = 'game_directory'",
+            params![game_dir, &now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -3794,16 +3925,16 @@ pub fn db_save_cache(key: String, value: String) -> Result<(), String> {
 pub fn db_get_favorite_raids() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
-    // 使用 rowid 作为排序依据
-    // raid_versions.id 越大版本越新，rowid 越大副本越靠后（静态数据中）
+    // 使用 game_versions.sort_order 排序（raid_versions 表已废弃）
+    // sort_order 越大版本越新，rowid 越大副本越靠后（静态数据中）
     let mut stmt = conn
         .prepare(
             r#"
             SELECT DISTINCT f.raid_name, r.rowid
             FROM favorite_raids f
             LEFT JOIN raids r ON f.raid_name = r.name
-            LEFT JOIN raid_versions rv ON r.version = rv.name
-            ORDER BY COALESCE(rv.id, 0) DESC, r.rowid DESC
+            LEFT JOIN game_versions gv ON r.version = gv.name
+            ORDER BY COALESCE(gv.sort_order, 0) DESC, r.rowid DESC
             "#,
         )
         .map_err(|e| e.to_string())?;
@@ -4367,11 +4498,12 @@ mod tests {
         install_fresh_db(&conn).expect("fresh install should succeed");
 
         let expected_tables = [
-            "accounts", "baizhan_records", "cache", "config", "equipments",
-            "favorite_raids", "game_versions", "instance_types", "migration_flags",
-            "raid_bosses", "raid_role_visibility", "raid_versions", "raids",
-            "records", "role_instance_visibility", "roles", "schema_versions",
-            "seasons", "trial_records",
+            "accounts", "app_config", "baizhan_records", "cache", "equipments",
+            "favorite_raids", "game_versions", "instance_types",
+            "jcl_cache",
+            "raid_bosses", "raid_role_visibility", "raids",
+            "records", "role_instance_visibility", "roles",
+            "schema_versions", "seasons", "trial_records",
         ];
 
         let tables = get_table_names(&conn);
@@ -4471,11 +4603,12 @@ mod tests {
         upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
 
         let expected_tables = [
-            "accounts", "baizhan_records", "cache", "config", "equipments",
-            "favorite_raids", "game_versions", "instance_types", "migration_flags",
-            "raid_bosses", "raid_role_visibility", "raid_versions", "raids",
-            "records", "role_instance_visibility", "roles", "schema_versions",
-            "seasons", "trial_records",
+            "accounts", "app_config", "baizhan_records", "cache", "equipments",
+            "favorite_raids", "game_versions", "instance_types",
+            "jcl_cache",
+            "raid_bosses", "raid_role_visibility", "raids",
+            "records", "role_instance_visibility", "roles",
+            "schema_versions", "seasons", "trial_records",
         ];
 
         let tables = get_table_names(&conn);
@@ -4648,11 +4781,12 @@ mod tests {
         }
 
         let expected_tables = [
-            "accounts", "baizhan_records", "cache", "config", "equipments",
-            "favorite_raids", "game_versions", "instance_types", "migration_flags",
-            "raid_bosses", "raid_role_visibility", "raid_versions", "raids",
-            "records", "role_instance_visibility", "roles", "schema_versions",
-            "seasons", "trial_records",
+            "accounts", "app_config", "baizhan_records", "cache", "equipments",
+            "favorite_raids", "game_versions", "instance_types",
+            "jcl_cache",
+            "raid_bosses", "raid_role_visibility", "raids",
+            "records", "role_instance_visibility", "roles",
+            "schema_versions", "seasons", "trial_records",
         ];
 
         for table in &expected_tables {

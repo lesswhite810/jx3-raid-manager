@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Datelike;
+
 use crate::app_config;
 use crate::db;
 use crate::game_directory::MINGYI_ACCOUNTS_BASE_PATH;
@@ -31,6 +33,9 @@ static ITEM_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"�
 static SALARY_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"每人底薪：(\d+)金").unwrap());
 static EXPENSE_MSG_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]花费\[([^\]]+)\]购买了\[([^\]]+)\]").unwrap());
 static PURCHASED_ITEM_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"购买了\[([^\]]+)\]").unwrap());
+/// "记录给了"格式：[分配者]将[物品名]以[金额]记录给了[接收者]
+/// 当团长手动分配物品时使用此格式，有时不生成"花费购买了"消息
+static ALLOCATE_TO_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]将\[([^\]]+)\]以\[([^\]]+)\]记录给了\[([^\]]+)\]").unwrap());
 
 /// JCL 文件名解析结果
 #[derive(Debug, Clone)]
@@ -121,6 +126,10 @@ struct DbRoleIdentity {
     account_id: String,
     /// 角色名（用于匹配 chatlog 支出消息中的买家）
     role_name: String,
+    /// 服务器（用于扫描记录 JSON 的 server 字段）
+    server: String,
+    /// 大区（用于扫描记录 JSON 的 region 字段）
+    region: String,
 }
 
 /// 从茗伊账号目录解析 info.jx3dat 获取角色身份，
@@ -172,6 +181,8 @@ fn resolve_db_role_identity(
                 role_id,
                 account_id,
                 role_name: identity.role_name.clone(),
+                server: identity.server.clone(),
+                region: identity.region.clone(),
             }))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -190,6 +201,51 @@ fn resolve_db_role_identity(
 /// 解析 JCL 文件名
 ///
 /// 格式：YYYY-MM-DD-HH-MM-SS-副本名(副本ID)-BOSS名(BOSS ID).jcl
+/// 从 JCL 文件名提取日期前缀（YYYY-MM-DD）
+/// 文件名格式：YYYY-MM-DD-HH-MM-SS-副本名(副本ID)-BOSS名(BOSS ID).jcl
+/// 仅做轻量字符串提取，不做 regex/chrono 解析，用于快速范围过滤
+fn extract_date_prefix(file_name: &str) -> Option<String> {
+    // 文件名至少需要 10 个字符来包含 YYYY-MM-DD
+    if file_name.len() < 10 {
+        return None;
+    }
+    let prefix = &file_name[..10];
+    // 验证格式：YYYY-MM-DD
+    let bytes = prefix.as_bytes();
+    if bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    // 验证年月日均为数字
+    for i in 0..10 {
+        if i == 4 || i == 7 {
+            continue;
+        }
+        if !bytes[i].is_ascii_digit() {
+            return None;
+        }
+    }
+    Some(prefix.to_string())
+}
+
+/// 将 Unix 毫秒时间戳转换为本地时区（UTC+8）的日期字符串 YYYY-MM-DD
+/// 用于与 JCL 文件名前缀做字符串比较
+fn timestamp_to_local_date_string(ms: i64) -> String {
+    // 转换为 UTC+8 的秒级时间戳
+    let local_secs = (ms / 1000) + 8 * 3600;
+    let days = local_secs.div_euclid(86400);
+    // 1970-01-01 起的天数转日期
+    let (year, month, day) = days_to_ymd(days);
+    format!("{:04}-{:02}-{:02}", year, month, day)
+}
+
+/// 将 1970-01-01 起的天数转换为年月日
+fn days_to_ymd(days: i64) -> (i32, u32, u32) {
+    // 使用 chrono 做转换，确保正确性
+    let date = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+        + chrono::Duration::days(days);
+    (date.year(), date.month(), date.day())
+}
+
 fn parse_jcl_filename(file_name: &str) -> Option<JclFileInfo> {
     // 先尝试 UTF-8 解析，如果不是则可能是 GBK 编码的 bytes
     // 但由于 Rust 的 OsString 在 Windows 上可能是 WTF-8/UTF-8，
@@ -303,6 +359,31 @@ fn scan_jcl_files(
         let file_name_os = entry.file_name();
         let file_name_bytes = file_name_os.to_string_lossy().to_string();
 
+        // 快速日期前缀过滤：JCL 文件名格式为 YYYY-MM-DD-HH-MM-SS-...
+        // 在调用完整 regex+chrono 解析前，先用文件名前10字符做日期字符串比较
+        // 可跳过绝大部分范围外文件，避免 regex 匹配和 NaiveDateTime 构造
+        if start_ms > 0 || end_ms > 0 {
+            if let Some(date_str) = extract_date_prefix(&file_name_bytes) {
+                // date_str 格式为 YYYY-MM-DD，可直接与边界日期字符串比较
+                // start_ms 对应的日期字符串（本地时区）
+                if start_ms > 0 {
+                    let start_date = timestamp_to_local_date_string(start_ms);
+                    if date_str.as_str() < start_date.as_str() {
+                        skipped_out_of_range += 1;
+                        continue;
+                    }
+                }
+                if end_ms > 0 {
+                    let end_date = timestamp_to_local_date_string(end_ms);
+                    // end_ms 是开区间，日期等于 end_date 的需要保留（交给完整解析判断时间）
+                    if date_str.as_str() > end_date.as_str() {
+                        skipped_out_of_range += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
         // 尝试解析文件名（Windows 上 file_name 应该已经是 UTF-8/WTF-8）
         // 如果解析失败，可能是 GBK 编码问题，尝试从原始字节解码
         let parsed = parse_jcl_filename(&file_name_bytes).or_else(|| {
@@ -381,7 +462,7 @@ fn has_salary_between(
         }
         if let Ok(conn) = Connection::open(path) {
             let has = conn.query_row(
-                "SELECT COUNT(*) FROM ChatLog WHERE time >= ?1 AND time <= ?2 AND type = 'MSG_ROOM' AND text LIKE '%每人底薪%'",
+                "SELECT COUNT(*) FROM ChatLog WHERE time >= ?1 AND time <= ?2 AND (type = 'MSG_ROOM' OR type = 'MSG_WHISPER') AND text LIKE '%每人底薪%'",
                 params![start_sec, end_sec],
                 |row| row.get::<_, i64>(0),
             ).unwrap_or(0) > 0;
@@ -559,7 +640,7 @@ fn build_raid_instance(
                 .get(&last_jcl.file_name)
                 .and_then(|a| a.boss_name.as_deref());
             if analysis_boss_name.is_none() {
-                log::info!(
+                log::debug!(
                     "[DropScanner] 子组最后一个 JCL 的 boss_name=None（纯小怪/出场对话），跳过兜底: {}",
                     last_jcl.file_name
                 );
@@ -577,7 +658,7 @@ fn build_raid_instance(
 
     if success_jcls.is_empty() {
         // 整组都是拉托，跳过
-        log::info!(
+        log::debug!(
             "[DropScanner] 副本 {} 的一个组全为拉托，跳过（共{}个JCL）",
             group.first().map(|j| j.raid_display_name.as_str()).unwrap_or(""),
             group.len()
@@ -645,13 +726,13 @@ fn build_raid_instance(
 
 /// 副本信息（从 raids 表加载）
 #[derive(Clone)]
-struct RaidEntry {
+pub struct RaidEntry {
     /// raids.name（如 "阆风悬城"）
-    name: String,
+    pub name: String,
     /// raids.id（格式：{playerCount}人{difficulty}{name}，如 "25人普通阆风悬城"）
-    raid_id: String,
+    pub raid_id: String,
     /// BOSS 列表（可能为空）
-    bosses: Vec<(String, String)>,
+    pub bosses: Vec<(String, String)>,
 }
 
 /// 副本配置缓存（应用生命周期内有效，副本配置不会频繁变化）
@@ -669,11 +750,19 @@ fn get_cached_raids(conn: &Connection) -> Result<Vec<RaidEntry>, String> {
 }
 
 /// 清空副本配置缓存（副本配置变更时调用）
-#[allow(dead_code)]
+/// 同时清空 JCL 解析缓存，因为 BOSS 配置变化会影响 JCL 分析结果
 pub fn invalidate_raids_cache() {
     if let Some(cache) = RAIDS_CACHE.get() {
         let mut guard = cache.lock().unwrap();
         *guard = None;
+    }
+    // 清空 JCL 解析缓存表，避免副本配置变更后使用旧的 BOSS 分析结果
+    if let Ok(conn) = crate::db::init_db() {
+        if let Err(e) = conn.execute("DELETE FROM jcl_cache", []) {
+            log::warn!("[DropScanner] 清空 JCL 缓存失败: {}", e);
+        } else {
+            log::info!("[DropScanner] 已清空 JCL 解析缓存（副本配置变更）");
+        }
     }
 }
 
@@ -892,7 +981,101 @@ fn map_boss_names_to_ids(
 /// - boss_template_id: BOSS 模板 ID（来自 JCL 文件名，如 137005）
 /// - raid_bosses: raid_bosses 表的 (boss_id, boss_name) 列表
 ///
-/// 返回：JclAnalysis，包含战斗时间、击杀状态和真实 BOSS 名
+/// 从 SQLite 缓存读取 JCL 解析结果（跨会话复用）
+/// 缓存键：file_path + file_mtime，文件未修改时直接返回缓存
+fn get_jcl_cache(conn: &Connection, file_path: &str, file_mtime: i64) -> Option<JclAnalysis> {
+    let result: rusqlite::Result<(Option<String>, i64, i64, i64)> = conn.query_row(
+        "SELECT boss_name, fight_start_ms, fight_end_ms, is_kill FROM jcl_cache WHERE file_path = ?1 AND file_mtime = ?2",
+        params![file_path, file_mtime],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        },
+    );
+
+    match result {
+        Ok((boss_name, fight_start_ms, fight_end_ms, is_kill)) => {
+            log::debug!("[DropScanner] JCL 缓存命中: {}", file_path);
+            Some(JclAnalysis {
+                boss_name,
+                fight_start_ms,
+                fight_end_ms,
+                is_kill: is_kill != 0,
+            })
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            log::warn!("[DropScanner] JCL 缓存读取失败: {}", e);
+            None
+        }
+    }
+}
+
+/// 将 JCL 解析结果写入 SQLite 缓存
+fn set_jcl_cache(conn: &Connection, file_path: &str, file_mtime: i64, analysis: &JclAnalysis) {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    if let Err(e) = conn.execute(
+        "INSERT OR REPLACE INTO jcl_cache (file_path, file_mtime, boss_name, fight_start_ms, fight_end_ms, is_kill, cached_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            file_path,
+            file_mtime,
+            analysis.boss_name,
+            analysis.fight_start_ms,
+            analysis.fight_end_ms,
+            if analysis.is_kill { 1 } else { 0 },
+            now
+        ],
+    ) {
+        log::warn!("[DropScanner] JCL 缓存写入失败: {}", e);
+    }
+}
+
+/// 获取文件的修改时间（Unix 毫秒）
+fn get_file_mtime(path: &Path) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| {
+            t.duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
+/// 带缓存的 JCL 分析：优先查 SQLite 缓存，未命中则解析文件并写回缓存
+fn analyze_jcl_cached(
+    conn: &Connection,
+    jcl_path: &Path,
+    jcl_boss_name: &str,
+    boss_template_id: i64,
+    raid_bosses: &[(String, String)],
+) -> Option<JclAnalysis> {
+    let path_str = jcl_path.to_string_lossy().to_string();
+    let file_mtime = get_file_mtime(jcl_path);
+
+    // 1. 查缓存
+    if file_mtime > 0 {
+        if let Some(cached) = get_jcl_cache(conn, &path_str, file_mtime) {
+            return Some(cached);
+        }
+    }
+
+    // 2. 缓存未命中，解析文件
+    let analysis = analyze_jcl(jcl_path, jcl_boss_name, boss_template_id, raid_bosses)?;
+
+    // 3. 写回缓存
+    if file_mtime > 0 {
+        set_jcl_cache(conn, &path_str, file_mtime, &analysis);
+    }
+
+    Some(analysis)
+}
+
+/// 解析 JCL 文件，提取 BOSS 击杀状态和战斗时间
 fn analyze_jcl(
     jcl_path: &Path,
     jcl_boss_name: &str,
@@ -1407,10 +1590,13 @@ fn normalize_role_name(name: &str) -> String {
 /// 2. **金币收入**（type='MSG_MONEY'，text 以"你获得："开头）：
 ///    - BOSS 击杀奖励（Gold=10, Silver=0, Copper=0）不计入收入，仅计数 boss_kill_count。
 ///    - 其余"你获得："金币累加为 other_income_gold（排除 10 金）。
-/// 3. **拍团底薪**（type='MSG_ROOM'，text 含"每人底薪：XXX金"）：
+/// 3. **拍团底薪**（type='MSG_ROOM' 或 'MSG_WHISPER'，text 含"每人底薪：XXX金"）：
 ///    若存在则 base_salary = Some(XXX)，收入优先取底薪值。
-/// 4. **支出**（type='MSG_ROOM'，text 含"[角色名]花费[XX金砖XX金]购买了[物品名]"）：
+/// 4. **支出**（type='MSG_ROOM' 或 'MSG_WHISPER'，text 含"[角色名]花费[XX金砖XX金]购买了[物品名]"）：
 ///    仅统计当前角色（role_name 匹配）的花费，金砖按 1金砖=10000金 换算。
+///    支出消息可能出现在房间频道(MSG_ROOM)或密语频道(MSG_WHISPER)，均需查询。
+///    注意：仅"花费了...购买了"格式计为支出；"记录给了"格式仅提取物品名加入 drops，不计入支出
+///    （团长分配记录不代表角色实际购买了该物品）。
 ///
 /// 返回 (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times)。
 /// income_records 为非 BOSS 10金的收入记录列表 (time_sec, gold)，用于精确收入匹配。
@@ -1435,18 +1621,20 @@ fn extract_drops_from_chatlog(
     let start_sec = start_time_ms / 1000;
     let end_sec = end_time_ms / 1000;
 
-    // 查询 MSG_ITEM（物品分配）、MSG_MONEY（金币获得）和 MSG_ROOM（底薪/支出）
+    // 查询 MSG_ITEM（物品分配）、MSG_MONEY（金币获得）和 MSG_ROOM/MSG_WHISPER（底薪/支出）
     // MSG_MONEY 只查询 text 以"你获得："开头的收入消息（精确过滤，跳过修理等支出）
-    // MSG_ROOM 只查询包含"每人底薪"或"花费["且"购买了"的消息，避免拉取全部房间聊天
+    // MSG_ROOM/MSG_WHISPER 查询包含"每人底薪"、"花费["且"购买了"（直接购买支出）、"记录给了"（团长分配支出）的消息
+    // 支出消息可能出现在 MSG_ROOM（房间频道）或 MSG_WHISPER（密语频道），两种都需要查询
     let mut stmt = conn
         .prepare(
             "SELECT type, text, msg, time FROM ChatLog \
              WHERE time >= ?1 AND time <= ?2 AND ( \
                type = 'MSG_ITEM' \
                OR (type = 'MSG_MONEY' AND text LIKE '你获得：%') \
-               OR (type = 'MSG_ROOM' AND ( \
+               OR ((type = 'MSG_ROOM' OR type = 'MSG_WHISPER') AND ( \
                  text LIKE '%每人底薪%' \
                  OR (text LIKE '%花费[%' AND text LIKE '%购买了%') \
+                 OR text LIKE '%记录给了%' \
                )) \
              )",
         )
@@ -1465,7 +1653,8 @@ fn extract_drops_from_chatlog(
 
     // 物品分配消息：`分配者将：[物品名]分配给角色名·服务器。`
     // 拍团底薪消息：`每人底薪：XXX金`
-    // 支出消息：`[角色名·服务器]花费[金额]购买了[物品名]`
+    // 支出消息（直接购买）：`[角色名·服务器]花费[金额]购买了[物品名]`
+    // 支出消息（团长分配）：`[分配者]将[物品名]以[金额]记录给了[角色名·服务器]`
     // 拍卖物品名提取：`购买了[物品名]`（包括帮别人购买的情况）
 
     let mut drops_set: HashSet<String> = HashSet::new();
@@ -1482,6 +1671,11 @@ fn extract_drops_from_chatlog(
     let mut income_records: Vec<(i64, i64)> = Vec::new();
 
     let target_name = normalize_role_name(role_name);
+
+    // 去重：记录已通过"花费购买了"格式检测到的支出 (物品名, 金额, 时间窗口)
+    // 用于避免同一笔交易在 MSG_ROOM 和 MSG_WHISPER 两个频道中重复计算
+    // 时间窗口：30秒内的相同物品+金额视为同一笔交易
+    let mut expense_dedup: HashSet<(String, i64, i64)> = HashSet::new();
 
     for row in rows {
         let (msg_type, text, _msg, time_sec) = match row {
@@ -1515,13 +1709,15 @@ fn extract_drops_from_chatlog(
                     income_records.push((time_sec, gold));
                 }
             }
-        } else if msg_type == "MSG_ROOM" {
+        } else if msg_type == "MSG_ROOM" || msg_type == "MSG_WHISPER" {
+            // 拍团底薪/支出消息可能出现在房间频道(MSG_ROOM)或密语频道(MSG_WHISPER)
             // 拍团底薪消息：取最后一条（最终分配金额）
             if let Some(caps) = SALARY_RE.captures(&text) {
                 let salary: i64 = caps[1].parse().unwrap_or(0);
                 base_salary = Some(salary);
             }
-            // 支出消息：仅统计当前角色的花费
+            // 支出消息（直接购买格式）：[角色名]花费[金额]购买了[物品名]
+            // 这是唯一确认的支出格式，"记录给了"只是团长分配记录不代表实际购买
             if let Some(caps) = EXPENSE_MSG_RE.captures(&text) {
                 let buyer_name = normalize_role_name(&caps[1]);
                 // 匹配角色名（buyer_name 格式为"角色名·服务器"，检查前缀）
@@ -1529,8 +1725,26 @@ fn extract_drops_from_chatlog(
                     || buyer_name.starts_with(&format!("{}·", target_name))
                 {
                     let amount = parse_expense_amount(&caps[2]);
-                    expense_gold += amount;
+                    let item_name = caps[3].to_string();
+                    // 去重：同一笔交易可能在 MSG_ROOM 和 MSG_WHISPER 两个频道都出现
+                    let time_bucket = time_sec / 30;
+                    let dedup_key = (item_name.clone(), amount, time_bucket);
+                    if !expense_dedup.contains(&dedup_key) {
+                        // 还需检查 ±1 个时间窗口（两条频道消息可能有几秒偏差）
+                        let prev_bucket = (item_name.clone(), amount, time_bucket - 1);
+                        let next_bucket = (item_name.clone(), amount, time_bucket + 1);
+                        if !expense_dedup.contains(&prev_bucket) && !expense_dedup.contains(&next_bucket) {
+                            expense_gold += amount;
+                            expense_dedup.insert(dedup_key);
+                        }
+                    }
                 }
+            }
+            // 团长分配记录：[分配者]将[物品名]以[金额]记录给了[接收者]
+            // 仅提取物品名加入 drops（掉落物记录），不计入支出（分配不等于实际购买）
+            if let Some(caps) = ALLOCATE_TO_RE.captures(&text) {
+                let item_name = caps[2].to_string();
+                drops_set.insert(item_name);
             }
             // 拍卖物品名提取：所有"购买了[物品名]"的物品都加入 drops
             // （包括帮别人购买的情况，用于检测玄晶等稀有掉落）
@@ -1865,6 +2079,9 @@ fn upsert_raid_drop_record(
     boss_ids: &[String],
     boss_names: &[String],
     role_id: &Option<String>,
+    role_name: &str,
+    role_server: &str,
+    role_region: &str,
     raid_name: &str,
     gold_income: i64,
     gold_expense: i64,
@@ -1873,7 +2090,7 @@ fn upsert_raid_drop_record(
 ) -> Result<(), String> {
     let now = chrono::Local::now().to_rfc3339();
 
-    // 检查 scan_records 表是否已存在同账号、同副本、同日期的待确认记录
+    // 检查 records 表是否已存在同账号、同副本、同日期的待确认记录（pending）
     // 注意：raid_name 列存储的是 raids.name（如 "阆风悬城"），不是 JCL 显示名
     // （如 "25人普通阆风悬城"），因此必须用 raid_name 参数做精确匹配，
     // 不能用 instance.raid_display_name 做 LIKE 匹配（会永远匹配不到，导致重复 INSERT）。
@@ -1881,7 +2098,7 @@ fn upsert_raid_drop_record(
     // 可用于精确匹配区分同一天的不同副本实例。
     let existing: Option<(String, String)> = conn
         .query_row(
-            "SELECT id, status FROM scan_records WHERE account_id = ?1 AND raid_name = ?2 AND record_date = ?3",
+            "SELECT id, status FROM records WHERE account_id = ?1 AND raid_name = ?2 AND record_date = ?3 AND status IN ('pending', 'scanning')",
             params![instance.account_id, raid_name, instance.start_time],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -1926,7 +2143,8 @@ fn upsert_raid_drop_record(
                 "SELECT data FROM records
                  WHERE account_id = ?1
                    AND record_date >= ?2
-                   AND record_date < ?3",
+                   AND record_date < ?3
+                   AND status = 'confirmed'",
             )
             .map_err(|e| format!("准备手工记录查询失败: {}", e))?;
 
@@ -1992,6 +2210,8 @@ fn upsert_raid_drop_record(
         "id": record_id,
         "accountId": instance.account_id,
         "roleId": role_id,
+        "roleName": role_name,
+        "server": format!("{} {}", role_region, role_server),
         "raidName": instance.raid_display_name,
         "date": instance.start_time,
         "goldIncome": gold_income,
@@ -2015,7 +2235,7 @@ fn upsert_raid_drop_record(
     if let Some((existing_id, _)) = existing {
         // pending/scanning 状态，覆盖更新（含 status 字段）
         conn.execute(
-            "UPDATE scan_records SET
+            "UPDATE records SET
                 data = ?1, drops = ?2, jcl_files = ?3, status = ?4, updated_at = ?5
              WHERE id = ?6",
             params![record_str, drops_json, jcl_files_json, record_status, now, existing_id],
@@ -2031,8 +2251,8 @@ fn upsert_raid_drop_record(
     } else {
         // 插入新记录
         conn.execute(
-            "INSERT INTO scan_records (id, data, raid_name, account_id, role_id, record_date, record_type, drops, jcl_files, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type, source, status, drops, jcl_files, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'auto_scan', ?8, ?9, ?10, ?11, ?12)",
             params![
                 record_id,
                 record_str,
@@ -2041,9 +2261,9 @@ fn upsert_raid_drop_record(
                 role_id,
                 instance.start_time,
                 "raid",
+                record_status,
                 drops_json,
                 jcl_files_json,
-                record_status,
                 now,
                 now
             ],
@@ -2067,7 +2287,7 @@ fn upsert_raid_drop_record(
 /// 2. 查询 chatlog 获取所有10金记录
 /// 3. 聚类为副本实例（带10金匹配，过滤拉托）
 /// 4. 对每个副本实例，提取 chatlog 物品分配和金币收入
-/// 5. 写入 scan_records 表：
+/// 5. 写入 records 表（source='auto_scan'）：
 ///    - 副本未完成（BOSS未全击杀 / 无底薪 / 进程在跑 / 角色在线）→ status='scanning'，UI 锁定不可确认
 ///    - 副本已完成（BOSS全击杀 / 有底薪 / 进程退出 / 角色离线）→ status='pending'，UI 可确认
 ///
@@ -2086,6 +2306,20 @@ pub fn scan_raid_drops_internal(
     start_ms: i64,
     end_ms: i64,
 ) -> Result<usize, String> {
+    scan_raid_drops_with_raids(account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms, None)
+}
+
+/// scan_raid_drops_internal 的扩展版本，支持传入预加载的副本配置
+/// `pre_loaded_raids`: 若 Some，则跳过 init_db + get_cached_raids，直接使用传入的配置
+pub fn scan_raid_drops_with_raids(
+    account_id: &str,
+    jx3_running: bool,
+    role_online: bool,
+    process_start_ms: i64,
+    start_ms: i64,
+    end_ms: i64,
+    pre_loaded_raids: Option<&[RaidEntry]>,
+) -> Result<usize, String> {
     log::info!(
         "[DropScanner] 开始扫描账号 {} 的掉落记录 (jx3_running={}, role_online={}, process_start_ms={}, start_ms={}, end_ms={})",
         account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms
@@ -2103,26 +2337,38 @@ pub fn scan_raid_drops_internal(
         return Err(format!("账号目录不存在: {}", account_dir.display()));
     }
 
-    // 0. 先加载副本配置（用于在聚类前过滤未配置的副本，避免无谓的10金匹配和"拉托"日志）
-    let conn = match db::init_db() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("[DropScanner] 账号 {} 初始化数据库失败: {}", account_id, e);
-            return Err(e);
+    // 0. 加载副本配置（用于在聚类前过滤未配置的副本，避免无谓的10金匹配和"拉托"日志）
+    let raids: Vec<RaidEntry> = if let Some(pre_loaded) = pre_loaded_raids {
+        // 使用预加载的配置，跳过 init_db + get_cached_raids
+        log::debug!(
+            "[DropScanner] 账号 {} 使用预加载的 {} 个副本配置",
+            account_id,
+            pre_loaded.len()
+        );
+        pre_loaded.to_vec()
+    } else {
+        let conn = match db::init_db() {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("[DropScanner] 账号 {} 初始化数据库失败: {}", account_id, e);
+                return Err(e);
+            }
+        };
+        match get_cached_raids(&conn) {
+            Ok(r) => {
+                log::info!(
+                    "[DropScanner] 账号 {} 加载 {} 个副本配置",
+                    account_id,
+                    r.len()
+                );
+                r
+            }
+            Err(e) => {
+                log::error!("[DropScanner] 账号 {} 加载副本信息失败: {}", account_id, e);
+                return Err(e);
+            }
         }
     };
-    let raids = match get_cached_raids(&conn) {
-        Ok(r) => r,
-        Err(e) => {
-            log::error!("[DropScanner] 账号 {} 加载副本信息失败: {}", account_id, e);
-            return Err(e);
-        }
-    };
-    log::info!(
-        "[DropScanner] 账号 {} 加载 {} 个副本配置",
-        account_id,
-        raids.len()
-    );
 
     // 1. 扫描 JCL 文件（只扫描进程启动后的文件）
     let jcl_files = scan_jcl_files(&account_dir, process_start_ms, start_ms, end_ms)?;
@@ -2139,21 +2385,28 @@ pub fn scan_raid_drops_internal(
 
     // 1.5 过滤未配置的副本（如5人副本、试炼之地等不在 raids 表中的副本）
     //     在聚类前过滤，避免对未配置副本做10金匹配和"拉托"判定
+    let mut skipped_unconfigured: Vec<String> = Vec::new();
     let configured_jcl_files: Vec<JclFileInfo> = jcl_files
         .into_iter()
         .filter(|jcl| {
             if match_raid_name(&jcl.raid_display_name, &raids).is_some() {
                 true
             } else {
-                log::info!(
-                    "[DropScanner] 跳过未配置副本: {} (BOSS={})",
-                    jcl.raid_display_name,
-                    jcl.boss_name
-                );
+                skipped_unconfigured.push(jcl.raid_display_name.clone());
                 false
             }
         })
         .collect();
+
+    if !skipped_unconfigured.is_empty() {
+        let unique_names: HashSet<&str> = skipped_unconfigured.iter().map(|s| s.as_str()).collect();
+        log::info!(
+            "[DropScanner] 账号 {} 跳过 {} 个未配置副本的 JCL: {}",
+            account_id,
+            skipped_unconfigured.len(),
+            unique_names.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
 
     if configured_jcl_files.is_empty() {
         log::info!("[DropScanner] 账号 {} 过滤后无已配置副本的 JCL 文件", account_id);
@@ -2184,6 +2437,14 @@ pub fn scan_raid_drops_internal(
     // 3. 分析每个 JCL 文件内容，提取战斗时间和击杀状态
     //    替代原 10金查询方案：通过 JCL 的 NPC_FIGHT_HINT (bFight True→False) 判定通关
     //    每个 JCL 只解析一次，结果缓存到 jcl_analyses
+    //    同时使用 SQLite 持久化缓存（jcl_cache 表），跨会话复用解析结果
+    let conn = match db::init_db() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[DropScanner] 账号 {} 初始化数据库失败: {}", account_id, e);
+            return Err(e);
+        }
+    };
     let combat_logs_dir = account_dir.join("userdata").join("combat_logs");
     let mut jcl_analyses: HashMap<String, JclAnalysis> = HashMap::new();
     for jcl in &configured_jcl_files {
@@ -2194,7 +2455,7 @@ pub fn scan_raid_drops_internal(
         };
         let raid_bosses = &raid_entry.bosses;
         let jcl_path = combat_logs_dir.join(&jcl.file_name);
-        let mut analysis = analyze_jcl(&jcl_path, &jcl.boss_name, jcl.boss_id, raid_bosses).unwrap_or(JclAnalysis {
+        let mut analysis = analyze_jcl_cached(&conn, &jcl_path, &jcl.boss_name, jcl.boss_id, raid_bosses).unwrap_or(JclAnalysis {
             boss_name: None,
             fight_start_ms: 0,
             fight_end_ms: 0,
@@ -2234,6 +2495,8 @@ pub fn scan_raid_drops_internal(
     // 6. 解析 info.jx3dat 获取角色身份，映射到数据库 UUID
     //    records 表的 account_id/role_id 是 UUID 格式（与 accounts/roles 表对齐），
     //    不能使用茗伊目录名的数字 uid，否则 UI 过滤不到 pending 记录。
+    //    conn 已在 JCL 分析阶段创建，此处直接复用
+
     let db_identity = match resolve_db_role_identity(&conn, &account_dir) {
         Ok(Some(id)) => id,
         Ok(None) => {
@@ -2478,6 +2741,7 @@ pub fn scan_raid_drops_internal(
 
         let role_id_opt: Option<String> = Some(db_identity.role_id.clone());
         let drops_vec: Vec<String> = drops.into_iter().collect();
+
         if let Err(e) = upsert_raid_drop_record(
             &conn,
             instance,
@@ -2485,6 +2749,9 @@ pub fn scan_raid_drops_internal(
             &boss_ids,
             &boss_names,
             &role_id_opt,
+            &db_identity.role_name,
+            &db_identity.server,
+            &db_identity.region,
             raid_name,
             total_gold,
             total_expense,
@@ -2792,7 +3059,23 @@ pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<Accou
             account_ids.len()
         );
 
-        // 2. 对每个账号执行扫描（离线模式：jx3_running=false, role_online=false）
+        // 2. 预加载副本配置一次，传引用给各线程
+        // 避免每个账号独立调用 init_db + get_cached_raids
+        let pre_loaded_conn = match db::init_db() {
+            Ok(c) => c,
+            Err(e) => return Err(format!("预加载副本配置失败: {}", e)),
+        };
+        let pre_loaded_raids = match get_cached_raids(&pre_loaded_conn) {
+            Ok(r) => r,
+            Err(e) => return Err(format!("预加载副本配置失败: {}", e)),
+        };
+        drop(pre_loaded_conn); // 释放连接，各线程按需创建自己的写连接
+        log::info!(
+            "[DropScanner] 预加载 {} 个副本配置，将共享给各扫描线程",
+            pre_loaded_raids.len()
+        );
+
+        // 3. 对每个账号执行扫描（离线模式：jx3_running=false, role_online=false）
         // 并行化：将账号分块到多个线程处理，块内顺序执行。
         // 并发度选择 4：SQLite journal_mode=DELETE 下写入互斥，
         // 过高并发反而增加 busy 等待；JCL/chatlog 读取是 I/O 密集型，4 并发已能显著加速。
@@ -2803,6 +3086,7 @@ pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<Accou
             .map(|c| c.to_vec())
             .collect();
 
+        let raids_ref = &pre_loaded_raids;
         let chunk_results: Vec<Vec<AccountScanResult>> = std::thread::scope(|s| {
             let handles: Vec<_> = chunks
                 .into_iter()
@@ -2814,13 +3098,14 @@ pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<Accou
                                 "[DropScanner] 时间范围扫描账号: {} (start_ms={}, end_ms={})",
                                 account_id, start_ms, end_ms
                             );
-                            let result = scan_raid_drops_internal(
+                            let result = scan_raid_drops_with_raids(
                                 &account_id,
                                 false, // 离线扫描：JX3 进程未运行
                                 false, // 离线扫描：角色不在线
                                 0,     // 不按 mtime 过滤
                                 start_ms,
                                 end_ms,
+                                Some(raids_ref),
                             );
                             match result {
                                 Ok(n) => {
@@ -2879,27 +3164,24 @@ pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<Accou
 
 /// Tauri 命令：确认 pending 记录
 ///
-/// 从事务中完成：
-/// 1. 从 scan_records 读取 pending 记录的 data JSON
+/// 1. 从 records 读取 pending 记录的 data JSON
 /// 2. 合并可选的编辑数据，强制设置 source='manual', status='confirmed'
-/// 3. INSERT INTO records（含 raid_name 等 metadata 列）
-/// 4. DELETE FROM scan_records（pending 记录从待确认表移除）
-/// 5. 提交事务
+/// 3. UPDATE records（更新 data、source、status、updated_at）
 ///
 /// 可选传入 edit_data（RaidRecord 部分字段的 JSON 字符串），用于在确认时
 /// 编辑收支金额、BOSS 选择、标记位等。提供时会合并到 data JSON 后再置为 confirmed。
 #[tauri::command]
 pub fn confirm_record(record_id: String, edit_data: Option<String>) -> Result<(), String> {
-    let mut conn = db::init_db()?;
+    let conn = db::init_db()?;
 
-    // 从 scan_records 读取当前 data JSON 和 status
+    // 从 records 读取当前 data JSON 和 status
     let (current_data, current_status): (String, String) = conn
         .query_row(
-            "SELECT data, status FROM scan_records WHERE id = ?1",
+            "SELECT data, status FROM records WHERE id = ?1",
             params![record_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .map_err(|e| format!("查询 scan_records 记录失败: {}", e))?;
+        .map_err(|e| format!("查询 records 记录失败: {}", e))?;
 
     // 副本进行中（scanning）的记录不允许确认，UI 应禁用确认按钮
     // 此处再次校验作为防御性兜底
@@ -2931,45 +3213,14 @@ pub fn confirm_record(record_id: String, edit_data: Option<String>) -> Result<()
     }
 
     let updated_data = serde_json::to_string(&current_json).unwrap_or(current_data);
+    let now = chrono::Local::now().to_rfc3339();
 
-    // 从 current_json 提取 metadata
-    let raid_name = current_json["raidName"].as_str().map(|s| s.to_string());
-    let account_id = current_json["accountId"].as_str().map(|s| s.to_string());
-    let role_id = current_json["roleId"].as_str().map(|s| s.to_string());
-    let record_date = current_json["date"].as_i64();
-    let record_type = current_json["type"].as_str().map(|s| s.to_string()).unwrap_or_else(|| "raid".to_string());
-
-    // 事务：INSERT INTO records + DELETE FROM scan_records
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-
-    tx.execute(
-        "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(id) DO UPDATE SET
-            data = excluded.data,
-            account_id = excluded.account_id,
-            role_id = excluded.role_id,
-            record_date = excluded.record_date,
-            record_type = excluded.record_type",
-        params![
-            record_id,
-            updated_data,
-            raid_name,
-            account_id,
-            role_id,
-            record_date,
-            record_type
-        ],
+    // UPDATE records：更新 data、source、status、updated_at
+    conn.execute(
+        "UPDATE records SET data = ?1, source = 'manual', status = 'confirmed', updated_at = ?2 WHERE id = ?3",
+        params![updated_data, now, record_id],
     )
-    .map_err(|e| format!("插入 records 表失败: {}", e))?;
-
-    tx.execute(
-        "DELETE FROM scan_records WHERE id = ?1",
-        params![record_id],
-    )
-    .map_err(|e| format!("删除 scan_records 记录失败: {}", e))?;
-
-    tx.commit().map_err(|e| format!("事务提交失败: {}", e))?;
+    .map_err(|e| format!("更新 records 记录失败: {}", e))?;
 
     log::info!("[DropScanner] 记录已确认: {}", record_id);
     Ok(())
@@ -2982,9 +3233,9 @@ pub fn reject_record(record_id: String) -> Result<(), String> {
 
     let now = chrono::Local::now().to_rfc3339();
 
-    // 更新 scan_records 状态和 data JSON
+    // 更新 records 状态和 data JSON
     if let Ok(data) = conn.query_row(
-        "SELECT data FROM scan_records WHERE id = ?1",
+        "SELECT data FROM records WHERE id = ?1",
         params![record_id],
         |row| row.get::<_, String>(0),
     ) {
@@ -2993,7 +3244,7 @@ pub fn reject_record(record_id: String) -> Result<(), String> {
                 obj.insert("status".to_string(), serde_json::json!("rejected"));
                 let updated_data = serde_json::to_string(&json).unwrap_or(data);
                 conn.execute(
-                    "UPDATE scan_records SET data = ?1, status = 'rejected', updated_at = ?2 WHERE id = ?3",
+                    "UPDATE records SET data = ?1, status = 'rejected', updated_at = ?2 WHERE id = ?3",
                     params![updated_data, now, record_id],
                 )
                 .map_err(|e| format!("驳回记录失败: {}", e))?;
@@ -3005,7 +3256,7 @@ pub fn reject_record(record_id: String) -> Result<(), String> {
 
     // 如果 data JSON 解析失败，至少更新 status 列
     conn.execute(
-        "UPDATE scan_records SET status = 'rejected', updated_at = ?1 WHERE id = ?2",
+        "UPDATE records SET status = 'rejected', updated_at = ?1 WHERE id = ?2",
         params![now, record_id],
     )
     .map_err(|e| format!("驳回记录失败: {}", e))?;
@@ -3058,7 +3309,7 @@ mod tests {
         (account_id, role_id)
     }
 
-    /// 插入一条 pending 状态的 scan_records 记录，返回 record_id 和 record_date
+    /// 插入一条 pending 状态的 records 记录（source='auto_scan'），返回 record_id 和 record_date
     fn insert_pending_scan_record(
         conn: &rusqlite::Connection,
         account_id: &str,
@@ -3086,8 +3337,8 @@ mod tests {
         .to_string();
 
         conn.execute(
-            "INSERT INTO scan_records (id, data, raid_name, account_id, role_id, record_date, record_type, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'raid', 'pending', ?7, ?8)",
+            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type, source, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'raid', 'auto_scan', 'pending', ?7, ?8)",
             sql_params![record_id, data, "阆风悬城", account_id, role_id, record_date, now, now],
         )
         .expect("should insert scan record");
@@ -3096,37 +3347,31 @@ mod tests {
     }
 
     /// 测试完整 confirm 流程：
-    /// 插入 pending 记录 → 确认 → 验证记录已迁移到 records 表
+    /// 插入 pending 记录 → 确认 → 验证记录在 records 表中状态已更新
     #[test]
     fn test_scan_records_confirm_flow() {
-        let (mut conn, _temp_dir) = create_scan_test_db();
+        let (conn, _temp_dir) = create_scan_test_db();
         let (account_id, role_id) = create_test_account_role(&conn);
         let (record_id, _record_date) = insert_pending_scan_record(&conn, &account_id, &role_id);
 
         // 验证 pending 记录存在
         let pending_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM scan_records WHERE status = 'pending'",
+                "SELECT COUNT(*) FROM records WHERE status = 'pending'",
                 [],
                 |row| row.get(0),
             )
             .expect("should query pending count");
         assert_eq!(pending_count, 1, "应有 1 条 pending 记录");
 
-        // 验证 records 表为空
-        let records_count_before: i64 = conn
-            .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
-            .expect("should query records count");
-        assert_eq!(records_count_before, 0, "records 表应初始为空");
-
         // === 模拟 confirm_record 逻辑 ===
         let current_data: String = conn
             .query_row(
-                "SELECT data FROM scan_records WHERE id = ?1",
+                "SELECT data FROM records WHERE id = ?1",
                 sql_params![record_id],
                 |row| row.get(0),
             )
-            .expect("should read scan record data");
+            .expect("should read record data");
 
         let mut current_json: serde_json::Value =
             serde_json::from_str(&current_data).expect("should parse JSON");
@@ -3137,44 +3382,13 @@ mod tests {
         }
 
         let updated_data = serde_json::to_string(&current_json).unwrap_or(current_data);
+        let now = chrono::Local::now().to_rfc3339();
 
-        let raid_name = current_json["raidName"].as_str().map(|s| s.to_string());
-        let account_id_val = current_json["accountId"].as_str().map(|s| s.to_string());
-        let role_id_val = current_json["roleId"].as_str().map(|s| s.to_string());
-        let record_date_val = current_json["date"].as_i64();
-        let record_type = current_json["type"]
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "raid".to_string());
-
-        let tx = conn.transaction().expect("should start transaction");
-        tx.execute(
-            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(id) DO UPDATE SET
-                data = excluded.data,
-                account_id = excluded.account_id,
-                role_id = excluded.role_id,
-                record_date = excluded.record_date,
-                record_type = excluded.record_type",
-            sql_params![
-                record_id,
-                updated_data,
-                raid_name,
-                account_id_val,
-                role_id_val,
-                record_date_val,
-                record_type
-            ],
+        conn.execute(
+            "UPDATE records SET data = ?1, source = 'manual', status = 'confirmed', updated_at = ?2 WHERE id = ?3",
+            sql_params![updated_data, now, record_id],
         )
-        .expect("should insert into records");
-
-        tx.execute(
-            "DELETE FROM scan_records WHERE id = ?1",
-            sql_params![record_id],
-        )
-        .expect("should delete from scan_records");
-        tx.commit().expect("should commit transaction");
+        .expect("should update records");
 
         // 验证 records 表有 1 条记录
         let records_count_after: i64 = conn
@@ -3183,19 +3397,6 @@ mod tests {
         assert_eq!(
             records_count_after, 1,
             "confirm 后 records 表应有 1 条记录"
-        );
-
-        // 验证 scan_records 中该记录已被删除
-        let scan_remaining: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM scan_records WHERE id = ?1",
-                sql_params![record_id],
-                |row| row.get(0),
-            )
-            .expect("should query scan_records");
-        assert_eq!(
-            scan_remaining, 0,
-            "confirm 后 scan_records 应无该记录"
         );
 
         // 验证 records 表中的 data 包含 confirmed 状态
@@ -3222,7 +3423,7 @@ mod tests {
     /// 角色=少年白了发, 时间=2026-06-28 12:00 (CST)
     #[test]
     fn test_scan_records_shaonianbailaofa_noon() {
-        let (mut conn, _temp_dir) = create_scan_test_db();
+        let (conn, _temp_dir) = create_scan_test_db();
         let (account_id, role_id) = create_test_account_role(&conn);
 
         // 使用 2026-06-28 12:00:00 CST (UTC+8) 作为开始时间
@@ -3248,8 +3449,8 @@ mod tests {
         .to_string();
 
         conn.execute(
-            "INSERT INTO scan_records (id, data, raid_name, account_id, role_id, record_date, record_type, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'raid', 'pending', ?7, ?8)",
+            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type, source, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'raid', 'auto_scan', 'pending', ?7, ?8)",
             sql_params![record_id, data, "阆风悬城", account_id, role_id, record_date, now, now],
         )
         .expect("should insert scan record");
@@ -3257,7 +3458,7 @@ mod tests {
         // 验证 pending 记录的时间戳
         let stored_date: i64 = conn
             .query_row(
-                "SELECT record_date FROM scan_records WHERE id = ?1",
+                "SELECT record_date FROM records WHERE id = ?1",
                 sql_params![record_id],
                 |row| row.get(0),
             )
@@ -3266,7 +3467,7 @@ mod tests {
 
         let pending_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM scan_records WHERE status = 'pending' AND account_id = ?1",
+                "SELECT COUNT(*) FROM records WHERE status = 'pending' AND account_id = ?1",
                 sql_params![account_id],
                 |row| row.get(0),
             )
@@ -3275,8 +3476,8 @@ mod tests {
 
         // 确认记录
         let current_data: String = conn
-            .query_row("SELECT data FROM scan_records WHERE id = ?1", sql_params![record_id], |row| row.get(0))
-            .expect("should read scan record data");
+            .query_row("SELECT data FROM records WHERE id = ?1", sql_params![record_id], |row| row.get(0))
+            .expect("should read record data");
 
         let mut current_json: serde_json::Value =
             serde_json::from_str(&current_data).expect("should parse JSON");
@@ -3287,32 +3488,17 @@ mod tests {
         }
 
         let updated_data = serde_json::to_string(&current_json).unwrap_or(current_data);
-        let raid_name = current_json["raidName"].as_str().map(|s| s.to_string());
-        let account_id_val = current_json["accountId"].as_str().map(|s| s.to_string());
-        let role_id_val = current_json["roleId"].as_str().map(|s| s.to_string());
-        let record_date_val = current_json["date"].as_i64();
-        let record_type = current_json["type"]
-            .as_str().map(|s| s.to_string())
-            .unwrap_or_else(|| "raid".to_string());
 
-        let tx = conn.transaction().expect("should start transaction");
-        tx.execute(
-            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(id) DO UPDATE SET
-                data = excluded.data, account_id = excluded.account_id, role_id = excluded.role_id,
-                record_date = excluded.record_date, record_type = excluded.record_type",
-            sql_params![record_id, updated_data, raid_name, account_id_val, role_id_val, record_date_val, record_type],
-        ).expect("should insert into records");
-        tx.execute("DELETE FROM scan_records WHERE id = ?1", sql_params![record_id])
-            .expect("should delete from scan_records");
-        tx.commit().expect("should commit transaction");
+        conn.execute(
+            "UPDATE records SET data = ?1, source = 'manual', status = 'confirmed', updated_at = ?2 WHERE id = ?3",
+            sql_params![updated_data, now, record_id],
+        ).expect("should update records");
 
         // 验证最终状态
         let records_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM records WHERE id = ?1", sql_params![record_id], |row| row.get(0))
             .expect("should query records");
-        assert_eq!(records_count, 1, "少年白了发 的记录应已迁移到 records 表");
+        assert_eq!(records_count, 1, "少年白了发 的记录应仍在 records 表中");
 
         let confirmed_data: String = conn
             .query_row("SELECT data FROM records WHERE id = ?1", sql_params![record_id], |row| row.get(0))
@@ -3335,7 +3521,7 @@ mod tests {
         // 验证 pending 记录存在
         let pending_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM scan_records WHERE status = 'pending'",
+                "SELECT COUNT(*) FROM records WHERE status = 'pending'",
                 [],
                 |row| row.get(0),
             )
@@ -3346,7 +3532,7 @@ mod tests {
         let now = chrono::Local::now().to_rfc3339();
 
         if let Ok(data) = conn.query_row(
-            "SELECT data FROM scan_records WHERE id = ?1",
+            "SELECT data FROM records WHERE id = ?1",
             sql_params![record_id],
             |row| row.get::<_, String>(0),
         ) {
@@ -3355,7 +3541,7 @@ mod tests {
                     obj.insert("status".to_string(), serde_json::json!("rejected"));
                     let updated_data = serde_json::to_string(&json).unwrap_or(data);
                     conn.execute(
-                        "UPDATE scan_records SET data = ?1, status = 'rejected', updated_at = ?2 WHERE id = ?3",
+                        "UPDATE records SET data = ?1, status = 'rejected', updated_at = ?2 WHERE id = ?3",
                         sql_params![updated_data, now, record_id],
                     )
                     .expect("should reject record");
@@ -3363,26 +3549,26 @@ mod tests {
             }
         }
 
-        // 验证 scan_records 状态已更新为 rejected
+        // 验证 records 状态已更新为 rejected
         let status: String = conn
             .query_row(
-                "SELECT status FROM scan_records WHERE id = ?1",
+                "SELECT status FROM records WHERE id = ?1",
                 sql_params![record_id],
                 |row| row.get(0),
             )
             .expect("should query status");
         assert_eq!(status, "rejected", "记录应被标记为 rejected");
 
-        // 验证 records 表仍为空（驳回不移除记录）
+        // 验证 records 表仍有 1 条记录（驳回不删除记录，只更新状态）
         let records_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
             .expect("should query records count");
-        assert_eq!(records_count, 0, "驳回不应影响 records 表");
+        assert_eq!(records_count, 1, "驳回后 records 表应仍有 1 条记录");
 
         // 验证 data JSON 中也包含 rejected 状态
         let rejected_data: String = conn
             .query_row(
-                "SELECT data FROM scan_records WHERE id = ?1",
+                "SELECT data FROM records WHERE id = ?1",
                 sql_params![record_id],
                 |row| row.get(0),
             )
@@ -3868,7 +4054,7 @@ mod tests {
             };
             let raid_bosses = &raid_entry.bosses;
             let jcl_path = combat_logs_dir.join(&jcl.file_name);
-            let mut analysis = analyze_jcl(&jcl_path, &jcl.boss_name, jcl.boss_id, raid_bosses).unwrap_or(JclAnalysis {
+            let mut analysis = analyze_jcl_cached(&conn, &jcl_path, &jcl.boss_name, jcl.boss_id, raid_bosses).unwrap_or(JclAnalysis {
                 boss_name: None,
                 fight_start_ms: 0,
                 fight_end_ms: 0,
@@ -3972,37 +4158,37 @@ mod tests {
         // 少年白了发的数据库 UUID（account_id）
         let db_account_id = "3913bc21-4623-4e3b-92cb-bc231dbabe7c";
 
-        // 1. 查询 scan_records 之前的状态
+        // 1. 查询 records (pending) 之前的状态
         let conn = db::init_db().expect("初始化数据库失败");
 
         let before_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM scan_records WHERE account_id = ?1",
+                "SELECT COUNT(*) FROM records WHERE account_id = ?1 AND status IN ('pending', 'scanning')",
                 params![db_account_id],
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        println!("[DEDUP] scan_records before: {} 条", before_count);
+        println!("[DEDUP] records (pending) before: {} 条", before_count);
 
         // 2. 运行扫描（历史数据回放：JX3 进程未运行，角色离线，记录应为 pending）
         let result = scan_raid_drops_internal("432345564243886337", false, false, 0, 0, 0);
         println!("[DEDUP] 扫描结果: {:?}", result);
 
-        // 3. 查询 scan_records 之后的状态
+        // 3. 查询 records (pending) 之后的状态
         let after_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM scan_records WHERE account_id = ?1",
+                "SELECT COUNT(*) FROM records WHERE account_id = ?1 AND status IN ('pending', 'scanning')",
                 params![db_account_id],
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        println!("[DEDUP] scan_records after: {} 条", after_count);
+        println!("[DEDUP] records (pending) after: {} 条", after_count);
 
         // 4. 检查是否有阆风悬城的新 pending
         //    raid_name 列存储 raids.name 短名（如 "阆风悬城"）
         let pending_langfeng: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM scan_records \
+                "SELECT COUNT(*) FROM records \
                  WHERE account_id = ?1 AND raid_name = '阆风悬城' AND status = 'pending'",
                 params![db_account_id],
                 |row| row.get(0),
