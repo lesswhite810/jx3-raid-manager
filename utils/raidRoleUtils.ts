@@ -15,6 +15,7 @@ export interface SearchableRaidRole {
 export interface RaidClearStatsRole {
   id: string;
   canRun: boolean;
+  hasPendingRecord?: boolean;
   bossCooldowns?: Array<{
     hasRecord: boolean;
   }>;
@@ -23,6 +24,7 @@ export interface RaidClearStatsRole {
 export interface RaidClearStats {
   noneClearedCount: number;
   partialClearedCount: number;
+  pendingClearedCount: number;
   completeClearedCount: number;
 }
 
@@ -79,17 +81,22 @@ export const getRaidClearStats = <T extends RaidClearStatsRole>(
     return completedCount > 0 && completedCount < role.bossCooldowns.length;
   }).length;
 
-  const completeClearedCount = enabledRoles.filter(role => {
+  // 完全清完的角色中，区分"待确认"和"已确认"
+  const fullyClearedRoles = enabledRoles.filter(role => {
     if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
       return !role.canRun;
     }
 
     return role.bossCooldowns.filter(boss => boss.hasRecord).length === role.bossCooldowns.length;
-  }).length;
+  });
+
+  const pendingClearedCount = fullyClearedRoles.filter(role => role.hasPendingRecord).length;
+  const completeClearedCount = fullyClearedRoles.length - pendingClearedCount;
 
   return {
     noneClearedCount,
     partialClearedCount,
+    pendingClearedCount,
     completeClearedCount
   };
 };

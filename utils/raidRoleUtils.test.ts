@@ -75,6 +75,11 @@ describe('getRaidClearStats', () => {
       canRun: false
     },
     {
+      id: 'enabled-pending',
+      canRun: false,
+      hasPendingRecord: true
+    },
+    {
       id: 'disabled-complete',
       canRun: false,
       bossCooldowns: [
@@ -90,6 +95,7 @@ describe('getRaidClearStats', () => {
     })).toEqual({
       noneClearedCount: 1,
       partialClearedCount: 1,
+      pendingClearedCount: 1,
       completeClearedCount: 1
     });
   });
@@ -98,6 +104,7 @@ describe('getRaidClearStats', () => {
     expect(getRaidClearStats(roles, {})).toEqual({
       noneClearedCount: 1,
       partialClearedCount: 1,
+      pendingClearedCount: 1,
       completeClearedCount: 2
     });
   });

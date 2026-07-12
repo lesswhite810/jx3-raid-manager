@@ -46,6 +46,7 @@ interface RoleWithStatus {
   lastRunExpense?: number;
   cooldownDays?: number;
   bossCooldowns?: BossCooldownInfo[];
+  hasPendingRecord?: boolean;
 }
 
 interface CountdownState {
@@ -300,6 +301,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
       const roleRecords = thisWeekRecords.filter(r => r.roleId === record.roleId);
 
+      const hasPendingRecord = roleRecords.some(r => r.source === 'auto' && r.status === 'pending');
+
       const lastRunRecord = roleRecords.sort((a, b) =>
         new Date(b.date).getTime() - new Date(a.date).getTime()
       )[0];
@@ -368,7 +371,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             roleId: r.roleId,
             accountId: r.accountId
           }];
-        }), record.roleId, new Date(), true)
+        }), record.roleId, new Date(), true),
+        hasPendingRecord,
       });
 
       processedRoleIds.add(record.roleId);
@@ -431,16 +435,19 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     const sorted = [...rolesWithStatus];
 
     sorted.sort((a, b) => {
-      // 1. BOSS 完成状态优先（未清 > 部分清完 > 完全清完）
+      // 1. BOSS 完成状态优先（未清 > 部分清完 > 待确认 > 完全清完）
       const getBossStatus = (role: RoleWithStatus): number => {
         if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
           // 没有 BOSS CD 配置，使用旧的 canRun 逻辑
-          return role.canRun ? 0 : 2;
+          if (role.canRun) return 0;
+          return role.hasPendingRecord ? 2 : 3;
         }
         const completedCount = role.bossCooldowns.filter(b => b.hasRecord).length;
         const totalCount = role.bossCooldowns.length;
         if (completedCount === 0) return 0; // 未清
-        if (completedCount === totalCount) return 2; // 完全清完
+        if (completedCount === totalCount) {
+          return role.hasPendingRecord ? 2 : 3; // 待确认 / 完全清完
+        }
         return 1; // 部分清完
       };
 
@@ -487,10 +494,11 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
     return sortedRoles.filter(role => roleVisibilityMap[role.id] === false).length;
   }, [sortedRoles, roleVisibilityMap]);
 
-  // 计算三态统计：未清、部分清、完全清
+  // 计算四态统计：未清、部分清、待确认、完全清
   const {
     noneClearedCount,
     partialClearedCount,
+    pendingClearedCount,
     completeClearedCount
   } = useMemo(() => getRaidClearStats(rolesWithStatus, roleVisibilityMap), [rolesWithStatus, roleVisibilityMap]);
 
@@ -563,6 +571,12 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               <span className="font-bold text-amber-600">{partialClearedCount}</span>
               <span className="text-muted text-xs">部分清</span>
             </div>
+            {pendingClearedCount > 0 && (
+              <div className="flex items-center gap-1.5 text-sm">
+                <span className="font-bold text-amber-500">{pendingClearedCount}</span>
+                <span className="text-muted text-xs">待确认</span>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 text-sm">
               <span className="font-bold text-slate-500">{completeClearedCount}</span>
               <span className="text-muted text-xs">完全清</span>
@@ -608,14 +622,19 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredRoles.map((role) => {
               // 计算 BOSS 完成状态
-              const getBossClearStatus = (): 'none' | 'partial' | 'complete' => {
+              const getBossClearStatus = (): 'none' | 'partial' | 'complete' | 'pending' => {
                 if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
-                  return role.canRun ? 'none' : 'complete';
+                  if (!role.canRun) {
+                    return role.hasPendingRecord ? 'pending' : 'complete';
+                  }
+                  return 'none';
                 }
                 const completedCount = role.bossCooldowns.filter(b => b.hasRecord).length;
                 const totalCount = role.bossCooldowns.length;
                 if (completedCount === 0) return 'none';
-                if (completedCount === totalCount) return 'complete';
+                if (completedCount === totalCount) {
+                  return role.hasPendingRecord ? 'pending' : 'complete';
+                }
                 return 'partial';
               };
 
@@ -625,6 +644,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               const getCardStyle = () => {
                 if (bossStatus === 'complete') {
                   return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-md';
+                } else if (bossStatus === 'pending') {
+                  return 'bg-gradient-to-br from-amber-50 to-white dark:from-amber-900/10 dark:to-surface border-amber-300 dark:border-amber-700 hover:shadow-md';
                 } else if (bossStatus === 'partial') {
                   return 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-700 hover:shadow-lg hover:border-amber-300';
                 } else {
@@ -637,6 +658,12 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                   return (
                     <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
                       <Check className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                    </div>
+                  );
+                } else if (bossStatus === 'pending') {
+                  return (
+                    <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                      <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                     </div>
                   );
                 } else if (bossStatus === 'partial') {
@@ -660,6 +687,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 }
                 if (bossStatus === 'complete') {
                   return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
+                } else if (bossStatus === 'pending') {
+                  return 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5';
                 } else if (bossStatus === 'partial') {
                   return 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5';
                 } else {
@@ -670,6 +699,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               const getButtonViewStyle = () => {
                 if (bossStatus === 'complete') {
                   return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
+                } else if (bossStatus === 'pending') {
+                  return 'bg-white text-amber-700 border border-amber-300 hover:bg-amber-50 hover:border-amber-400';
                 } else if (bossStatus === 'partial') {
                   return 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300';
                 } else {
@@ -696,6 +727,11 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                               装分 {role.equipmentScore.toLocaleString()}
                             </span>
                           )}
+                          {bossStatus === 'pending' && (
+                            <span className="text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded font-medium flex items-center gap-1 flex-shrink-0" title="自动扫描记录，等待确认">
+                              <Clock className="w-3 h-3" />待确认
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -709,7 +745,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         {role.lastRunDate ? (
                           <>
                             <div className="flex items-center gap-1.5 text-muted overflow-hidden">
-                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'partial' ? 'text-amber-500' : 'text-emerald-500'}`} />
+                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-amber-500' : bossStatus === 'partial' ? 'text-amber-500' : 'text-emerald-500'}`} />
                               <span className="text-[11px] whitespace-nowrap">{formatDate(role.lastRunDate)}</span>
                             </div>
                             {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
@@ -727,7 +763,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                           </>
                         ) : (
                           <div className="flex items-center gap-1.5 text-muted">
-                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'partial' ? 'text-amber-400' : 'text-emerald-400'}`} />
+                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-amber-400' : bossStatus === 'partial' ? 'text-amber-400' : 'text-emerald-400'}`} />
                             <span className="text-[11px] whitespace-nowrap">暂无记录</span>
                           </div>
                         )}
