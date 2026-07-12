@@ -11,6 +11,7 @@ import { getLastMonday, getNextMonday, getTenPersonCycle } from '../utils/cooldo
 import { getBaseServerName } from '../utils/serverUtils';
 import { formatGoldAmount } from '../utils/recordUtils';
 import { toast } from '../utils/toastManager';
+import { getDefaultBosses } from '../data/raidBosses';
 
 interface PendingRecordsPanelProps {
   records: RaidRecord[];
@@ -37,6 +38,7 @@ interface EditFormData {
   hasTitle: boolean;
   hasSecretBook: boolean;
   notes: string;
+  bossNames: string[];
 }
 
 /**
@@ -53,6 +55,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
 }) => {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [cdConflictRecord, setCdConflictRecord] = useState<RaidRecord | null>(null);
+  const [cdConflictAction, setCdConflictAction] = useState<'edit' | 'direct'>('edit');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
   const [editForm, setEditForm] = useState<EditFormData | null>(null);
@@ -119,15 +122,6 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     });
   }, [records]);
 
-  /** 打开编辑弹窗，预填充自动扫描数据 */
-  const openEditModal = useCallback((record: RaidRecord) => {
-    if (checkCdConflict(record)) {
-      setCdConflictRecord(record);
-      return;
-    }
-    doOpenEditModal(record);
-  }, [checkCdConflict]);
-
   /** 实际打开编辑弹窗（跳过 CD 冲突检查） */
   const doOpenEditModal = useCallback((record: RaidRecord) => {
     setEditingRecord(record);
@@ -145,8 +139,44 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       hasTitle: record.hasTitle || false,
       hasSecretBook: record.hasSecretBook || false,
       notes: record.notes || '',
+      bossNames: record.bossNames ?? [],
     });
   }, []);
+
+  /** 直接确认（不打开编辑弹窗），调用 confirmRecord 不传 editData */
+  const doDirectConfirm = useCallback(async (record: RaidRecord) => {
+    setPendingActionId(record.id);
+    try {
+      await dropScannerService.confirmRecord(record.id);
+      onRefreshRecords?.();
+      toast.success('记录已确认');
+    } catch (error) {
+      console.error('确认记录失败:', error);
+      toast.error('确认失败，请重试');
+    } finally {
+      setPendingActionId(null);
+    }
+  }, [onRefreshRecords]);
+
+  /** 打开编辑弹窗，预填充自动扫描数据 */
+  const openEditModal = useCallback((record: RaidRecord) => {
+    if (checkCdConflict(record)) {
+      setCdConflictAction('edit');
+      setCdConflictRecord(record);
+      return;
+    }
+    doOpenEditModal(record);
+  }, [checkCdConflict, doOpenEditModal]);
+
+  /** 直接确认（带 CD 冲突预检） */
+  const handleDirectConfirm = useCallback((record: RaidRecord) => {
+    if (checkCdConflict(record)) {
+      setCdConflictAction('direct');
+      setCdConflictRecord(record);
+      return;
+    }
+    doDirectConfirm(record);
+  }, [checkCdConflict, doDirectConfirm]);
 
   const closeEditModal = useCallback(() => {
     setEditingRecord(null);
@@ -170,6 +200,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         hasTitle: editForm.hasTitle,
         hasSecretBook: editForm.hasSecretBook,
         notes: editForm.notes.trim() || undefined,
+        bossNames: editForm.bossNames,
       });
       onRefreshRecords?.();
       toast.success('记录已确认');
@@ -182,13 +213,18 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     }
   }, [editingRecord, editForm, onRefreshRecords, closeEditModal]);
 
-  /** CD 冲突时点击"继续编辑"，关闭冲突提示后打开编辑弹窗 */
-  const continueToEdit = useCallback(() => {
+  /** CD 冲突时点击"继续"，根据原操作类型执行编辑或直接确认 */
+  const continueAfterConflict = useCallback(() => {
     if (!cdConflictRecord) return;
     const record = cdConflictRecord;
+    const action = cdConflictAction;
     setCdConflictRecord(null);
-    doOpenEditModal(record);
-  }, [cdConflictRecord, doOpenEditModal]);
+    if (action === 'edit') {
+      doOpenEditModal(record);
+    } else {
+      doDirectConfirm(record);
+    }
+  }, [cdConflictRecord, cdConflictAction, doOpenEditModal, doDirectConfirm]);
 
   const handleReject = useCallback(async (record: RaidRecord) => {
     setPendingActionId(record.id);
@@ -398,16 +434,24 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                     ) : (
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => openEditModal(record)}
+                          onClick={() => handleDirectConfirm(record)}
                           disabled={pendingActionId === record.id}
-                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-white bg-primary hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {pendingActionId === record.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           ) : (
-                            <Pencil className="w-3.5 h-3.5" />
+                            <Check className="w-3.5 h-3.5" />
                           )}
-                          编辑并确认
+                          确认
+                        </button>
+                        <button
+                          onClick={() => openEditModal(record)}
+                          disabled={pendingActionId === record.id}
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          编辑
                         </button>
                         <button
                           onClick={() => handleReject(record)}
@@ -497,6 +541,47 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* BOSS 进度编辑 */}
+              {editingRecord && (() => {
+                // 从副本名提取基础名，匹配默认 BOSS 列表
+                const raidName = editingRecord.raidName || '';
+                const baseName = raidName.replace(/^(10人|25人|英雄|普通)\s*/, '').replace(/·.+$/, '');
+                const defaultBosses = getDefaultBosses(baseName) ?? getDefaultBosses(raidName);
+                if (!defaultBosses || defaultBosses.length === 0) return null;
+                return (
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
+                      <Skull className="w-4 h-4 text-rose-500" />
+                      BOSS 进度
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {defaultBosses.map(boss => {
+                        const selected = editForm.bossNames.includes(boss.name);
+                        return (
+                          <button
+                            key={boss.id}
+                            type="button"
+                            onClick={() => {
+                              const next = selected
+                                ? editForm.bossNames.filter(n => n !== boss.name)
+                                : [...editForm.bossNames, boss.name];
+                              setEditForm({ ...editForm, bossNames: next });
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-sm font-medium border transition-colors ${
+                              selected
+                                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                                : 'bg-surface text-muted border-base hover:border-emerald-200 dark:hover:border-emerald-800 hover:text-main'
+                            }`}
+                          >
+                            {boss.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* 标记位 */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-base rounded-lg border border-base">
@@ -607,11 +692,20 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 取消
               </button>
               <button
-                onClick={continueToEdit}
+                onClick={continueAfterConflict}
                 className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-1.5"
               >
-                <Pencil className="w-3.5 h-3.5" />
-                继续编辑
+                {cdConflictAction === 'edit' ? (
+                  <>
+                    <Pencil className="w-3.5 h-3.5" />
+                    继续编辑
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    继续确认
+                  </>
+                )}
               </button>
             </div>
           </div>

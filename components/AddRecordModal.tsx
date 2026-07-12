@@ -227,31 +227,28 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                 <label className="block text-sm font-medium text-main mb-1.5">
                   击败BOSS（可多选）
                 </label>
-                <div className="grid grid-cols-3 gap-2 p-3 bg-base rounded-lg border border-base">
+                <div className="flex flex-wrap gap-2 p-3 bg-base rounded-lg border border-base">
                   {availableBosses.map((boss) => {
                     const isSelected = selectedBossIds.includes(boss.id);
                     return (
-                      <label
+                      <button
                         key={boss.id}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${isSelected
-                          ? 'bg-primary text-white'
-                          : 'bg-surface text-muted border border-base hover:border-primary hover:text-primary'
-                          }`}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedBossIds(selectedBossIds.filter(id => id !== boss.id));
+                          } else {
+                            setSelectedBossIds([...selectedBossIds, boss.id]);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-sm font-medium border transition-colors ${
+                          isSelected
+                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                            : 'bg-surface text-muted border-base hover:border-emerald-200 dark:hover:border-emerald-800 hover:text-main'
+                        }`}
                       >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedBossIds([...selectedBossIds, boss.id]);
-                            } else {
-                              setSelectedBossIds(selectedBossIds.filter(id => id !== boss.id));
-                            }
-                          }}
-                          className="sr-only"
-                        />
-                        <span className="text-sm font-medium">{boss.name}</span>
-                      </label>
+                        {boss.name}
+                      </button>
                     );
                   })}
                 </div>

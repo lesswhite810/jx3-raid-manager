@@ -785,17 +785,17 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             }
                                             className={`
                                                 relative w-full aspect-[3/4] rounded-xl border-2 p-0 flex flex-col items-center justify-start overflow-hidden
-                                                transition-all duration-300 hover:-translate-y-1 hover:shadow-xl
+                                                transition-colors duration-200
                                                 ${isSuggestedEquipmentPosition
-                                                    ? 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-400 dark:border-emerald-600 border-solid shadow-sm'
+                                                    ? 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-400 dark:border-emerald-600 border-solid'
                                                     : isSuggestedEquipmentPositionForRole
-                                                        ? 'bg-sky-50/80 dark:bg-sky-900/20 border-sky-400 dark:border-sky-600 border-solid shadow-sm'
+                                                        ? 'bg-sky-50/80 dark:bg-sky-900/20 border-sky-400 dark:border-sky-600 border-solid'
                                                         : hasItem
-                                                            ? 'bg-surface border-slate-200 dark:border-slate-700 shadow-sm'
-                                                            : 'bg-surface border-dashed border-base/60 hover:border-primary/50 hover:bg-base/30'
+                                                            ? 'bg-surface border-slate-200 dark:border-slate-700'
+                                                            : 'bg-surface border-dashed border-base/60 hover:border-emerald-300 dark:hover:border-emerald-700 hover:bg-base/30'
                                                 }
                                                 ${isFlipped
-                                                    ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-surface shadow-lg shadow-primary/10'
+                                                    ? 'ring-2 ring-emerald-400 dark:ring-emerald-600 ring-offset-2 ring-offset-surface'
                                                     : ''
                                                 }
                                             `}
@@ -835,8 +835,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             </div>
 
                                             {/* Hover Overlay */}
-                                            <div className="absolute inset-0 bg-primary/10 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[1px] z-20">
-                                                <div className="bg-surface/90 text-primary text-xs font-bold px-3 py-1.5 rounded-full shadow-lg transform scale-90 group-hover/card:scale-100 transition-transform">
+                                            <div className="absolute inset-0 bg-emerald-500/10 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[1px] z-20">
+                                                <div className="bg-surface/90 text-emerald-600 dark:text-emerald-400 text-xs font-medium px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
                                                     {hasItem ? '更换装备' : '选择装备'}
                                                 </div>
                                             </div>
@@ -852,9 +852,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 className="hidden"
                                             />
                                             <div className={`
-                                                flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[10px] font-bold tracking-wide transition-all border
+                                                flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[10px] font-medium tracking-wide transition-colors border
                                                 ${isFlipped
-                                                    ? 'bg-primary text-white border-primary shadow-md shadow-primary/20 scale-105'
+                                                    ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
                                                     : 'bg-base/50 text-muted border-transparent hover:bg-base hover:text-main'
                                                 }
                                             `}>
@@ -896,7 +896,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                         <button
                             type="submit"
                             disabled={isSubmitting}
-                            className="flex-1 py-2.5 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/25 hover:bg-primary-hover hover:shadow-primary/40 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            className="flex-1 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                             {isSubmitting ? (
                                 <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -972,10 +972,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 type="button"
                                                 onClick={() => setSelectedType(type)}
                                                 className={`
-                                                px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border
+                                                px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border
                                                 ${selectedType === type
-                                                        ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-primary/50'
+                                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-emerald-200 dark:hover:border-emerald-800'
                                                     }
                                             `}
                                             >
@@ -996,10 +996,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 type="button"
                                                 onClick={() => setSelectedBindType(opt.value)}
                                                 className={`
-                                                px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border
+                                                px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border
                                                 ${selectedBindType === opt.value
-                                                        ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-primary/50'
+                                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-emerald-200 dark:hover:border-emerald-800'
                                                     }
                                             `}
                                             >
@@ -1066,7 +1066,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             key={`${equip.ID}-${idx}`}
                                             type="button"
                                             onClick={() => handleSelectEquipment(equip.ID.toString())}
-                                            className="relative group bg-surface border border-base rounded-xl p-2 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5 transition-all duration-200 text-left overflow-hidden flex flex-col"
+                                            className="relative group bg-surface border border-base rounded-xl p-2 hover:border-emerald-300 dark:hover:border-emerald-700 transition-colors duration-200 text-left overflow-hidden flex flex-col"
                                         >
                                             <EquipDisplay item={equip} />
                                             {/* Hover Effect Highlight */}
