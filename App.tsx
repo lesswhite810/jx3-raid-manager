@@ -47,7 +47,8 @@ const ConfigManager = lazy(async () => import('./components/ConfigManager').then
 
 function App() {
   const [dashboardStatsPeriod, setDashboardStatsPeriod] = useState<'week' | 'season' | 'all'>('week');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager'>('dashboard');
+  const [showConfigModal, setShowConfigModal] = useState(false);
   const [showIncomeDetail, setShowIncomeDetail] = useState(false);
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);
   const [showTrialFlipDetail, setShowTrialFlipDetail] = useState(false);
@@ -570,8 +571,14 @@ function App() {
             <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18} />} label="概览" />
             <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18} />} label="副本管理" />
             <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
-            <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18} />} label="配置" />
           </div>
+          <button
+            onClick={() => setShowConfigModal(true)}
+            className="p-2 rounded-lg text-muted hover:text-main hover:bg-base transition-colors app-region-no-drag"
+            title="配置"
+          >
+            <Settings size={20} />
+          </button>
           <button
             onClick={toggleTheme}
             className="p-2 rounded-lg text-muted hover:text-main hover:bg-base transition-colors app-region-no-drag"
@@ -654,16 +661,6 @@ function App() {
                 onRefreshTrialRecords={reloadTrialRecords}
                 onRefreshBaizhanRecords={reloadBaizhanRecords}
               />
-            )}
-            {activeTab === 'config' && (
-              <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置模块..." />}>
-                <ConfigManager
-                  updateRuntimeInfo={updateRuntimeInfo}
-                  updateStatus={updateStatus}
-                  updateCheckResult={updateCheckResult}
-                  onCheckForUpdates={() => handleCheckForUpdates(false)}
-                />
-              </Suspense>
             )}
         </>
       </main>
@@ -760,6 +757,20 @@ function App() {
           accounts={accounts}
           initialData={editingBaizhanRecord}
         />
+      )}
+
+      {/* Config Modal */}
+      {showConfigModal && (
+        <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置..." />}>
+          <ConfigManager
+            isOpen={showConfigModal}
+            onClose={() => setShowConfigModal(false)}
+            updateRuntimeInfo={updateRuntimeInfo}
+            updateStatus={updateStatus}
+            updateCheckResult={updateCheckResult}
+            onCheckForUpdates={() => handleCheckForUpdates(false)}
+          />
+        </Suspense>
       )}
 
       <UpdateDialog
