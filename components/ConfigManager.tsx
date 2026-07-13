@@ -169,10 +169,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-main">系统配置</h2>
-        <p className="text-sm text-muted">配置项修改后会自动保存，无需手动点击保存。</p>
-      </div>
+      <h2 className="text-2xl font-bold text-main">系统配置</h2>
 
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center justify-between gap-4 mb-6">
@@ -180,10 +177,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
             <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
               <Download className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-main">版本与更新</h3>
-              <p className="text-xs text-muted">安装版支持应用内更新，便携版仅提供下载提示</p>
-            </div>
+            <h3 className="text-lg font-bold text-main">版本与更新</h3>
           </div>
           <button
             onClick={onCheckForUpdates}
@@ -225,10 +219,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
             <FolderOpen className="w-5 h-5" />
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-main">游戏配置</h3>
-            <p className="text-xs text-muted">设置游戏安装路径以实现自动扫描等功能</p>
-          </div>
+          <h3 className="text-lg font-bold text-main">游戏配置</h3>
         </div>
 
         <div className="space-y-4">
@@ -317,38 +308,30 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
             <Database className="w-5 h-5" />
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-main">数据存储</h3>
-            <p className="text-xs text-muted">配置数据库与日志文件的存储位置</p>
-          </div>
+          <h3 className="text-lg font-bold text-main">数据存储</h3>
         </div>
 
-        <div className="space-y-4">
-          <div className="flex items-center gap-4">
-            <p className="text-sm text-main break-all font-mono select-all flex-1">
-              {dataDirInfo?.currentPath ?? '加载中...'}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSelectCustomDataDir}
-                className="btn btn-secondary flex items-center gap-2 text-sm"
-              >
-                <ExternalLink className="w-4 h-4" />
-                切换目录
-              </button>
-              {dataDirInfo?.customDirConfigured && (
-                <button
-                  onClick={handleResetCustomDataDir}
-                  className="btn btn-secondary text-sm"
-                >
-                  还原默认
-                </button>
-              )}
-            </div>
-          </div>
-          <p className="text-xs text-muted">
-            修改目录后需要重启应用才能生效，重启时会自动迁移数据库和日志文件
+        <div className="flex items-center gap-4">
+          <p className="text-sm text-main break-all font-mono select-all flex-1">
+            {dataDirInfo?.currentPath ?? '加载中...'}
           </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSelectCustomDataDir}
+              className="btn btn-secondary flex items-center gap-2 text-sm"
+            >
+              <ExternalLink className="w-4 h-4" />
+              切换目录
+            </button>
+            {dataDirInfo?.customDirConfigured && (
+              <button
+                onClick={handleResetCustomDataDir}
+                className="btn btn-secondary text-sm"
+              >
+                还原默认
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -359,10 +342,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
             <div className="w-10 h-10 bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 rounded-lg flex items-center justify-center">
               <RotateCcw className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-main">重新初始化</h3>
-              <p className="text-xs text-muted">清空游戏目录、账号列表，回到引导界面</p>
-            </div>
+            <h3 className="text-lg font-bold text-main">重新初始化</h3>
           </div>
         </div>
 
