@@ -636,7 +636,7 @@ function App() {
               )
             )}
             {activeTab === 'accounts' && (
-              <AccountManager accounts={accounts} setAccounts={setAccounts} config={config} instanceTypes={instanceTypes} />
+              <AccountManager accounts={accounts} setAccounts={setAccounts} instanceTypes={instanceTypes} />
             )}
             {activeTab === 'raidManager' && (
               <RaidManager
@@ -658,8 +658,6 @@ function App() {
             {activeTab === 'config' && (
               <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置模块..." />}>
                 <ConfigManager
-                  config={config}
-                  setConfig={setConfig}
                   updateRuntimeInfo={updateRuntimeInfo}
                   updateStatus={updateStatus}
                   updateCheckResult={updateCheckResult}

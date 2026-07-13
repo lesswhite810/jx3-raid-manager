@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Config, UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
+import { UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
 import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor, RotateCcw } from 'lucide-react';
 import { isValidGamePath } from '../utils/configUtils';
 import { formatUpdatePubDate } from '../utils/updaterUtils';
@@ -10,8 +10,6 @@ import { scanJx3Clients, Jx3ClientInfo } from '../services/gameDirectoryScanner'
 import { useAppConfig } from '../contexts/AppConfigContext';
 
 interface ConfigManagerProps {
-  config: Config;
-  setConfig: React.Dispatch<React.SetStateAction<Config>>;
   updateRuntimeInfo: UpdateRuntimeInfo | null;
   updateStatus: UpdateStatus;
   updateCheckResult: UpdateCheckResult | null;
@@ -19,8 +17,6 @@ interface ConfigManagerProps {
 }
 
 export const ConfigManager: React.FC<ConfigManagerProps> = ({
-  config,
-  setConfig,
   updateRuntimeInfo,
   updateStatus,
   updateCheckResult,
@@ -41,7 +37,14 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  const { updateGameDirectory, resetAll } = useAppConfig();
+  const { appConfig, updateGameDirectory, resetAll } = useAppConfig();
+
+  // 游戏目录以 app_config.game_directory 为唯一源（不再从 config_json 读取）
+  const [gameDirectory, setGameDirectory] = useState<string>('');
+
+  useEffect(() => {
+    setGameDirectory(appConfig?.gameDirectory ?? '');
+  }, [appConfig?.gameDirectory]);
 
   const loadDataDirInfo = useCallback(async () => {
     try {
@@ -70,14 +73,14 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   }, [loadCurrentSeason]);
 
   useEffect(() => {
-    if (!config.game.gameDirectory) {
+    if (!gameDirectory.trim()) {
       setPathValid(null);
       return;
     }
-    isValidGamePath(config.game.gameDirectory).then(result => {
+    isValidGamePath(gameDirectory).then(result => {
       setPathValid(result.isValid);
     });
-  }, [config.game.gameDirectory]);
+  }, [gameDirectory]);
 
   const handleScanClients = useCallback(async () => {
     setScanningClients(true);
@@ -87,9 +90,8 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
       if (result.success && result.clients.length > 0) {
         setScanResults(result.clients);
         setShowScanResults(true);
-        if (result.clients.length === 1 && !config.game.gameDirectory) {
+        if (result.clients.length === 1 && !gameDirectory) {
           const client = result.clients[0];
-          // updateGameDirectory 同时写入 app_config.game_directory 和 config_json
           await updateGameDirectory(client.workDirectory);
           toast.success(`已自动填入 ${client.displayName} 的安装目录`);
         } else if (result.clients.length > 1) {
@@ -104,7 +106,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     } finally {
       setScanningClients(false);
     }
-  }, [config.game.gameDirectory, updateGameDirectory]);
+  }, [gameDirectory, updateGameDirectory]);
 
   const handleSelectClient = useCallback(async (client: Jx3ClientInfo) => {
     // updateGameDirectory 同时写入 app_config.game_directory 和 config_json
@@ -113,16 +115,11 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     toast.success(`已选择 ${client.displayName}`);
   }, [updateGameDirectory]);
 
-  const handleConfigChange = (section: keyof Config, key: string, value: unknown) => {
-    const nextConfig = { ...config, [section]: { ...config[section], [key]: value } };
-    setConfig(nextConfig);
-
-    // 游戏目录变更时同步到 app_config（set_game_directory 内部会同时更新 config_json）
-    if (section === 'game' && key === 'gameDirectory' && typeof value === 'string') {
-      updateGameDirectory(value).catch(error => {
-        console.error('[ConfigManager] 同步游戏目录到 app_config 失败:', error);
-      });
-    }
+  const handleGameDirectoryChange = (value: string) => {
+    setGameDirectory(value);
+    updateGameDirectory(value).catch(error => {
+      console.error('[ConfigManager] 同步游戏目录到 app_config 失败:', error);
+    });
   };
 
   const getUpdateStatusText = () => {
@@ -255,8 +252,8 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
             <div className="flex-1 flex items-center gap-2">
               <input
                 type="text"
-                value={config.game.gameDirectory}
-                onChange={(e) => handleConfigChange('game', 'gameDirectory', e.target.value)}
+                value={gameDirectory}
+                onChange={(e) => handleGameDirectoryChange(e.target.value)}
                 className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
                 placeholder="输入剑网三安装目录，例如 E:\Game\SeasunGame"
               />

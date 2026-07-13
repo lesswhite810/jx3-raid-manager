@@ -6,7 +6,7 @@ import { toast } from '../utils/toastManager';
 interface AppConfigContextType {
   appConfig: AppConfig | null;
   isLoading: boolean;
-  /** 设置游戏目录：写入 app_config 表（旧 config 表的同步由 App.tsx 监听 appConfig.gameDirectory 完成） */
+  /** 设置游戏目录：写入 app_config 表（唯一存储源，不再同步到 config_json） */
   updateGameDirectory: (path: string) => Promise<void>;
   /** 标记引导流程完成 */
   markSetupCompleted: () => Promise<void>;

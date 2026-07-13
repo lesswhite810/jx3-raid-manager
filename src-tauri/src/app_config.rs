@@ -15,7 +15,6 @@ pub struct AppConfig {
 const KEY_GAME_DIRECTORY: &str = "game_directory";
 const KEY_SETUP_COMPLETED: &str = "setup_completed";
 const KEY_LAST_SCAN_MINGYI_AT: &str = "last_scan_mingyi_at";
-const KEY_CONFIG_JSON: &str = "config_json";
 
 /// 从 app_config 表读取指定 key 的值
 fn read_value(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
@@ -70,31 +69,12 @@ pub fn get_app_config() -> Result<AppConfig, String> {
 
 /// 设置游戏目录（Tauri 命令）
 ///
-/// 同时更新 app_config.game_directory 和 config_json 中的 game.gameDirectory，
-/// 保持两处一致。
+/// 游戏目录以 app_config.game_directory 为唯一存储源，
+/// 不再同步到 config_json。
 #[tauri::command]
 pub fn set_game_directory(path: String) -> Result<(), String> {
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_GAME_DIRECTORY, &path)?;
-
-    // 同步 config_json 中的 game.gameDirectory
-    if let Some(config_json) = read_value(&conn, KEY_CONFIG_JSON)? {
-        if !config_json.is_empty() {
-            if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&config_json) {
-                if let Some(game) = parsed.get_mut("game") {
-                    if let Some(game_obj) = game.as_object_mut() {
-                        game_obj.insert(
-                            "gameDirectory".to_string(),
-                            serde_json::Value::String(path.clone()),
-                        );
-                    }
-                }
-                if let Ok(updated) = serde_json::to_string(&parsed) {
-                    upsert_value(&conn, KEY_CONFIG_JSON, &updated)?;
-                }
-            }
-        }
-    }
 
     log::info!("[AppConfig] 游戏目录已更新: {}", path);
     Ok(())

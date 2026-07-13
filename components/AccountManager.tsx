@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Account, AccountType, Role, Config, InstanceType } from '../types';
+import { Account, AccountType, Role, InstanceType } from '../types';
 import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download } from 'lucide-react';
 import {
   canStartAccountDrag,
@@ -18,13 +18,13 @@ import { SectSelect } from './SectSelect';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
 import { getBaseServerName } from '../utils/serverUtils';
+import { useAppConfig } from '../contexts/AppConfigContext';
 
 
 
 interface AccountManagerProps {
   accounts: Account[];
   setAccounts: React.Dispatch<React.SetStateAction<Account[]>>;
-  config?: Config;
   instanceTypes: InstanceType[];
 }
 
@@ -37,7 +37,8 @@ interface AccountDragPointerPayload extends AccountDragPointerPosition {
   pointerId: number;
 }
 
-export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, config, instanceTypes }) => {
+export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, instanceTypes }) => {
+  const { appConfig } = useAppConfig();
   const ACCOUNT_DRAG_START_DISTANCE = 6;
   const ACCOUNT_REORDER_EASING = 'cubic-bezier(0.22, 0.8, 0.2, 1)';
   const ACCOUNT_DRAG_SURFACE_EASING = 'cubic-bezier(0.2, 0.85, 0.2, 1)';
@@ -237,7 +238,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   }, [confirmDeleteRole, safeAccounts]);
 
   const getConfiguredGameDirectory = (): string | null => {
-    const gameDirectory = config?.game?.gameDirectory?.trim();
+    const gameDirectory = appConfig?.gameDirectory?.trim();
     if (!gameDirectory) {
       toast.error('\u8bf7\u5148\u914d\u7f6e\u6e38\u620f\u76ee\u5f55');
       return null;
@@ -557,7 +558,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 打开导入本地角色弹窗
   const handleOpenImportRolesModal = () => {
-    if (!config?.game?.gameDirectory) {
+    if (!appConfig?.gameDirectory) {
       toast.error('请先在配置页面设置游戏目录');
       return;
     }
@@ -1016,7 +1017,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           <div className="flex items-center gap-2">
             {/* 导入本地角色按钮 */}
             {
-              config?.game?.gameDirectory && (
+              appConfig?.gameDirectory && (
                 <button
                   onClick={handleOpenImportRolesModal}
                   className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
@@ -1798,7 +1799,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       <ImportRolesModal
         isOpen={isImportRolesModalOpen}
         onClose={() => setIsImportRolesModalOpen(false)}
-        gameDirectory={config?.game?.gameDirectory || ''}
+        gameDirectory={appConfig?.gameDirectory || ''}
         onImported={handleImportedRoles}
       />
 
