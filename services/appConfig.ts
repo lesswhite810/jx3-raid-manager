@@ -17,4 +17,8 @@ export const appConfigService = {
   async resetSetup(): Promise<void> {
     await invoke('reset_setup');
   },
+
+  async setAutoScanEnabled(enabled: boolean): Promise<void> {
+    await invoke('set_auto_scan_enabled', { enabled });
+  },
 };

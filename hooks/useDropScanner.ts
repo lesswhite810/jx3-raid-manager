@@ -27,6 +27,8 @@ const SCAN_POLL_INTERVAL_MS = 30 * 1000; // 30 秒
 export interface UseDropScannerOptions {
   /** 扫描完成且至少有一条新/更新记录时回调（用于触发 UI 刷新） */
   onRecordsUpdated?: (scannedCount: number) => void;
+  /** 自动扫描是否启用，关闭时不触发轮询扫描 */
+  autoScanEnabled?: boolean;
 }
 
 export interface UseDropScannerReturn {
@@ -43,7 +45,7 @@ export interface UseDropScannerReturn {
 }
 
 export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScannerReturn => {
-  const { onRecordsUpdated } = options;
+  const { onRecordsUpdated, autoScanEnabled = false } = options;
   const { result: activeResult } = useActivePoller();
 
   const [isScanning, setIsScanning] = useState(false);
@@ -101,8 +103,9 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
     }
   }, []);
 
-  // 订阅活跃检测结果 + 30 秒轮询
+  // 订阅活跃检测结果 + 30 秒轮询（仅在自动扫描开启时）
   useEffect(() => {
+    if (!autoScanEnabled) return;
     if (!activeResult) return;
     if (!activeResult.jx3Running) return;
 
@@ -124,7 +127,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
       window.clearTimeout(initialTimer);
       window.clearInterval(intervalId);
     };
-  }, [activeResult, scanAll]);
+  }, [activeResult, scanAll, autoScanEnabled]);
 
   // 手动刷新
   const refresh = useCallback(async () => {

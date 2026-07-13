@@ -12,6 +12,8 @@ interface AppConfigContextType {
   markSetupCompleted: () => Promise<void>;
   /** 重新初始化（清空配置后重载应用） */
   resetAll: () => Promise<void>;
+  /** 设置自动扫描开关 */
+  setAutoScanEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const AppConfigContext = createContext<AppConfigContextType | undefined>(undefined);
@@ -20,6 +22,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   gameDirectory: null,
   setupCompleted: false,
   lastScanMingyiAt: null,
+  autoScanEnabled: false,
 };
 
 export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -87,6 +90,17 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  const setAutoScanEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      await appConfigService.setAutoScanEnabled(enabled);
+      setAppConfig(prev => (prev ? { ...prev, autoScanEnabled: enabled } : { ...DEFAULT_APP_CONFIG, autoScanEnabled: enabled }));
+    } catch (error) {
+      console.error('[AppConfig] 设置自动扫描开关失败:', error);
+      toast.error('设置自动扫描开关失败');
+      throw error;
+    }
+  }, []);
+
   return (
     <AppConfigContext.Provider
       value={{
@@ -95,6 +109,7 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateGameDirectory,
         markSetupCompleted,
         resetAll,
+        setAutoScanEnabled,
       }}
     >
       {children}

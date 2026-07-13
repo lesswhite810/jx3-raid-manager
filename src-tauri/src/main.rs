@@ -240,6 +240,7 @@ fn main() {
             app_config::set_game_directory,
             app_config::complete_setup,
             app_config::reset_setup,
+            app_config::set_auto_scan_enabled,
             // JX3 进程检测（C 阶段）
             jx3_process::get_jx3_runtime_status,
             // 活跃检测（C 阶段）

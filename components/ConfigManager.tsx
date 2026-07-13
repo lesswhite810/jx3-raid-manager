@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
-import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, Database, ExternalLink, Search, Monitor, RotateCcw } from 'lucide-react';
+import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, ExternalLink, Search, Monitor, RotateCcw, MessageCircle, Info } from 'lucide-react';
 import { isValidGamePath } from '../utils/configUtils';
-import { formatUpdatePubDate } from '../utils/updaterUtils';
 import { db } from '../services/db';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from '../utils/toastManager';
@@ -36,10 +35,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [showPathError, setShowPathError] = useState(false);
 
-  const { appConfig, updateGameDirectory, resetAll } = useAppConfig();
+  const { appConfig, updateGameDirectory, resetAll, setAutoScanEnabled } = useAppConfig();
 
-  // 游戏目录以 app_config.game_directory 为唯一源（不再从 config_json 读取）
   const [gameDirectory, setGameDirectory] = useState<string>('');
 
   useEffect(() => {
@@ -109,17 +108,32 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   }, [gameDirectory, updateGameDirectory]);
 
   const handleSelectClient = useCallback(async (client: Jx3ClientInfo) => {
-    // updateGameDirectory 同时写入 app_config.game_directory 和 config_json
     await updateGameDirectory(client.workDirectory);
     setShowScanResults(false);
     toast.success(`已选择 ${client.displayName}`);
   }, [updateGameDirectory]);
 
-  const handleGameDirectoryChange = (value: string) => {
-    setGameDirectory(value);
-    updateGameDirectory(value).catch(error => {
-      console.error('[ConfigManager] 同步游戏目录到 app_config 失败:', error);
-    });
+  const handleBrowseGameDirectory = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: '选择剑网三安装目录',
+      });
+      if (typeof selected === 'string') {
+        await updateGameDirectory(selected);
+        setGameDirectory(selected);
+        // 校验路径
+        const result = await isValidGamePath(selected);
+        setPathValid(result.isValid);
+        if (!result.isValid) {
+          setShowPathError(true);
+        }
+      }
+    } catch (error) {
+      console.error('选择游戏目录失败:', error);
+      toast.error('选择目录失败: ' + (error instanceof Error ? error.message : String(error)));
+    }
   };
 
   const getUpdateStatusText = () => {
@@ -167,108 +181,95 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     }
   };
 
+  const handleReset = async () => {
+    setResetting(true);
+    try {
+      await resetAll();
+    } catch (error) {
+      console.error('重新初始化失败:', error);
+      setResetting(false);
+      setShowResetConfirm(false);
+    }
+  };
+
+  const handleAutoScanToggle = async (enabled: boolean) => {
+    if (enabled) {
+      toast.info('请确保已在茗伊插件中开启：插件集 → 团队 → 团队工具 → 勾选"战斗事件记录"并启用秘境保存');
+    }
+    await setAutoScanEnabled(enabled);
+  };
+
+  const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing';
+  const currentVersion = updateRuntimeInfo?.currentVersion ?? updateCheckResult?.currentVersion ?? '未知';
+  const isPortable = updateRuntimeInfo?.isPortable;
+  const hasNewVersion = updateCheckResult?.available && updateCheckResult.version;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <h2 className="text-2xl font-bold text-main">系统配置</h2>
 
-      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
-        <div className="flex items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-              <Download className="w-5 h-5" />
-            </div>
-            <h3 className="text-lg font-bold text-main">版本与更新</h3>
-          </div>
-          <button
-            onClick={onCheckForUpdates}
-            disabled={updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'}
-            className="btn btn-secondary flex items-center gap-2 text-sm"
-          >
-            <RefreshCw className={`w-4 h-4 ${updateStatus === 'checking' ? 'animate-spin' : ''}`} />
-            {updateStatus === 'checking' ? '检查中...' : '检查更新'}
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <InfoCard label="当前版本" value={`v${updateRuntimeInfo?.currentVersion ?? updateCheckResult?.currentVersion ?? '未知'}`} />
-          <InfoCard label="运行形态" value={updateRuntimeInfo?.isPortable ? '便携版' : '安装版'} />
-          <InfoCard label="更新状态" value={getUpdateStatusText()} />
-        </div>
-
-        {updateCheckResult?.available && updateCheckResult.version && (
-          <div className="mt-4 p-4 bg-base/50 rounded-lg border border-base">
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <span className="text-sm font-medium text-main">发现新版本 v{updateCheckResult.version}</span>
-                {publishedAtText && (
-                  <span className="text-xs text-muted ml-2">发布时间：{publishedAtText}</span>
-                )}
-              </div>
-              <span className="text-xs text-muted">
-                {updateCheckResult.isPortable
-                  ? '便携版检测到新版本后会跳转到 GitHub 下载'
-                  : '确认更新后将下载安装包执行升级'}
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-
+      {/* 合并卡片：路径设置 */}
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
             <FolderOpen className="w-5 h-5" />
           </div>
-          <h3 className="text-lg font-bold text-main">游戏配置</h3>
+          <h3 className="text-lg font-bold text-main">路径设置</h3>
         </div>
 
         <div className="space-y-4">
+          {/* 游戏目录 */}
           <div className="flex items-center gap-4">
-            <label className="text-sm font-medium text-muted whitespace-nowrap">当前赛季</label>
-            <span className="text-sm font-medium text-main">{currentSeason ? currentSeason.name : '加载中...'}</span>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium text-muted whitespace-nowrap">游戏安装目录</label>
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">游戏目录</label>
             <div className="flex-1 flex items-center gap-2">
-              <input
-                type="text"
-                value={gameDirectory}
-                onChange={(e) => handleGameDirectoryChange(e.target.value)}
-                className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-main focus:bg-surface focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted/50 text-sm"
-                placeholder="输入剑网三安装目录，例如 E:\Game\SeasunGame"
-              />
+              <button
+                onClick={handleBrowseGameDirectory}
+                className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-left text-sm text-main hover:border-primary/50 hover:bg-base transition-all truncate"
+                title={gameDirectory || '点击选择游戏安装目录'}
+              >
+                {gameDirectory || '点击选择游戏安装目录'}
+              </button>
+              {pathValid === true && <Check className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+              {pathValid === false && <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />}
               <button
                 onClick={handleScanClients}
                 disabled={scanningClients}
-                className="btn btn-secondary flex items-center gap-2 text-sm whitespace-nowrap"
+                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
                 title="从注册表扫描剑网3客户端"
               >
                 {scanningClients ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Search className="w-4 h-4" />
+                  <Search className="w-3.5 h-3.5" />
                 )}
                 {scanningClients ? '扫描中...' : '扫描'}
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-4 pl-[7.5rem]">
-            {pathValid === false && (
-              <div className="flex items-center gap-1.5 text-xs text-red-500">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>游戏目录路径无效</span>
-              </div>
-            )}
+
+          {/* 路径补全提示 */}
+          <div className="flex items-center gap-2 pl-24">
             {pathValid === true && (
               <div className="flex items-center gap-1.5 text-xs text-emerald-500">
                 <Check className="w-3.5 h-3.5" />
-                <span>游戏目录路径有效</span>
+                <span>游戏目录有效</span>
               </div>
             )}
-            <span className="text-xs text-muted">支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd</span>
+            {pathValid === false && (
+              <div className="flex items-center gap-1.5 text-xs text-red-500">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>目录无效，请选择包含 SeasunGame 的安装根目录，如 E:\Game\SeasunGame</span>
+              </div>
+            )}
+            {pathValid === null && gameDirectory && (
+              <div className="flex items-center gap-1.5 text-xs text-muted">
+                <Info className="w-3.5 h-3.5" />
+                <span>支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd</span>
+              </div>
+            )}
           </div>
 
+          {/* 扫描结果 */}
           {showScanResults && scanResults.length > 0 && (
             <div className="p-4 bg-base/30 rounded-lg border border-base">
               <div className="flex items-center gap-2 mb-3">
@@ -300,66 +301,177 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
               </div>
             </div>
           )}
-        </div>
-      </div>
 
-      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-            <Database className="w-5 h-5" />
-          </div>
-          <h3 className="text-lg font-bold text-main">数据存储</h3>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <p className="text-sm text-main break-all font-mono select-all flex-1">
-            {dataDirInfo?.currentPath ?? '加载中...'}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleSelectCustomDataDir}
-              className="btn btn-secondary flex items-center gap-2 text-sm"
-            >
-              <ExternalLink className="w-4 h-4" />
-              切换目录
-            </button>
-            {dataDirInfo?.customDirConfigured && (
+          {/* 数据目录 */}
+          <div className="flex items-center gap-4 pt-4 border-t border-base">
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">数据目录</label>
+            <div className="flex-1 flex items-center gap-2">
+              <p className="text-sm text-main break-all font-mono select-all flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg">
+                {dataDirInfo?.currentPath ?? '加载中...'}
+              </p>
               <button
-                onClick={handleResetCustomDataDir}
-                className="btn btn-secondary text-sm"
+                onClick={handleSelectCustomDataDir}
+                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
               >
-                还原默认
+                <ExternalLink className="w-3.5 h-3.5" />
+                切换
               </button>
-            )}
+              {dataDirInfo?.customDirConfigured && (
+                <button
+                  onClick={handleResetCustomDataDir}
+                  className="btn btn-secondary text-sm whitespace-nowrap"
+                >
+                  还原
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 当前赛季 */}
+          <div className="flex items-center gap-4 pt-4 border-t border-base">
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">当前赛季</label>
+            <span className="text-sm font-medium text-main">{currentSeason ? currentSeason.name : '加载中...'}</span>
           </div>
         </div>
       </div>
 
-      {/* 重新初始化（危险操作） */}
+      {/* 自动扫描配置 */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+              <RefreshCw className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-main">自动扫描</h3>
+              <p className="text-xs text-muted mt-0.5">
+                {appConfig?.autoScanEnabled
+                  ? '已开启，游戏运行时自动扫描副本掉落'
+                  : '已关闭，仅手动录入副本记录'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => handleAutoScanToggle(!appConfig?.autoScanEnabled)}
+            className={`relative w-11 h-6 rounded-full transition-colors ${
+              appConfig?.autoScanEnabled ? 'bg-emerald-500' : 'bg-base'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+                appConfig?.autoScanEnabled ? 'translate-x-5' : ''
+              }`}
+            />
+          </button>
+        </div>
+        {appConfig?.autoScanEnabled && (
+          <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+            <div className="flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                使用前请确认茗伊插件已开启：插件集 → 团队 → 团队工具 → 勾选"战斗事件记录"并启用秘境保存，否则无法扫描到副本数据。
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 版本与更新 */}
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 rounded-lg flex items-center justify-center">
-              <RotateCcw className="w-5 h-5" />
+            <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+              <Download className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-bold text-main">重新初始化</h3>
+            <h3 className="text-lg font-bold text-main">版本与更新</h3>
+          </div>
+          <button
+            onClick={onCheckForUpdates}
+            disabled={isUpdateBusy}
+            className="btn btn-secondary flex items-center gap-2 text-sm"
+          >
+            <RefreshCw className={`w-4 h-4 ${updateStatus === 'checking' ? 'animate-spin' : ''}`} />
+            {updateStatus === 'checking' ? '检查中...' : '检查更新'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="p-3 bg-base/50 rounded-lg border border-base">
+            <div className="text-xs text-muted mb-1">当前版本</div>
+            <div className="text-sm font-medium text-main">v{currentVersion}</div>
+          </div>
+          <div className="p-3 bg-base/50 rounded-lg border border-base">
+            <div className="text-xs text-muted mb-1">运行形态</div>
+            <div className="text-sm font-medium text-main">{isPortable ? '便携版' : '安装版'}</div>
+          </div>
+          <div className="p-3 bg-base/50 rounded-lg border border-base">
+            <div className="text-xs text-muted mb-1">更新状态</div>
+            <div className="text-sm font-medium text-main">{getUpdateStatusText()}</div>
           </div>
         </div>
 
-        <div className="space-y-3">
-          <p className="text-sm text-muted">
-            重新初始化会清空应用配置（游戏目录、账号 ID 列表、引导完成标记），应用将重载并显示引导界面。
-            <span className="text-amber-600 dark:text-amber-400">副本记录、AI 配置等数据不会删除</span>，仅影响引导流程与活跃检测。
-          </p>
+        {hasNewVersion && (
+          <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                  发现新版本 v{updateCheckResult!.version}
+                </span>
+                {publishedAtText && (
+                  <span className="text-xs text-muted ml-2">发布时间：{publishedAtText}</span>
+                )}
+              </div>
+              <span className="text-xs text-muted">
+                {updateCheckResult!.isPortable
+                  ? '便携版请前往 GitHub 下载'
+                  : '确认更新后将自动下载安装'}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
 
-          <button
-            onClick={() => setShowResetConfirm(true)}
-            className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-          >
-            <RotateCcw className="w-4 h-4" />
-            重新初始化应用
-          </button>
+      {/* 问题反馈 */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+            <MessageCircle className="w-5 h-5" />
+          </div>
+          <h3 className="text-lg font-bold text-main">问题反馈</h3>
         </div>
+        <div className="flex items-center gap-6">
+          <img
+            src="/qq-group-qr.jpg"
+            alt="QQ群二维码"
+            className="w-28 h-28 rounded-lg border border-base object-cover"
+          />
+          <div className="space-y-2">
+            <p className="text-sm text-main">加入 QQ 群反馈问题、提建议或交流使用心得</p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted">群号：</span>
+              <span className="text-lg font-bold text-primary select-all">1085903108</span>
+            </div>
+            <p className="text-xs text-muted">扫描左侧二维码或搜索群号加入</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 重新初始化 */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 rounded-lg flex items-center justify-center">
+            <RotateCcw className="w-5 h-5" />
+          </div>
+          <h3 className="text-lg font-bold text-main">重新初始化</h3>
+        </div>
+
+        <button
+          onClick={() => setShowResetConfirm(true)}
+          className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+        >
+          <RotateCcw className="w-4 h-4" />
+          重新初始化应用
+        </button>
       </div>
 
       {/* 重新初始化确认弹窗 */}
@@ -373,7 +485,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
             <div className="bg-surface rounded-xl border border-base shadow-lg p-6 max-w-sm w-full pointer-events-auto">
               <h3 className="text-base font-bold text-main mb-2">确认重新初始化</h3>
               <p className="text-sm text-muted mb-5">
-                应用将立即重载，未保存的数据可能丢失。副本记录、AI 配置等数据不会删除。
+                此操作将清空游戏目录和账号配置，应用重载后回到引导界面。副本记录和 AI 配置等数据不受影响。
               </p>
               <div className="flex justify-end gap-2">
                 <button
@@ -384,16 +496,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                   取消
                 </button>
                 <button
-                  onClick={async () => {
-                    setResetting(true);
-                    try {
-                      await resetAll();
-                    } catch (error) {
-                      console.error('重新初始化失败:', error);
-                      setResetting(false);
-                      setShowResetConfirm(false);
-                    }
-                  }}
+                  onClick={handleReset}
                   disabled={resetting}
                   className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
                 >
@@ -404,27 +507,52 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           </div>
         </>
       )}
+
+      {/* 路径无效提示弹窗 */}
+      {showPathError && (
+        <>
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]"
+            onClick={() => setShowPathError(false)}
+          />
+          <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
+            <div className="bg-surface rounded-xl border border-base shadow-lg p-6 max-w-sm w-full pointer-events-auto">
+              <h3 className="text-base font-bold text-main mb-2">游戏目录无效</h3>
+              <p className="text-sm text-muted mb-5">
+                所选目录无法识别为剑网三安装目录。请选择包含 SeasunGame 文件夹的根目录，例如 <span className="font-mono text-main">E:\Game\SeasunGame</span>，系统会自动补全到游戏运行目录。
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowPathError(false)}
+                  className="btn btn-secondary text-sm"
+                >
+                  知道了
+                </button>
+                <button
+                  onClick={() => {
+                    setShowPathError(false);
+                    handleBrowseGameDirectory();
+                  }}
+                  className="btn btn-primary text-sm"
+                >
+                  重新选择
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
 
-interface InfoCardProps {
-  label: string;
-  value: string;
-  badge?: string;
-  badgeClass?: string;
+// 工具函数：格式化发布日期
+function formatUpdatePubDate(pubDate: string | undefined): string | null {
+  if (!pubDate) return null;
+  try {
+    const date = new Date(pubDate);
+    return date.toLocaleDateString('zh-CN');
+  } catch {
+    return null;
+  }
 }
-
-const InfoCard: React.FC<InfoCardProps> = ({ label, value, badge, badgeClass }) => (
-  <div className="p-3 bg-base/50 rounded-lg border border-base">
-    <div className="text-xs text-muted mb-1">{label}</div>
-    <div className="flex items-center gap-2">
-      <span className="text-sm font-medium text-main">{value}</span>
-      {badge && (
-        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badgeClass || 'bg-primary/10 text-primary'}`}>
-          {badge}
-        </span>
-      )}
-    </div>
-  </div>
-);

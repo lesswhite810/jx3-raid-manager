@@ -378,4 +378,5 @@ export interface AppConfig {
   gameDirectory: string | null;
   setupCompleted: boolean;
   lastScanMingyiAt: string | null;
+  autoScanEnabled: boolean;
 }

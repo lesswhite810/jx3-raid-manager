@@ -105,6 +105,7 @@ function App() {
   // 副本掉落自动扫描（B 阶段）：JX3 在线时全局自动扫描 pending 记录
   // 扫描到新记录后自动重新加载 records
   useDropScanner({
+    autoScanEnabled: appConfig?.autoScanEnabled ?? false,
     onRecordsUpdated: () => {
       void reloadRecords();
     },

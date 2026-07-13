@@ -10,11 +10,13 @@ pub struct AppConfig {
     pub game_directory: Option<String>,
     pub setup_completed: bool,
     pub last_scan_mingyi_at: Option<String>,
+    pub auto_scan_enabled: bool,
 }
 
 const KEY_GAME_DIRECTORY: &str = "game_directory";
 const KEY_SETUP_COMPLETED: &str = "setup_completed";
 const KEY_LAST_SCAN_MINGYI_AT: &str = "last_scan_mingyi_at";
+const KEY_AUTO_SCAN_ENABLED: &str = "auto_scan_enabled";
 
 /// 从 app_config 表读取指定 key 的值
 fn read_value(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
@@ -53,11 +55,14 @@ pub fn get_app_config_internal() -> Result<AppConfig, String> {
     let setup_completed_str = read_value(&conn, KEY_SETUP_COMPLETED)?.unwrap_or_default();
     let setup_completed = setup_completed_str.eq_ignore_ascii_case("true");
     let last_scan_mingyi_at = non_empty(read_value(&conn, KEY_LAST_SCAN_MINGYI_AT)?);
+    let auto_scan_enabled_str = read_value(&conn, KEY_AUTO_SCAN_ENABLED)?.unwrap_or_default();
+    let auto_scan_enabled = auto_scan_enabled_str.eq_ignore_ascii_case("true");
 
     Ok(AppConfig {
         game_directory,
         setup_completed,
         last_scan_mingyi_at,
+        auto_scan_enabled,
     })
 }
 
@@ -97,6 +102,15 @@ pub fn reset_setup() -> Result<(), String> {
     upsert_value(&conn, KEY_SETUP_COMPLETED, "false")?;
     upsert_value(&conn, KEY_LAST_SCAN_MINGYI_AT, "")?;
     log::info!("[AppConfig] 应用配置已重置，将回到引导界面");
+    Ok(())
+}
+
+/// 设置自动扫描开关（Tauri 命令）
+#[tauri::command]
+pub fn set_auto_scan_enabled(enabled: bool) -> Result<(), String> {
+    let conn = db::init_db()?;
+    upsert_value(&conn, KEY_AUTO_SCAN_ENABLED, if enabled { "true" } else { "false" })?;
+    log::info!("[AppConfig] 自动扫描已{}", if enabled { "开启" } else { "关闭" });
     Ok(())
 }
 
