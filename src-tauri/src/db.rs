@@ -1266,7 +1266,7 @@ fn auto_complete_setup_for_legacy_users(conn: &Connection) -> Result<(), String>
         return Ok(());
     }
 
-    // 2. 检查 game_directory 是否非空
+    // 2. 检查是否有使用痕迹：game_directory 非空 或 accounts 表有数据（满足任一即可）
     let game_directory: String = conn
         .query_row(
             "SELECT value FROM app_config WHERE key = 'game_directory'",
@@ -1275,11 +1275,9 @@ fn auto_complete_setup_for_legacy_users(conn: &Connection) -> Result<(), String>
         )
         .unwrap_or_default();
 
-    if game_directory.trim().is_empty() {
-        return Ok(());
-    }
+    let has_game_dir = !game_directory.trim().is_empty();
 
-    // 3. 检查 accounts 表是否存在且有数据
+    // 检查 accounts 表是否存在且有数据
     let accounts_table_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='accounts'",
@@ -1288,15 +1286,15 @@ fn auto_complete_setup_for_legacy_users(conn: &Connection) -> Result<(), String>
         )
         .map_err(|e| e.to_string())?;
 
-    if !accounts_table_exists {
-        return Ok(());
-    }
+    let account_count: i64 = if accounts_table_exists {
+        conn.query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+            .unwrap_or(0)
+    } else {
+        0
+    };
 
-    let account_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-
-    if account_count == 0 {
+    // 只要配置过游戏目录或导入过账号，就视为历史用户，自动标记引导完成
+    if !has_game_dir && account_count == 0 {
         return Ok(());
     }
 
@@ -3625,19 +3623,9 @@ pub fn db_save_config(config: String) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    // 同步 game_directory（从 JSON 中提取）
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&config) {
-        let game_dir = parsed
-            .get("game")
-            .and_then(|g| g.get("gameDirectory"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        conn.execute(
-            "UPDATE app_config SET value = ?1, updated_at = ?2 WHERE key = 'game_directory'",
-            params![game_dir, &now],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+    // 注意：不再从 config_json 反向覆盖 game_directory
+    // game_directory 的唯一存储源是 app_config.game_directory，由 set_game_directory 命令写入
+    // 旧代码从 config_json 中提取 gameDirectory 并覆盖 game_directory 会导致升级后游戏目录丢失
 
     Ok(())
 }

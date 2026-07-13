@@ -127,7 +127,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
       window.clearTimeout(initialTimer);
       window.clearInterval(intervalId);
     };
-  }, [activeResult, scanAll, autoScanEnabled]);
+  }, [activeResult?.jx3Running, scanAll, autoScanEnabled]);
 
   // 手动刷新
   const refresh = useCallback(async () => {

@@ -320,6 +320,9 @@ export const SetupGuide: React.FC = () => {
             {!canComplete && (
               <p className="text-xs text-muted mt-2">请先保存游戏目录</p>
             )}
+            <p className="text-xs text-muted mt-3">
+              数据默认存储在应用安装目录下，后续可在"配置 → 路径设置"中修改数据存储位置。
+            </p>
           </section>
         </div>
 

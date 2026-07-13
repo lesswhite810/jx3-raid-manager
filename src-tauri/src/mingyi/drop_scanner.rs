@@ -667,7 +667,8 @@ fn build_raid_instance(
     }
 
     let raid_display_name = success_jcls[0].raid_display_name.clone();
-    let start_time = success_jcls[0].timestamp;
+    // 使用组内第一个 JCL 的时间戳作为稳定的去重键，避免进行中副本因新 JCL 产生导致 start_time 变化
+    let start_time = group.first().map(|j| j.timestamp).unwrap_or(success_jcls[0].timestamp);
     // last_jcl_time 取整组最后一个 JCL（含拉托），用于确定聊天记录结束范围
     let last_jcl_time = group.last().map(|j| j.timestamp).unwrap_or(0);
 

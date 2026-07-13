@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Account, AccountType, Role, InstanceType } from '../types';
-import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download } from 'lucide-react';
+import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download, RefreshCw } from 'lucide-react';
 import {
   canStartAccountDrag,
   getAccountReorderAnimationDuration,
@@ -17,6 +17,7 @@ import { SectIcon } from './SectIcon';
 import { SectSelect } from './SectSelect';
 import { db } from '../services/db';
 import { deleteAccountDirectory, deleteRoleDirectory } from '../services/accountDirectoryCleanup';
+import { analyzeRoles } from '../services/gameDirectoryScanner';
 import { getBaseServerName } from '../utils/serverUtils';
 import { useAppConfig } from '../contexts/AppConfigContext';
 
@@ -47,6 +48,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
   const [isImportRolesModalOpen, setIsImportRolesModalOpen] = useState(false);
+  const [refreshingEquip, setRefreshingEquip] = useState(false);
   const [addingRoleToAccountId, setAddingRoleToAccountId] = useState<string | null>(null);
   const [expandedAccountIds, setExpandedAccountIds] = useState<Set<string>>(new Set());
 
@@ -466,16 +468,20 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       return;
     }
 
+    let updatedRole: Role | null = null;
+
     setAccounts(prev => prev.map(account => {
       if (account.id !== accountId) return account;
 
       const updatedRoles = account.roles.map(role => {
         if (role.id !== roleId) return role;
-        return {
+        const newRole = {
           ...role,
           martial: martial.trim(),
           equipmentScore: equipmentScore !== undefined && equipmentScore !== null ? equipmentScore : undefined
         };
+        updatedRole = newRole;
+        return newRole;
       });
 
       return {
@@ -483,6 +489,14 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         roles: sortRoles(updatedRoles)
       };
     }));
+
+    // 落库保存
+    if (updatedRole) {
+      db.saveRoleStructured(updatedRole).catch(error => {
+        console.error('保存角色信息到数据库失败:', error);
+        toast.error('保存到数据库失败，修改可能在刷新后丢失');
+      });
+    }
 
     toast.success('角色信息更新成功');
     handleCloseEditRoleModal();
@@ -563,6 +577,35 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       return;
     }
     setIsImportRolesModalOpen(true);
+  };
+
+  // 从茗伊数据库刷新已导入角色的装分
+  const handleRefreshEquipScores = async () => {
+    if (!appConfig?.gameDirectory) {
+      toast.error('请先在配置页面设置游戏目录');
+      return;
+    }
+    setRefreshingEquip(true);
+    try {
+      const result = await analyzeRoles(appConfig.gameDirectory);
+      if (result.success) {
+        if (result.updatedRoles > 0) {
+          toast.success(`已刷新 ${result.updatedRoles} 个角色的装分`);
+          // 重新加载账号数据
+          const freshAccounts = await db.getAccounts();
+          setAccounts(freshAccounts);
+        } else {
+          toast.info('没有需要更新的角色装分');
+        }
+      } else {
+        toast.error(result.error || '刷新装分失败');
+      }
+    } catch (error) {
+      console.error('刷新装分失败:', error);
+      toast.error('刷新装分失败: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setRefreshingEquip(false);
+    }
   };
 
   const handleAddAccountSubmit = (data: { accountName: string; type: AccountType; password?: string; notes?: string }) => {
@@ -1015,6 +1058,18 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <h2 className="text-xl font-bold text-main">账号管理</h2>
           <div className="flex items-center gap-2">
+            {/* 刷新装分按钮 */}
+            {appConfig?.gameDirectory && (
+              <button
+                onClick={handleRefreshEquipScores}
+                disabled={refreshingEquip}
+                className="bg-surface border border-base text-main hover:border-primary hover:text-primary hover:bg-primary/5 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm disabled:opacity-50"
+                title="从茗伊插件数据库刷新已导入角色的装分"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshingEquip ? 'animate-spin' : ''}`} />
+                <span>{refreshingEquip ? '刷新中...' : '刷新装分'}</span>
+              </button>
+            )}
             {/* 导入本地角色按钮 */}
             {
               appConfig?.gameDirectory && (

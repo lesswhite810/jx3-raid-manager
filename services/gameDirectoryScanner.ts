@@ -101,6 +101,27 @@ export async function autoParseGameDirectory(gameDirectory: string): Promise<Aut
   }
 }
 
+/**
+ * 从茗伊数据库刷新已导入角色的门派、心法、装分
+ */
+export async function analyzeRoles(gameDirectory: string): Promise<AutoParseResult> {
+  try {
+    const result = await invoke<AutoParseResult>('analyze_roles', {
+      gameDirectory
+    });
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      newAccounts: 0,
+      updatedAccounts: 0,
+      newRoles: 0,
+      updatedRoles: 0,
+      error: `刷新装分失败: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
 // 客户端类型
 export type ClientType =
   | 'zhcn_hd'
