@@ -2102,16 +2102,21 @@ fn upsert_raid_drop_record(
 ) -> Result<(), String> {
     let now = chrono::Local::now().to_rfc3339();
 
-    // 检查 records 表是否已存在同账号、同副本、同日期的待确认记录（pending）
+    // 检查 records 表是否已存在同账号、同副本、同 CD 周期的待确认记录（pending/scanning）
     // 注意：raid_name 列存储的是 raids.name（如 "阆风悬城"），不是 JCL 显示名
-    // （如 "25人普通阆风悬城"），因此必须用 raid_name 参数做精确匹配，
-    // 不能用 instance.raid_display_name 做 LIKE 匹配（会永远匹配不到，导致重复 INSERT）。
-    // record_date 是首张 JCL 的毫秒时间戳，同一副本实例的 start_time 跨扫描稳定，
-    // 可用于精确匹配区分同一天的不同副本实例。
+    // （如 "25人普通阆风悬城"），因此必须用 raid_name 参数做精确匹配。
+    // 使用 CD 窗口范围匹配替代精确时间戳匹配：同一 CD 周期内同一副本只保留一条 pending/scanning，
+    // 避免 start_time 因 JCL 文件增减而变化导致去重失败。
+    let is_ten_person = instance.raid_display_name.contains("10人");
+    let (window_start, window_end) = calculate_cd_window(instance.start_time, is_ten_person);
+
     let existing: Option<(String, String)> = conn
         .query_row(
-            "SELECT id, status FROM records WHERE account_id = ?1 AND raid_name = ?2 AND record_date = ?3 AND status IN ('pending', 'scanning')",
-            params![instance.account_id, raid_name, instance.start_time],
+            "SELECT id, status FROM records
+             WHERE account_id = ?1 AND raid_name = ?2
+               AND record_date >= ?3 AND record_date < ?4
+               AND status IN ('pending', 'scanning')",
+            params![instance.account_id, raid_name, window_start, window_end],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .ok();
@@ -2137,9 +2142,6 @@ fn upsert_raid_drop_record(
     // 因此不能用 raid_name 列精确匹配，需查询同账号同 CD 窗口内所有手工记录，
     // 在 Rust 中解析 JSON data 字段的 raidName 比较。
     if existing.is_none() {
-        let is_ten_person = instance.raid_display_name.contains("10人");
-        let (window_start, window_end) = calculate_cd_window(instance.start_time, is_ten_person);
-
         log::info!(
             "[DropScanner] CD 检查: account_id={}, raid_display='{}', start_time={}, is_ten={}, window=[{}, {}]",
             instance.account_id,
