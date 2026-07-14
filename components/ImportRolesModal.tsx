@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { X, Loader2, AlertCircle, User, Download, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, Loader2, AlertCircle, User, Download, Check, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { toast } from '../utils/toastManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { SectIcon } from './SectIcon';
@@ -62,6 +62,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [refreshingEquip, setRefreshingEquip] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<PreviewableAccount[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -227,6 +228,37 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
     }
   };
 
+  // 刷新已导入角色的装分（从茗伊数据库重新读取）
+  const handleRefreshEquipScores = async () => {
+    if (refreshingEquip) return;
+    setRefreshingEquip(true);
+    try {
+      const result = await invoke<ImportResult>('analyze_roles', { gameDirectory });
+      if (result.success) {
+        if (result.updatedRoles > 0) {
+          toast.success(`已刷新 ${result.updatedRoles} 个角色的装分`);
+          onImported();
+          // 重新加载预览数据以显示最新装分
+          invoke<PreviewResult>('preview_importable_roles', { gameDirectory })
+            .then(previewResult => {
+              if (previewResult.success) {
+                setAccounts(previewResult.accounts);
+              }
+            })
+            .catch(() => {});
+        } else {
+          toast.info('没有需要更新的角色装分');
+        }
+      } else {
+        setError(result.error || '刷新装分失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshingEquip(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return createPortal(
@@ -265,6 +297,17 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
               <span>可导入 <span className="font-medium text-primary">{stats.importableCount}</span></span>
             </div>
             <div className="flex items-center gap-2">
+              {stats.importedCount > 0 && (
+                <button
+                  onClick={handleRefreshEquipScores}
+                  disabled={refreshingEquip || importing}
+                  className="text-xs px-2.5 py-1 rounded-md bg-surface border border-base hover:border-primary hover:text-primary text-main transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  title="从茗伊插件数据库刷新已导入角色的装分"
+                >
+                  <RefreshCw className={`w-3 h-3 ${refreshingEquip ? 'animate-spin' : ''}`} />
+                  {refreshingEquip ? '刷新中...' : '刷新装分'}
+                </button>
+              )}
               <button
                 onClick={selectAllImportable}
                 className="text-xs px-2.5 py-1 rounded-md bg-surface border border-base hover:border-primary hover:text-primary text-main transition-all"
