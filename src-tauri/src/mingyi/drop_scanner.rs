@@ -2102,11 +2102,11 @@ fn upsert_raid_drop_record(
 ) -> Result<(), String> {
     let now = chrono::Local::now().to_rfc3339();
 
-    // 检查 records 表是否已存在同账号、同副本、同 CD 周期的待确认记录（pending/scanning）
-    // 注意：raid_name 列存储的是 raids.name（如 "阆风悬城"），不是 JCL 显示名
-    // （如 "25人普通阆风悬城"），因此必须用 raid_name 参数做精确匹配。
-    // 使用 CD 窗口范围匹配替代精确时间戳匹配：同一 CD 周期内同一副本只保留一条 pending/scanning，
-    // 避免 start_time 因 JCL 文件增减而变化导致去重失败。
+    // 检查 records 表是否已存在同账号、同副本、同 CD 周期的 auto_scan 记录（任意状态）
+    // 注意：raid_name 列存储的是 raids.name（如 "阆风悬城"），不是 JCL 显示名。
+    // 使用 CD 窗口范围匹配：同一 CD 周期内同一副本只保留一条记录。
+    // 查询所有状态（含 confirmed/rejected），避免已确认/已拒绝的记录被重复创建。
+    // 优先返回 pending/scanning（用于更新），其次 confirmed/rejected（用于跳过）。
     let is_ten_person = instance.raid_display_name.contains("10人");
     let (window_start, window_end) = calculate_cd_window(instance.start_time, is_ten_person);
 
@@ -2115,31 +2115,39 @@ fn upsert_raid_drop_record(
             "SELECT id, status FROM records
              WHERE account_id = ?1 AND raid_name = ?2
                AND record_date >= ?3 AND record_date < ?4
-               AND status IN ('pending', 'scanning')",
+               AND source = 'auto_scan'
+             ORDER BY
+               CASE status
+                 WHEN 'scanning' THEN 0
+                 WHEN 'pending' THEN 1
+                 ELSE 2
+               END
+             LIMIT 1",
             params![instance.account_id, raid_name, window_start, window_end],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .ok();
 
-    // 已有 confirmed 记录或 rejected 记录时跳过
+    // 已有 confirmed 或 rejected 记录时跳过（已处理，不再重复扫描）
     if let Some((_, ref status)) = existing {
         if status == "confirmed" || status == "rejected" {
             log::info!(
-                "[DropScanner] 记录已 {}，跳过: {} - {}",
+                "[DropScanner] CD 窗口内已有 {} 的 auto_scan 记录，跳过: {} (window: {}~{})",
                 status,
                 instance.raid_display_name,
-                instance.start_time
+                window_start,
+                window_end
             );
             return Ok(());
         }
     }
 
-    // 若不存在同源 pending，进一步检查 records 表中同 CD 窗口内是否已有手工记录。
+    // 若不存在同源 auto_scan 记录，进一步检查同 CD 窗口内是否已有手工记录。
     // 已有手工记录时跳过 pending 创建，避免重复占用 CD。
     //
     // 注意：手工记录的 raid_name 列存的是 JSON raidName 完整名（如 "25人英雄阆风悬城"），
     // 而 auto 记录的 raid_name 列存的是 raids.name 短名（如 "阆风悬城"）。
-    // 因此不能用 raid_name 列精确匹配，需查询同账号同 CD 窗口内所有手工记录，
+    // 因此不能用 raid_name 列精确匹配，需查询同账号同 CD 窗口内所有 confirmed 记录，
     // 在 Rust 中解析 JSON data 字段的 raidName 比较。
     if existing.is_none() {
         log::info!(
