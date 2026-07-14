@@ -478,6 +478,139 @@ pub fn get_db_path() -> Result<PathBuf, String> {
     Ok(app_dir.join(DATABASE_NAME))
 }
 
+/// 版本化数据库迁移
+///
+/// 旧版本使用 `jx3-raid-manager-v{N}.db` 文件名（如 v14），新版本统一使用
+/// `jx3-raid-manager.db`。此函数在以下条件下自动迁移：
+///
+/// 1. 主数据库 (`jx3-raid-manager.db`) 不存在，或存在但为空（accounts=0 且 records=0）
+/// 2. 同目录下存在版本化备份 (`jx3-raid-manager-v{N}.db`) 且有数据（accounts>0 或 records>0）
+///
+/// 迁移策略：选择文件修改时间最新的有数据的版本化备份，复制覆盖主数据库。
+fn migrate_versioned_db_if_needed(db_path: &Path) -> Result<(), String> {
+    let parent = match db_path.parent() {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    let main_exists = db_path.exists();
+
+    // 检查主数据库是否为空（需要打开并查询）
+    let main_is_empty = if main_exists {
+        match Connection::open(db_path) {
+            Ok(conn) => {
+                let accounts: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='accounts'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                if accounts == 0 {
+                    true
+                } else {
+                    let count: i64 = conn
+                        .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+                        .unwrap_or(0);
+                    let records_count: i64 = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='records'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(0);
+                    let actual_records: i64 = if records_count > 0 {
+                        conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    count == 0 && actual_records == 0
+                }
+            }
+            Err(_) => true,
+        }
+    } else {
+        true
+    };
+
+    if !main_is_empty {
+        return Ok(());
+    }
+
+    // 查找同目录下的版本化备份
+    let entries = match std::fs::read_dir(parent) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+
+    let db_prefix = "jx3-raid-manager-v";
+    let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+
+        // 匹配 jx3-raid-manager-v{N}.db 格式
+        if name_str.starts_with(db_prefix) && name_str.ends_with(".db") {
+            let path = entry.path();
+            // 验证该备份是否有数据
+            if let Ok(conn) = Connection::open(&path) {
+                let has_data: bool = conn
+                    .query_row(
+                        "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM records) > 0",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                if has_data {
+                    if let Ok(meta) = entry.metadata() {
+                        if let Ok(mtime) = meta.modified() {
+                            candidates.push((path, mtime));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    // 按修改时间降序，取最新的
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    let latest = &candidates[0].0;
+
+    log::info!(
+        "[INIT] 版本化数据库迁移：主数据库为空，使用最新版本化备份 {:?} 覆盖 {:?}",
+        latest,
+        db_path
+    );
+
+    // 备份当前空的主数据库（如果存在）
+    if main_exists {
+        let backup_name = format!(
+            "{}.empty-backup",
+            db_path.file_name().unwrap_or_default().to_string_lossy()
+        );
+        let backup_path = db_path.with_file_name(backup_name);
+        let _ = std::fs::rename(db_path, &backup_path);
+    }
+
+    std::fs::copy(latest, db_path).map_err(|e| {
+        format!(
+            "版本化数据库迁移失败: {} -> {}: {}",
+            latest.display(),
+            db_path.display(),
+            e
+        )
+    })?;
+
+    log::info!("[INIT] 版本化数据库迁移完成");
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 pub struct DirectoryDeleteResult {
     pub deleted: bool,
@@ -603,6 +736,12 @@ pub fn init_db() -> Result<Connection, String> {
     }
 
     let path = get_db_path()?;
+
+    // 版本化数据库迁移：旧版本使用 jx3-raid-manager-v{N}.db 文件名，
+    // 新版本统一使用 jx3-raid-manager.db。如果主数据库不存在或为空（无账号无记录），
+    // 但同目录存在版本化备份且有数据，则用最新的版本化备份覆盖主数据库。
+    migrate_versioned_db_if_needed(&path)?;
+
     let db_exists = path.exists();
 
     log::info!(

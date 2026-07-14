@@ -354,7 +354,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           <button
             onClick={() => handleAutoScanToggle(!appConfig?.autoScanEnabled)}
             className={`relative w-11 h-6 rounded-full transition-colors ${
-              appConfig?.autoScanEnabled ? 'bg-emerald-500' : 'bg-base'
+              appConfig?.autoScanEnabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
             }`}
           >
             <span
@@ -439,13 +439,13 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           </div>
           <h3 className="text-lg font-bold text-main">问题反馈</h3>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-6 p-4 bg-base/30 rounded-lg">
           <img
             src="/qq-group-qr.jpg"
             alt="QQ群二维码"
-            className="w-28 h-28 rounded-lg border border-base object-cover"
+            className="w-32 h-32 rounded-lg border border-base object-contain bg-white flex-shrink-0"
           />
-          <div className="space-y-2">
+          <div className="space-y-2 min-w-0">
             <p className="text-sm text-main">加入 QQ 群反馈问题、提建议或交流使用心得</p>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted">群号：</span>
