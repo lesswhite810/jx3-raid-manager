@@ -631,11 +631,9 @@ fn build_raid_instance(
             success_jcls.push(*kill_jcl);
         } else if !boss_group.is_empty() {
             // 无明确击杀信号，组级别兜底：最后一个 JCL 为击杀
-            // 适用场景：部分 BOSS 击杀时不触发 bFight=false 也不产生宝箱（如墨家机侍、唐怀仁、须罗巨傀）
+            // 适用场景：部分 BOSS 击杀时不触发 bFight=false 也不产生宝箱（如墨家机侍→唐怀仁、须罗巨傀）
             let last_jcl = boss_group.last().unwrap();
             // 跳过纯小怪子组：JclAnalysis.boss_name=None 说明是路径 B 小怪 JCL
-            // （文件名 BOSS 不在配置中，且真实 BOSS 未进入战斗 bFight=true），
-            // 这种 JCL 不应被兜底为击杀 JCL（如"狼牙士兵"出场对话 JCL）。
             let analysis_boss_name = jcl_analyses
                 .get(&last_jcl.file_name)
                 .and_then(|a| a.boss_name.as_deref());
@@ -646,10 +644,23 @@ fn build_raid_instance(
                 );
                 continue;
             }
+            // 仅当文件名 BOSS 与内容 BOSS 不同时才兜底（说明是小怪 JCL，真实 BOSS 从内容中识别）
+            // 文件名 BOSS 与内容 BOSS 相同且 is_kill=false → 真正的灭团，不兜底
+            let file_boss = &last_jcl.boss_name;
+            let analysis_boss = analysis_boss_name.unwrap_or("");
+            if file_boss == analysis_boss {
+                log::debug!(
+                    "[DropScanner] BOSS {} is_kill=false 且文件名BOSS与内容BOSS一致，判定为灭团不兜底: {}",
+                    file_boss,
+                    last_jcl.file_name
+                );
+                continue;
+            }
             let boss_name = get_effective_boss_name(last_jcl, jcl_analyses);
             log::info!(
-                "[DropScanner] BOSS {} 无JCL内部击杀信号，组级别兜底取最后一个JCL为击杀: {}",
+                "[DropScanner] BOSS {} (文件名:{}) 无JCL内部击杀信号，组级别兜底取最后一个JCL为击杀: {}",
                 boss_name,
+                file_boss,
                 last_jcl.file_name
             );
             success_jcls.push(*last_jcl);
@@ -2623,10 +2634,45 @@ pub fn scan_raid_drops_with_raids(
             chatlog_query_count
         );
 
-        // Boss 击杀数验证：如果 chatlog 已查询且 JCL 判定的击杀数 > chatlog 的 10 金次数，
-        // 以 chatlog 为准（裁剪 bosses_killed，保留 chatlog 记录的击杀数）。
-        // 如果 chatlog 未写入磁盘（chatlog_query_count == 0）且角色在线，暂保留 JCL 判定（待补检）。
-        if chatlog_query_count > 0 {
+        // Boss 击杀数验证：以 chatlog 10金次数校验 JCL 判定的击杀数。
+        // 但 chatlog 10金校验仅在 chatlog 确认落盘后（游戏退出或角色离线）执行，
+        // 因为茗伊插件在游戏运行期间不实时刷盘，chatlog 数据可能不完整。
+        // 判定信号：jx3_running=false 或 role_online=false 表示 chatlog 已落盘。
+        let boss_all_killed = !raid_bosses.is_empty() && {
+            let configured_names: std::collections::HashSet<&str> = raid_bosses
+                .iter()
+                .map(|(_, name)| name.as_str())
+                .collect();
+            let killed_configured = instance
+                .bosses_killed
+                .iter()
+                .filter(|name| configured_names.contains(name.as_str()))
+                .count() as u32;
+            killed_configured >= raid_bosses.len() as u32
+        };
+
+        // chatlog 是否已落盘：游戏退出或角色离线时，chatlog 不再被实时写入，视为已落盘
+        let chatlog_flushed = !jx3_running || !role_online;
+
+        if boss_all_killed {
+            log::info!(
+                "[DropScanner] 副本 {} BOSS已全清({}/{}), 跳过 chatlog 10金校验",
+                instance.raid_display_name,
+                instance.boss_kill_count,
+                raid_bosses.len()
+            );
+        } else if !chatlog_flushed {
+            // 游戏运行中且角色在线：chatlog 可能未完全落盘，跳过校验，保留 JCL 判定
+            log::info!(
+                "[DropScanner] 副本 {} BOSS未全清({}/{}), chatlog 未落盘(jx3_running={}, role_online={}), 跳过10金校验保留JCL判定",
+                instance.raid_display_name,
+                instance.boss_kill_count,
+                raid_bosses.len(),
+                jx3_running,
+                role_online
+            );
+        } else if chatlog_query_count > 0 {
+            // chatlog 已落盘：执行原有 10金校验逻辑
             let chatlog_boss_kills = all_boss_kill_times.len() as u32;
             if chatlog_boss_kills < instance.boss_kill_count {
                 log::warn!(
@@ -2639,9 +2685,10 @@ pub fn scan_raid_drops_with_raids(
                 }
                 instance.boss_kill_count = chatlog_boss_kills;
             }
-        } else if role_online {
+        } else {
+            // chatlog 已落盘但无数据（chatlog_query_count == 0），保留 JCL 判定
             log::info!(
-                "[DropScanner] 副本 {} chatlog 未写入磁盘，暂保留 JCL 判定（待补检）",
+                "[DropScanner] 副本 {} chatlog 已落盘但无10金记录, 保留JCL判定",
                 instance.raid_display_name
             );
         }
@@ -2730,10 +2777,11 @@ pub fn scan_raid_drops_with_raids(
         let record_status = if raid_complete { "pending" } else { "scanning" };
 
         log::info!(
-            "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, has_salary={}, jx3_running={}, role_online={} -> status='{}'",
+            "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, boss_all_killed={}, has_salary={}, jx3_running={}, role_online={} -> status='{}'",
             instance.raid_display_name,
             instance.boss_kill_count,
             raid_bosses.len(),
+            boss_all_killed,
             base_salary.is_some(),
             jx3_running,
             role_online,

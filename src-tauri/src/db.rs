@@ -1486,7 +1486,9 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             source TEXT DEFAULT 'manual',
             status TEXT DEFAULT 'confirmed',
             drops TEXT,
-            jcl_files TEXT
+            jcl_files TEXT,
+            created_at TEXT,
+            updated_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS config (
