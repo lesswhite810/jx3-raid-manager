@@ -87,6 +87,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const filteredRecords = useMemo(() => {
     return safeRecords.filter(r => {
+      // 排除待确认和已拒绝的自动扫描记录，不计入统计
+      if (r.source === 'auto' && (r.status === 'pending' || r.status === 'rejected')) return false;
       const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
       return periodStartTime === null ? true : recordTime >= periodStartTime;
     });

@@ -42,6 +42,8 @@ interface EnhancedRecord {
   displayServer: string;
   isBaizhan?: boolean;
   isTrial?: boolean;
+  source?: 'auto' | 'manual';
+  status?: 'pending' | 'confirmed' | 'rejected' | 'scanning';
 }
 
 export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanRecords, accounts, initialPeriod, onPeriodChange, onBack, onDeleteRecord, onEditRecord, onEditBaizhanRecord }) => {
@@ -138,10 +140,18 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
     const startTime = startOfPeriod.getTime();
     return enhancedRecords.filter(r => {
+      // 排除待确认的自动扫描记录，不计入收益统计
+      // rejected 记录保留显示在"全部"页签中，但不参与统计
+      if (r.source === 'auto' && r.status === 'pending') return false;
       const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
       return recordTime >= startTime;
     });
   }, [enhancedRecords, period, currentSeason]);
+
+  // 用于统计和图表的记录：排除 rejected 记录
+  const confirmedRecords = useMemo(() => {
+    return filteredRecords.filter(r => !(r.source === 'auto' && r.status === 'rejected'));
+  }, [filteredRecords]);
 
   const searchedRecords = useMemo(() => {
     return filteredRecords.filter(r =>
@@ -152,25 +162,25 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
   const tabFilteredRecords = useMemo(() => {
     if (activeTab === 'income') {
-      return searchedRecords.filter(r => r.goldIncome > 0);
+      return searchedRecords.filter(r => r.goldIncome > 0 && !(r.source === 'auto' && r.status === 'rejected'));
     } else if (activeTab === 'expense') {
-      return searchedRecords.filter(r => (r.goldExpense || 0) > 0);
+      return searchedRecords.filter(r => (r.goldExpense || 0) > 0 && !(r.source === 'auto' && r.status === 'rejected'));
     }
     return searchedRecords;
   }, [searchedRecords, activeTab]);
 
   const stats = useMemo(() => {
-    const totalIncome = filteredRecords.reduce((acc, r) => acc + r.goldIncome, 0);
-    const totalExpense = filteredRecords.reduce((acc, r) => acc + (r.goldExpense || 0), 0);
+    const totalIncome = confirmedRecords.reduce((acc, r) => acc + r.goldIncome, 0);
+    const totalExpense = confirmedRecords.reduce((acc, r) => acc + (r.goldExpense || 0), 0);
     const netIncome = totalIncome - totalExpense;
-    const xuanjingCount = filteredRecords.filter(r => r.hasXuanjing).length;
+    const xuanjingCount = confirmedRecords.filter(r => r.hasXuanjing).length;
 
     const clientAccountIds = buildClientAccountIdSet(safeAccounts);
-    const clientIncome = filteredRecords
+    const clientIncome = confirmedRecords
       .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + r.goldIncome, 0);
 
-    const clientExpense = filteredRecords
+    const clientExpense = confirmedRecords
       .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + (r.goldExpense || 0), 0);
 
@@ -183,23 +193,23 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       clientExpense,
       clientNetIncome: clientIncome - clientExpense
     };
-  }, [filteredRecords, safeAccounts]);
+  }, [confirmedRecords, safeAccounts]);
 
   // 副本收益分布图表数据
   const chartData = useMemo(() => {
     const grouped: Record<string, number> = {};
-    filteredRecords.forEach(r => {
+    confirmedRecords.forEach(r => {
       grouped[r.raidName] = (grouped[r.raidName] || 0) + r.goldIncome;
     });
     return Object.keys(grouped)
       .map(k => ({ name: k, value: grouped[k] }))
       .sort((a, b) => b.value - a.value);
-  }, [filteredRecords]);
+  }, [confirmedRecords]);
 
   // 角色收支图表数据
   const roleChartData = useMemo(() => {
     const grouped: Record<string, { income: number; expense: number; name: string }> = {};
-    filteredRecords.forEach(r => {
+    confirmedRecords.forEach(r => {
       const key = r.roleId;
       if (!grouped[key]) {
         grouped[key] = { income: 0, expense: 0, name: r.displayRoleName };
@@ -211,7 +221,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       .map(d => ({ name: d.name, 收入: d.income, 支出: d.expense, netIncome: d.income - d.expense }))
       .filter(d => d.收入 > 0 || d.支出 > 0)
       .sort((a, b) => b.收入 - a.收入);
-  }, [filteredRecords]);
+  }, [confirmedRecords]);
 
   useEffect(() => {
     setRecordListScrollTop(0);
@@ -586,13 +596,16 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   ? '+'
                   : '';
                 const isExpanded = expandedRecordId === record.id;
+                const isRejected = record.source === 'auto' && record.status === 'rejected';
 
                 return (
                   <div
                     key={record.id}
                     className={`transition-colors border-l-4 ${isExpanded
                       ? 'bg-base/50 border-primary'
-                      : 'hover:bg-base border-transparent'
+                      : isRejected
+                        ? 'bg-red-50/30 dark:bg-red-900/5 border-red-300 dark:border-red-800'
+                        : 'hover:bg-base border-transparent'
                       }`}
                   >
                     {/* Summary Row - Click to Expand */}
@@ -608,8 +621,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                         </div>
 
                         <div className="min-w-0">
-                          <div className="font-semibold text-main truncate text-[1rem] leading-tight mb-0.5">
-                            {record.raidName}
+                          <div className="font-semibold text-main truncate text-[1rem] leading-tight mb-0.5 flex items-center gap-1.5">
+                            <span className="truncate">{record.raidName}</span>
+                            {isRejected && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-medium rounded border border-red-200 dark:border-red-800 flex-shrink-0">
+                                已拒绝
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted truncate">
                             <span className="truncate max-w-[100px]">{record.displayRoleName}</span>

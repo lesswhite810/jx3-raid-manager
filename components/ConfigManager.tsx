@@ -123,7 +123,6 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
       if (typeof selected === 'string') {
         await updateGameDirectory(selected);
         setGameDirectory(selected);
-        // 校验路径
         const result = await isValidGamePath(selected);
         setPathValid(result.isValid);
         if (!result.isValid) {
@@ -208,174 +207,6 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     <div className="space-y-4">
       <h2 className="text-2xl font-bold text-main">系统配置</h2>
 
-      {/* 合并卡片：路径设置 */}
-      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-            <FolderOpen className="w-5 h-5" />
-          </div>
-          <h3 className="text-lg font-bold text-main">路径设置</h3>
-        </div>
-
-        <div className="space-y-4">
-          {/* 游戏目录 */}
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">游戏目录</label>
-            <div className="flex-1 flex items-center gap-2">
-              <button
-                onClick={handleBrowseGameDirectory}
-                className="flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg text-left text-sm text-main hover:border-primary/50 hover:bg-base transition-all truncate"
-                title={gameDirectory || '点击选择游戏安装目录'}
-              >
-                {gameDirectory || '点击选择游戏安装目录'}
-              </button>
-              {pathValid === true && <Check className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-              {pathValid === false && <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />}
-              <button
-                onClick={handleScanClients}
-                disabled={scanningClients}
-                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
-                title="从注册表扫描剑网3客户端"
-              >
-                {scanningClients ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Search className="w-3.5 h-3.5" />
-                )}
-                {scanningClients ? '扫描中...' : '扫描'}
-              </button>
-            </div>
-          </div>
-
-          {/* 路径补全提示 */}
-          <div className="flex items-center gap-2 pl-24">
-            {pathValid === true && (
-              <div className="flex items-center gap-1.5 text-xs text-emerald-500">
-                <Check className="w-3.5 h-3.5" />
-                <span>游戏目录有效</span>
-              </div>
-            )}
-            {pathValid === false && (
-              <div className="flex items-center gap-1.5 text-xs text-red-500">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>目录无效，请选择包含 SeasunGame 的安装根目录，如 E:\Game\SeasunGame</span>
-              </div>
-            )}
-            {pathValid === null && gameDirectory && (
-              <div className="flex items-center gap-1.5 text-xs text-muted">
-                <Info className="w-3.5 h-3.5" />
-                <span>支持填写安装根目录，运行时会自动补全到 Game\JX3\bin\zhcn_hd</span>
-              </div>
-            )}
-          </div>
-
-          {/* 扫描结果 */}
-          {showScanResults && scanResults.length > 0 && (
-            <div className="p-4 bg-base/30 rounded-lg border border-base">
-              <div className="flex items-center gap-2 mb-3">
-                <Monitor className="w-4 h-4 text-primary" />
-                <span className="text-sm font-medium text-main">已检测到的客户端</span>
-                <button
-                  onClick={() => setShowScanResults(false)}
-                  className="ml-auto text-xs text-muted hover:text-main transition-colors"
-                >
-                  收起
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                {scanResults.map((client, index) => (
-                  <div
-                    key={index}
-                    className="p-3 rounded-lg border border-base hover:border-primary/50 hover:bg-surface/50 transition-all cursor-pointer group"
-                    onClick={() => handleSelectClient(client)}
-                  >
-                    <div className="text-sm font-medium text-main group-hover:text-primary">
-                      {client.displayName}
-                    </div>
-                    <div className="text-xs text-muted truncate mt-0.5">{client.workDirectory}</div>
-                    {client.version && (
-                      <div className="text-xs text-muted/70 mt-0.5">版本: {client.version}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 数据目录 */}
-          <div className="flex items-center gap-4 pt-4 border-t border-base">
-            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">数据目录</label>
-            <div className="flex-1 flex items-center gap-2">
-              <p className="text-sm text-main break-all font-mono select-all flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg">
-                {dataDirInfo?.currentPath ?? '加载中...'}
-              </p>
-              <button
-                onClick={handleSelectCustomDataDir}
-                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                切换
-              </button>
-              {dataDirInfo?.customDirConfigured && (
-                <button
-                  onClick={handleResetCustomDataDir}
-                  className="btn btn-secondary text-sm whitespace-nowrap"
-                >
-                  还原
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* 当前赛季 */}
-          <div className="flex items-center gap-4 pt-4 border-t border-base">
-            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">当前赛季</label>
-            <span className="text-sm font-medium text-main">{currentSeason ? currentSeason.name : '加载中...'}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 自动扫描配置 */}
-      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-              <RefreshCw className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-main">自动扫描</h3>
-              <p className="text-xs text-muted mt-0.5">
-                {appConfig?.autoScanEnabled
-                  ? '已开启，游戏运行时自动扫描副本掉落'
-                  : '已关闭，仅手动录入副本记录'}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => handleAutoScanToggle(!appConfig?.autoScanEnabled)}
-            className={`relative w-11 h-6 rounded-full transition-colors ${
-              appConfig?.autoScanEnabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
-                appConfig?.autoScanEnabled ? 'translate-x-5' : ''
-              }`}
-            />
-          </button>
-        </div>
-        {appConfig?.autoScanEnabled && (
-          <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-            <div className="flex items-start gap-2">
-              <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-700 dark:text-amber-300">
-                使用前请确认茗伊插件已开启：插件集 → 团队 → 团队工具 → 勾选"战斗事件记录"并启用秘境保存，否则无法扫描到副本数据。
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* 版本与更新 */}
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center justify-between gap-4 mb-4">
@@ -431,6 +262,188 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         )}
       </div>
 
+      {/* 游戏配置 */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+            <FolderOpen className="w-5 h-5" />
+          </div>
+          <h3 className="text-lg font-bold text-main">游戏配置</h3>
+        </div>
+
+        <div className="space-y-4">
+          {/* 当前赛季 */}
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">当前赛季</label>
+            <span className="text-sm font-medium text-main">{currentSeason ? currentSeason.name : '加载中...'}</span>
+          </div>
+
+          {/* 游戏目录 */}
+          <div className="flex items-center gap-4 pt-4 border-t border-base">
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">游戏目录</label>
+            <div className="flex-1 flex items-center gap-2">
+              <p className="text-sm text-main break-all font-mono select-all flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg truncate">
+                {gameDirectory || '未设置'}
+              </p>
+              {pathValid === true && <Check className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+              {pathValid === false && <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+              <button
+                onClick={handleBrowseGameDirectory}
+                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                切换
+              </button>
+              <button
+                onClick={handleScanClients}
+                disabled={scanningClients}
+                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
+                title="从注册表扫描剑网3客户端"
+              >
+                {scanningClients ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                {scanningClients ? '扫描中...' : '扫描'}
+              </button>
+            </div>
+          </div>
+
+          {/* 路径校验提示 */}
+          {pathValid === false && (
+            <div className="flex items-center gap-2 pl-24">
+              <div className="flex items-center gap-1.5 text-xs text-red-500">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>目录无效，请选择包含 SeasunGame 的安装根目录</span>
+              </div>
+            </div>
+          )}
+
+          {/* 扫描结果 */}
+          {showScanResults && scanResults.length > 0 && (
+            <div className="p-4 bg-base/30 rounded-lg border border-base">
+              <div className="flex items-center gap-2 mb-3">
+                <Monitor className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium text-main">已检测到的客户端</span>
+                <button
+                  onClick={() => setShowScanResults(false)}
+                  className="ml-auto text-xs text-muted hover:text-main transition-colors"
+                >
+                  收起
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {scanResults.map((client, index) => (
+                  <div
+                    key={index}
+                    className="p-3 rounded-lg border border-base hover:border-primary/50 hover:bg-surface/50 transition-all cursor-pointer group"
+                    onClick={() => handleSelectClient(client)}
+                  >
+                    <div className="text-sm font-medium text-main group-hover:text-primary">
+                      {client.displayName}
+                    </div>
+                    <div className="text-xs text-muted truncate mt-0.5">{client.workDirectory}</div>
+                    {client.version && (
+                      <div className="text-xs text-muted/70 mt-0.5">版本: {client.version}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 自动扫描 */}
+          <div className="flex items-center justify-between gap-4 pt-4 border-t border-base">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-4">
+                <label className="text-sm font-medium text-muted whitespace-nowrap w-20">自动扫描</label>
+                <p className="text-xs text-muted">
+                  {appConfig?.autoScanEnabled
+                    ? '已开启，游戏运行时自动扫描副本掉落'
+                    : '已关闭，仅手动录入副本记录'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => handleAutoScanToggle(!appConfig?.autoScanEnabled)}
+              className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                appConfig?.autoScanEnabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+                  appConfig?.autoScanEnabled ? 'translate-x-5' : ''
+                }`}
+              />
+            </button>
+          </div>
+
+          {appConfig?.autoScanEnabled && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+              <div className="flex items-start gap-2">
+                <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  使用前请确认茗伊插件已开启：插件集 → 团队 → 团队工具 → 勾选"战斗事件记录"并启用秘境保存，否则无法扫描到副本数据。
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 自定义配置 */}
+      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+            <RotateCcw className="w-5 h-5" />
+          </div>
+          <h3 className="text-lg font-bold text-main">自定义配置</h3>
+        </div>
+
+        <div className="space-y-4">
+          {/* 数据目录 */}
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">数据目录</label>
+            <div className="flex-1 flex items-center gap-2">
+              <p className="text-sm text-main break-all font-mono select-all flex-1 px-3 py-2 bg-base/50 border border-base rounded-lg truncate">
+                {dataDirInfo?.currentPath ?? '加载中...'}
+              </p>
+              <button
+                onClick={handleSelectCustomDataDir}
+                className="btn btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                切换
+              </button>
+              {dataDirInfo?.customDirConfigured && (
+                <button
+                  onClick={handleResetCustomDataDir}
+                  className="btn btn-secondary text-sm whitespace-nowrap"
+                >
+                  还原
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 重新初始化 */}
+          <div className="flex items-center gap-4 pt-4 border-t border-base">
+            <label className="text-sm font-medium text-muted whitespace-nowrap w-20">重置应用</label>
+            <div className="flex-1 flex items-center justify-between">
+              <p className="text-xs text-muted">清空游戏目录和账号配置，应用重载后回到引导界面</p>
+              <button
+                onClick={() => setShowResetConfirm(true)}
+                className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                重新初始化
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* 问题反馈 */}
       <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
         <div className="flex items-center gap-3 mb-4">
@@ -439,39 +452,21 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           </div>
           <h3 className="text-lg font-bold text-main">问题反馈</h3>
         </div>
-        <div className="flex items-center gap-6 p-4 bg-base/30 rounded-lg">
+        <div className="flex items-center gap-5 p-4 bg-base/30 rounded-lg">
           <img
             src="/qq-group-qr.jpg"
             alt="QQ群二维码"
-            className="w-32 h-32 rounded-lg border border-base object-contain bg-white flex-shrink-0"
+            className="w-28 h-28 rounded-lg border border-base object-contain bg-white flex-shrink-0"
           />
-          <div className="space-y-2 min-w-0">
-            <p className="text-sm text-main">加入 QQ 群反馈问题、提建议或交流使用心得</p>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted">群号：</span>
+          <div className="flex flex-col justify-center min-w-0 flex-1">
+            <p className="text-sm text-main mb-1.5">加入 QQ 群反馈问题、提建议或交流使用心得</p>
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-muted">群号</span>
               <span className="text-lg font-bold text-primary select-all">1085903108</span>
             </div>
-            <p className="text-xs text-muted">扫描左侧二维码或搜索群号加入</p>
+            <p className="text-xs text-muted mt-1.5">扫描左侧二维码或搜索群号加入</p>
           </div>
         </div>
-      </div>
-
-      {/* 重新初始化 */}
-      <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 rounded-lg flex items-center justify-center">
-            <RotateCcw className="w-5 h-5" />
-          </div>
-          <h3 className="text-lg font-bold text-main">重新初始化</h3>
-        </div>
-
-        <button
-          onClick={() => setShowResetConfirm(true)}
-          className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-        >
-          <RotateCcw className="w-4 h-4" />
-          重新初始化应用
-        </button>
       </div>
 
       {/* 重新初始化确认弹窗 */}

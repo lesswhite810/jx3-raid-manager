@@ -1,14 +1,15 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock, AlertTriangle } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
-import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
+import { getLastMonday, getNextMonday, getTenPersonCycle } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
 import { getBaseServerName } from '../utils/serverUtils';
 import { db } from '../services/db';
 import { dropScannerService } from '../services/dropScanner';
+import { toast } from '../utils/toastManager';
 
 interface RoleWithStatus {
   id: string;
@@ -53,6 +54,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   const [errorMessage, setErrorMessage] = useState('');
   // pending 记录确认/拒绝的处理中状态
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  // CD 冲突状态
+  const [cdConflictRecord, setCdConflictRecord] = useState<RaidRecord | null>(null);
 
   const isTenPerson = raid.playerCount === 10;
   const maxRecords = isTenPerson ? 2 : 1;
@@ -86,13 +89,21 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [records, role.id, raid, weekInfo]);
 
-  const totalIncome = roleRecords.reduce((sum, r) => sum + (Number(r.goldIncome) || 0), 0);
-  const totalExpense = roleRecords.reduce((sum, r) => sum + (Number(r.goldExpense) || 0), 0);
-  const xuanjingCount = roleRecords.filter(r => r.hasXuanjing).length;
+  // 用于统计的记录：排除待确认和已拒绝的自动扫描记录
+  const confirmedRoleRecords = useMemo(() => {
+    return roleRecords.filter(r => {
+      if (r.source === 'auto' && (r.status === 'pending' || r.status === 'rejected')) return false;
+      return true;
+    });
+  }, [roleRecords]);
+
+  const totalIncome = confirmedRoleRecords.reduce((sum, r) => sum + (Number(r.goldIncome) || 0), 0);
+  const totalExpense = confirmedRoleRecords.reduce((sum, r) => sum + (Number(r.goldExpense) || 0), 0);
+  const xuanjingCount = confirmedRoleRecords.filter(r => r.hasXuanjing).length;
   const totalNet = totalIncome - totalExpense;
 
   const bossCooldowns = useMemo(() => {
-    return calculateBossCooldowns(raid, roleRecords.flatMap(r => {
+    return calculateBossCooldowns(raid, confirmedRoleRecords.flatMap(r => {
       // 支持多选BOSS：为每个bossId创建一个记录
       if (r.bossIds && r.bossIds.length > 0) {
         return r.bossIds.map(bossId => ({
@@ -116,7 +127,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
         accountId: r.accountId
       }];
     }), role.id, new Date(), true);
-  }, [raid, roleRecords, role.id]);
+  }, [raid, confirmedRoleRecords, role.id]);
 
   const canDeleteRecord = useCallback((record: RaidRecord): boolean => {
     if (isAdmin) return true;
@@ -183,23 +194,65 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     setRecordToDelete(null);
   }, []);
 
-  // 确认 pending 记录：status -> 'confirmed'，与手动记录完全等价
-  const handleConfirmRecord = useCallback(async (record: RaidRecord) => {
+  /**
+   * 检查 CD 冲突：同一角色、同一副本名、同一 CD 窗口内是否已存在手动记录
+   */
+  const checkCdConflict = useCallback((record: RaidRecord): boolean => {
+    const recordDate = new Date(record.date);
+    const isTenPerson = record.raidName?.includes('10人');
+
+    let windowStart: Date;
+    let windowEnd: Date;
+    if (isTenPerson) {
+      const cycle = getTenPersonCycle(recordDate);
+      windowStart = cycle.start;
+      windowEnd = cycle.end;
+    } else {
+      windowStart = getLastMonday(recordDate);
+      windowEnd = getNextMonday(recordDate);
+    }
+
+    return roleRecords.some(r => {
+      if (r.source !== 'manual') return false;
+      if (r.roleId !== record.roleId) return false;
+      if (r.raidName !== record.raidName) return false;
+      if (r.status === 'rejected') return false;
+      const rDate = new Date(r.date);
+      return rDate >= windowStart && rDate < windowEnd;
+    });
+  }, [roleRecords]);
+
+  /** 直接确认（带 CD 冲突预检） */
+  const handleConfirmRecord = useCallback((record: RaidRecord) => {
+    if (checkCdConflict(record)) {
+      setCdConflictRecord(record);
+      return;
+    }
+    doDirectConfirm(record);
+  }, [checkCdConflict]);
+
+  /** 实际执行确认（跳过 CD 冲突检查） */
+  const doDirectConfirm = useCallback(async (record: RaidRecord) => {
     setPendingActionId(record.id);
     try {
       await dropScannerService.confirmRecord(record.id);
       onRefreshRecords?.();
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 2000);
+      toast.success('记录已确认');
     } catch (error) {
       console.error('确认记录失败:', error);
-      setErrorMessage('确认失败，请重试');
-      setShowError(true);
-      setTimeout(() => setShowError(false), 3000);
+      toast.error('确认失败，请重试');
     } finally {
       setPendingActionId(null);
     }
   }, [onRefreshRecords]);
+
+  /** CD 冲突后继续确认 */
+  const continueAfterConflict = useCallback(() => {
+    if (!cdConflictRecord) return;
+    const record = cdConflictRecord;
+    setCdConflictRecord(null);
+    doDirectConfirm(record);
+  }, [cdConflictRecord, doDirectConfirm]);
 
   // 拒绝 pending 记录：status -> 'rejected'，不参与 CD 计算
   const handleRejectRecord = useCallback(async (record: RaidRecord) => {
@@ -207,13 +260,10 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
     try {
       await dropScannerService.rejectRecord(record.id);
       onRefreshRecords?.();
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 2000);
+      toast.info('记录已拒绝');
     } catch (error) {
       console.error('拒绝记录失败:', error);
-      setErrorMessage('拒绝失败，请重试');
-      setShowError(true);
-      setTimeout(() => setShowError(false), 3000);
+      toast.error('拒绝失败，请重试');
     } finally {
       setPendingActionId(null);
     }
@@ -278,7 +328,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                 </div>
               ) : (
                 <div className="flex items-center justify-center bg-surface border border-base px-3 py-1.5 rounded-md shadow-sm">
-                  <span className="text-sm font-bold text-main">{roleRecords.length} <span className="text-muted text-xs font-normal mx-0.5">/</span> {maxRecords}</span>
+                  <span className="text-sm font-bold text-main">{confirmedRoleRecords.length} <span className="text-muted text-xs font-normal mx-0.5">/</span> {maxRecords}</span>
                 </div>
               )}
             </div>
@@ -409,23 +459,6 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           </div>
                         )}
 
-                        {/* 自动扫描记录的掉落物列表 */}
-                        {isAutoRecord && record.drops && record.drops.length > 0 && (
-                          <div className="flex items-start gap-1.5 text-xs bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-2 rounded-lg">
-                            <Package className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-                            <div className="flex-1 min-w-0">
-                              <div className="text-muted text-[11px] mb-1">掉落物品（来自聊天记录自动扫描）</div>
-                              <div className="flex flex-wrap gap-1">
-                                {record.drops.map((drop, idx) => (
-                                  <span key={`${drop}-${idx}`} className="px-1.5 py-0.5 bg-surface border border-base text-main rounded text-[11px]">
-                                    {drop}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
                         {record.notes && (
                           <div className="flex items-start gap-1.5 text-xs text-muted bg-base/50 p-2 rounded-lg">
                             <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-muted/70" />
@@ -462,6 +495,23 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                             <X className="w-4 h-4" />
                           </button>
                         </>
+                      )}
+
+                      {/* rejected 记录的接受按钮 */}
+                      {isRejected && (
+                        <button
+                          onClick={() => handleConfirmRecord(record)}
+                          disabled={pendingActionId === record.id}
+                          className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="接受此记录（恢复参与 CD 计算）"
+                          aria-label="接受记录"
+                        >
+                          {pendingActionId === record.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Check className="w-4 h-4" />
+                          )}
+                        </button>
                       )}
 
                       {/* 非.pending 记录的编辑/删除按钮 */}
@@ -556,6 +606,48 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in">
           <AlertCircle className="w-5 h-5" />
           {errorMessage}
+        </div>
+      )}
+
+      {/* CD 冲突确认弹窗 */}
+      {cdConflictRecord && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[120] p-4"
+          onClick={() => setCdConflictRecord(null)}
+        >
+          <div
+            className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-in"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <h3 className="text-lg font-bold text-main">CD 冲突提醒</h3>
+            </div>
+            <p className="text-sm text-muted mb-2 leading-relaxed">
+              角色 <span className="font-medium text-main">{role.name}</span> 在当前 CD 周期内已存在
+              <span className="font-medium text-main">「{cdConflictRecord.raidName}」</span> 的手动记录。
+            </p>
+            <p className="text-sm text-muted mb-6 leading-relaxed">
+              确认此自动记录后，两条记录将共存并共享 CD。是否继续？
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setCdConflictRecord(null)}
+                className="px-4 py-2 text-sm font-medium text-muted hover:text-main rounded-lg hover:bg-base transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={continueAfterConflict}
+                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                继续确认
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>,

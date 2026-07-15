@@ -64,7 +64,11 @@ export const getRaidClearStats = <T extends RaidClearStatsRole>(
 ): RaidClearStats => {
   const enabledRoles = roles.filter(role => roleVisibilityMap[role.id] !== false);
 
-  const noneClearedCount = enabledRoles.filter(role => {
+  // 有待确认记录的角色优先归为"待确认"
+  const pendingRoles = enabledRoles.filter(role => role.hasPendingRecord);
+  const nonPendingRoles = enabledRoles.filter(role => !role.hasPendingRecord);
+
+  const noneClearedCount = nonPendingRoles.filter(role => {
     if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
       return role.canRun;
     }
@@ -72,7 +76,7 @@ export const getRaidClearStats = <T extends RaidClearStatsRole>(
     return role.bossCooldowns.filter(boss => boss.hasRecord).length === 0;
   }).length;
 
-  const partialClearedCount = enabledRoles.filter(role => {
+  const partialClearedCount = nonPendingRoles.filter(role => {
     if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
       return false;
     }
@@ -81,22 +85,18 @@ export const getRaidClearStats = <T extends RaidClearStatsRole>(
     return completedCount > 0 && completedCount < role.bossCooldowns.length;
   }).length;
 
-  // 完全清完的角色中，区分"待确认"和"已确认"
-  const fullyClearedRoles = enabledRoles.filter(role => {
+  const fullyClearedCount = nonPendingRoles.filter(role => {
     if (!role.bossCooldowns || role.bossCooldowns.length === 0) {
       return !role.canRun;
     }
 
     return role.bossCooldowns.filter(boss => boss.hasRecord).length === role.bossCooldowns.length;
-  });
-
-  const pendingClearedCount = fullyClearedRoles.filter(role => role.hasPendingRecord).length;
-  const completeClearedCount = fullyClearedRoles.length - pendingClearedCount;
+  }).length;
 
   return {
     noneClearedCount,
     partialClearedCount,
-    pendingClearedCount,
-    completeClearedCount
+    pendingClearedCount: pendingRoles.length,
+    completeClearedCount: fullyClearedCount
   };
 };

@@ -2095,6 +2095,7 @@ fn upsert_raid_drop_record(
     role_server: &str,
     role_region: &str,
     raid_name: &str,
+    raid_full_name: &str,
     gold_income: i64,
     gold_expense: i64,
     filtered_jcl_files: &[String],
@@ -2234,7 +2235,7 @@ fn upsert_raid_drop_record(
         "roleId": role_id,
         "roleName": role_name,
         "server": format!("{} {}", role_region, role_server),
-        "raidName": instance.raid_display_name,
+        "raidName": raid_full_name,
         "date": instance.start_time,
         "goldIncome": gold_income,
         "goldExpense": gold_expense,
@@ -2594,7 +2595,8 @@ pub fn scan_raid_drops_with_raids(
 
         // 聊天记录分析范围：
         // 开始 = instance.first_gold_time（首个BOSS击杀时间）
-        // 结束 = 下一副本实例的 start_time 或 instance.last_jcl_time + 30min
+        // 结束 = 下一副本实例的 start_time 或当前扫描时间
+        // （底薪通常在副本结束后30-60分钟内发送，用当前时间可确保覆盖）
         let chatlog_start = instance.first_gold_time;
         let chatlog_end = if index + 1 < instance_start_times.len() {
             instance_start_times[index + 1]
@@ -2706,9 +2708,9 @@ pub fn scan_raid_drops_with_raids(
         // 最终收入计算：
         // - 有底薪：在收入记录中找金额 >= 底薪值的第一条记录，用该金额作为收入
         //   （团长发放底薪时的"你获得：XXX金"记录，金额通常等于或略大于底薪）
-        // - 无底薪：使用最后一个 BOSS 后最近的一条收入记录作为收入
-        //   （最后一个 BOSS 击杀时间 = last_jcl_time，找该时间之后最近的一条收入记录）
-        // - 找不到匹配记录时回退：有底薪回退到底薪值，无底薪回退到收入总和
+        // - 无底薪：使用收入记录总和作为收入
+        //   （无底薪参考时，单条记录可能是小额系统消息，总和相关收入更可靠）
+        // - 找不到匹配记录时回退：有底薪回退到底薪值，无底薪使用收入总和
         all_income_records.sort_by_key(|(t, _)| *t);
         let last_jcl_sec = instance.last_jcl_time / 1000;
         let total_gold = if let Some(salary) = base_salary {
@@ -2730,23 +2732,12 @@ pub fn scan_raid_drops_with_raids(
                 }
             }
         } else {
-            // 无底薪：找最后一个 BOSS 后最近的一条收入记录
-            match all_income_records.iter().find(|(t, _)| *t >= last_jcl_sec) {
-                Some((t, g)) => {
-                    log::info!(
-                        "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 匹配记录 gold={} time={} -> 收入={}",
-                        last_jcl_sec, g, t, g
-                    );
-                    *g
-                }
-                None => {
-                    log::info!(
-                        "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 无匹配记录, 回退到收入总和 {} -> 收入={}",
-                        last_jcl_sec, other_income, other_income
-                    );
-                    other_income
-                }
-            }
+            // 无底薪：使用收入记录总和
+            log::info!(
+                "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 使用收入总和 {} (共 {} 条记录) -> 收入={}",
+                last_jcl_sec, other_income, all_income_records.len(), other_income
+            );
+            other_income
         };
         log::info!(
             "[DropScanner] 收入汇总: 底薪={:?}, 其他收入总和={}, 最终收入={}, 支出={}, 收入记录数={}",
@@ -2812,6 +2803,7 @@ pub fn scan_raid_drops_with_raids(
             &db_identity.server,
             &db_identity.region,
             raid_name,
+            &raid_entry.raid_id,
             total_gold,
             total_expense,
             &filtered_jcl_files,
