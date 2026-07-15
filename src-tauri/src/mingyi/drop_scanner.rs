@@ -2108,7 +2108,8 @@ fn upsert_raid_drop_record(
     // 使用 CD 窗口范围匹配：同一 CD 周期内同一副本只保留一条记录。
     // 查询所有状态（含 confirmed/rejected），避免已确认/已拒绝的记录被重复创建。
     // 优先返回 pending/scanning（用于更新），其次 confirmed/rejected（用于跳过）。
-    let is_ten_person = instance.raid_display_name.contains("10人");
+    // 使用 raid_full_name 判断人数（含 "10人" 前缀），而非 JCL 原始显示名
+    let is_ten_person = raid_full_name.contains("10人");
     let (window_start, window_end) = calculate_cd_window(instance.start_time, is_ten_person);
 
     let existing: Option<(String, String)> = conn
@@ -2196,9 +2197,9 @@ fn upsert_raid_drop_record(
                     manual_count,
                     manual_raid_name,
                     manual_date,
-                    manual_raid_name == instance.raid_display_name
+                    manual_raid_name == raid_full_name
                 );
-                if manual_raid_name == instance.raid_display_name {
+                if manual_raid_name == raid_full_name {
                     matched = true;
                 }
             }
