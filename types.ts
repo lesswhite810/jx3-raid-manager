@@ -379,4 +379,5 @@ export interface AppConfig {
   setupCompleted: boolean;
   lastScanMingyiAt: string | null;
   autoScanEnabled: boolean;
+  autoRefreshEquipScore: boolean;
 }

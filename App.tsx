@@ -39,6 +39,7 @@ import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
+import { analyzeRoles } from './services/gameDirectoryScanner';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { updaterService } from './services/updater';
 import { toast } from './utils/toastManager';
@@ -56,6 +57,7 @@ function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const initStartedRef = useRef(false);
   const updaterInitializedRef = useRef(false);
+  const equipRefreshStartedRef = useRef(false);
 
   // 应用配置（引导流程与活跃检测依赖）
   const { appConfig, isLoading: appConfigLoading } = useAppConfig();
@@ -101,6 +103,31 @@ function App() {
       toast.error('重新加载副本记录失败');
     }
   }, []);
+
+  // 重新从数据库加载账号（含可见性与排序），用于装分刷新后刷新 UI
+  const reloadAccounts = useCallback(async () => {
+    try {
+      const [loadedAccounts, loadedRoleVisibility] = await Promise.all([
+        db.getAccounts(),
+        db.getAllRoleVisibility(),
+      ]);
+      if (loadedAccounts.length > 0) {
+        const accountsWithVisibility = loadedAccounts.map(acc => ({
+          ...acc,
+          roles: acc.roles.map((role: any) => ({
+            ...role,
+            visibility: buildVisibilityMap(role.id, loadedRoleVisibility, instanceTypes)
+          }))
+        }));
+        const sortedAccounts = sortAccounts(accountsWithVisibility);
+        setAccounts(sortedAccounts);
+      } else {
+        setAccounts([]);
+      }
+    } catch (error) {
+      console.error('重新加载账号失败:', error);
+    }
+  }, [instanceTypes]);
 
   // 副本掉落自动扫描（B 阶段）：JX3 在线时全局自动扫描 pending 记录
   // 扫描到新记录后自动重新加载 records
@@ -350,6 +377,36 @@ function App() {
       console.error('启动时检查更新失败:', error);
     });
   }, [isInitialized, handleCheckForUpdates]);
+
+  // 启动后自动刷新已导入角色装分（可在配置页关闭）
+  useEffect(() => {
+    if (equipRefreshStartedRef.current) return;
+    if (!isInitialized) return;
+    if (!appConfig?.setupCompleted || !appConfig?.gameDirectory) return;
+    if (!appConfig.autoRefreshEquipScore) return;
+
+    equipRefreshStartedRef.current = true;
+    const runRefresh = async () => {
+      try {
+        console.log('[启动刷新装分] 开始刷新已导入角色装分...');
+        const result = await analyzeRoles(appConfig.gameDirectory!);
+        if (result.success) {
+          if (result.updatedRoles > 0) {
+            console.log(`[启动刷新装分] 已更新 ${result.updatedRoles} 个角色装分，重新加载账号数据`);
+            await reloadAccounts();
+            toast.success(`已自动刷新 ${result.updatedRoles} 个角色的装分`);
+          } else {
+            console.log('[启动刷新装分] 没有需要更新的角色装分');
+          }
+        } else {
+          console.warn('[启动刷新装分] 刷新失败:', result.error);
+        }
+      } catch (error) {
+        console.error('[启动刷新装分] 异常:', error);
+      }
+    };
+    runRefresh();
+  }, [isInitialized, appConfig, reloadAccounts]);
 
   useEffect(() => {
     if (!isInitialized) return;

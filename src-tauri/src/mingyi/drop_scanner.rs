@@ -46,8 +46,7 @@ struct JclFileInfo {
     timestamp: i64,
     /// JCL 副本名（如 "25人英雄阆风悬城"）
     raid_display_name: String,
-    /// 副本 ID（仅用于调试/测试断言）
-    #[allow(dead_code)]
+    /// 副本 ID（与 JX3Box 掉落接口的 MapID 同源，如阆风悬城=795）
     raid_id: i64,
     /// BOSS 名
     boss_name: String,
@@ -83,6 +82,9 @@ struct RaidInstance {
     account_id: String,
     /// JCL 副本名（如 "25人英雄阆风悬城"）
     raid_display_name: String,
+    /// 副本 MapID（与 JX3Box 掉落接口同源，如阆风悬城=795）
+    /// 取自 JCL 文件名的副本 ID，用于查询理论掉落表
+    map_id: i64,
     /// 副本开始时间：第一个成功击杀 JCL 的文件名时间（毫秒）
     start_time: i64,
     /// 副本结束时间：最后一个成功击杀 JCL 的战斗结束时间（毫秒）
@@ -678,6 +680,8 @@ fn build_raid_instance(
     }
 
     let raid_display_name = success_jcls[0].raid_display_name.clone();
+    // map_id 取自 JCL 文件名的副本 ID（与 JX3Box 掉落接口同源）
+    let map_id = success_jcls[0].raid_id;
     // 使用组内第一个 JCL 的时间戳作为稳定的去重键，避免进行中副本因新 JCL 产生导致 start_time 变化
     let start_time = group.first().map(|j| j.timestamp).unwrap_or(success_jcls[0].timestamp);
     // last_jcl_time 取整组最后一个 JCL（含拉托），用于确定聊天记录结束范围
@@ -725,6 +729,7 @@ fn build_raid_instance(
     Some(RaidInstance {
         account_id: account_id.to_string(),
         raid_display_name,
+        map_id,
         start_time,
         end_time,
         last_jcl_time,
@@ -905,7 +910,15 @@ fn match_raid_name<'a>(jcl_raid_name: &str, raids: &'a [RaidEntry]) -> Option<&'
 }
 
 /// 判断 JCL BOSS 名是否为有效 BOSS（精确/模糊匹配 raid_bosses 表）
+///
+/// 当 raid_bosses 为空（副本未配置 BOSS 追踪）时返回 true，含义是"不做过滤"。
+/// 这样无配置副本的 JCL 也会走 analyze_jcl 路径 A（文件名 BOSS 即真实 BOSS），
+/// 通过 bFight true→false / HP=0 / 分身离场等信号判定击杀，从而能正常扫描记录。
 fn is_valid_boss(boss_name: &str, raid_bosses: &[(String, String)]) -> bool {
+    // 无 BOSS 配置时，不做过滤（所有 BOSS 名都视为有效）
+    if raid_bosses.is_empty() {
+        return true;
+    }
     // 精确匹配
     if raid_bosses.iter().any(|(_, name)| name == boss_name) {
         return true;
@@ -1238,6 +1251,13 @@ fn analyze_jcl(
                 if !bfight {
                     fight_end_ms = timestamp_sec * 1000;
                 }
+                // 无 BOSS 配置时，全局战斗信号也作为 BOSS 战斗信号
+                // 某些 BOSS（如白帝江关的赵八嫂）不产生 NPC_FIGHT_HINT 事件，
+                // 但 JCL 文件以该 BOSS 命名，说明游戏客户端认为是该 BOSS 的战斗，
+                // 因此全局 FIGHT_TIME 的 bFight=true 可作为 BOSS 进入战斗的信号。
+                if raid_bosses.is_empty() && bfight {
+                    boss_fight_true_seen = true;
+                }
             }
             8 => {
                 // NPC_INFO: { dwID, szName, dwTemplateID, dwEmployer, nX, nY, nZ }
@@ -1287,6 +1307,14 @@ fn analyze_jcl(
                             break;
                         }
                     }
+                    // 无 BOSS 配置时，用文件名 BOSS 名做模糊匹配
+                    // 例如 "罗芬和胡汤宝箱" 能匹配文件名 BOSS "罗芬"
+                    if raid_bosses.is_empty()
+                        && !jcl_boss_name.is_empty()
+                        && prefix.contains(jcl_boss_name)
+                    {
+                        treasure_box_bosses.insert(jcl_boss_name.to_string());
+                    }
                 }
 
                 // 用途 4：当文件名 BOSS 在配置中时，追踪所有同名 NPC 的 dwID（多阶段 BOSS）
@@ -1326,6 +1354,20 @@ fn analyze_jcl(
 
                 // 文件名 BOSS（小怪路径下是小怪 dwID）的 bFight 状态
                 if boss_dwid != 0 && dwid == boss_dwid {
+                    if bfight {
+                        boss_fight_true_seen = true;
+                    } else {
+                        boss_fight_false_seen = true;
+                    }
+                }
+                // 无 BOSS 配置时，同名 NPC（不同 templateID 的分身/阶段）的 bFight 也算
+                // 例如水鬼有 templateID=103400 和 103848 两套同名 NPC，
+                // boss_dwid 只追踪了文件名中的 103400，但实际参战的是 103848
+                if file_boss_in_config
+                    && raid_bosses.is_empty()
+                    && same_name_dwids.contains(&dwid)
+                    && !(boss_dwid != 0 && dwid == boss_dwid)
+                {
                     if bfight {
                         boss_fight_true_seen = true;
                     } else {
@@ -1439,7 +1481,13 @@ fn analyze_jcl(
     //   通过 real_boss_respawned 排除团灭情况。
     let is_kill = if file_boss_in_config {
         // 路径 A
-        let treasure_ok = treasure_box_bosses.contains(jcl_boss_name);
+        // 无 BOSS 配置时，任何宝箱 NPC 出现都算击杀信号（不限于"BOSS名+宝箱"）
+        // 例如白帝江关的宫傲击杀后掉落"武林通鉴宝箱"，不包含"宫傲"二字
+        let treasure_ok = if raid_bosses.is_empty() {
+            !treasure_box_bosses.is_empty()
+        } else {
+            treasure_box_bosses.contains(jcl_boss_name)
+        };
         // 分身离场时间跨度信号：分身陆续离场（跨度>=120s）判定为击杀，
         // 集中离场（跨度<120s）判定为团灭。仅当有分身离场时才计算。
         let clone_leave_span_sec = if first_clone_leave_ms > 0 {
@@ -1453,9 +1501,19 @@ fn analyze_jcl(
         // 实测：16-34-59 阿史那承庆 bFight=false(HP=91.7%) + LEAVE_SCENE = 拉托；
         //       16-43-09 阿史那承庆 bFight=false(HP满) + 无LEAVE = 击杀。
         let bfight_false_is_kill = boss_fight_false_seen && !boss_leave_scene_seen;
+        // 无 BOSS 配置时，LEAVE_SCENE 也可作为击杀信号（当没有 bFight=false 时）
+        // 某些 BOSS（如白帝江关的宇文灭、姜集苦）击杀后无 bFight=false，
+        // 但会触发 LEAVE_SCENE（BOSS 被击杀后离场）。
+        // 仅当没有 bFight=false 时才使用 LEAVE_SCENE，避免误判拉托为击杀。
+        let leave_scene_is_kill = raid_bosses.is_empty()
+            && boss_leave_scene_seen
+            && !boss_fight_false_seen;
         let death_ok = boss_dwid != 0
             && boss_fight_true_seen
-            && (bfight_false_is_kill || boss_hp_zero_seen || clone_leave_signal);
+            && (bfight_false_is_kill
+                || boss_hp_zero_seen
+                || clone_leave_signal
+                || leave_scene_is_kill);
         treasure_ok || death_ok
     } else {
         // 路径 B
@@ -1610,9 +1668,10 @@ fn normalize_role_name(name: &str) -> String {
 ///    注意：仅"花费了...购买了"格式计为支出；"记录给了"格式仅提取物品名加入 drops，不计入支出
 ///    （团长分配记录不代表角色实际购买了该物品）。
 ///
-/// 返回 (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times)。
+/// 返回 (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items)。
 /// income_records 为非 BOSS 10金的收入记录列表 (time_sec, gold)，用于精确收入匹配。
 /// boss_kill_times 为每个 BOSS 击杀（10金收入）的 time_sec 列表，用于击杀数验证。
+/// purchased_items 为当前角色花钱购买的物品名列表（来自"花费了...购买了"格式消息）。
 /// 调用方根据 base_salary 是否存在决定最终收入：
 ///   - 有底薪 → 在 income_records 中找 gold >= base_salary 的第一条记录，用该 gold 作为收入
 ///   - 无底薪 → 在 income_records 中找最后一个 BOSS 后最近的一条记录，用该 gold 作为收入
@@ -1621,9 +1680,9 @@ fn extract_drops_from_chatlog(
     start_time_ms: i64,
     end_time_ms: i64,
     role_name: &str,
-) -> Result<(Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>), String> {
+) -> Result<(Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>, Vec<String>), String> {
     if !chatlog_path.exists() {
-        return Ok((Vec::new(), None, 0, 0, 0, Vec::new(), Vec::new()));
+        return Ok((Vec::new(), None, 0, 0, 0, Vec::new(), Vec::new(), Vec::new()));
     }
 
     let conn = Connection::open(chatlog_path)
@@ -1689,6 +1748,9 @@ fn extract_drops_from_chatlog(
     // 时间窗口：30秒内的相同物品+金额视为同一笔交易
     let mut expense_dedup: HashSet<(String, i64, i64)> = HashSet::new();
 
+    // 当前角色花钱购买的物品名集合（用于 notes 显示）
+    let mut purchased_items_set: HashSet<String> = HashSet::new();
+
     for row in rows {
         let (msg_type, text, _msg, time_sec) = match row {
             Ok(t) => t,
@@ -1748,6 +1810,8 @@ fn extract_drops_from_chatlog(
                         if !expense_dedup.contains(&prev_bucket) && !expense_dedup.contains(&next_bucket) {
                             expense_gold += amount;
                             expense_dedup.insert(dedup_key);
+                            // 记录购买的物品名（用于 notes 显示）
+                            purchased_items_set.insert(item_name);
                         }
                     }
                 }
@@ -1769,21 +1833,23 @@ fn extract_drops_from_chatlog(
 
     // HashSet 转 Vec
     let drops: Vec<String> = drops_set.into_iter().collect();
+    let purchased_items: Vec<String> = purchased_items_set.into_iter().collect();
 
     // 铜转金（整数，截断银铜部分）
     let other_income_gold = other_income_copper / 10000;
 
     log::info!(
-        "[DropScanner] chatlog 提取完成: {} 个物品分配, {} 条金币获得, 底薪={:?}, 其他收入 {} 金, 支出 {} 金, BOSS击杀奖励 {} 次",
+        "[DropScanner] chatlog 提取完成: {} 个物品分配, {} 条金币获得, 底薪={:?}, 其他收入 {} 金, 支出 {} 金, BOSS击杀奖励 {} 次, 购买物品 {} 件",
         item_count,
         money_count,
         base_salary,
         other_income_gold,
         expense_gold,
-        boss_kill_count
+        boss_kill_count,
+        purchased_items.len()
     );
 
-    Ok((drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times))
+    Ok((drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items))
 }
 
 /// 扫描账号目录下所有 chatlog 数据库文件
@@ -2088,6 +2154,7 @@ fn upsert_raid_drop_record(
     conn: &Connection,
     instance: &RaidInstance,
     drops: &[String],
+    purchased_items: &[String],
     boss_ids: &[String],
     boss_names: &[String],
     role_id: &Option<String>,
@@ -2225,8 +2292,110 @@ fn upsert_raid_drop_record(
     // 使用 existing_id（更新）或新生成的 UUID（插入）作为记录 ID。
     let record_id = existing.clone().map(|(id, _)| id).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // 掉落物中包含"玄晶"时自动标记（与前端 PendingRecordsPanel 编辑弹窗逻辑一致）
-    let has_xuanjing = drops.iter().any(|d| d.contains("玄晶"));
+    // 掉落物分类（单表 drop_items + 批量 item_merged 接口）
+    // 流程：drop/v2 获取副本可能掉落 → 与实际掉落取交集 → 缓存过滤 → 仅查未命中物品 → 纯字段分类
+    // 网络请求失败不阻塞主流程，仅记录警告，降级为 unknown
+    let mut has_xuanjing = false;
+    let mut has_mount = false;
+    let mut has_secret_book = false;
+    let mut has_pet = false;
+    let mut has_maju = false;
+    let mut has_pendant = false;
+    let mut has_appearance = false;
+    let mut has_title = false;
+    // 分类结果（name -> category），用于构建 notes
+    let mut item_categories: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    if instance.map_id > 0 {
+        let drop_names: Vec<String> = drops.to_vec();
+
+        match crate::drop_table::classify_drops_sync(
+            instance.map_id,
+            Some(raid_name),
+            &drop_names,
+        ) {
+            Ok(categories) => {
+                log::info!(
+                    "[DropScanner] 副本 {} 掉落分类完成: MapID={}, 实际掉落 {} 条, 分类命中 {} 条",
+                    instance.raid_display_name,
+                    instance.map_id,
+                    drop_names.len(),
+                    categories.len()
+                );
+
+                for (name, category) in &categories {
+                    item_categories.insert(name.clone(), category.clone());
+                    match category.as_str() {
+                        "xuanjing" => has_xuanjing = true,
+                        "mount" => has_mount = true,
+                        "secret_book" => has_secret_book = true,
+                        "pet" => has_pet = true,
+                        "maju" => has_maju = true,
+                        "pendant" => has_pendant = true,
+                        "appearance" => has_appearance = true,
+                        "title" => has_title = true,
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[DropScanner] 副本 {} 掉落分类失败，降级为 unknown: MapID={}, 错误={}",
+                    instance.raid_display_name,
+                    instance.map_id,
+                    e
+                );
+            }
+        }
+    } else {
+        log::debug!(
+            "[DropScanner] 副本 {} 无 MapID，跳过掉落分类",
+            instance.raid_display_name
+        );
+    }
+
+    // 构建 notes：特殊掉落名称 + 消费购买的装备
+    // 特殊掉落：分类为 xuanjing/mount/secret_book/pet/maju/pendant/appearance/title 的物品
+    // 消费购买的装备：purchased_items 中分类为 equipment 的物品
+    let special_categories = [
+        "xuanjing", "mount", "secret_book", "pet",
+        "maju", "pendant", "appearance", "title",
+    ];
+    let mut special_drops: Vec<&str> = Vec::new();
+    let mut purchased_equipment: Vec<&str> = Vec::new();
+
+    for (name, category) in &item_categories {
+        if special_categories.contains(&category.as_str()) {
+            special_drops.push(name.as_str());
+        }
+    }
+    for name in purchased_items {
+        if let Some(cat) = item_categories.get(name) {
+            if cat == "equipment" {
+                purchased_equipment.push(name.as_str());
+            }
+        }
+    }
+    special_drops.sort();
+    purchased_equipment.sort();
+
+    let notes = {
+        let mut parts: Vec<String> = Vec::new();
+        if !special_drops.is_empty() {
+            parts.push(format!("特殊掉落: {}", special_drops.join("、")));
+        }
+        if !purchased_equipment.is_empty() {
+            parts.push(format!("购买装备: {}", purchased_equipment.join("、")));
+        }
+        if parts.is_empty() {
+            format!("自动扫描记录 - {}", now)
+        } else {
+            parts.join(" | ")
+        }
+    };
+
+    // dropTable 字段保留为 null（新设计不再使用旧的理论掉落表结构）
+    let drop_table: Option<crate::drop_table::DropItem> = None;
 
     // 构造 RaidRecord JSON
     // goldIncome 使用 chatlog 提取的分配金额作为默认值，用户确认时可在 UI 编辑。
@@ -2237,18 +2406,27 @@ fn upsert_raid_drop_record(
         "roleName": role_name,
         "server": format!("{} {}", role_region, role_server),
         "raidName": raid_full_name,
+        "mapId": instance.map_id,
         "date": instance.start_time,
         "goldIncome": gold_income,
         "goldExpense": gold_expense,
         "hasXuanjing": has_xuanjing,
+        "hasMount": has_mount,
+        "hasSecretBook": has_secret_book,
+        "hasPet": has_pet,
+        "hasMaJu": has_maju,
+        "hasPendant": has_pendant,
+        "hasAppearance": has_appearance,
+        "hasTitle": has_title,
         "bossIds": boss_ids,
         "bossNames": boss_names,
         "type": "raid",
         "source": "auto",
         "status": record_status,
         "drops": drops,
+        "dropTable": drop_table,
         "jclFiles": filtered_jcl_files,
-        "notes": format!("自动扫描记录 - {}", now),
+        "notes": notes,
     });
 
     let record_str = record.to_string();
@@ -2621,16 +2799,19 @@ pub fn scan_raid_drops_with_raids(
         let mut all_income_records: Vec<(i64, i64)> = Vec::new();
         // 累加所有 chatlog 文件的 boss_kill_times，用于击杀数验证
         let mut all_boss_kill_times: Vec<i64> = Vec::new();
+        // 合并所有 chatlog 文件的购买物品名（用于 notes 显示）
+        let mut all_purchased_items: HashSet<String> = HashSet::new();
         for chatlog_path in &chatlog_files {
             // 文件名日期预过滤：跳过不覆盖 [chatlog_start, chatlog_end] 的文件
             if !chatlog_file_covers_range_cached(chatlog_path, chatlog_start, chatlog_end, &chatlog_range_cache) {
                 continue;
             }
             chatlog_query_count += 1;
-            if let Ok((chatlog_drops, salary, income, expense, _, income_records, boss_kill_times)) =
+            if let Ok((chatlog_drops, salary, income, expense, _, income_records, boss_kill_times, purchased_items)) =
                 extract_drops_from_chatlog(chatlog_path, chatlog_start, chatlog_end, &db_identity.role_name)
             {
                 drops.extend(chatlog_drops);
+                all_purchased_items.extend(purchased_items);
                 // 底薪取最后一个非 None 值（最终分配金额，跨文件时后文件优先）
                 if salary.is_some() {
                     base_salary = salary;
@@ -2792,11 +2973,13 @@ pub fn scan_raid_drops_with_raids(
 
         let role_id_opt: Option<String> = Some(db_identity.role_id.clone());
         let drops_vec: Vec<String> = drops.into_iter().collect();
+        let purchased_items_vec: Vec<String> = all_purchased_items.into_iter().collect();
 
         if let Err(e) = upsert_raid_drop_record(
             &conn,
             instance,
             &drops_vec,
+            &purchased_items_vec,
             &boss_ids,
             &boss_names,
             &role_id_opt,
@@ -4142,7 +4325,7 @@ mod tests {
             let mut other_income: i64 = 0;
             let mut total_expense: i64 = 0;
             for chatlog_path in &chatlog_files {
-                if let Ok((chatlog_drops, salary, income, expense, _, _, _)) =
+                if let Ok((chatlog_drops, salary, income, expense, _, _, _, _)) =
                     extract_drops_from_chatlog(chatlog_path, chatlog_start, chatlog_end, "少年白了发")
                 {
                     for drop in chatlog_drops {
@@ -4258,6 +4441,147 @@ mod tests {
             );
         }
         println!("[DEDUP] 去重验证通过：未为阆风悬城创建新 pending");
+    }
+
+    /// 验证 is_valid_boss 在 raid_bosses 为空时返回 true（不过滤）
+    /// 这是无 BOSS 配置副本能正常扫描的核心前提
+    #[test]
+    fn test_is_valid_boss_empty_config() {
+        let empty_bosses: Vec<(String, String)> = vec![];
+        assert!(is_valid_boss("任意BOSS名", &empty_bosses));
+        assert!(is_valid_boss("", &empty_bosses));
+        assert!(is_valid_boss("史朝义", &empty_bosses));
+    }
+
+    /// 验证 is_valid_boss 在 raid_bosses 非空时仍按精确/模糊匹配
+    #[test]
+    fn test_is_valid_boss_non_empty_config() {
+        let bosses = vec![
+            ("1".to_string(), "笑妆娘".to_string()),
+            ("2".to_string(), "唐醉".to_string()),
+        ];
+        assert!(is_valid_boss("笑妆娘", &bosses));
+        assert!(is_valid_boss("笑妆娘·幻影", &bosses)); // 模糊匹配
+        assert!(!is_valid_boss("未知BOSS", &bosses));
+    }
+
+    /// 验证无 BOSS 配置的副本能正常聚类产出实例
+    /// 模拟场景：副本"西津渡"未配置 raid_bosses，JCL 的 is_kill=true 且 boss_name=文件名
+    #[test]
+    fn test_cluster_raid_instances_unconfigured_raid() {
+        let jcl_files = vec![
+            JclFileInfo {
+                file_name: "2026-07-10-20-00-00-25人普通西津渡(800)-史朝义(140000).jcl".to_string(),
+                timestamp: 1752168000000,
+                raid_display_name: "25人普通西津渡".to_string(),
+                raid_id: 800,
+                boss_name: "史朝义".to_string(),
+                boss_id: 140000,
+            },
+            JclFileInfo {
+                file_name: "2026-07-10-20-15-00-25人普通西津渡(800)-慕容野(140001).jcl".to_string(),
+                timestamp: 1752168900000,
+                raid_display_name: "25人普通西津渡".to_string(),
+                raid_id: 800,
+                boss_name: "慕容野".to_string(),
+                boss_id: 140001,
+            },
+        ];
+
+        // 模拟 analyze_jcl 路径 A 的返回值：
+        // raid_bosses 为空 → file_boss_in_config=true → boss_name=文件名，is_kill=true
+        let mut jcl_analyses: HashMap<String, JclAnalysis> = HashMap::new();
+        jcl_analyses.insert(
+            "2026-07-10-20-00-00-25人普通西津渡(800)-史朝义(140000).jcl".to_string(),
+            JclAnalysis {
+                boss_name: Some("史朝义".to_string()),
+                fight_start_ms: 1752168000000,
+                fight_end_ms: 1752168060000,
+                is_kill: true,
+            },
+        );
+        jcl_analyses.insert(
+            "2026-07-10-20-15-00-25人普通西津渡(800)-慕容野(140001).jcl".to_string(),
+            JclAnalysis {
+                boss_name: Some("慕容野".to_string()),
+                fight_start_ms: 1752168900000,
+                fight_end_ms: 1752168960000,
+                is_kill: true,
+            },
+        );
+
+        let instances = cluster_raid_instances(
+            "test_account",
+            jcl_files,
+            &jcl_analyses,
+            &[],
+            &HashMap::new(),
+        );
+
+        // 核心断言：无配置副本也能产出实例（修复前 build_raid_instance 返回 None → 0 个实例）
+        assert_eq!(instances.len(), 1, "无 BOSS 配置的副本应产出 1 个实例");
+        assert_eq!(
+            instances[0].boss_kill_count, 2,
+            "应识别 2 个 BOSS 击杀"
+        );
+        assert!(
+            instances[0]
+                .jcl_boss_names
+                .contains(&"史朝义".to_string()),
+            "应包含史朝义"
+        );
+        assert!(
+            instances[0]
+                .jcl_boss_names
+                .contains(&"慕容野".to_string()),
+            "应包含慕容野"
+        );
+        assert_eq!(
+            instances[0].raid_display_name,
+            "25人普通西津渡",
+            "副本名应正确"
+        );
+    }
+
+    /// 验证无 BOSS 配置的副本在拉托时（is_kill=false）不产出实例
+    /// 修复后仍应保持保守判定：无击杀信号 = 灭团 = 不生成记录
+    #[test]
+    fn test_cluster_raid_instances_unconfigured_all_wipes() {
+        let jcl_files = vec![JclFileInfo {
+            file_name: "2026-07-10-20-00-00-25人普通西津渡(800)-史朝义(140000).jcl".to_string(),
+            timestamp: 1752168000000,
+            raid_display_name: "25人普通西津渡".to_string(),
+            raid_id: 800,
+            boss_name: "史朝义".to_string(),
+            boss_id: 140000,
+        }];
+
+        // is_kill=false（拉托），boss_name=文件名（路径 A 返回）
+        let mut jcl_analyses: HashMap<String, JclAnalysis> = HashMap::new();
+        jcl_analyses.insert(
+            "2026-07-10-20-00-00-25人普通西津渡(800)-史朝义(140000).jcl".to_string(),
+            JclAnalysis {
+                boss_name: Some("史朝义".to_string()),
+                fight_start_ms: 1752168000000,
+                fight_end_ms: 1752168060000,
+                is_kill: false,
+            },
+        );
+
+        let instances = cluster_raid_instances(
+            "test_account",
+            jcl_files,
+            &jcl_analyses,
+            &[],
+            &HashMap::new(),
+        );
+
+        // 灭团时不产出实例（保守判定，与有配置副本行为一致）
+        assert_eq!(
+            instances.len(),
+            0,
+            "无 BOSS 配置副本全灭团时不应产出实例"
+        );
     }
 
 }

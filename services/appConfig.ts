@@ -21,4 +21,8 @@ export const appConfigService = {
   async setAutoScanEnabled(enabled: boolean): Promise<void> {
     await invoke('set_auto_scan_enabled', { enabled });
   },
+
+  async setAutoRefreshEquipScoreEnabled(enabled: boolean): Promise<void> {
+    await invoke('set_auto_refresh_equip_score_enabled', { enabled });
+  },
 };

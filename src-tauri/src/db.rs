@@ -21,7 +21,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 14;
+pub const CURRENT_SCHEMA_VERSION: i32 = 15;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -645,6 +645,7 @@ pub fn init_db() -> Result<Connection, String> {
     ensure_raid_bosses_table(&conn)?;
     ensure_records_columns(&conn)?;
     ensure_jcl_cache_table(&conn)?;
+    ensure_drop_items_table(&conn)?;
     ensure_critical_columns(&conn)?;
     migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
@@ -1123,6 +1124,94 @@ fn ensure_jcl_cache_table(conn: &Connection) -> Result<(), String> {
         "#,
     )
     .map_err(|e| format!("创建 jcl_cache 表失败: {}", e))?;
+    Ok(())
+}
+
+/// 确保 drop_items 表存在（全新安装时 create_latest_schema 不包含此表，需兜底创建）
+fn ensure_drop_items_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS drop_items (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            map_id            INTEGER,
+            item_type         INTEGER NOT NULL,
+            item_id           INTEGER NOT NULL,
+            item_ext_id       INTEGER,
+            boss_name         TEXT,
+            applicable_school_ids TEXT,
+            ui_id             INTEGER,
+            source            TEXT,
+            source_id         INTEGER,
+            item_name         TEXT NOT NULL UNIQUE,
+            description       TEXT,
+            genre             INTEGER,
+            sub_type          INTEGER,
+            detail_type       INTEGER,
+            price             INTEGER,
+            level             INTEGER,
+            bind_type         INTEGER,
+            max_durability    INTEGER,
+            abrade_rate       INTEGER,
+            max_exist_time    INTEGER,
+            max_exist_amount  INTEGER,
+            can_trade         INTEGER,
+            can_destroy       INTEGER,
+            quality           INTEGER,
+            skill_id          INTEGER,
+            skill_level       INTEGER,
+            belong_school     TEXT,
+            magic_kind        TEXT,
+            magic_type        TEXT,
+            get_type          TEXT,
+            icon_id           INTEGER,
+            can_set_color     INTEGER,
+            auc_genre         INTEGER,
+            auc_sub_type      INTEGER,
+            require_camp      INTEGER,
+            max_strength_level INTEGER,
+            can_apart         INTEGER,
+            can_exterior      INTEGER,
+            can_change_magic  INTEGER,
+            can_shared        INTEGER,
+            repair_price_rebate INTEGER,
+            can_stack         INTEGER,
+            can_consume       INTEGER,
+            require_level     INTEGER,
+            require_gender    INTEGER,
+            require_homeland_level INTEGER,
+            can_use_on_horse  INTEGER,
+            can_use_in_fight  INTEGER,
+            can_good_camp_use INTEGER,
+            can_evil_camp_use INTEGER,
+            can_neutral_camp_use INTEGER,
+            type_label        TEXT,
+            appearance        TEXT,
+            cool_down         TEXT,
+            is_quest          INTEGER,
+            wu_cai_html       TEXT,
+            is_equip          INTEGER,
+            equip_usage       INTEGER,
+            image_url         TEXT,
+            id_key            INTEGER,
+            diamonds          TEXT,
+            requires          TEXT,
+            recommend         TEXT,
+            recommend_xfs     TEXT,
+            attribute_types   TEXT,
+            set_info          TEXT,
+            get_source        TEXT,
+            attributes        TEXT,
+            furniture_attributes TEXT,
+            category          TEXT NOT NULL DEFAULT 'unknown',
+            class_source      TEXT NOT NULL DEFAULT 'api',
+            created_at        TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_drop_items_category ON drop_items(category);
+        CREATE INDEX IF NOT EXISTS idx_drop_items_item_type_id ON drop_items(item_type, item_id);
+        "#,
+    )
+    .map_err(|e| format!("创建 drop_items 表失败: {}", e))?;
     Ok(())
 }
 

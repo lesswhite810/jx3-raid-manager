@@ -6,7 +6,7 @@ mod tests {
     use std::time::Duration;
     use rusqlite::Connection;
 
-    const CURRENT_SCHEMA_VERSION: i32 = 14;
+    const CURRENT_SCHEMA_VERSION: i32 = 15;
 
     fn get_test_dir() -> PathBuf {
         let app_data = std::env::var("APPDATA").expect("无法获取 APPDATA 环境变量");
@@ -168,46 +168,48 @@ mod tests {
 
         copy_with_retry(&db_path, &backup_path).map_err(|e| format!("备份数据库失败: {}", e))?;
 
-        {
-            let conn = Connection::open(&db_path)
-                .map_err(|e| format!("打开数据库失败: {}", e))?;
+        // 将测试逻辑放在闭包中，确保任何失败路径都能恢复备份
+        let result = (|| -> Result<String, String> {
+            {
+                let conn = Connection::open(&db_path)
+                    .map_err(|e| format!("打开数据库失败: {}", e))?;
 
-            if !verify_schema_version(&conn, version)? {
-                return Err(format!("初始版本验证失败，期望 V{}", version));
-            }
-        }
-
-        println!("  开始执行 V{} -> V{} 升级...", version, CURRENT_SCHEMA_VERSION);
-
-        let upgrade_conn = crate::db::init_db_with_path(&db_path)?;
-        drop(upgrade_conn);
-
-        let mut verification_results = Vec::new();
-        {
-            let conn = Connection::open(&db_path)
-                .map_err(|e| format!("重新打开数据库失败: {}", e))?;
-
-            if !verify_schema_version(&conn, CURRENT_SCHEMA_VERSION)? {
-                let actual: i32 = conn
-                    .query_row(
-                        "SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .map_err(|e| format!("查询版本失败: {}", e))?;
-                return Err(format!(
-                    "升级后版本验证失败，期望 V{}，实际 V{}",
-                    CURRENT_SCHEMA_VERSION, actual
-                ));
+                if !verify_schema_version(&conn, version)? {
+                    return Err(format!("初始版本验证失败，期望 V{}", version));
+                }
             }
 
-            let issues = verify_data_integrity(&conn)?;
-            if !issues.is_empty() {
-                return Err(format!("数据完整性问题: {}", issues.join(", ")));
-            }
+            println!("  开始执行 V{} -> V{} 升级...", version, CURRENT_SCHEMA_VERSION);
 
-            if verify_column_exists(&conn, "accounts", "sort_order")? {
-                verification_results.push("accounts.sort_order 存在".to_string());
+            let upgrade_conn = crate::db::init_db_with_path(&db_path)?;
+            drop(upgrade_conn);
+
+            let mut verification_results = Vec::new();
+            {
+                let conn = Connection::open(&db_path)
+                    .map_err(|e| format!("重新打开数据库失败: {}", e))?;
+
+                if !verify_schema_version(&conn, CURRENT_SCHEMA_VERSION)? {
+                    let actual: i32 = conn
+                        .query_row(
+                            "SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .map_err(|e| format!("查询版本失败: {}", e))?;
+                    return Err(format!(
+                        "升级后版本验证失败，期望 V{}，实际 V{}",
+                        CURRENT_SCHEMA_VERSION, actual
+                    ));
+                }
+
+                let issues = verify_data_integrity(&conn)?;
+                if !issues.is_empty() {
+                    return Err(format!("数据完整性问题: {}", issues.join(", ")));
+                }
+
+                if verify_column_exists(&conn, "accounts", "sort_order")? {
+                    verification_results.push("accounts.sort_order 存在".to_string());
             } else {
                 verification_results.push("accounts.sort_order 缺失".to_string());
             }
@@ -233,17 +235,24 @@ mod tests {
             if verify_index_exists(&conn, "idx_accounts_sort_order")? {
                 verification_results.push("idx_accounts_sort_order 存在".to_string());
             }
-        } // conn 在此处 drop，确保恢复前文件句柄已释放
+            } // conn 在此处 drop，确保恢复前文件句柄已释放
 
-        copy_with_retry(&backup_path, &db_path).map_err(|e| format!("恢复数据库失败: {}", e))?;
-        remove_with_retry(&backup_path).map_err(|e| format!("删除备份失败: {}", e))?;
+            Ok(format!(
+                "V{} -> V{} 升级成功 | {}",
+                version,
+                CURRENT_SCHEMA_VERSION,
+                verification_results.join(", ")
+            ))
+        })();
 
-        Ok(format!(
-            "V{} -> V{} 升级成功 | {}",
-            version,
-            CURRENT_SCHEMA_VERSION,
-            verification_results.join(", ")
-        ))
+        // 无论测试成功还是失败，都恢复备份，避免测试数据库被永久修改
+        if let Err(e) = copy_with_retry(&backup_path, &db_path) {
+            // 恢复失败时记录警告但不影响测试结果
+            eprintln!("警告: 恢复数据库失败: {}", e);
+        }
+        let _ = remove_with_retry(&backup_path);
+
+        result
     }
 
     #[test]

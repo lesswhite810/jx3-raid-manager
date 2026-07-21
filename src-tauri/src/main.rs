@@ -2,6 +2,7 @@
 
 mod app_config;
 mod db;
+mod drop_table;
 mod equip_sync;
 mod game_directory;
 mod gkp_parser;
@@ -241,6 +242,7 @@ fn main() {
             app_config::complete_setup,
             app_config::reset_setup,
             app_config::set_auto_scan_enabled,
+            app_config::set_auto_refresh_equip_score_enabled,
             // JX3 进程检测（C 阶段）
             jx3_process::get_jx3_runtime_status,
             // 活跃检测（C 阶段）

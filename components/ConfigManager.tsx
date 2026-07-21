@@ -37,7 +37,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [resetting, setResetting] = useState(false);
   const [showPathError, setShowPathError] = useState(false);
 
-  const { appConfig, updateGameDirectory, resetAll, setAutoScanEnabled } = useAppConfig();
+  const { appConfig, updateGameDirectory, resetAll, setAutoScanEnabled, setAutoRefreshEquipScoreEnabled } = useAppConfig();
 
   const [gameDirectory, setGameDirectory] = useState<string>('');
 
@@ -196,6 +196,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
       toast.info('请确保已在茗伊插件中开启：插件集 → 团队 → 团队工具 → 勾选"战斗事件记录"并启用秘境保存');
     }
     await setAutoScanEnabled(enabled);
+  };
+
+  const handleAutoRefreshEquipScoreToggle = async (enabled: boolean) => {
+    await setAutoRefreshEquipScoreEnabled(enabled);
   };
 
   const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing';
@@ -389,6 +393,30 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
               </div>
             </div>
           )}
+
+          {/* 启动刷新装分 */}
+          <div className="flex items-center justify-between gap-4 pt-4 border-t border-base">
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-medium text-muted whitespace-nowrap w-20">启动刷新装分</label>
+              <p className="text-xs text-muted">
+                {appConfig?.autoRefreshEquipScore
+                  ? '已开启，每次启动应用时自动刷新已导入角色的装分'
+                  : '已关闭，仅手动在导入角色窗口刷新装分'}
+              </p>
+            </div>
+            <button
+              onClick={() => handleAutoRefreshEquipScoreToggle(!appConfig?.autoRefreshEquipScore)}
+              className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                appConfig?.autoRefreshEquipScore ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+                  appConfig?.autoRefreshEquipScore ? 'translate-x-5' : ''
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </div>
 

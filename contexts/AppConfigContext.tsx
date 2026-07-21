@@ -14,6 +14,8 @@ interface AppConfigContextType {
   resetAll: () => Promise<void>;
   /** 设置自动扫描开关 */
   setAutoScanEnabled: (enabled: boolean) => Promise<void>;
+  /** 设置启动刷新装分开关 */
+  setAutoRefreshEquipScoreEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const AppConfigContext = createContext<AppConfigContextType | undefined>(undefined);
@@ -23,6 +25,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   setupCompleted: false,
   lastScanMingyiAt: null,
   autoScanEnabled: false,
+  autoRefreshEquipScore: true,
 };
 
 export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -101,6 +104,17 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  const setAutoRefreshEquipScoreEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      await appConfigService.setAutoRefreshEquipScoreEnabled(enabled);
+      setAppConfig(prev => (prev ? { ...prev, autoRefreshEquipScore: enabled } : { ...DEFAULT_APP_CONFIG, autoRefreshEquipScore: enabled }));
+    } catch (error) {
+      console.error('[AppConfig] 设置启动刷新装分开关失败:', error);
+      toast.error('设置启动刷新装分开关失败');
+      throw error;
+    }
+  }, []);
+
   return (
     <AppConfigContext.Provider
       value={{
@@ -110,6 +124,7 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         markSetupCompleted,
         resetAll,
         setAutoScanEnabled,
+        setAutoRefreshEquipScoreEnabled,
       }}
     >
       {children}
