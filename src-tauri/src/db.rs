@@ -599,7 +599,18 @@ pub fn init_db() -> Result<Connection, String> {
     let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
 
     if *initialized {
-        return Connection::open(get_db_path()?).map_err(|e| e.to_string());
+        let path = get_db_path()?;
+        // 快速路径校验：文件存在且大小 > 0 才跳过初始化
+        // 防止数据库文件在运行期间被删除/替换为空文件后，
+        // DB_INITIALIZED 缓存导致返回空数据库连接
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if metadata.len() > 0 {
+                return Connection::open(path).map_err(|e| e.to_string());
+            }
+        }
+        // 文件不存在或大小为 0，重置标志重新初始化
+        log::warn!("[INIT] 数据库文件缺失或为空，重新初始化");
+        *initialized = false;
     }
 
     let path = get_db_path()?;

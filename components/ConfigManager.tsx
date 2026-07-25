@@ -33,6 +33,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [scanResults, setScanResults] = useState<Jx3ClientInfo[]>([]);
   const [showScanResults, setShowScanResults] = useState(false);
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+  const [seasonLoaded, setSeasonLoaded] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showPathError, setShowPathError] = useState(false);
@@ -60,6 +61,8 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
       setCurrentSeason(season);
     } catch (error) {
       console.error('Failed to load current season:', error);
+    } finally {
+      setSeasonLoaded(true);
     }
   }, []);
 
@@ -279,7 +282,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
           {/* 当前赛季 */}
           <div className="flex items-center gap-4">
             <label className="text-sm font-medium text-muted whitespace-nowrap w-20">当前赛季</label>
-            <span className="text-sm font-medium text-main">{currentSeason ? currentSeason.name : '加载中...'}</span>
+            <span className="text-sm font-medium text-main">{!seasonLoaded ? '加载中...' : currentSeason ? currentSeason.name : '暂无赛季'}</span>
           </div>
 
           {/* 游戏目录 */}
