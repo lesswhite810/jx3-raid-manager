@@ -193,6 +193,40 @@ fn normalize_mingyi_role_name(owner_name: &str, server_name: &str) -> String {
     owner_name.to_string()
 }
 
+/// 通过 uid 在茗伊装备数据库（equip_stat.v4.db）的 OwnerInfo 表查询角色名
+///
+/// 用于 info.jx3dat 缺失 `name` 字段时的回退：
+/// 部分账号的 info.jx3dat 在新版茗伊插件下未写入 name/id 字段（仅含 uid+server），
+/// 但茗伊装备数据库始终记录完整的 ownerkey/ownername 映射，可作为可信回退源。
+///
+/// 返回 None 表示：装备数据库不存在、查询失败、或未找到对应 uid。
+pub fn lookup_role_name_by_uid(game_directory: &Path, uid: &str) -> Option<String> {
+    if uid.is_empty() {
+        return None;
+    }
+
+    let db_path = game_directory.join(MING_YI_DB_PATH);
+    if !db_path.exists() {
+        log::warn!("[GameDirectory] 茗伊装备数据库不存在: {}", db_path.display());
+        return None;
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).ok()?;
+    let owner_key: i64 = uid.parse().ok()?;
+    let name: String = conn
+        .query_row(
+            "SELECT ownername FROM OwnerInfo WHERE ownerkey = ? LIMIT 1",
+            params![owner_key],
+            |row| row.get(0),
+        )
+        .ok()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, String> {
     let db_path = game_directory.join(MING_YI_DB_PATH);
 

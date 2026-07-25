@@ -286,7 +286,12 @@ fn extract_lua_string_field(text: &str, key: &str) -> Option<String> {
 /// 解析 info.jx3dat 文件，提取角色身份信息
 ///
 /// info.jx3dat 为 GBK 编码的 Lua return 语句（XOR key 全0，明文可读）
-pub fn parse_info_jx3dat(path: &Path) -> Option<MingyiRoleIdentity> {
+///
+/// `game_directory`: 游戏运行目录（如 `E:\...\JX3\bin\zhcn_hd`）。
+/// 当 info.jx3dat 缺失 `name` 字段时（部分新版茗伊插件下的异常），
+/// 用 uid 在茗伊装备数据库 equip_stat.v4.db 中查询 ownername 作为回退。
+/// 传 None 表示不进行回退（用于不便于传入游戏目录的场景）。
+pub fn parse_info_jx3dat(path: &Path, game_directory: Option<&Path>) -> Option<MingyiRoleIdentity> {
     let bytes = std::fs::read(path).ok()?;
     // GBK 解码（茗伊文件使用 GBK 编码）
     let (text, _, had_errors) = encoding_rs::GBK.decode(&bytes);
@@ -296,9 +301,32 @@ pub fn parse_info_jx3dat(path: &Path) -> Option<MingyiRoleIdentity> {
     let text = text.as_ref();
 
     let uid = extract_lua_string_field(text, "uid")?;
-    let role_name = extract_lua_string_field(text, "name").unwrap_or_default();
+    let mut role_name = extract_lua_string_field(text, "name").unwrap_or_default();
     let server = extract_lua_string_field(text, "server").unwrap_or_default();
     let region = extract_lua_string_field(text, "region").unwrap_or_default();
+
+    // 回退：info.jx3dat 缺失 name 字段时，从茗伊装备数据库查 ownername
+    // 实测部分账号（如糯闪 uid=342273571708094124）的 info.jx3dat 完全缺失 name/id 字段，
+    // 但 equip_stat.v4.db 的 OwnerInfo 表始终记录完整 ownerkey/ownername 映射
+    if role_name.is_empty() {
+        if let Some(game_dir) = game_directory {
+            if let Some(name_from_db) = crate::game_directory::lookup_role_name_by_uid(game_dir, &uid) {
+                log::info!(
+                    "[ActiveDetector] info.jx3dat 缺失 name 字段，从装备数据库回退: uid={} -> name={} ({})",
+                    uid,
+                    name_from_db,
+                    path.display()
+                );
+                role_name = name_from_db;
+            } else {
+                log::warn!(
+                    "[ActiveDetector] info.jx3dat 缺失 name 字段且装备数据库无回退: uid={} ({})",
+                    uid,
+                    path.display()
+                );
+            }
+        }
+    }
 
     Some(MingyiRoleIdentity {
         uid,
@@ -469,7 +497,11 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
         }
 
         // 解析 info.jx3dat 获取角色身份
-        let identity = parse_info_jx3dat(&path.join("info.jx3dat"));
+        // 传入 game_dir 用于在 info.jx3dat 缺失 name 字段时回退到装备数据库
+        let identity = parse_info_jx3dat(
+            &path.join("info.jx3dat"),
+            Some(&game_dir),
+        );
 
         // 提取 uid（目录名去掉 @zhcn_hd 后缀）
         let uid = dir_name.trim_end_matches("@zhcn_hd").to_string();
@@ -759,5 +791,73 @@ mod tests {
         assert!(!rfc.is_empty());
         // 应能解析回 DateTime
         assert!(chrono::DateTime::parse_from_rfc3339(&rfc).is_ok());
+    }
+
+    /// 验证 info.jx3dat 缺失 name 字段时，能从装备数据库回退
+    ///
+    /// 历史复现条件：糯闪账号（uid=342273571708094124）的 info.jx3dat
+    /// 在新版茗伊插件（1.5.0.9878）下曾完全缺失 name/id 字段，
+    /// 但 equip_stat.v4.db 的 OwnerInfo 表记录了完整的 ownerkey/ownername 映射。
+    ///
+    /// 注意：茗伊插件在角色重新登录后会重写 info.jx3dat 并补上 name 字段，
+    /// 因此此测试用临时文件构造"缺失 name"的场景来验证回退逻辑本身。
+    ///
+    /// 验证点：
+    /// 1. 不传 game_directory 且文件缺失 name 时 role_name 为空（确认根因存在）
+    /// 2. 传 game_directory 且文件缺失 name 时 role_name 回退为 "糯闪"
+    /// 3. 文件有 name 字段时直接用，不触发回退
+    #[test]
+    #[ignore]
+    fn test_parse_info_jx3dat_fallback_for_nuoshan() {
+        let game_dir = std::path::Path::new(r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd");
+
+        // 用临时文件构造"缺失 name"的 info.jx3dat（复现 7-25 23:23 的文件版本）
+        // 注意：茗伊 info.jx3dat 是 GBK 编码，临时文件也必须用 GBK 编码写入
+        let temp_dir = std::env::temp_dir().join("jx3-test-nuoshan-fallback");
+        std::fs::create_dir_all(&temp_dir).expect("创建临时目录失败");
+        let temp_info_path = temp_dir.join("info.jx3dat");
+        // 模拟缺失 name 字段的 info.jx3dat（与 7-25 23:23 版本一致）
+        let info_content_no_name = "return {region=\"电信区\",time_str=\"20260725232306\",time=1784992986,region_origin=\"梦江南\",uid=\"342273571708094124\",version=\"1.5.0.9878\",server_origin=\"电信区\",server=\"梦江南\",branch=\"remake\",lang=\"zhcn\",edition=\"zhcn_hd\"}";
+        let (gbk_bytes, _, _) = encoding_rs::GBK.encode(info_content_no_name);
+        std::fs::write(&temp_info_path, gbk_bytes.as_ref())
+            .expect("写入临时 info.jx3dat 失败");
+
+        // 1. 不传 game_directory：role_name 应为空（复现根因）
+        let identity_no_fallback = parse_info_jx3dat(&temp_info_path, None)
+            .expect("应能解析 info.jx3dat");
+        assert_eq!(identity_no_fallback.uid, "342273571708094124");
+        assert_eq!(identity_no_fallback.server, "梦江南");
+        assert_eq!(identity_no_fallback.region, "电信区");
+        assert!(
+            identity_no_fallback.role_name.is_empty(),
+            "不传 game_directory 时 role_name 应为空，实际: {}",
+            identity_no_fallback.role_name
+        );
+
+        // 2. 传 game_directory：role_name 应从装备数据库回退为 "糯闪"
+        let identity_with_fallback = parse_info_jx3dat(&temp_info_path, Some(game_dir))
+            .expect("应能解析 info.jx3dat");
+        assert_eq!(identity_with_fallback.uid, "342273571708094124");
+        assert_eq!(identity_with_fallback.server, "梦江南");
+        assert_eq!(
+            identity_with_fallback.role_name, "糯闪",
+            "传 game_directory 时 role_name 应从装备数据库回退为 '糯闪'"
+        );
+
+        // 3. 验证真实文件（当前版本已包含 name 字段，应直接用不触发回退）
+        let real_info_path = game_dir
+            .join("interface")
+            .join("my#data")
+            .join("342273571708094124@zhcn_hd")
+            .join("info.jx3dat");
+        if real_info_path.exists() {
+            let identity_real = parse_info_jx3dat(&real_info_path, None)
+                .expect("应能解析真实 info.jx3dat");
+            assert_eq!(identity_real.role_name, "糯闪",
+                "真实 info.jx3dat 应直接包含 name='糯闪'");
+        }
+
+        // 清理临时文件
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

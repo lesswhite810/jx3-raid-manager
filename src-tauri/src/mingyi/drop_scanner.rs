@@ -145,9 +145,10 @@ struct DbRoleIdentity {
 fn resolve_db_role_identity(
     conn: &Connection,
     account_dir: &Path,
+    game_path: &Path,
 ) -> Result<Option<DbRoleIdentity>, String> {
     let info_path = account_dir.join("info.jx3dat");
-    let identity = match parse_info_jx3dat(&info_path) {
+    let identity = match parse_info_jx3dat(&info_path, Some(game_path)) {
         Some(id) => id,
         None => {
             log::warn!(
@@ -1562,7 +1563,33 @@ fn analyze_jcl(
                 || boss_hp_zero_seen
                 || clone_leave_signal
                 || leave_scene_is_kill);
-        treasure_ok || death_ok
+        let result = treasure_ok || death_ok;
+        // 路径 A 详细诊断日志（用于调试笑妆娘等 BOSS is_kill=false 的根因）
+        // 使用 eprintln! 输出到 stderr，cargo test --nocapture 可直接看到
+        eprintln!(
+            "[JCL诊断] 路径A jcl_boss='{}' file_boss_in_config={} → is_kill={}
+            | boss_dwid={} boss_fight_true={} boss_fight_false={} boss_leave_scene={} boss_hp_zero={}
+            | bfight_false_is_kill={} leave_scene_is_kill={} clone_leave_signal={} (count={}, span={}ms)
+            | treasure_ok={} (treasure_box_bosses={:?})
+            | death_ok={}",
+            jcl_boss_name,
+            file_boss_in_config,
+            result,
+            boss_dwid,
+            boss_fight_true_seen,
+            boss_fight_false_seen,
+            boss_leave_scene_seen,
+            boss_hp_zero_seen,
+            bfight_false_is_kill,
+            leave_scene_is_kill,
+            clone_leave_signal,
+            same_name_leave_scene_count,
+            if first_clone_leave_ms > 0 { last_clone_leave_ms - first_clone_leave_ms } else { 0 },
+            treasure_ok,
+            treasure_box_bosses,
+            death_ok,
+        );
+        result
     } else {
         // 路径 B
         if real_boss_dwid == 0 || !real_boss_fight_true_seen {
@@ -2769,7 +2796,7 @@ pub fn scan_raid_drops_with_raids(
     //    不能使用茗伊目录名的数字 uid，否则 UI 过滤不到 pending 记录。
     //    conn 已在 JCL 分析阶段创建，此处直接复用
 
-    let db_identity = match resolve_db_role_identity(&conn, &account_dir) {
+    let db_identity = match resolve_db_role_identity(&conn, &account_dir, &game_path) {
         Ok(Some(id)) => id,
         Ok(None) => {
             log::warn!(
@@ -2844,18 +2871,28 @@ pub fn scan_raid_drops_with_raids(
 
         // 聊天记录分析范围：
         // 开始 = instance.first_gold_time（首个BOSS击杀时间）
-        // 结束 = 下一副本实例的 start_time 或当前扫描时间
-        // （底薪通常在副本结束后30-60分钟内发送，用当前时间可确保覆盖）
+        // 结束 = 下一副本实例的 start_time，或（最后一个实例）副本结束后 2 小时
+        // （底薪通常在副本结束后30-60分钟内发送，2小时窗口足够覆盖）
         let chatlog_start = instance.first_gold_time;
         let chatlog_end = if index + 1 < instance_start_times.len() {
             instance_start_times[index + 1]
         } else {
-            // 最后一个副本实例：以当前扫描时间为结束时间
-            // （底薪通常在副本结束后30-60分钟内发送，用当前时间可确保覆盖）
-            SystemTime::now()
+            // 最后一个副本实例：根据副本是否仍在进行中选择结束时间
+            let now_ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
-                .unwrap_or(instance.last_jcl_time + 2 * 60 * 60 * 1000)
+                .unwrap_or(0);
+            let raid_stale = instance.last_jcl_time > 0
+                && now_ms - instance.last_jcl_time > RAID_STALE_THRESHOLD_MS;
+            if jx3_running && role_online && !raid_stale {
+                // 副本可能仍在进行（JX3运行 + 角色在线 + 最后JCL在6小时内）
+                // 使用当前时间以覆盖实时底薪发送
+                now_ms
+            } else {
+                // 副本已结束：使用 last_jcl_time + 2h 作为结束时间
+                // 避免使用 SystemTime::now() 导致纳入后续家园活动等无关收入
+                instance.last_jcl_time + 2 * 60 * 60 * 1000
+            }
         };
 
         // 从 chatlog 提取掉落物、金币收入和支出
@@ -3533,6 +3570,22 @@ pub fn confirm_record(record_id: String, edit_data: Option<String>) -> Result<()
 
     log::info!("[DropScanner] 记录已确认: {}", record_id);
     Ok(())
+}
+
+/// 清空 JCL 缓存表
+///
+/// 用途：当 analyze_jcl 逻辑修复后，旧版缓存可能残留错误的 is_kill 判定。
+/// 调用此命令清空 jcl_cache 表，下次扫描时所有 JCL 文件会重新解析。
+///
+/// 返回：被清除的缓存条目数量
+#[tauri::command]
+pub fn clear_jcl_cache() -> Result<i64, String> {
+    let conn = db::init_db()?;
+    let deleted = conn
+        .execute("DELETE FROM jcl_cache", [])
+        .map_err(|e| format!("清空 JCL 缓存失败: {}", e))?;
+    log::info!("[DropScanner] 已清空 JCL 缓存，删除 {} 条记录", deleted);
+    Ok(deleted as i64)
 }
 
 /// Tauri 命令：拒绝 pending 记录（CD 释放）
@@ -4517,6 +4570,202 @@ mod tests {
         println!("[DEDUP] 去重验证通过：未为阆风悬城创建新 pending");
     }
 
+    /// 验证 info.jx3dat 缺失 name 字段时，scan_raid_drops 仍能正确识别糯闪账号
+    ///
+    /// 复现条件：糯闪账号（uid=342273571708094124）的 info.jx3dat 缺失 name 字段，
+    /// 修复前 resolve_db_role_identity 返回 None 导致整个账号被跳过。
+    ///
+    /// 验证点：
+    /// 1. resolve_db_role_identity 对糯闪账号返回 Some，role_name="糯闪"
+    /// 2. scan_jcl_files 能扫描到 7-25 的 25 英雄阆风 JCL
+    /// 3. cluster_raid_instances 能聚类出 25 人英雄阆风悬城实例
+    ///
+    /// 注意：此测试不写入 records 表，仅验证扫描流程到聚类阶段
+    #[test]
+    #[ignore]
+    fn test_scan_nuoshan_fallback_identity() {
+        let game_dir = PathBuf::from(r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd");
+        let account_dir = game_dir
+            .join("interface")
+            .join("my#data")
+            .join("342273571708094124@zhcn_hd");
+
+        assert!(
+            account_dir.exists(),
+            "账号目录不存在: {}",
+            account_dir.display()
+        );
+
+        // 1. 验证 resolve_db_role_identity 能识别糯闪（修复前返回 None）
+        let conn = db::init_db().expect("初始化数据库失败");
+        let identity = resolve_db_role_identity(&conn, &account_dir, &game_dir)
+            .expect("resolve_db_role_identity 失败")
+            .expect("糯闪账号应能被识别（修复前会被跳过）");
+
+        assert_eq!(identity.role_name, "糯闪", "role_name 应为 '糯闪'");
+        assert_eq!(identity.server, "梦江南", "server 应为 '梦江南'");
+        assert_eq!(identity.region, "电信区", "region 应为 '电信区'");
+        println!(
+            "[NUOSHAN] 角色身份: role_id={}, account_id={}, name={}",
+            identity.role_id, identity.account_id, identity.role_name
+        );
+
+        // 2. 扫描 JCL 文件（CD 窗口：7-21 07:00 ~ 7-28 07:00，覆盖 7-25 副本）
+        //    用 process_start_ms=0 表示不做进程时间过滤，仅用 CD 窗口过滤
+        let cd_start = chrono::NaiveDate::from_ymd_opt(2026, 7, 20)
+            .unwrap()
+            .and_hms_opt(7, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
+        let cd_end = chrono::NaiveDate::from_ymd_opt(2026, 7, 27)
+            .unwrap()
+            .and_hms_opt(7, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
+
+        let jcl_files = scan_jcl_files(&account_dir, 0, cd_start, cd_end)
+            .expect("扫描 JCL 失败");
+        println!("[NUOSHAN] CD 窗口内 JCL 文件数: {}", jcl_files.len());
+        for jcl in &jcl_files {
+            println!("  JCL: {} | boss={}", jcl.file_name, jcl.boss_name);
+        }
+
+        // 应扫描到 7-25 的 25 英雄阆风 JCL（9 个：笑妆娘、唐醉、墨家机侍、柳公子×2、狼牙士兵、阿史那承庆、唐怀仁、须罗巨傀）
+        assert!(
+            !jcl_files.is_empty(),
+            "应扫描到糯闪的 JCL 文件"
+        );
+        let has_langfeng = jcl_files
+            .iter()
+            .any(|j| j.raid_display_name == "25人英雄阆风悬城");
+        assert!(
+            has_langfeng,
+            "应包含 25人英雄阆风悬城 JCL"
+        );
+
+        // 3. 加载副本配置并分析 JCL
+        let raids = load_raids_with_bosses(&conn).expect("加载副本配置失败");
+        let combat_logs_dir = account_dir.join("userdata").join("combat_logs");
+        let mut jcl_analyses: HashMap<String, JclAnalysis> = HashMap::new();
+        for jcl in &jcl_files {
+            let raid_entry = match match_raid_name(&jcl.raid_display_name, &raids) {
+                Some(entry) => entry,
+                None => continue,
+            };
+            let raid_bosses = &raid_entry.bosses;
+            let jcl_path = combat_logs_dir.join(&jcl.file_name);
+            let mut analysis = analyze_jcl_cached(
+                &conn,
+                &jcl_path,
+                &jcl.boss_name,
+                jcl.boss_id,
+                raid_bosses,
+            )
+            .unwrap_or(JclAnalysis {
+                boss_name: None,
+                fight_start_ms: 0,
+                fight_end_ms: 0,
+                is_kill: false,
+            });
+            if is_valid_boss(&jcl.boss_name, raid_bosses) {
+                analysis.boss_name = Some(jcl.boss_name.clone());
+            }
+            jcl_analyses.insert(jcl.file_name.clone(), analysis);
+        }
+
+        // 4. 聚类
+        let instances = cluster_raid_instances(
+            "342273571708094124",
+            jcl_files,
+            &jcl_analyses,
+            &[],
+            &HashMap::new(),
+        );
+        println!("[NUOSHAN] 副本实例数: {}", instances.len());
+        for (i, inst) in instances.iter().enumerate() {
+            println!(
+                "=== 实例 #{}: {} | BOSS击杀={} | JCL数={} ===",
+                i + 1,
+                inst.raid_display_name,
+                inst.boss_kill_count,
+                inst.jcl_files.len()
+            );
+        }
+
+        // 应聚类出 25 人英雄阆风悬城实例
+        let langfeng = instances
+            .iter()
+            .find(|i| i.raid_display_name == "25人英雄阆风悬城")
+            .expect("应聚类出 25人英雄阆风悬城");
+
+        // 25 英雄阆风应有 5 个 BOSS 击杀（笑妆娘、唐醉、柳公子、阿史那承庆、唐怀仁）
+        assert!(
+            langfeng.boss_kill_count >= 5,
+            "25英雄阆风击杀数应 >= 5，实际: {}",
+            langfeng.boss_kill_count
+        );
+        println!(
+            "[NUOSHAN] 验证通过：糯闪账号被正确识别，25英雄阆风 {} 个 BOSS 击杀",
+            langfeng.boss_kill_count
+        );
+
+        // 5. 从 chatlog 提取掉落和金币（仿照 dry_run 测试）
+        let chatlog_files = find_chatlog_files(&account_dir).expect("查找 chatlog 失败");
+        println!("[NUOSHAN] chatlog 文件数: {}", chatlog_files.len());
+
+        // chatlog 窗口：首个金币时间 ~ last_jcl_time + 2h
+        // 注意：修复后副本已结束时用 last_jcl_time + 2h 而非 SystemTime::now()
+        let chatlog_start = langfeng.first_gold_time;
+        let chatlog_end = langfeng.last_jcl_time + 2 * 60 * 60 * 1000;
+
+        // 时间戳格式化（用 NaiveDateTime，避免引入 TimeZone trait）
+        let fmt_ts = |ms: i64| {
+            #[allow(deprecated)]
+            chrono::NaiveDateTime::from_timestamp_millis(ms)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| format!("ts={}", ms))
+        };
+        println!(
+            "[NUOSHAN] chatlog 窗口: {} ~ {}",
+            fmt_ts(chatlog_start),
+            fmt_ts(chatlog_end)
+        );
+
+        let mut drops: Vec<String> = Vec::new();
+        let mut base_salary: Option<i64> = None;
+        let mut other_income: i64 = 0;
+        let mut total_expense: i64 = 0;
+        for chatlog_path in &chatlog_files {
+            if let Ok((chatlog_drops, salary, income, expense, _, _, _, _)) =
+                extract_drops_from_chatlog(chatlog_path, chatlog_start, chatlog_end, "糯闪")
+            {
+                for drop in chatlog_drops {
+                    if !drops.contains(&drop) {
+                        drops.push(drop);
+                    }
+                }
+                if salary.is_some() {
+                    base_salary = salary;
+                }
+                other_income += income;
+                total_expense += expense;
+            }
+        }
+        let total_gold = base_salary.unwrap_or(other_income);
+
+        println!("\n[NUOSHAN] === 25 英雄阆风收入统计 ===");
+        println!("  掉落物数量: {}", drops.len());
+        println!("  掉落物列表: {:?}", drops);
+        println!("  底薪: {:?}", base_salary);
+        println!("  其他收入合计: {} 金", other_income);
+        println!("  支出合计: {} 金", total_expense);
+        println!("  最终收入: {} 金", total_gold);
+        println!("  副本开始: {}", fmt_ts(langfeng.first_gold_time));
+        println!("  最后 JCL: {}", fmt_ts(langfeng.last_jcl_time));
+    }
+
     /// 验证 is_valid_boss 在 raid_bosses 为空时返回 true（不过滤）
     /// 这是无 BOSS 配置副本能正常扫描的核心前提
     #[test]
@@ -4656,6 +4905,453 @@ mod tests {
             0,
             "无 BOSS 配置副本全灭团时不应产出实例"
         );
+    }
+
+    /// 真实数据扫描：扫描本月（2026-07-01 ~ 2026-08-01）所有账号副本记录
+    ///
+    /// 用途：手动触发本月扫描，会写入 D:\Tools\Jx3RaidManager 数据库的 pending 记录
+    /// 运行方式：
+    ///   cargo test --package jx3-raid-manager --lib test_scan_this_month_real_data -- --ignored --nocapture
+    ///
+    /// 注意：此测试依赖 D:\Tools\Jx3RaidManager 下的应用数据库（通过 data-dir.json 配置）。
+    /// 完成后请在应用内查看 PendingRecordsPanel 的待确认记录。
+    #[test]
+    #[ignore]
+    fn test_scan_this_month_real_data() {
+        use chrono::TimeZone;
+
+        // 本月时间范围（北京时间）：
+        //   start = 2026-07-01 00:00:00 +08:00
+        //   end   = 2026-08-01 00:00:00 +08:00
+        let start_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+        let end_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 8, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+
+        println!(
+            "[本月扫描] 时间范围 (ms): start={}, end={}",
+            start_ms, end_ms
+        );
+        println!(
+            "[本月扫描] 本地起始: {}",
+            chrono::Local.timestamp_millis_opt(start_ms).unwrap()
+        );
+        println!(
+            "[本月扫描] 本地结束: {}",
+            chrono::Local.timestamp_millis_opt(end_ms).unwrap()
+        );
+
+        // 初始化数据库（基于 data-dir.json 配置，应使用 D:\Tools\Jx3RaidManager）
+        let _conn = crate::db::init_db().expect("初始化数据库失败");
+        println!("[本月扫描] 数据库初始化完成");
+
+        // 创建多线程 runtime 调用 async 函数
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("创建 tokio runtime 失败");
+
+        let results = rt
+            .block_on(async { scan_raids_in_range(start_ms, end_ms).await })
+            .expect("scan_raids_in_range 调用失败");
+
+        println!("[本月扫描] 扫描完成，账号数: {}", results.len());
+        let total_scanned: usize = results.iter().map(|r| r.instance_count.unwrap_or(0)).sum();
+        let failed_count = results.iter().filter(|r| !r.success).count();
+        println!("[本月扫描] 处理副本实例总数: {}", total_scanned);
+        println!("[本月扫描] 失败账号数: {}", failed_count);
+
+        for r in &results {
+            if r.success {
+                println!(
+                    "  账号 {} -> 成功, 实例数 = {}",
+                    r.account_id,
+                    r.instance_count.unwrap_or(0)
+                );
+            } else {
+                println!(
+                    "  账号 {} -> 失败, 原因 = {}",
+                    r.account_id,
+                    r.error.as_deref().unwrap_or("未知")
+                );
+            }
+        }
+
+        assert!(
+            results.iter().any(|r| r.success),
+            "应至少有一个账号扫描成功"
+        );
+    }
+
+    /// 重新扫描 7-12 风闪的副本，触发 pending 记录覆盖更新
+    ///
+    /// 用途：笑妆娘 JCL 缓存已修复（is_kill=true），需重新扫描覆盖旧的 pending 记录，
+    /// 让 bossNames 字段包含笑妆娘。
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_rescan_fengshan_712 -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_rescan_fengshan_712() {
+        use chrono::TimeZone;
+
+        // 时间范围：2026-07-12 00:00 ~ 2026-07-13 00:00 (北京时间)
+        let start_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 7, 12)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+        let end_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 7, 13)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+
+        println!("[7-12 重扫] 时间范围: {} ~ {}", start_ms, end_ms);
+
+        let _conn = crate::db::init_db().expect("初始化数据库失败");
+        println!("[7-12 重扫] 数据库初始化完成");
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("创建 tokio runtime 失败");
+
+        let results = rt
+            .block_on(async { scan_raids_in_range(start_ms, end_ms).await })
+            .expect("scan_raids_in_range 调用失败");
+
+        println!("\n[7-12 重扫] 扫描完成，账号数: {}", results.len());
+        let total_scanned: usize = results.iter().map(|r| r.instance_count.unwrap_or(0)).sum();
+        println!("[7-12 重扫] 处理副本实例总数: {}", total_scanned);
+
+        for r in &results {
+            if r.success {
+                println!(
+                    "  账号 {} -> 成功, 实例数 = {}",
+                    r.account_id,
+                    r.instance_count.unwrap_or(0)
+                );
+            } else {
+                println!(
+                    "  账号 {} -> 失败, 原因 = {}",
+                    r.account_id,
+                    r.error.as_deref().unwrap_or("未知")
+                );
+            }
+        }
+
+        // 验证：重新读取风闪 7-12 pending 记录，确认 bossNames 包含笑妆娘
+        let conn = crate::db::init_db().expect("再次初始化数据库失败");
+        let data: String = conn
+            .query_row(
+                "SELECT data FROM records
+                 WHERE role_id = '293f3c1f-9a2e-44c8-8911-f541074b0c7e'
+                   AND source = 'auto_scan'
+                   AND status = 'pending'
+                   AND record_date >= ?1 AND record_date < ?2",
+                sql_params![start_ms, end_ms],
+                |r| r.get::<_, String>(0),
+            )
+            .expect("应找到风闪 7-12 pending 记录");
+
+        let data_val: serde_json::Value =
+            serde_json::from_str(&data).expect("解析 data JSON 失败");
+        let boss_names = data_val["bossNames"]
+            .as_array()
+            .expect("bossNames 应为数组");
+        println!("\n[验证] 重扫后 bossNames = {:?}", boss_names);
+
+        let has_xiaozhuangniang = boss_names
+            .iter()
+            .any(|v| v.as_str() == Some("笑妆娘"));
+        assert!(
+            has_xiaozhuangniang,
+            "重扫后 bossNames 应包含笑妆娘，实际: {:?}",
+            boss_names
+        );
+        println!("[验证] ✓ bossNames 已包含笑妆娘");
+    }
+
+    /// 读取风闪 7-12 pending 记录的 bossNames 字段
+    ///
+    /// 用途：诊断为什么该 pending 记录没有笑妆娘 BOSS
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_read_fengshan_712_pending -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_read_fengshan_712_pending() {
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 先打印所有 pending 记录，确认数据库状态
+        println!("=== 所有 pending 记录 ===");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, role_id, record_date, raid_name FROM records
+                 WHERE source='auto_scan' AND status='pending' ORDER BY record_date DESC",
+            )
+            .expect("prepare 失败");
+        let pending_rows: Vec<(String, String, i64, String)> = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .expect("query_map 失败")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect 失败");
+        for r in &pending_rows {
+            let dt = chrono::DateTime::<chrono::Local>::from(
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(r.2 as u64),
+            );
+            println!("  id={} role={} raid={} date={}", r.0, r.1, r.3, dt);
+        }
+        println!("pending 记录总数: {}", pending_rows.len());
+
+        // 找风闪 7-12 14:52:51 那条（role_id=293f3c1f-9a2e-44c8-8911-f541074b0c7e）
+        let target = pending_rows
+            .iter()
+            .find(|r| r.1 == "293f3c1f-9a2e-44c8-8911-f541074b0c7e")
+            .expect("应能找到风闪 7-12 pending 记录");
+
+        let data: String = conn
+            .query_row(
+                "SELECT data FROM records WHERE id=?1",
+                sql_params![&target.0],
+                |r| r.get::<_, String>(0),
+            )
+            .expect("读取 data 失败");
+
+        println!("\n=== Target Pending Record ===");
+        println!("id: {}", target.0);
+        println!("role_id: {}", target.1);
+        println!("record_date: {}", target.2);
+        println!("raid_name: {}", target.3);
+        let dt = chrono::DateTime::<chrono::Local>::from(
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(target.2 as u64),
+        );
+        println!("record_date_local: {}", dt);
+
+        let data_val: serde_json::Value =
+            serde_json::from_str(&data).expect("解析 data JSON 失败");
+        println!("\n=== data pretty ===");
+        println!("{}", serde_json::to_string_pretty(&data_val).unwrap());
+
+        if let Some(boss_names) = data_val.get("bossNames") {
+            println!("\n=== bossNames ===");
+            println!("{}", serde_json::to_string_pretty(boss_names).unwrap());
+        } else {
+            println!("\n[bossNames 字段不存在]");
+        }
+
+        if let Some(jcl_files) = data_val.get("jclFiles") {
+            println!("\n=== jclFiles ===");
+            println!("{}", serde_json::to_string_pretty(jcl_files).unwrap());
+        }
+
+        if let Some(drops) = data_val.get("drops") {
+            println!("\n=== drops ===");
+            println!("{}", serde_json::to_string_pretty(drops).unwrap());
+        }
+    }
+
+    /// 批量清空 JCL 缓存表（一次性维护操作）
+    ///
+    /// 用途：当 analyze_jcl 逻辑修复后，旧版缓存可能残留错误的 is_kill 判定，
+    /// 调用此测试一次性清空所有缓存，下次扫描时所有 JCL 文件会重新解析。
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_clear_all_jcl_cache -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_clear_all_jcl_cache() {
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 先统计当前缓存状态
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jcl_cache", [], |r| r.get::<_, i64>(0))
+            .expect("查询总数失败");
+        let is_kill_zero: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM jcl_cache WHERE is_kill = 0",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("查询 is_kill=0 失败");
+        println!("[清缓存] 当前 jcl_cache: 总计 {} 条, is_kill=0 共 {} 条", total, is_kill_zero);
+
+        // 调用 clear_jcl_cache 函数（与 Tauri 命令共用同一实现）
+        let deleted = super::clear_jcl_cache().expect("清空 JCL 缓存失败");
+        println!("[清缓存] 已删除 {} 条缓存", deleted);
+
+        // 验证
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jcl_cache", [], |r| r.get::<_, i64>(0))
+            .expect("查询剩余总数失败");
+        println!("[清缓存] 剩余 {} 条", remaining);
+        assert_eq!(remaining, 0, "清空后 jcl_cache 应为空");
+        println!("[清缓存] ✓ 已清空所有 JCL 缓存，下次扫描会重新解析");
+    }
+
+    /// 验证 jcl_cache 表清理后再扫描的状态
+    ///
+    /// 用途：执行 test_clear_all_jcl_cache + test_scan_this_month_real_data 后，
+    /// 检查重新解析后的 jcl_cache 状态，确认 is_kill=0 的记录都是真正的灭团。
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_verify_jcl_cache_after_clear -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_verify_jcl_cache_after_clear() {
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jcl_cache", [], |r| r.get::<_, i64>(0))
+            .expect("查询总数失败");
+        let is_kill_zero: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM jcl_cache WHERE is_kill = 0",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("查询 is_kill=0 失败");
+        let is_kill_one: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM jcl_cache WHERE is_kill = 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("查询 is_kill=1 失败");
+        println!("[验证] 重新解析后 jcl_cache: 总计 {} 条, is_kill=1 共 {} 条, is_kill=0 共 {} 条",
+            total, is_kill_one, is_kill_zero);
+
+        // 列出 is_kill=0 的 BOSS 分布（应都是真正灭团）
+        let mut stmt = conn
+            .prepare(
+                "SELECT boss_name, COUNT(*) as cnt FROM jcl_cache
+                 WHERE is_kill = 0 AND boss_name IS NOT NULL
+                 GROUP BY boss_name ORDER BY cnt DESC",
+            )
+            .expect("prepare 失败");
+        let boss_counts: Vec<(String, i64)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .expect("query_map 失败")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect 失败");
+        println!("\n[验证] is_kill=0 的 BOSS 分布（应为真正灭团）:");
+        for (boss, cnt) in &boss_counts {
+            println!("  {} - {} 条", boss, cnt);
+        }
+    }
+
+    /// 诊断风闪 7-12 14:52:51 笑妆娘 JCL 的击杀判定信号
+    ///
+    /// 用途：测试 analyze_jcl 各信号状态，看为什么 is_kill=false
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_analyze_fengshan_xiaozhuangniang_jcl -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_analyze_fengshan_xiaozhuangniang_jcl() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 笑妆娘 JCL 路径
+        let jcl_path = PathBuf::from(
+            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\432345564258532896@zhcn_hd\userdata\combat_logs\2026-07-12-14-52-51-25人普通阆风悬城(794)-笑妆娘(137088).jcl",
+        );
+        assert!(jcl_path.exists(), "JCL 文件不存在: {}", jcl_path.display());
+
+        // 加载 raids 配置
+        let raids = load_raids_with_bosses(&conn).expect("加载副本配置失败");
+        let raid_entry = raids
+            .iter()
+            .find(|r| r.raid_id == "25人普通阆风悬城")
+            .expect("应找到 25人普通阆风悬城 配置");
+        let raid_bosses: Vec<(String, String)> = raid_entry.bosses.clone();
+        println!("raid_bosses={:?}", raid_bosses);
+
+        // 笑妆娘 template_id=137088（从 JCL 文件名提取）
+        let boss_template_id: i64 = 137088;
+
+        // 删除笑妆娘 JCL 的缓存（强制重新解析）
+        let path_str = jcl_path.to_string_lossy().to_string();
+        conn.execute(
+            "DELETE FROM jcl_cache WHERE file_path = ?1",
+            sql_params![&path_str],
+        )
+        .expect("删除缓存失败");
+        println!("[诊断] 已删除笑妆娘 JCL 缓存，准备重新解析");
+
+        // 调用 analyze_jcl_cached 重新解析（会触发 log::info! 诊断日志）
+        let analysis = analyze_jcl_cached(
+            &conn,
+            &jcl_path,
+            "笑妆娘",
+            boss_template_id,
+            &raid_bosses,
+        )
+        .expect("分析 JCL 失败");
+
+        println!("\n=== 笑妆娘 JCL 分析结果 ===");
+        println!("boss_name: {:?}", analysis.boss_name);
+        println!("fight_start_ms: {}", analysis.fight_start_ms);
+        println!("fight_end_ms: {}", analysis.fight_end_ms);
+        println!("is_kill: {}", analysis.is_kill);
+
+        // 同时打印相邻 JCL 的分析结果作为对比
+        // (jcl_file_name, boss_name, template_id)
+        let adjacent_jcls: [(&str, &str, i64); 3] = [
+            ("2026-07-12-14-58-39-25人普通阆风悬城(794)-唐醉(137005).jcl", "唐醉", 137005),
+            ("2026-07-12-15-08-29-25人普通阆风悬城(794)-柳公子(137019).jcl", "柳公子", 137019),
+            ("2026-07-12-15-15-43-25人普通阆风悬城(794)-阿史那承庆(137017).jcl", "阿史那承庆", 137017),
+        ];
+        for (jcl_name, boss_name, template_id) in &adjacent_jcls {
+            let p = jcl_path.parent().unwrap().join(jcl_name);
+            if !p.exists() {
+                println!("[对比] JCL 不存在: {}", p.display());
+                continue;
+            }
+            let p_str = p.to_string_lossy().to_string();
+            conn.execute(
+                "DELETE FROM jcl_cache WHERE file_path = ?1",
+                sql_params![&p_str],
+            )
+            .expect("删除缓存失败");
+            let a = analyze_jcl_cached(&conn, &p, boss_name, *template_id, &raid_bosses)
+                .expect("分析失败");
+            println!(
+                "\n[对比] {} → boss={:?} is_kill={} start={} end={}",
+                jcl_name,
+                a.boss_name,
+                a.is_kill,
+                a.fight_start_ms,
+                a.fight_end_ms
+            );
+        }
     }
 
 }

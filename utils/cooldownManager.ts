@@ -95,6 +95,29 @@ export const getNextMonday = (date: Date): Date => {
 };
 
 /**
+ * 获取当前月份的起始时间（本月1日 00:00）
+ * 用于"扫描本月"等按自然月范围扫描的场景
+ */
+export const getMonthStart = (date: Date): Date => {
+  const d = new Date(date);
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+/**
+ * 获取下个月的起始时间（下月1日 00:00）
+ * 用于"扫描本月"等按自然月范围扫描的场景
+ */
+export const getMonthEnd = (date: Date): Date => {
+  const d = new Date(date);
+  d.setDate(1);
+  d.setMonth(d.getMonth() + 1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+/**
  * 获取 10人本的当前 CD 周期范围
  * 周期1: 周一 07:00 ~ 周五 07:00
  * 周期2: 周五 07:00 ~ 下周一 07:00

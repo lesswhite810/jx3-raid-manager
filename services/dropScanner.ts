@@ -76,4 +76,16 @@ export const dropScannerService = {
   async rejectRecord(recordId: string): Promise<void> {
     await invoke('reject_record', { recordId });
   },
+
+  /**
+   * 清空 JCL 解析缓存表（jcl_cache）。
+   *
+   * 当 analyze_jcl 逻辑修复后，旧版缓存可能残留错误的 is_kill 判定，
+   * 调用此方法清空缓存，下次扫描时所有 JCL 文件会重新解析。
+   *
+   * @returns 被清除的缓存条目数量
+   */
+  async clearJclCache(): Promise<number> {
+    return invoke<number>('clear_jcl_cache');
+  },
 };

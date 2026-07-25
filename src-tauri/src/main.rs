@@ -254,6 +254,7 @@ fn main() {
             mingyi::drop_scanner::scan_raids_in_range,
             mingyi::drop_scanner::confirm_record,
             mingyi::drop_scanner::reject_record,
+            mingyi::drop_scanner::clear_jcl_cache,
             // 缓存相关
             db::db_get_cache,
             db::db_save_cache,
