@@ -197,6 +197,7 @@ fn main() {
             game_directory::import_selected_roles,
             game_directory::validate_game_directory,
             game_directory::scan_jx3_clients,
+            game_directory::generate_deterministic_uuid,
             db::db_init,
             // 新的版本管理命令
             db::db_get_version_info,

@@ -152,7 +152,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         hasSecretBook,
         notes: notes.trim() || undefined,
         roleName: role.name,
-        server: `${role.region} ${role.server}`,
+        server: role.server,
         transactionType: 'combined',
         bossIds: selectedBossIds.length > 0 ? selectedBossIds : undefined,
         bossNames: selectedBossIds.map(id => availableBosses.find(b => b.id === id)?.name).filter(Boolean) as string[] || undefined,

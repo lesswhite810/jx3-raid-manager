@@ -68,6 +68,8 @@ pub struct BatchActiveResult {
     pub jx3_running: bool,
     /// JX3 进程启动时间（RFC3339）
     pub jx3_start_time: Option<String>,
+    /// JX3 进程启动时间（UNIX 时间戳，秒）
+    pub jx3_start_time_unix: u64,
     /// JX3 进程结束时间（运行中为 None）
     pub jx3_end_time: Option<String>,
     pub jx3_process_count: u32,
@@ -398,6 +400,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
         return BatchActiveResult {
             jx3_running: false,
             jx3_start_time: None,
+            jx3_start_time_unix: 0,
             jx3_end_time: None,
             jx3_process_count: runtime_status.all_processes.len() as u32,
             multi_instance_detected: runtime_status.multi_instance_detected,
@@ -412,6 +415,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
     let window_start = unix_to_system_time(matched.start_time_unix);
     let window_end = SystemTime::now();
     let jx3_start_time = Some(matched.start_time.clone());
+    let jx3_start_time_unix = matched.start_time_unix;
     // 进程运行中，无结束时间
     let jx3_end_time: Option<String> = None;
 
@@ -440,6 +444,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
             return BatchActiveResult {
                 jx3_running: true,
                 jx3_start_time,
+                jx3_start_time_unix,
                 jx3_end_time,
                 jx3_process_count: runtime_status.all_processes.len() as u32,
                 multi_instance_detected: runtime_status.multi_instance_detected,
@@ -541,6 +546,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
     BatchActiveResult {
         jx3_running: true,
         jx3_start_time,
+        jx3_start_time_unix,
         jx3_end_time,
         jx3_process_count: runtime_status.all_processes.len() as u32,
         multi_instance_detected: runtime_status.multi_instance_detected,

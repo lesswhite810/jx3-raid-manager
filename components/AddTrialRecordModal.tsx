@@ -560,7 +560,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 accountId: role.accountId,
                 roleId: role.id,
                 roleName: role.name,
-                server: `${role.region} ${role.server}`,
+                server: role.server,
                 date: formatDateFromInput(recordDate),
                 layer,
                 bosses: [boss1, boss2, boss3],

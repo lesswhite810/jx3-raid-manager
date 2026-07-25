@@ -11,6 +11,7 @@ import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
+import { getBaseServerName } from '../utils/serverUtils';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -271,7 +272,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       let sect = '';
       let martial = '';
       let region = '';
-      let server = record.server || '未知服务器';
+      let server = getBaseServerName(record.server || '未知服务器');
       let accountName = record.accountId || '未知账号';
       let accountType = AccountType.OWN;
       let accountNote: string | undefined;

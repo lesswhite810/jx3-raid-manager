@@ -179,6 +179,38 @@ fn resolve_db_role_identity(
                 role_id,
                 account_id
             );
+
+            // 修复孤儿记录：role_id 匹配但 account_id 不一致的记录
+            // 场景：账号被删除后重新添加（手动/导入），account_id 变了但 role_id 不变
+            let orphan_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM records WHERE role_id = ?1 AND account_id != ?2",
+                    params![&role_id, &account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            if orphan_count > 0 {
+                // 更新表列
+                let updated = conn.execute(
+                    "UPDATE records SET account_id = ?1 WHERE role_id = ?2 AND account_id != ?1",
+                    params![&account_id, &role_id],
+                ).map_err(|e| format!("更新孤儿记录 account_id 失败: {}", e))?;
+                // 同步更新 JSON data 中的 accountId 字段（前端从 data 读取）
+                conn.execute(
+                    "UPDATE records SET data = json_set(data, '$.accountId', ?1) \
+                     WHERE role_id = ?2 AND json_extract(data, '$.accountId') != ?1",
+                    params![&account_id, &role_id],
+                ).map_err(|e| format!("更新孤儿记录 JSON accountId 失败: {}", e))?;
+                log::info!(
+                    "[DropScanner] 修复 {} 条孤儿记录: role_id={} -> account_id={} (rows affected: {})",
+                    orphan_count,
+                    role_id,
+                    account_id,
+                    updated
+                );
+            }
+
             Ok(Some(DbRoleIdentity {
                 role_id,
                 account_id,
@@ -1134,8 +1166,9 @@ fn analyze_jcl(
     let mut boss_fight_true_seen = false;
     let mut boss_fight_false_seen = false;
     let mut boss_hp_zero_seen = false;
-    // 注意：主 BOSS LEAVE_SCENE 不可靠（拉托时也会离场），路径 A 不使用。
-    // 仅路径 B（小怪 JCL）使用，因为路径 B 的真实 BOSS 击杀时可能无 bFight=false。
+    // 主 BOSS LEAVE_SCENE：单独不可靠（拉托时也会离场），
+    // 但与 bFight=false 组合可区分击杀/拉托（见下方 leave_scene_is_kill）。
+    // 路径 B 也使用，因为真实 BOSS 击杀时可能无 bFight=false。
     let mut boss_leave_scene_seen = false;
     // 已发现的 BOSS 专属宝箱 NPC（"BOSS名+宝箱"），用于路径 A/B 判定
     let mut treasure_box_bosses: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1168,6 +1201,9 @@ fn analyze_jcl(
     //   - 击杀：分身在整个战斗过程中陆续离场，跨度大（实测 229~374 秒）
     //   - 团灭：分身在战斗结束时集中离场，跨度小（实测 56 秒）
     //   阈值 120 秒可完美区分两类情况。
+    //   注意：此机制仅适用于有多个分身的 BOSS（如笑妆娘）。
+    //   柳公子只有 1 个分身（跨度=0），不满足此信号，
+    //   但可通过 leave_scene_is_kill（无脱战离场）判定击杀。
     let mut same_name_dwids: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let mut same_name_leave_scene_count: u32 = 0;
     // 分身（非主 BOSS 的同名 NPC）离场时间戳，用于计算离场时间跨度
@@ -1393,7 +1429,7 @@ fn analyze_jcl(
                 }
                 let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
 
-                // 文件名 BOSS 离开场景（仅路径 B 使用）
+                // 文件名 BOSS 离开场景
                 if boss_dwid != 0 && dwid == boss_dwid {
                     boss_leave_scene_seen = true;
                 }
@@ -1460,9 +1496,14 @@ fn analyze_jcl(
     //   2) 死亡路径：必须同时满足
     //      - boss_dwid 已追踪到（!= 0）
     //      - boss_fight_true_seen（确认 BOSS 真的进入过战斗）
-    //      - **boss_fight_false_seen 或 boss_hp_zero_seen 或 clone_leave_signal**
-    //        （bFight=false / HP 归零 / 分身长时间跨度离场，任一即可确认死亡）
-    //   注意：路径 A **不使用** boss_leave_scene_seen，因为拉托时主 BOSS 也会离场。
+    //      - **bfight_false_is_kill 或 boss_hp_zero_seen 或 clone_leave_signal 或 leave_scene_is_kill**
+    //        （bFight=false无离场 / HP 归零 / 分身长时间跨度离场 / 无脱战离场，任一即可确认死亡）
+    //   击杀/拉托判定矩阵（bFight=false × LEAVE_SCENE）：
+    //     bFight=false + 无 LEAVE  → 击杀（bfight_false_is_kill）
+    //     bFight=false + 有 LEAVE  → 拉托（BOSS 脱战后离场回原位）
+    //     无 bFight=false + 有 LEAVE → 击杀（leave_scene_is_kill，BOSS 被击杀后直接消失）
+    //     无 bFight=false + 无 LEAVE → 无死亡信号
+    //   适用 BOSS：柳公子击杀时无宝箱、无 bFight=false，但主 BOSS LEAVE_SCENE。
     //
     // 路径 B：文件名 BOSS 不在配置中（小怪 JCL 如"须罗巨傀"对应唐怀仁战斗）
     //   Q1: JCL 中能找到配置 BOSS 吗？
@@ -1501,13 +1542,20 @@ fn analyze_jcl(
         // 实测：16-34-59 阿史那承庆 bFight=false(HP=91.7%) + LEAVE_SCENE = 拉托；
         //       16-43-09 阿史那承庆 bFight=false(HP满) + 无LEAVE = 击杀。
         let bfight_false_is_kill = boss_fight_false_seen && !boss_leave_scene_seen;
-        // 无 BOSS 配置时，LEAVE_SCENE 也可作为击杀信号（当没有 bFight=false 时）
-        // 某些 BOSS（如白帝江关的宇文灭、姜集苦）击杀后无 bFight=false，
-        // 但会触发 LEAVE_SCENE（BOSS 被击杀后离场）。
+        // LEAVE_SCENE 作为击杀信号（当没有 bFight=false 时）：
+        // 完整的击杀/拉托判定矩阵（基于 bFight=false × LEAVE_SCENE）：
+        //   bFight=false + 无 LEAVE  → 击杀（BOSS 死在原地，bfight_false_is_kill）
+        //   bFight=false + 有 LEAVE  → 拉托（BOSS 脱战后离场回原位）
+        //   无 bFight=false + 有 LEAVE → 击杀（BOSS 被击杀后直接消失，无脱战过程）
+        //   无 bFight=false + 无 LEAVE → 无死亡信号
+        // 原理：拉托时 BOSS 会先触发 bFight=false（脱战）再离场；
+        //       击杀时 BOSS 直接死亡消失，不触发 bFight=false。
+        // 适用场景：
+        // - 无 BOSS 配置：白帝江关的宇文灭、姜集苦等击杀后无 bFight=false 但会 LEAVE_SCENE
+        // - 有 BOSS 配置：柳公子等 BOSS 击杀时 NPC_FIGHT_HINT 仅有 bFight=true，
+        //   无宝箱 NPC、无 bFight=false，但主 BOSS LEAVE_SCENE
         // 仅当没有 bFight=false 时才使用 LEAVE_SCENE，避免误判拉托为击杀。
-        let leave_scene_is_kill = raid_bosses.is_empty()
-            && boss_leave_scene_seen
-            && !boss_fight_false_seen;
+        let leave_scene_is_kill = boss_leave_scene_seen && !boss_fight_false_seen;
         let death_ok = boss_dwid != 0
             && boss_fight_true_seen
             && (bfight_false_is_kill
@@ -2033,6 +2081,10 @@ fn calculate_cd_window(record_time_ms: i64, is_ten_person: bool) -> (i64, i64) {
 /// 角色在线判断阈值：chatlog 最新 mtime 在此窗口内视为在线（毫秒）
 const ROLE_ONLINE_THRESHOLD_MS: i64 = 5 * 60 * 1000; // 5 分钟
 
+/// 副本"过期"阈值：副本最后一个 JCL 距今超过此值，视为已完成（毫秒）
+/// 6 小时足以覆盖绝大多数副本时长（含多次拉托），超过此时间说明副本早已结束
+const RAID_STALE_THRESHOLD_MS: i64 = 6 * 60 * 60 * 1000; // 6 小时
+
 /// 判断角色是否在线（基于 chatlog 最新 mtime）
 ///
 /// 用户要求：不能用 combat_logs mtime（挂机不打本时无新 JCL），
@@ -2107,6 +2159,8 @@ fn is_role_online(account_dir: &Path, jx3_running: bool) -> bool {
 /// 2. 出现底薪结算消息：has_salary = true（聊天记录中检测到"每人底薪：XXX金"）
 /// 3. JX3 进程退出：jx3_running = false
 /// 4. 角色离线：role_online = false（chatlog mtime > 5 分钟未更新）
+/// 5. 时间兜底：副本最后一个 JCL 距今超过 RAID_STALE_THRESHOLD_MS（6 小时），
+///    无论进程/角色状态如何均视为已完成。避免历史副本因当前 JX3 运行而被误判为"进行中"。
 ///
 /// 由于通关判定改为基于 JCL 数据（NPC_FIGHT_HINT 的 bFight True→False），
 /// 不再依赖 chatlog 10金，所有条件均可可靠检查。
@@ -2145,6 +2199,21 @@ fn is_raid_complete(
     // 条件 4：角色离线
     if !role_online {
         return true;
+    }
+    // 条件 5：时间兜底 — 副本最后一个 JCL 距今超过阈值，视为已完成
+    // 防止历史副本因当前 JX3 运行中 + 角色在线而被误判为"进行中"（scanning）
+    if instance.last_jcl_time > 0 {
+        let now_ms = chrono::Local::now().timestamp_millis();
+        let elapsed = now_ms - instance.last_jcl_time;
+        if elapsed > RAID_STALE_THRESHOLD_MS {
+            log::info!(
+                "[DropScanner] 时间兜底: 副本 '{}' 最后JCL距今 {}ms > 阈值 {}ms，判定已完成",
+                instance.raid_display_name,
+                elapsed,
+                RAID_STALE_THRESHOLD_MS
+            );
+            return true;
+        }
     }
     false
 }
@@ -2404,7 +2473,8 @@ fn upsert_raid_drop_record(
         "accountId": instance.account_id,
         "roleId": role_id,
         "roleName": role_name,
-        "server": format!("{} {}", role_region, role_server),
+        "server": role_server,
+        "region": role_region,
         "raidName": raid_full_name,
         "mapId": instance.map_id,
         "date": instance.start_time,
@@ -3108,17 +3178,21 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
     let jx3_running = active_result.jx3_running;
 
     // 从 active_result 获取进程启动时间（用于过滤 JCL 文件，只扫描本次会话产生的）
-    let process_start_ms = active_result
-        .jx3_start_time
-        .as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.timestamp_millis())
-        .unwrap_or(0);
+    // 直接使用 UNIX 时间戳，避免 RFC3339 字符串往返解析导致的 0 值问题
+    let process_start_ms = (active_result.jx3_start_time_unix as i64) * 1000;
+
+    // 计算当前 CD 窗口（本周一 07:00 ~ 下周一 07:00），
+    // 作为 start_ms/end_ms 传入 scan_jcl_files 的日期前缀 + 精确时间过滤，
+    // 即使 process_start_ms 过滤因故失效，CD 窗口仍能拦截历史 JCL 文件
+    let now_ms = chrono::Local::now().timestamp_millis();
+    let (cd_start_ms, cd_end_ms) = calculate_cd_window(now_ms, false);
 
     log::info!(
-        "[DropScanner] 批量扫描: JX3 启动时间={}, process_start_ms={}, 检测到 {} 个角色",
+        "[DropScanner] 批量扫描: JX3 启动时间={}, process_start_ms={}, CD窗口=[{},{}], 检测到 {} 个角色",
         active_result.jx3_start_time.as_deref().unwrap_or("未知"),
         process_start_ms,
+        cd_start_ms,
+        cd_end_ms,
         active_result.roles.len()
     );
 
@@ -3199,7 +3273,7 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
             role_online
         );
 
-        let result = scan_raid_drops_internal(uid, jx3_running, role_online, process_start_ms, 0, 0);
+        let result = scan_raid_drops_internal(uid, jx3_running, role_online, process_start_ms, cd_start_ms, cd_end_ms);
         results.push((uid.clone(), result));
 
         // Recent 角色扫描完成后记入集合，后续轮询跳过

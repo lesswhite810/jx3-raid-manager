@@ -177,6 +177,25 @@ class DatabaseService {
     }
   }
 
+  /// 根据复合键生成确定性 UUID，与后端 generate_uuid_from_key 一致
+  /// 前端手动添加账号/角色时使用，确保删除重建后 ID 不变
+  async generateDeterministicUUID(key: string): Promise<string> {
+    try {
+      return await invoke<string>('generate_deterministic_uuid', { key });
+    } catch (error) {
+      console.error('Failed to generate deterministic UUID, falling back to random:', error);
+      // 降级：返回随机 UUID（不影响功能，但不具备确定性）
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+  }
+
   async getRecords(): Promise<any[]> {
     await this.init();
     try {

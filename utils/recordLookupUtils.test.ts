@@ -35,7 +35,7 @@ describe('record lookup helpers', () => {
 
     expect(lookup.get('account-1::role-1')).toEqual({
       roleName: '角色一',
-      server: '电信一区 梦江南'
+      server: '梦江南'
     });
   });
 

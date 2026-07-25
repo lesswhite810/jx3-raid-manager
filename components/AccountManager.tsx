@@ -8,7 +8,6 @@ import {
   reorderAccounts,
   sortRoles,
 } from '../utils/accountUtils';
-import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
@@ -577,9 +576,9 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     setIsImportRolesModalOpen(true);
   };
 
-  const handleAddAccountSubmit = (data: { accountName: string; type: AccountType; password?: string; notes?: string }) => {
+  const handleAddAccountSubmit = async (data: { accountName: string; type: AccountType; password?: string; notes?: string }) => {
     const account: Account = {
-      id: generateUUID(),
+      id: await db.generateDeterministicUUID(`account:${data.accountName}`),
       accountName: data.accountName,
       type: data.type,
       username: data.accountName,
@@ -592,7 +591,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     toast.success('成功添加账号');
   };
 
-  const handleAddRoleSubmit = (data: {
+  const handleAddRoleSubmit = async (data: {
     name: string;
     server: string;
     region: string;
@@ -606,7 +605,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     if (!targetAccount) return;
 
     const role: Role = {
-      id: generateUUID(),
+      id: await db.generateDeterministicUUID(`role:${targetAccount.accountName}:${data.name}:${data.region}:${data.server}`),
       name: data.name,
       server: data.server,
       region: data.region,

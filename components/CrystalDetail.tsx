@@ -63,7 +63,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
         if (role) {
           return {
             roleName: role.name,
-            server: `${role.region} ${role.server}`
+            server: role.server
           };
         }
       }

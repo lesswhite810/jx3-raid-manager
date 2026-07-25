@@ -35,7 +35,7 @@ const flattenRoles = (accounts: Account[]): { id: string; name: string; server: 
     return safeRoles.filter(role => !role.disabled).map(role => ({
       id: `${account.id}-${role.id}`,
       name: role.name,
-      server: `${role.region} ${role.server}`,
+      server: role.server,
       accountId: account.id
     }));
   });
@@ -310,7 +310,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
       const safeRoles = Array.isArray(account.roles) ? account.roles : [];
       const role = safeRoles.find(r => r.id === roleId);
       const roleName = role?.name || '未知';
-      const server = role ? `${role.region} ${role.server}` : '未知';
+      const server = role ? role.server : '未知';
 
       const record: RaidRecord = {
         id: generateUUID(),
@@ -374,7 +374,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
 
     return {
       roleName: role?.name || '未知',
-      server: role ? `${role.region} ${role.server}` : '未知'
+      server: role ? role.server : '未知'
     };
   };
 

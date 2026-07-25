@@ -798,6 +798,13 @@ fn generate_uuid_from_key(key: &str) -> String {
     format!("{:016x}-auto-0000-0000-000000000000", hasher.finish())
 }
 
+/// 前端调用：根据复合键生成确定性 UUID，与后端 generate_uuid_from_key 保持一致
+/// 用于手动添加账号/角色时生成与自动导入相同的 ID，避免删除重建后 ID 不一致
+#[tauri::command]
+pub fn generate_deterministic_uuid(key: String) -> String {
+    generate_uuid_from_key(&key)
+}
+
 // 自动解析游戏目录并将结果存入数据库
 fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String> {
     let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;

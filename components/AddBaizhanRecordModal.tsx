@@ -134,7 +134,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                 accountId: role.accountId,
                 roleId: role.id,
                 roleName: role.name,
-                server: `${role.region} ${role.server}`,
+                server: role.server,
                 date: formatDateFromInput(recordDate),
                 goldIncome: goldIncome || 0,
                 goldExpense: goldExpense || 0,

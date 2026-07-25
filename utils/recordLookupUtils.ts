@@ -35,7 +35,7 @@ export const buildRoleInfoLookup = (accounts: Account[]): Map<string, RoleInfo> 
     roles.forEach(role => {
       lookup.set(getRoleInfoKey(account.id, role.id), {
         roleName: role.name,
-        server: `${role.region} ${role.server}`.trim()
+        server: role.server
       });
     });
   });
