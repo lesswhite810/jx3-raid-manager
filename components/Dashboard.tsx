@@ -14,6 +14,7 @@ interface DashboardProps {
   accounts: Account[];
   baizhanRecords: BaizhanRecord[];
   trialRecords: TrialPlaceRecord[];
+  equipments: EquipmentLike[];
   statsPeriod: 'week' | 'season' | 'all';
   onStatsPeriodChange: (period: 'week' | 'season' | 'all') => void;
   onShowIncomeDetail: () => void;
@@ -26,20 +27,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
   accounts,
   baizhanRecords,
   trialRecords,
+  equipments,
   statsPeriod,
   onStatsPeriodChange,
   onShowIncomeDetail,
   onShowCrystalDetail,
   onShowTrialFlipDetail
 }) => {
-  const [equipments, setEquipments] = useState<EquipmentLike[]>([]);
-
-  React.useEffect(() => {
-    db.getEquipments().then((data: unknown[]) => {
-      setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d as EquipmentLike));
-    }).catch(console.error);
-  }, []);
-
   const equipmentLookup = useMemo(() => buildEquipmentLookup(equipments), [equipments]);
   const findEquipmentById = React.useCallback((id: string | undefined) => {
     return getEquipmentById(equipmentLookup, id);

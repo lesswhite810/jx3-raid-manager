@@ -1,17 +1,18 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Clock, Check, X, Loader2, AlertTriangle, Package,
   TrendingUp, TrendingDown, Coins, Sparkles, Anchor, Ghost, Package as PackageIcon,
-  Flag, Shirt, Crown, BookOpen, FileText, Pencil, Skull, Calendar,
+  Flag, Shirt, Crown, BookOpen, FileText, Pencil, Skull, Calendar, ChevronDown,
 } from 'lucide-react';
 import { RaidRecord, Account } from '../types';
 import { dropScannerService } from '../services/dropScanner';
-import { getLastMonday, getNextMonday, getTenPersonCycle } from '../utils/cooldownManager';
+import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { formatGoldAmount } from '../utils/recordUtils';
 import { toast } from '../utils/toastManager';
 import { getDefaultBosses } from '../data/raidBosses';
+import { useDebug } from '../contexts/DebugContext';
 
 interface PendingRecordsPanelProps {
   records: RaidRecord[];
@@ -60,6 +61,22 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
   const [editForm, setEditForm] = useState<EditFormData | null>(null);
   const [isScanningThisWeek, setIsScanningThisWeek] = useState(false);
+  const [isScanMenuOpen, setIsScanMenuOpen] = useState(false);
+  const scanMenuRef = useRef<HTMLDivElement>(null);
+  // Debug 模式：仅在开启时显示「扫描本月」下拉选项
+  const { debugEnabled } = useDebug();
+
+  // 点击外部关闭扫描下拉菜单
+  useEffect(() => {
+    if (!isScanMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (scanMenuRef.current && !scanMenuRef.current.contains(e.target as Node)) {
+        setIsScanMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isScanMenuOpen]);
 
   // 筛选所有待确认记录（含 scanning 副本进行中和 pending 可确认）
   // scanning 记录显示为锁定状态，不可确认/拒绝；pending 记录可正常确认/拒绝
@@ -68,6 +85,13 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       r.source === 'auto' && (r.status === 'pending' || r.status === 'scanning')
     );
   }, [records]);
+
+  // 待确认记录变空时自动关闭 modal，避免 modal 显示「待确认记录 (0)」然后被卸载
+  useEffect(() => {
+    if (pendingRecords.length === 0 && isModalOpen) {
+      setIsModalOpen(false);
+    }
+  }, [pendingRecords.length, isModalOpen]);
 
   // 构建 roleId -> role 信息映射
   const roleMap = useMemo(() => {
@@ -241,16 +265,18 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   }, [onRefreshRecords]);
 
   /**
-   * 扫描本周（周一7:00到下周一7:00）所有账号数据
+   * 按时间范围扫描所有账号数据
    * 离线扫描，不依赖 JX3 运行状态，扫描所有账号
+   *
+   * @param startMs 副本时间下限（毫秒，闭区间）
+   * @param endMs 副本时间上限（毫秒，开区间）
+   * @param rangeLabel 时间范围标签（如"本周"/"本月"），用于提示文案
    */
-  const handleScanThisWeek = useCallback(async () => {
+  const handleScan = useCallback(async (startMs: number, endMs: number, rangeLabel: string) => {
     if (isScanningThisWeek) return;
+    setIsScanMenuOpen(false);
     setIsScanningThisWeek(true);
     try {
-      const now = new Date();
-      const startMs = getLastMonday(now).getTime();
-      const endMs = getNextMonday(now).getTime();
       const results = await dropScannerService.scanRaidsInRange(startMs, endMs);
       const totalScanned = results.reduce((sum, r) => sum + (r.instanceCount ?? 0), 0);
       const failedCount = results.filter(r => !r.success).length;
@@ -260,66 +286,101 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       } else if (failedCount > 0) {
         toast.warning(`扫描完成但有 ${failedCount} 个账号失败`);
       } else {
-        toast.info('本周暂无副本数据');
+        toast.info(`${rangeLabel}暂无副本数据`);
       }
     } catch (error) {
-      console.error('扫描本周失败:', error);
+      console.error(`扫描${rangeLabel}失败:`, error);
       const message = error instanceof Error ? error.message : String(error);
-      toast.error(`扫描本周失败: ${message}`);
+      toast.error(`扫描${rangeLabel}失败: ${message}`);
     } finally {
       setIsScanningThisWeek(false);
     }
   }, [isScanningThisWeek, onRefreshRecords]);
 
-  if (pendingRecords.length === 0 && !isScanningThisWeek) {
-    // 没有待确认记录时，仅显示"扫描本周"按钮
-    return (
+  /** 扫描本周（周一7:00到下周一7:00） */
+  const handleScanThisWeek = useCallback(() => {
+    const now = new Date();
+    void handleScan(getLastMonday(now).getTime(), getNextMonday(now).getTime(), '本周');
+  }, [handleScan]);
+
+  /** 扫描本月（本月1日00:00到下月1日00:00） */
+  const handleScanThisMonth = useCallback(() => {
+    const now = new Date();
+    void handleScan(getMonthStart(now).getTime(), getMonthEnd(now).getTime(), '本月');
+  }, [handleScan]);
+
+  const scanMenu = debugEnabled ? (
+    // Debug 模式：保留下拉框，提供「扫描本周」+「扫描本月」两个选项
+    <div className="relative" ref={scanMenuRef}>
       <button
-        onClick={handleScanThisWeek}
+        onClick={() => setIsScanMenuOpen(!isScanMenuOpen)}
         disabled={isScanningThisWeek}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-        title="扫描本周一7:00到下周一7:00所有账号的副本数据"
+        title="选择扫描时间范围"
       >
         {isScanningThisWeek ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
           <Calendar className="w-4 h-4" />
         )}
-        <span>{isScanningThisWeek ? '扫描中...' : '扫描本周'}</span>
+        <span>{isScanningThisWeek ? '扫描中...' : '扫描记录'}</span>
+        {!isScanningThisWeek && <ChevronDown className="w-3.5 h-3.5" />}
       </button>
-    );
-  }
+      {isScanMenuOpen && (
+        <div className="absolute top-full left-0 mt-1 w-40 bg-surface border border-base rounded-lg shadow-md z-50 py-1">
+          <button
+            onClick={handleScanThisWeek}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+          >
+            <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>扫描本周</span>
+          </button>
+          <button
+            onClick={handleScanThisMonth}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+          >
+            <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>扫描本月</span>
+          </button>
+        </div>
+      )}
+    </div>
+  ) : (
+    // 正常模式：直接显示「扫描本周」按钮，无下拉
+    <button
+      onClick={handleScanThisWeek}
+      disabled={isScanningThisWeek}
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      title="扫描本周副本记录"
+    >
+      {isScanningThisWeek ? (
+        <Loader2 className="w-4 h-4 animate-spin" />
+      ) : (
+        <Calendar className="w-4 h-4" />
+      )}
+      <span>{isScanningThisWeek ? '扫描中...' : '扫描本周'}</span>
+    </button>
+  );
 
   return (
     <>
       <div className="flex items-center gap-2">
-        {/* 扫描本周按钮 */}
-        <button
-          onClick={handleScanThisWeek}
-          disabled={isScanningThisWeek}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          title="扫描本周一7:00到下周一7:00所有账号的副本数据"
-        >
-          {isScanningThisWeek ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Calendar className="w-4 h-4" />
-          )}
-          <span>{isScanningThisWeek ? '扫描中...' : '扫描本周'}</span>
-        </button>
+        {scanMenu}
 
-        {/* 待确认按钮：带数字徽章 */}
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors text-sm font-medium"
-          title="查看自动扫描的待确认记录"
-        >
-          <Clock className="w-4 h-4" />
-          <span>待确认</span>
-          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-xs font-bold">
-            {pendingRecords.length}
-          </span>
-        </button>
+        {/* 待确认按钮：仅在有待确认记录时显示 */}
+        {pendingRecords.length > 0 && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors text-sm font-medium"
+            title="查看自动扫描的待确认记录"
+          >
+            <Clock className="w-4 h-4" />
+            <span>待确认</span>
+            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-xs font-bold">
+              {pendingRecords.length}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* 记录列表 Modal */}

@@ -1,30 +1,22 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { TrialPlaceRecord } from '../types';
-import { db } from '../services/db';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 import { TrialBossEquipmentStatsSection } from './TrialBossEquipmentStatsSection';
 
 interface TrialFlipDetailProps {
   trialRecords: TrialPlaceRecord[];
+  equipments: any[];
   onBack: () => void;
 }
 
-export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, onBack }) => {
-  const [equipments, setEquipments] = useState<any[]>([]);
-
-  useEffect(() => {
-    db.getEquipments().then((data: any[]) => {
-      setEquipments(data.map(d => typeof d === 'string' ? JSON.parse(d) : d));
-    }).catch(console.error);
-  }, []);
-
+export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, equipments, onBack }) => {
   const findEquipmentById = (id: string | undefined) => {
     if (!id || !id.trim()) return null;
-    
+
     let equip = equipments.find(e => e.ID?.toString() === id);
     if (equip) return equip;
-    
+
     if (id.includes('_')) {
       const numericPart = id.split('_')[1];
       if (numericPart) {
@@ -32,7 +24,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
         if (equip) return equip;
       }
     }
-    
+
     return null;
   };
 

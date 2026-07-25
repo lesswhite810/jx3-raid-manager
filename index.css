@@ -65,6 +65,41 @@
         @apply bg-base text-main transition-colors duration-200 antialiased;
         font-feature-settings: "rlig" 1, "calt" 1;
     }
+
+    /* 全局光标策略：默认箭头，仅在真正可编辑/可交互元素上覆盖
+       使用 universal selector 覆盖浏览器对文本容器的 auto 行为
+       Tailwind 的 cursor-pointer 等 utility class 优先级更高，会自动覆盖 */
+    *,
+    *::before,
+    *::after {
+        cursor: default;
+    }
+
+    /* 文本输入元素：显示 text 光标 */
+    input,
+    textarea,
+    [contenteditable="true"] {
+        cursor: text;
+    }
+
+    /* 可点击元素：显示手型光标（覆盖 Preflight 的 button cursor: pointer，扩展到 a/select/label 等） */
+    button,
+    a,
+    select,
+    label,
+    [role="button"],
+    [role="checkbox"],
+    [role="radio"],
+    [role="tab"],
+    [role="switch"],
+    summary {
+        cursor: pointer;
+    }
+
+    button:disabled,
+    [role="button"][aria-disabled="true"] {
+        cursor: not-allowed;
+    }
 }
 
 @layer components {

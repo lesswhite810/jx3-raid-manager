@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AppConfigProvider } from './contexts/AppConfigContext';
 import { ActivePollerProvider } from './contexts/ActivePollerContext';
+import { DebugProvider } from './contexts/DebugContext';
 import './index.css';
 
 // 添加全局错误捕获
@@ -31,7 +32,9 @@ root.render(
       <ThemeProvider>
         <AppConfigProvider>
           <ActivePollerProvider>
-            <App />
+            <DebugProvider>
+              <App />
+            </DebugProvider>
           </ActivePollerProvider>
         </AppConfigProvider>
       </ThemeProvider>

@@ -1040,41 +1040,34 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             }
           </div>
         </div>
-        {/* 筛选结果提示 */}
-        {(searchTerm || accountTypeFilter !== 'all') && filteredAccounts.length > 0 && (
-          <div className="flex items-center text-sm text-muted px-1">
-            {filteredAccounts.length === safeAccounts.length && accountTypeFilter === 'all' && !searchTerm ? (
-              <>
-                共 <span className="font-medium text-main mx-1">{safeAccounts.length}</span> 个账户
-              </>
-            ) : (
-              <>
-                找到 <span className="font-medium text-emerald-600 mx-1">{filteredAccounts.length}</span> 个匹配
-              </>
-            )}
-          </div>
-        )}
 
         {/* 列表控制栏：全选与筛选、操作按钮 */}
         {
           safeAccounts.length > 0 && (
             <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-4">
-                {filteredAccounts.length > 0 && (
+                {filteredAccounts.length > 0 ? (
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={isAllSelected}
                       onChange={handleSelectAll}
-                      className="w-4 h-4 text-primary border-base rounded focus:ring-primary"
+                      className="w-4 h-4 text-primary border-base rounded focus:ring-primary cursor-pointer"
                     />
-                    <label className="text-sm font-medium text-main">
+                    <label className="text-sm font-medium text-main cursor-pointer">
                       全选 ({filteredAccounts.length} 个账户)
-                      {accountTypeFilter !== 'all' && filteredAccounts.length !== safeAccounts.length && (
-                        <span className="text-muted ml-1">
-                          / 共 {safeAccounts.length}
-                        </span>
-                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      disabled
+                      className="w-4 h-4 text-primary border-base rounded cursor-not-allowed opacity-50"
+                    />
+                    <label className="text-sm font-medium text-muted">
+                      全选 (0 个账户)
                     </label>
                   </div>
                 )}

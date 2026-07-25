@@ -78,6 +78,8 @@ function App() {
   const [trialRecords, setTrialRecords] = useState<TrialPlaceRecord[]>([]);
   const [baizhanRecords, setBaizhanRecords] = useState<BaizhanRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
+  // 装备数据：与账号/记录等一起在启动时并行加载，避免子组件单独异步加载导致数字先显示 0 再跳变
+  const [equipments, setEquipments] = useState<any[]>([]);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [editingRecord, setEditingRecord] = useState<RaidRecord | null>(null);
   const [editingBaizhanRecord, setEditingBaizhanRecord] = useState<BaizhanRecord | null>(null);
@@ -288,7 +290,7 @@ function App() {
         }
 
         console.log('\n正在加载数据库数据...');
-        const [loadedAccounts, loadedRecords, loadedPending, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords, loadedInstanceTypes, loadedRoleVisibility] = await Promise.all([
+        const [loadedAccounts, loadedRecords, loadedPending, loadedRaids, loadedConfig, loadedTrialRecords, loadedBaizhanRecords, loadedInstanceTypes, loadedRoleVisibility, loadedEquipments] = await Promise.all([
           db.getAccounts(),
           db.getRecords(),
           db.getPendingRecords(),
@@ -297,10 +299,14 @@ function App() {
           db.getTrialRecords(),
           db.getBaizhanRecords(),
           db.getInstanceTypes(),
-          db.getAllRoleVisibility()
+          db.getAllRoleVisibility(),
+          db.getEquipments()
         ]);
 
-        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 待确认 ${loadedPending.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}, 百战 ${loadedBaizhanRecords.length}`);
+        // 装备数据：反序列化后统一存储，供 Dashboard / TrialFlipDetail 等子组件直接使用
+        setEquipments(loadedEquipments.map(d => typeof d === 'string' ? JSON.parse(d) : d));
+
+        console.log(`加载完成: 账号 ${loadedAccounts.length}, 记录 ${loadedRecords.length}, 待确认 ${loadedPending.length}, 副本 ${loadedRaids.length}, 试炼 ${loadedTrialRecords.length}, 百战 ${loadedBaizhanRecords.length}, 装备 ${loadedEquipments.length}`);
 
         // 保存副本类型
         setInstanceTypes(loadedInstanceTypes);
@@ -677,6 +683,7 @@ function App() {
               ) : showTrialFlipDetail ? (
                 <TrialFlipDetail
                   trialRecords={trialRecords}
+                  equipments={equipments}
                   onBack={() => setShowTrialFlipDetail(false)}
                 />
               ) : (
@@ -685,6 +692,7 @@ function App() {
                   accounts={accounts}
                   baizhanRecords={baizhanRecords}
                   trialRecords={trialRecords}
+                  equipments={equipments}
                   statsPeriod={dashboardStatsPeriod}
                   onStatsPeriodChange={setDashboardStatsPeriod}
                   onShowIncomeDetail={() => setShowIncomeDetail(true)}

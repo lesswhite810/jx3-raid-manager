@@ -1,12 +1,19 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
-import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, ExternalLink, Search, Monitor, RotateCcw, MessageCircle, Info } from 'lucide-react';
+import { Check, AlertTriangle, FolderOpen, Download, RefreshCw, ExternalLink, Search, Monitor, RotateCcw, MessageCircle, Info, Trash2 } from 'lucide-react';
 import { isValidGamePath } from '../utils/configUtils';
 import { db } from '../services/db';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from '../utils/toastManager';
 import { scanJx3Clients, Jx3ClientInfo } from '../services/gameDirectoryScanner';
+import { dropScannerService } from '../services/dropScanner';
 import { useAppConfig } from '../contexts/AppConfigContext';
+import { useDebug } from '../contexts/DebugContext';
+
+/** Debug 模式：连续点击次数阈值，达到后切换 */
+const DEBUG_TOGGLE_CLICK_COUNT = 7;
+/** 连续点击的有效间隔（毫秒），超时重置计数 */
+const DEBUG_TOGGLE_CLICK_WINDOW_MS = 1500;
 
 interface ConfigManagerProps {
   updateRuntimeInfo: UpdateRuntimeInfo | null;
@@ -37,6 +44,12 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showPathError, setShowPathError] = useState(false);
+  const [clearingJclCache, setClearingJclCache] = useState(false);
+  const [showClearJclCacheConfirm, setShowClearJclCacheConfirm] = useState(false);
+  // Debug 模式：从全局 DebugContext 获取，仅本次会话有效不持久化
+  const { debugEnabled, setDebugEnabled } = useDebug();
+  const versionClickCountRef = useRef(0);
+  const versionClickTimerRef = useRef<number | null>(null);
 
   const { appConfig, updateGameDirectory, resetAll, setAutoScanEnabled, setAutoRefreshEquipScoreEnabled } = useAppConfig();
 
@@ -194,6 +207,53 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     }
   };
 
+  const handleClearJclCache = async () => {
+    setClearingJclCache(true);
+    try {
+      const deleted = await dropScannerService.clearJclCache();
+      toast.success(`已清空 JCL 缓存（${deleted} 条）`);
+      toast.info('下次扫描副本时会重新解析所有 JCL 文件');
+      setShowClearJclCacheConfirm(false);
+    } catch (error) {
+      console.error('清空 JCL 缓存失败:', error);
+      toast.error('清空 JCL 缓存失败: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setClearingJclCache(false);
+    }
+  };
+
+  /**
+   * 处理版本号点击：连续点击 7 次切换 debug 模式。
+   * 用户不可见的隐藏入口，仅本次会话有效不持久化。
+   */
+  const handleVersionClick = useCallback(() => {
+    versionClickCountRef.current += 1;
+
+    if (versionClickTimerRef.current !== null) {
+      window.clearTimeout(versionClickTimerRef.current);
+    }
+
+    // 未达阈值，设置超时重置
+    if (versionClickCountRef.current < DEBUG_TOGGLE_CLICK_COUNT) {
+      versionClickTimerRef.current = window.setTimeout(() => {
+        versionClickCountRef.current = 0;
+      }, DEBUG_TOGGLE_CLICK_WINDOW_MS);
+      return;
+    }
+
+    // 达到阈值，切换 debug 模式
+    versionClickCountRef.current = 0;
+    if (debugEnabled) {
+      setDebugEnabled(false);
+      toast.info('已关闭调试模式');
+      // 关闭 debug 模式时同时关闭已打开的确认弹窗
+      setShowClearJclCacheConfirm(false);
+    } else {
+      setDebugEnabled(true);
+      toast.info('已启用调试模式');
+    }
+  }, [debugEnabled, setDebugEnabled]);
+
   const handleAutoScanToggle = async (enabled: boolean) => {
     if (enabled) {
       toast.info('请确保已在茗伊插件中开启：插件集 → 团队 → 团队工具 → 勾选"战斗事件记录"并启用秘境保存');
@@ -234,9 +294,15 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <div className="p-3 bg-base/50 rounded-lg border border-base">
+          {/* onClick 绑定到整个卡片：连续点击 7 次切换 debug 模式 */}
+          <div
+            className="p-3 bg-base/50 rounded-lg border border-base select-none"
+            onClick={handleVersionClick}
+          >
             <div className="text-xs text-muted mb-1">当前版本</div>
-            <div className="text-sm font-medium text-main">v{currentVersion}</div>
+            <div className="text-sm font-medium text-main">
+              v{currentVersion}
+            </div>
           </div>
           <div className="p-3 bg-base/50 rounded-lg border border-base">
             <div className="text-xs text-muted mb-1">运行形态</div>
@@ -458,6 +524,47 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
             </div>
           </div>
 
+          {/* 调试模式标识（仅 debug 模式开启时可见） */}
+          {debugEnabled && (
+            <div className="flex items-center gap-4 pt-4 border-t border-base">
+              <label className="text-sm font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap w-20">调试模式</label>
+              <div className="flex-1 flex items-center justify-between">
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  调试模式已开启（仅本次会话有效，重启后自动关闭）
+                </p>
+                <button
+                  onClick={() => {
+                    setDebugEnabled(false);
+                    setShowClearJclCacheConfirm(false);
+                    toast.info('已关闭调试模式');
+                  }}
+                  className="btn btn-secondary text-xs whitespace-nowrap"
+                  type="button"
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 清理 JCL 缓存（仅 debug 模式下可见） */}
+          {debugEnabled && (
+            <div className="flex items-center gap-4 pt-4 border-t border-base">
+              <label className="text-sm font-medium text-muted whitespace-nowrap w-20">JCL 缓存</label>
+              <div className="flex-1 flex items-center justify-between">
+                <p className="text-xs text-muted">清空副本战斗日志解析缓存，下次扫描会重新解析所有 JCL 文件</p>
+                <button
+                  onClick={() => setShowClearJclCacheConfirm(true)}
+                  disabled={clearingJclCache}
+                  className="btn btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {clearingJclCache ? '清理中...' : '清理 JCL 缓存'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 重新初始化 */}
           <div className="flex items-center gap-4 pt-4 border-t border-base">
             <label className="text-sm font-medium text-muted whitespace-nowrap w-20">重置应用</label>
@@ -527,6 +634,40 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                   className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
                 >
                   {resetting ? '正在重置...' : '确认重置'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 清理 JCL 缓存确认弹窗 */}
+      {showClearJclCacheConfirm && (
+        <>
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]"
+            onClick={() => !clearingJclCache && setShowClearJclCacheConfirm(false)}
+          />
+          <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
+            <div className="bg-surface rounded-xl border border-base shadow-lg p-6 max-w-sm w-full pointer-events-auto">
+              <h3 className="text-base font-bold text-main mb-2">确认清理 JCL 缓存</h3>
+              <p className="text-sm text-muted mb-5">
+                将清空副本战斗日志的解析缓存。下次扫描副本时会重新解析所有 JCL 文件，可能耗时略增。副本记录和已确认数据不受影响。
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowClearJclCacheConfirm(false)}
+                  disabled={clearingJclCache}
+                  className="btn btn-secondary text-sm"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleClearJclCache}
+                  disabled={clearingJclCache}
+                  className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
+                >
+                  {clearingJclCache ? '清理中...' : '确认清理'}
                 </button>
               </div>
             </div>

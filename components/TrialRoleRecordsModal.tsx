@@ -137,6 +137,10 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     onDeleteRecord
 }) => {
     const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
+    // 时间范围切换：'week' 仅本周（默认，性能优先），'all' 全部历史记录
+    const [timeRange, setTimeRange] = useState<'week' | 'all'>('week');
+    // 分页：全部模式下记录可能很多，分批渲染避免一次性渲染大量复杂卡片
+    const [displayLimit, setDisplayLimit] = useState(20);
     const [recordToDelete, setRecordToDelete] = useState<TrialPlaceRecord | null>(null);
     const [showConfirmDialog, setShowConfirmDialog] = useState(false);
     const [equipments, setEquipments] = useState<JX3Equip[]>([]);
@@ -187,24 +191,45 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
         return { start: weekStart, end: weekEnd };
     }, []);
 
-    const roleRecords = useMemo(() => {
-        const weekStartTime = weekInfo.start.getTime();
-        const weekEndTime = weekInfo.end.getTime();
-
+    // 该角色的全部记录（按时间倒序）
+    const allRoleRecords = useMemo(() => {
         return records
-            .filter(r => {
-                const matchesRole = r.roleId === role.id;
-                // 兼容旧记录（ISO字符串）和新记录（时间戳）
-                const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
-                const matchesTimeRange = recordTime >= weekStartTime && recordTime <= weekEndTime;
-                return matchesRole && matchesTimeRange;
-            })
+            .filter(r => r.roleId === role.id)
             .sort((a, b) => {
                 const timeA = typeof a.date === 'number' ? a.date : new Date(a.date).getTime();
                 const timeB = typeof b.date === 'number' ? b.date : new Date(b.date).getTime();
                 return timeB - timeA;
             });
-    }, [records, role.id, weekInfo]);
+    }, [records, role.id]);
+
+    // 按时间范围过滤后的记录
+    const roleRecords = useMemo(() => {
+        if (timeRange === 'all') {
+            return allRoleRecords;
+        }
+        const weekStartTime = weekInfo.start.getTime();
+        const weekEndTime = weekInfo.end.getTime();
+        return allRoleRecords.filter(r => {
+            // 兼容旧记录（ISO字符串）和新记录（时间戳）
+            const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+            return recordTime >= weekStartTime && recordTime <= weekEndTime;
+        });
+    }, [allRoleRecords, timeRange, weekInfo]);
+
+    // 分页：仅渲染前 displayLimit 条，避免一次性渲染大量复杂卡片导致卡顿
+    const visibleRecords = useMemo(() => {
+        return roleRecords.slice(0, displayLimit);
+    }, [roleRecords, displayLimit]);
+
+    // 切换时间范围时重置分页
+    useEffect(() => {
+        setDisplayLimit(20);
+    }, [timeRange]);
+
+    // 切换角色时重置时间范围为「本周」
+    useEffect(() => {
+        setTimeRange('week');
+    }, [role.id]);
 
 
     const handleDeleteClick = (record: TrialPlaceRecord) => {
@@ -234,17 +259,17 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
             <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
                 {/* Header - 对齐团本风格 */}
                 <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
-                    <div>
+                    <div className="min-w-0">
                         <h2 className="text-lg font-bold text-main">试炼之地记录</h2>
-                        <p className="text-muted text-xs mt-0.5">
-                            <span className="font-medium text-main">{role.name}@{role.server}</span>
+                        <div className="flex items-center gap-1.5 text-xs text-muted mt-0.5">
+                            <span className="font-medium text-main truncate">{role.name}@{role.server}</span>
                             {role.martial && (
                                 <>
-                                    <span className="mx-1.5 text-muted/40">·</span>
+                                    <span className="text-muted/40 flex-shrink-0">·</span>
                                     <SectIcon sectName={role.martial} />
                                 </>
                             )}
-                        </p>
+                        </div>
                     </div>
                     <button
                         onClick={onClose}
@@ -255,6 +280,35 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                     </button>
                 </div>
 
+
+                {/* 时间范围切换 + 计数 */}
+                <div className="px-4 pt-3 pb-2 flex items-center justify-between gap-2 flex-shrink-0">
+                    <div className="inline-flex rounded-lg border border-base bg-base/30 p-0.5">
+                        <button
+                            type="button"
+                            onClick={() => setTimeRange('week')}
+                            className={`px-3 py-1 text-xs rounded-md transition-colors ${timeRange === 'week'
+                                ? 'bg-surface text-main font-medium shadow-sm'
+                                : 'text-muted hover:text-main'
+                                }`}
+                        >
+                            本周
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setTimeRange('all')}
+                            className={`px-3 py-1 text-xs rounded-md transition-colors ${timeRange === 'all'
+                                ? 'bg-surface text-main font-medium shadow-sm'
+                                : 'text-muted hover:text-main'
+                                }`}
+                        >
+                            全部
+                        </button>
+                    </div>
+                    <span className="text-xs text-muted">
+                        共 {roleRecords.length} 条
+                    </span>
+                </div>
 
                 {/* Records List */}
                 <div className="flex-1 overflow-y-auto p-4 scroll-smooth">
@@ -267,7 +321,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                         </div>
                     ) : (
                         <div className="space-y-3">
-                            {roleRecords.map((record) => (
+                            {visibleRecords.map((record) => (
                                 <div
                                     key={record.id}
                                     className={`p-4 rounded-xl border-2 transition-all duration-200 bg-surface border-base hover:shadow-sm`}
@@ -403,6 +457,15 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                     </div>
                                 </div>
                             ))}
+                            {visibleRecords.length < roleRecords.length && (
+                                <button
+                                    type="button"
+                                    onClick={() => setDisplayLimit(prev => prev + 20)}
+                                    className="w-full py-2.5 mt-1 text-xs text-muted hover:text-main border border-base rounded-lg hover:bg-surface transition-colors"
+                                >
+                                    加载更多（剩 {roleRecords.length - visibleRecords.length} 条）
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
