@@ -75,6 +75,22 @@ struct JclAnalysis {
     is_kill: bool,
 }
 
+/// chatlog 预加载记录（单条 ChatLog 行的内存表示）
+///
+/// 用于 scan_raid_drops_with_raids 入口处一次性加载所有 chatlog 文件中的相关记录，
+/// 避免后续每个副本实例重复打开 SQLite 连接和全表扫描。
+#[derive(Clone, Debug)]
+struct ChatlogRecord {
+    /// 消息类型：MSG_ITEM / MSG_MONEY / MSG_ROOM / MSG_WHISPER
+    msg_type: String,
+    /// text 字段（消息文本）
+    text: String,
+    /// msg 字段（XML 格式的金额信息）
+    msg: String,
+    /// 时间戳（秒级）
+    time_sec: i64,
+}
+
 /// 副本实例（聚类后的一场副本）
 #[derive(Debug)]
 struct RaidInstance {
@@ -483,6 +499,7 @@ const RAID_SESSION_GAP_MS: i64 = 2 * 60 * 60 * 1000;
 
 /// 检查指定时间范围内 chatlog 是否有"每人底薪"记录
 /// 用于 2 小时阈值分割决策和中间工资检查
+#[allow(dead_code)]
 fn has_salary_between(
     chatlog_files: &[PathBuf],
     start_ms: i64,
@@ -507,12 +524,27 @@ fn has_salary_between(
     false
 }
 
+/// 在预加载的 chatlog 记录中检查指定时间范围是否有"每人底薪"记录
+/// 用于 cluster_raid_instances，避免重复打开 SQLite 连接
+fn has_salary_in_records(records: &[ChatlogRecord], start_ms: i64, end_ms: i64) -> bool {
+    let start_sec = start_ms / 1000;
+    let end_sec = end_ms / 1000;
+    // 二分查找时间范围起点
+    let start_idx = records.partition_point(|r| r.time_sec < start_sec);
+    records[start_idx..]
+        .iter()
+        .take_while(|r| r.time_sec <= end_sec)
+        .any(|r| {
+            (r.msg_type == "MSG_ROOM" || r.msg_type == "MSG_WHISPER")
+                && r.text.contains("每人底薪")
+        })
+}
+
 fn cluster_raid_instances(
     account_id: &str,
     jcl_files: Vec<JclFileInfo>,
     jcl_analyses: &HashMap<String, JclAnalysis>,
-    chatlog_files: &[PathBuf],
-    chatlog_range_cache: &HashMap<PathBuf, Option<(i64, i64)>>,
+    preloaded_records: &[ChatlogRecord],
 ) -> Vec<RaidInstance> {
     // 1. 按时间戳排序
     let mut sorted_files = jcl_files;
@@ -557,7 +589,7 @@ fn cluster_raid_instances(
                 // 检查中间是否发过工资
                 let gap_start = current_group.last().unwrap().timestamp;
                 let gap_end = jcl.timestamp;
-                let has_salary = has_salary_between(chatlog_files, gap_start, gap_end, chatlog_range_cache);
+                let has_salary = has_salary_in_records(preloaded_records, gap_start, gap_end);
                 if has_salary {
                     log::info!(
                         "[DropScanner] 副本 {} 时间间隔 > {}h 且中间有工资记录，分割",
@@ -578,7 +610,7 @@ fn cluster_raid_instances(
                         .map(|a| a.is_kill)
                         .unwrap_or(false)
                 });
-                if prev_has_kill && has_salary_between(chatlog_files, gap_start, gap_end, chatlog_range_cache) {
+                if prev_has_kill && has_salary_in_records(preloaded_records, gap_start, gap_end) {
                     log::info!(
                         "[DropScanner] 副本 {} 中间有工资记录，强制分割为两个副本",
                         jcl.raid_display_name,
@@ -1750,6 +1782,7 @@ fn normalize_role_name(name: &str) -> String {
 /// 调用方根据 base_salary 是否存在决定最终收入：
 ///   - 有底薪 → 在 income_records 中找 gold >= base_salary 的第一条记录，用该 gold 作为收入
 ///   - 无底薪 → 在 income_records 中找最后一个 BOSS 后最近的一条记录，用该 gold 作为收入
+#[allow(dead_code)]
 fn extract_drops_from_chatlog(
     chatlog_path: &PathBuf,
     start_time_ms: i64,
@@ -1788,20 +1821,129 @@ fn extract_drops_from_chatlog(
 
     let rows = stmt
         .query_map(params![start_sec, end_sec], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
+            Ok(ChatlogRecord {
+                msg_type: row.get::<_, String>(0)?,
+                text: row.get::<_, String>(1)?,
+                msg: row.get::<_, String>(2)?,
+                time_sec: row.get::<_, i64>(3)?,
+            })
         })
         .map_err(|e| format!("执行 chatlog 查询失败: {}", e))?;
 
-    // 物品分配消息：`分配者将：[物品名]分配给角色名·服务器。`
-    // 拍团底薪消息：`每人底薪：XXX金`
-    // 支出消息（直接购买）：`[角色名·服务器]花费[金额]购买了[物品名]`
-    // 支出消息（团长分配）：`[分配者]将[物品名]以[金额]记录给了[角色名·服务器]`
-    // 拍卖物品名提取：`购买了[物品名]`（包括帮别人购买的情况）
+    let mut records: Vec<ChatlogRecord> = Vec::new();
+    for row in rows {
+        match row {
+            Ok(r) => records.push(r),
+            Err(e) => log::warn!("[DropScanner] 读取 chatlog 行失败: {}", e),
+        }
+    }
+
+    Ok(extract_drops_from_records(&records, start_time_ms, end_time_ms, role_name))
+}
+
+/// 预加载账号下所有 chatlog 文件中的相关记录到内存
+///
+/// 在 scan_raid_drops_with_raids 入口处调用一次，避免后续每个副本实例重复打开
+/// SQLite 连接和全表扫描。返回按 time_sec 升序排序的记录列表。
+///
+/// 时间范围：[scan_start_ms, scan_end_ms + 2h]，2h 缓冲用于覆盖最后一个副本实例
+/// 的 chatlog_end 扩展（last_jcl_time + 2h 或 now_ms）。
+fn preload_chatlog_records(
+    chatlog_files: &[PathBuf],
+    chatlog_range_cache: &HashMap<PathBuf, Option<(i64, i64)>>,
+    scan_start_ms: i64,
+    scan_end_ms: i64,
+) -> Vec<ChatlogRecord> {
+    // 预加载范围：scan_end_ms + 2h，覆盖最后副本实例的 chatlog_end 扩展
+    let buffer_ms: i64 = 2 * 60 * 60 * 1000;
+    let preload_end_ms = scan_end_ms.saturating_add(buffer_ms);
+    let preload_start_sec = scan_start_ms / 1000;
+    let preload_end_sec = preload_end_ms / 1000;
+
+    let mut all_records: Vec<ChatlogRecord> = Vec::new();
+    let mut total_files_queried = 0u32;
+
+    for path in chatlog_files {
+        // 用 chatlog_range_cache 过滤不覆盖预加载范围的文件
+        if !chatlog_file_covers_range_cached(path, scan_start_ms, preload_end_ms, chatlog_range_cache) {
+            continue;
+        }
+        total_files_queried += 1;
+
+        let conn = match Connection::open(path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("[DropScanner] 预加载打开 chatlog 失败: {} - {}", path.display(), e);
+                continue;
+            }
+        };
+
+        let mut stmt = match conn.prepare(
+            "SELECT type, text, msg, time FROM ChatLog \
+             WHERE time >= ?1 AND time <= ?2 AND ( \
+               type = 'MSG_ITEM' \
+               OR (type = 'MSG_MONEY' AND text LIKE '你获得：%') \
+               OR ((type = 'MSG_ROOM' OR type = 'MSG_WHISPER') AND ( \
+                 text LIKE '%每人底薪%' \
+                 OR (text LIKE '%花费[%' AND text LIKE '%购买了%') \
+                 OR text LIKE '%记录给了%' \
+               )) \
+             )",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[DropScanner] 预加载 prepare 失败: {} - {}", path.display(), e);
+                continue;
+            }
+        };
+
+        let rows = stmt.query_map(params![preload_start_sec, preload_end_sec], |row| {
+            Ok(ChatlogRecord {
+                msg_type: row.get::<_, String>(0)?,
+                text: row.get::<_, String>(1)?,
+                msg: row.get::<_, String>(2)?,
+                time_sec: row.get::<_, i64>(3)?,
+            })
+        });
+
+        if let Ok(rows) = rows {
+            for row in rows.flatten() {
+                all_records.push(row);
+            }
+        }
+    }
+
+    // 按 time_sec 升序排序，支持后续二分查找
+    all_records.sort_by_key(|r| r.time_sec);
+
+    log::info!(
+        "[DropScanner] chatlog 预加载完成: 查询 {} 个文件, 共 {} 条记录, 范围 [{}~{}+2h]",
+        total_files_queried,
+        all_records.len(),
+        scan_start_ms,
+        scan_end_ms
+    );
+
+    all_records
+}
+
+/// 从预加载的 chatlog 记录中提取掉落物、金币收入和支出（纯内存操作）
+///
+/// 这是 extract_drops_from_chatlog 的核心逻辑，接受预加载的记录列表，
+/// 通过二分查找定位时间范围内的记录，避免重复打开 SQLite 连接。
+fn extract_drops_from_records(
+    records: &[ChatlogRecord],
+    start_time_ms: i64,
+    end_time_ms: i64,
+    role_name: &str,
+) -> (Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>, Vec<String>) {
+    let start_sec = start_time_ms / 1000;
+    let end_sec = end_time_ms / 1000;
+
+    // 二分查找时间范围 [start_sec, end_sec]
+    let start_idx = records.partition_point(|r| r.time_sec < start_sec);
+    let end_idx = records.partition_point(|r| r.time_sec <= end_sec);
+    let relevant = &records[start_idx..end_idx];
 
     let mut drops_set: HashSet<String> = HashSet::new();
     let mut base_salary: Option<i64> = None;
@@ -1826,18 +1968,15 @@ fn extract_drops_from_chatlog(
     // 当前角色花钱购买的物品名集合（用于 notes 显示）
     let mut purchased_items_set: HashSet<String> = HashSet::new();
 
-    for row in rows {
-        let (msg_type, text, _msg, time_sec) = match row {
-            Ok(t) => t,
-            Err(e) => {
-                log::warn!("[DropScanner] 读取 chatlog 行失败: {}", e);
-                continue;
-            }
-        };
+    for record in relevant {
+        let msg_type = &record.msg_type;
+        let text = &record.text;
+        let _msg = &record.msg;
+        let time_sec = record.time_sec;
 
         if msg_type == "MSG_ITEM" {
             // 提取分配的物品名
-            if let Some(caps) = ITEM_RE.captures(&text) {
+            if let Some(caps) = ITEM_RE.captures(text) {
                 let item_name = caps[1].to_string();
                 drops_set.insert(item_name);
                 item_count += 1;
@@ -1845,7 +1984,7 @@ fn extract_drops_from_chatlog(
         } else if msg_type == "MSG_MONEY" {
             // SQL 已过滤 text LIKE '你获得：%'，此处直接解析金额
             // 解析 msg 字段获取真实的金/银/铜值
-            if let Some((gold, silver, copper)) = parse_money_from_msg(&_msg) {
+            if let Some((gold, silver, copper)) = parse_money_from_msg(_msg) {
                 money_count += 1;
                 // BOSS 击杀奖励：固定 10 金，不计入收入，仅计数
                 if gold == BOSS_KILL_REWARD_GOLD && silver == 0 && copper == 0 {
@@ -1861,13 +2000,13 @@ fn extract_drops_from_chatlog(
         } else if msg_type == "MSG_ROOM" || msg_type == "MSG_WHISPER" {
             // 拍团底薪/支出消息可能出现在房间频道(MSG_ROOM)或密语频道(MSG_WHISPER)
             // 拍团底薪消息：取最后一条（最终分配金额）
-            if let Some(caps) = SALARY_RE.captures(&text) {
+            if let Some(caps) = SALARY_RE.captures(text) {
                 let salary: i64 = caps[1].parse().unwrap_or(0);
                 base_salary = Some(salary);
             }
             // 支出消息（直接购买格式）：[角色名]花费[金额]购买了[物品名]
             // 这是唯一确认的支出格式，"记录给了"只是团长分配记录不代表实际购买
-            if let Some(caps) = EXPENSE_MSG_RE.captures(&text) {
+            if let Some(caps) = EXPENSE_MSG_RE.captures(text) {
                 let buyer_name = normalize_role_name(&caps[1]);
                 // 匹配角色名（buyer_name 格式为"角色名·服务器"，检查前缀）
                 if buyer_name == target_name
@@ -1886,22 +2025,29 @@ fn extract_drops_from_chatlog(
                             expense_gold += amount;
                             expense_dedup.insert(dedup_key);
                             // 记录购买的物品名（用于 notes 显示）
-                            purchased_items_set.insert(item_name);
+                            purchased_items_set.insert(item_name.clone());
+                            // 当前角色购买的物品也加入 drops（属于副本掉落物分配）
+                            drops_set.insert(item_name);
                         }
                     }
                 }
             }
-            // 团长分配记录：[分配者]将[物品名]以[金额]记录给了[接收者]
-            // 仅提取物品名加入 drops（掉落物记录），不计入支出（分配不等于实际购买）
-            if let Some(caps) = ALLOCATE_TO_RE.captures(&text) {
-                let item_name = caps[2].to_string();
-                drops_set.insert(item_name);
-            }
-            // 拍卖物品名提取：所有"购买了[物品名]"的物品都加入 drops
-            // （包括帮别人购买的情况，用于检测玄晶等稀有掉落）
-            if let Some(caps) = PURCHASED_ITEM_RE.captures(&text) {
-                let item_name = caps[1].to_string();
-                drops_set.insert(item_name);
+            // 团长分配记录和拍卖物品名提取仅在 MSG_ROOM（团队频道）处理
+            // MSG_WHISPER（密语频道）可能包含玩家间私人交易或闲聊中的"购买了[X]"，
+            // 不能作为副本掉落物，否则会导致 drops 数量虚高
+            if msg_type == "MSG_ROOM" {
+                // 团长分配记录：[分配者]将[物品名]以[金额]记录给了[接收者]
+                // 仅提取物品名加入 drops（掉落物记录），不计入支出（分配不等于实际购买）
+                if let Some(caps) = ALLOCATE_TO_RE.captures(text) {
+                    let item_name = caps[2].to_string();
+                    drops_set.insert(item_name);
+                }
+                // 拍卖物品名提取：MSG_ROOM 中的"购买了[物品名]"都是副本掉落物分配
+                // （包括帮别人购买的情况，用于检测玄晶等稀有掉落）
+                if let Some(caps) = PURCHASED_ITEM_RE.captures(text) {
+                    let item_name = caps[1].to_string();
+                    drops_set.insert(item_name);
+                }
             }
         }
     }
@@ -1924,7 +2070,7 @@ fn extract_drops_from_chatlog(
         purchased_items.len()
     );
 
-    Ok((drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items))
+    (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items)
 }
 
 /// 扫描账号目录下所有 chatlog 数据库文件
@@ -2733,6 +2879,16 @@ pub fn scan_raid_drops_with_raids(
         .map(|path| (path.clone(), get_chatlog_time_range(path)))
         .collect();
 
+    // 2.5 预加载所有 chatlog 文件中的相关记录到内存
+    //     避免后续每个副本实例重复打开 SQLite 连接和全表扫描
+    //     性能优化：将 O(N*M) 次 SQLite 查询降为 O(M) 次（M=chatlog文件数）
+    let preloaded_records = preload_chatlog_records(
+        &chatlog_files,
+        &chatlog_range_cache,
+        start_ms,
+        end_ms,
+    );
+
     // 3. 分析每个 JCL 文件内容，提取战斗时间和击杀状态
     //    替代原 10金查询方案：通过 JCL 的 NPC_FIGHT_HINT (bFight True→False) 判定通关
     //    每个 JCL 只解析一次，结果缓存到 jcl_analyses
@@ -2778,12 +2934,19 @@ pub fn scan_raid_drops_with_raids(
     }
 
     // 4. 聚类（按 JCL 顺序，使用 is_kill 过滤拉托，2小时阈值智能分组）
+    //    使用预加载的 chatlog 记录进行工资检测，避免重复打开 SQLite
+    //    预提取所有已配置 JCL 的时间戳（排序），用于后续 chatlog_end 截断：
+    //    不管下一个副本是否通关，只要有 JCL 产生就说明新副本活动已开始，应截断 chatlog
+    let all_jcl_timestamps: Vec<i64> = {
+        let mut ts: Vec<i64> = configured_jcl_files.iter().map(|j| j.timestamp).collect();
+        ts.sort_unstable();
+        ts
+    };
     let mut instances = cluster_raid_instances(
         account_id,
         configured_jcl_files,
         &jcl_analyses,
-        &chatlog_files,
-        &chatlog_range_cache,
+        &preloaded_records,
     );
     log::info!(
         "[DropScanner] 账号 {} 聚类为 {} 个副本实例",
@@ -2818,10 +2981,8 @@ pub fn scan_raid_drops_with_raids(
 
     // 7. 处理每个副本实例
     let mut inserted_count = 0;
-    // 预提取各实例的 start_time，避免 iter_mut 借用冲突
-    let instance_start_times: Vec<i64> = instances.iter().map(|i| i.start_time).collect();
 
-    for (index, instance) in instances.iter_mut().enumerate() {
+    for instance in instances.iter_mut() {
         // 匹配 raids.name
         let raid_entry = match match_raid_name(&instance.raid_display_name, &raids) {
             Some(entry) => entry,
@@ -2871,13 +3032,19 @@ pub fn scan_raid_drops_with_raids(
 
         // 聊天记录分析范围：
         // 开始 = instance.first_gold_time（首个BOSS击杀时间）
-        // 结束 = 下一副本实例的 start_time，或（最后一个实例）副本结束后 2 小时
+        // 结束 = 下一个 JCL 产生时间（不管是否通关），或（最后一个 JCL）副本结束后 2 小时
         // （底薪通常在副本结束后30-60分钟内发送，2小时窗口足够覆盖）
+        // 注意：用 JCL 时间戳而非实例 start_time，避免未通关副本（如白帝江关无 BOSS 配置）
+        //       虽然不形成实例但其 JCL 仍能正确截断 chatlog 窗口
         let chatlog_start = instance.first_gold_time;
-        let chatlog_end = if index + 1 < instance_start_times.len() {
-            instance_start_times[index + 1]
+        let next_jcl_time = all_jcl_timestamps
+            .iter()
+            .find(|&&t| t > instance.last_jcl_time)
+            .copied();
+        let chatlog_end = if let Some(next_ts) = next_jcl_time {
+            next_ts
         } else {
-            // 最后一个副本实例：根据副本是否仍在进行中选择结束时间
+            // 没有后续 JCL：根据副本是否仍在进行中选择结束时间
             let now_ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
@@ -2896,43 +3063,35 @@ pub fn scan_raid_drops_with_raids(
         };
 
         // 从 chatlog 提取掉落物、金币收入和支出
-        // 用文件名日期预过滤，只打开覆盖副本时间范围的 chatlog 文件
+        // 优化：直接复用预加载的 chatlog 记录进行内存处理，避免重复打开 SQLite 连接
+        // （预加载在 scan_raid_drops_with_raids 入口完成，覆盖范围 [scan_start, scan_end+2h]）
         let mut drops: HashSet<String> = HashSet::new();
         let mut base_salary: Option<i64> = None;
-        let mut other_income: i64 = 0;
-        let mut total_expense: i64 = 0;
-        let mut chatlog_query_count = 0u32;
+        let other_income: i64;
+        let total_expense: i64;
+        let chatlog_query_count = if preloaded_records.is_empty() { 0u32 } else { 1u32 };
         // 合并所有 chatlog 文件的收入记录 (time_sec, gold)，用于精确收入匹配
         let mut all_income_records: Vec<(i64, i64)> = Vec::new();
         // 累加所有 chatlog 文件的 boss_kill_times，用于击杀数验证
         let mut all_boss_kill_times: Vec<i64> = Vec::new();
         // 合并所有 chatlog 文件的购买物品名（用于 notes 显示）
         let mut all_purchased_items: HashSet<String> = HashSet::new();
-        for chatlog_path in &chatlog_files {
-            // 文件名日期预过滤：跳过不覆盖 [chatlog_start, chatlog_end] 的文件
-            if !chatlog_file_covers_range_cached(chatlog_path, chatlog_start, chatlog_end, &chatlog_range_cache) {
-                continue;
-            }
-            chatlog_query_count += 1;
-            if let Ok((chatlog_drops, salary, income, expense, _, income_records, boss_kill_times, purchased_items)) =
-                extract_drops_from_chatlog(chatlog_path, chatlog_start, chatlog_end, &db_identity.role_name)
-            {
-                drops.extend(chatlog_drops);
-                all_purchased_items.extend(purchased_items);
-                // 底薪取最后一个非 None 值（最终分配金额，跨文件时后文件优先）
-                if salary.is_some() {
-                    base_salary = salary;
-                }
-                other_income += income;
-                total_expense += expense;
-                all_income_records.extend(income_records);
-                all_boss_kill_times.extend(boss_kill_times);
-            }
+
+        // 单次调用处理预加载记录，时间范围 [chatlog_start, chatlog_end] 通过二分查找定位
+        let (chatlog_drops, salary, income, expense, _, income_records, boss_kill_times, purchased_items) =
+            extract_drops_from_records(&preloaded_records, chatlog_start, chatlog_end, &db_identity.role_name);
+        drops.extend(chatlog_drops);
+        all_purchased_items.extend(purchased_items);
+        if salary.is_some() {
+            base_salary = salary;
         }
+        other_income = income;
+        total_expense = expense;
+        all_income_records.extend(income_records);
+        all_boss_kill_times.extend(boss_kill_times);
         log::info!(
-            "[DropScanner] chatlog 文件预过滤: 总 {} 个, 实际查询 {} 个",
-            chatlog_files.len(),
-            chatlog_query_count
+            "[DropScanner] chatlog 内存处理: 预加载 {} 条记录, 查询 1 次",
+            preloaded_records.len()
         );
 
         // Boss 击杀数验证：以 chatlog 10金次数校验 JCL 判定的击杀数。
@@ -4074,7 +4233,7 @@ mod tests {
             JclAnalysis { boss_name: Some("唐醉".to_string()), fight_start_ms: 1718266200000, fight_end_ms: 1718266260000, is_kill: true },
         );
 
-        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[], &HashMap::new());
+        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[]);
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].bosses_killed.len(), 2);
         assert_eq!(instances[0].boss_kill_count, 2);
@@ -4112,7 +4271,7 @@ mod tests {
             JclAnalysis { boss_name: Some("枯荣大师".to_string()), fight_start_ms: 1718266800000, fight_end_ms: 1718266860000, is_kill: true },
         );
 
-        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[], &HashMap::new());
+        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[]);
         assert_eq!(instances.len(), 2);
     }
 
@@ -4149,7 +4308,7 @@ mod tests {
             JclAnalysis { boss_name: Some("唐醉".to_string()), fight_start_ms: 1718266200000 + 60_000, fight_end_ms: 1718266200000 + 120_000, is_kill: false },
         );
 
-        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[], &HashMap::new());
+        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[]);
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].bosses_killed.len(), 1);
         assert_eq!(instances[0].boss_kill_count, 1);
@@ -4196,7 +4355,7 @@ mod tests {
             JclAnalysis { boss_name: Some("唐醉".to_string()), fight_start_ms: 1718266200000, fight_end_ms: 1718266260000, is_kill: false },
         );
 
-        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[], &HashMap::new());
+        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[]);
         assert_eq!(instances.len(), 0, "全为拉托应跳过不创建实例");
     }
 
@@ -4299,7 +4458,7 @@ mod tests {
             JclAnalysis { boss_name: Some("唐怀仁".to_string()), fight_start_ms: ts(23, 14, 4), fight_end_ms: ts(23, 21, 59), is_kill: true },
         );
 
-        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[], &HashMap::new());
+        let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[]);
 
         // 应该只有1个副本实例（连续相同副本名）
         assert_eq!(instances.len(), 1, "应聚类为1个副本实例");
@@ -4430,7 +4589,7 @@ mod tests {
         println!("[DRY RUN] JCL 分析完成: {} 个", jcl_analyses.len());
 
         // 4. 聚类
-        let instances = cluster_raid_instances("432345564243886337", jcl_files, &jcl_analyses, &[], &HashMap::new());
+        let instances = cluster_raid_instances("432345564243886337", jcl_files, &jcl_analyses, &[]);
         println!("[DRY RUN] 副本实例数: {}", instances.len());
 
         let mut heroic_gold: i64 = 0;
@@ -4681,7 +4840,6 @@ mod tests {
             jcl_files,
             &jcl_analyses,
             &[],
-            &HashMap::new(),
         );
         println!("[NUOSHAN] 副本实例数: {}", instances.len());
         for (i, inst) in instances.iter().enumerate() {
@@ -4838,7 +4996,6 @@ mod tests {
             jcl_files,
             &jcl_analyses,
             &[],
-            &HashMap::new(),
         );
 
         // 核心断言：无配置副本也能产出实例（修复前 build_raid_instance 返回 None → 0 个实例）
@@ -4896,7 +5053,6 @@ mod tests {
             jcl_files,
             &jcl_analyses,
             &[],
-            &HashMap::new(),
         );
 
         // 灭团时不产出实例（保守判定，与有配置副本行为一致）
@@ -4996,6 +5152,65 @@ mod tests {
             results.iter().any(|r| r.success),
             "应至少有一个账号扫描成功"
         );
+    }
+
+    /// 验证扫描后 records 表的掉落数量是否合理
+    ///
+    /// 运行：cargo test --bin jx3-raid-manager test_verify_drops_count -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_verify_drops_count() {
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT data,
+                        datetime(record_date/1000, 'unixepoch', '+08 hours') as start,
+                        drops, status
+                 FROM records
+                 WHERE source='auto_scan'
+                 ORDER BY record_date DESC
+                 LIMIT 30",
+            )
+            .expect("prepare 失败");
+
+        let rows: Vec<(String, String, String, String)> = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .expect("query_map 失败")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect 失败");
+
+        println!("[验证] 共 {} 条自动扫描记录\n", rows.len());
+        for (data_json, start, drops_json, status) in &rows {
+            let data: serde_json::Value = serde_json::from_str(data_json).unwrap_or_default();
+            let raid = data.get("raidName").and_then(|v| v.as_str()).unwrap_or("");
+            let role = data.get("roleName").and_then(|v| v.as_str()).unwrap_or("");
+            let gold = data.get("goldIncome").and_then(|v| v.as_i64()).unwrap_or(0);
+            let expense = data.get("goldExpense").and_then(|v| v.as_i64()).unwrap_or(0);
+            let purchased: Vec<String> = data
+                .get("purchasedItems")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let drops: Vec<String> = serde_json::from_str(drops_json).unwrap_or_default();
+            println!(
+                "{} | {} | {} | 收入={}金 支出={}金 | drops={}件 purchased={}件 | {}",
+                raid, role, start, gold, expense, drops.len(), purchased.len(), status
+            );
+            if !drops.is_empty() && drops.len() <= 30 {
+                println!("  drops: {}", drops.join(", "));
+            }
+            if !purchased.is_empty() {
+                println!("  purchased: {}", purchased.join(", "));
+            }
+        }
     }
 
     /// 重新扫描 7-12 风闪的副本，触发 pending 记录覆盖更新

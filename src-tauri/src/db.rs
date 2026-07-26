@@ -605,7 +605,13 @@ pub fn init_db() -> Result<Connection, String> {
         // DB_INITIALIZED 缓存导致返回空数据库连接
         if let Ok(metadata) = std::fs::metadata(&path) {
             if metadata.len() > 0 {
-                return Connection::open(path).map_err(|e| e.to_string());
+                let conn = Connection::open(path).map_err(|e| e.to_string())?;
+                // 快速路径同样需要应用 PRAGMA，确保连接配置一致
+                // （synchronous/journal_mode/foreign_keys/busy_timeout）
+                conn.execute_batch(
+                    "PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;"
+                ).ok();
+                return Ok(conn);
             }
         }
         // 文件不存在或大小为 0，重置标志重新初始化
