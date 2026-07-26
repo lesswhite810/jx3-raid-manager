@@ -2428,6 +2428,9 @@ fn upsert_raid_drop_record(
     let is_ten_person = raid_full_name.contains("10人");
     let (window_start, window_end) = calculate_cd_window(instance.start_time, is_ten_person);
 
+    // 按角色过滤：不同角色在同一账号下有独立的 CD
+    let role_filter = role_id.as_ref().map(|rid| rid.as_str()).unwrap_or("");
+
     let existing: Option<(String, String)> = conn
         .query_row(
             "SELECT id, status FROM records
@@ -2435,6 +2438,7 @@ fn upsert_raid_drop_record(
                AND record_date >= ?3 AND record_date < ?4
                AND source = 'auto_scan'
                AND json_extract(data, '$.raidName') = ?5
+               AND (?6 = '' OR role_id = ?6)
              ORDER BY
                CASE status
                  WHEN 'scanning' THEN 0
@@ -2442,7 +2446,7 @@ fn upsert_raid_drop_record(
                  ELSE 2
                END
              LIMIT 1",
-            params![instance.account_id, raid_name, window_start, window_end, raid_full_name],
+            params![instance.account_id, raid_name, window_start, window_end, raid_full_name, role_filter],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .ok();
@@ -2461,15 +2465,16 @@ fn upsert_raid_drop_record(
         }
     }
 
-    // 无论是否存在 pending auto_scan 记录，都检查同 CD 窗口内是否已有手工记录。
+    // 无论是否存在 pending auto_scan 记录，都检查同 CD 窗口内是否已有同角色的手工记录。
     // 已有手工记录时跳过 pending 创建/更新，避免重复占用 CD。
     // 注意：之前曾用 `if existing.is_none()` 包裹此检查，导致已存在 pending 记录时
     // 跳过手工检查，即使手工记录已存在也会继续 UPDATE pending，造成重复记录。
     //
     // 注意：手工记录的 raid_name 列存的是 JSON raidName 完整名（如 "25人英雄阆风悬城"），
     // 而 auto 记录的 raid_name 列存的是 raids.name 短名（如 "阆风悬城"）。
-    // 因此不能用 raid_name 列精确匹配，需查询同账号同 CD 窗口内所有 confirmed 记录，
+    // 因此不能用 raid_name 列精确匹配，需查询同角色同 CD 窗口内所有 confirmed 记录，
     // 在 Rust 中解析 JSON data 字段的 raidName 比较。
+    // 按 role_id 过滤：不同角色有独立 CD，同一账号下不同角色的手工记录不应互斥。
     log::info!(
         "[DropScanner] CD 检查: account_id={}, raid_display='{}', start_time={}, is_ten={}, window=[{}, {}]",
         instance.account_id,
@@ -2486,12 +2491,13 @@ fn upsert_raid_drop_record(
              WHERE account_id = ?1
                AND record_date >= ?2
                AND record_date < ?3
-               AND status = 'confirmed'",
+               AND status = 'confirmed'
+               AND (?4 = '' OR role_id = ?4)",
         )
         .map_err(|e| format!("准备手工记录查询失败: {}", e))?;
 
     let rows = stmt
-        .query_map(params![instance.account_id, window_start, window_end], |row| {
+        .query_map(params![instance.account_id, window_start, window_end, role_filter], |row| {
             row.get::<_, String>(0)
         })
         .map_err(|e| format!("查询手工记录失败: {}", e))?;
