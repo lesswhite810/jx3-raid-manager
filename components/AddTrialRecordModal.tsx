@@ -6,7 +6,7 @@ import { Package, Check, X, AlertCircle, Layers, Trophy, Save, HelpCircle } from
 import { DualRangeSlider } from './DualRangeSlider';
 import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
-import { getEquip, JX3Equip } from '../services/jx3BoxApi';
+import { getEquip, JX3Equip, JX3EquipMagicType } from '../services/jx3BoxApi';
 import { db } from '../services/db';
 import { DateTimePicker } from './DateTimePicker';
 import { getBaseServerName } from '../utils/serverUtils';
@@ -90,7 +90,7 @@ const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     };
 
     for (let i = 1; i <= 16; i++) {
-        const magicType = (item as any)[`_Magic${i}Type`];
+        const magicType = item[`_Magic${i}Type`] as JX3EquipMagicType | undefined;
         if (!magicType) continue;
 
         if (typeof magicType === 'object' && magicType.attr && Array.isArray(magicType.attr)) {
@@ -110,7 +110,7 @@ const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     }
 
     if (attrs.length === 0 && item.attributes && Array.isArray(item.attributes)) {
-        item.attributes.forEach((attr: any) => {
+        item.attributes.forEach((attr) => {
             if (attr.color === 'green' && attr.type) {
                 const label = ATTR_NAME_MAP[attr.type];
                 if (label) {

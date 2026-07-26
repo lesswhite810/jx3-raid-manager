@@ -21,7 +21,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 15;
+pub const CURRENT_SCHEMA_VERSION: i32 = 16;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -590,6 +590,35 @@ pub fn db_delete_directory(
     })
 }
 
+/// 应用持久化 PRAGMA（写入数据库文件头，只需在首次初始化时设置一次）
+///
+/// - `journal_mode=WAL`：WAL 模式支持多读 + 单写并发，避免 DELETE 模式的写独占锁
+/// - `wal_autocheckpoint=1000`：WAL 文件达到 1000 页时自动 checkpoint
+fn apply_persistent_pragmas(conn: &Connection) {
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=1000;"
+    ).ok();
+}
+
+/// 应用连接级 PRAGMA（每次新建连接都需要设置）
+///
+/// - `synchronous=NORMAL`：WAL 模式下安全性等同 FULL+DELETE，但避免每次 commit fsync
+/// - `foreign_keys=ON`：开启外键约束
+/// - `busy_timeout=5000`：5 秒忙等待，避免 SQLITE_BUSY
+/// - `cache_size=-65536`：64MB 页缓存（负数表示 KB）
+/// - `mmap_size=268435456`：256MB 内存映射 IO
+/// - `temp_store=MEMORY`：临时表和排序走内存
+fn apply_connection_pragmas(conn: &Connection) {
+    conn.execute_batch(
+        "PRAGMA synchronous=NORMAL; \
+         PRAGMA foreign_keys=ON; \
+         PRAGMA busy_timeout=5000; \
+         PRAGMA cache_size=-65536; \
+         PRAGMA mmap_size=268435456; \
+         PRAGMA temp_store=MEMORY;"
+    ).ok();
+}
+
 /// 初始化数据库（单例模式，只初始化一次）
 ///
 /// 安装与升级路径完全分离：
@@ -606,11 +635,9 @@ pub fn init_db() -> Result<Connection, String> {
         if let Ok(metadata) = std::fs::metadata(&path) {
             if metadata.len() > 0 {
                 let conn = Connection::open(path).map_err(|e| e.to_string())?;
-                // 快速路径同样需要应用 PRAGMA，确保连接配置一致
-                // （synchronous/journal_mode/foreign_keys/busy_timeout）
-                conn.execute_batch(
-                    "PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;"
-                ).ok();
+                // 快速路径只需应用连接级 PRAGMA
+                // 持久化 PRAGMA（journal_mode=WAL、wal_autocheckpoint）已写入数据库文件头，无需重复设置
+                apply_connection_pragmas(&conn);
                 return Ok(conn);
             }
         }
@@ -630,8 +657,9 @@ pub fn init_db() -> Result<Connection, String> {
 
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
 
-    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
-        .ok();
+    // 完整初始化路径：先设置持久化 PRAGMA（journal_mode=WAL），再设置连接级 PRAGMA
+    apply_persistent_pragmas(&conn);
+    apply_connection_pragmas(&conn);
 
     ensure_version_tables(&conn)?;
 
@@ -690,8 +718,9 @@ pub fn init_db_with_path(path: &std::path::Path) -> Result<Connection, String> {
 
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
 
-    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
-        .ok();
+    // 测试路径同样使用 WAL + NORMAL 配置，保持与生产环境一致
+    apply_persistent_pragmas(&conn);
+    apply_connection_pragmas(&conn);
 
     ensure_version_tables(&conn)?;
 
@@ -866,6 +895,10 @@ fn validate_post_upgrade(conn: &Connection) -> Result<(), String> {
         "idx_records_account_id",
         "idx_records_role_id",
         "idx_records_record_date",
+        "idx_records_data_raid_name",
+        "idx_records_cd_lookup",
+        "idx_records_pending",
+        "idx_records_manual_cd",
         "idx_seasons_version_id",
         "idx_raids_season_id",
     ];
@@ -1802,6 +1835,20 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_records_account_id ON records(account_id);
         CREATE INDEX IF NOT EXISTS idx_records_role_id ON records(role_id);
         CREATE INDEX IF NOT EXISTS idx_records_record_date ON records(record_date);
+
+        -- V16: records 表索引优化（表达式索引 + 复合索引）
+        -- 表达式索引：加速 json_extract(data, '$.raidName') 查询（CD 窗口去重 hot path）
+        CREATE INDEX IF NOT EXISTS idx_records_data_raid_name
+        ON records(json_extract(data, '$.raidName'));
+        -- 复合索引：覆盖 CD 窗口去重检查
+        CREATE INDEX IF NOT EXISTS idx_records_cd_lookup
+        ON records(account_id, raid_name, source, record_date);
+        -- 复合索引：覆盖 pending/scanning 查询 + 排序
+        CREATE INDEX IF NOT EXISTS idx_records_pending
+        ON records(status, record_date DESC);
+        -- 复合索引：覆盖手工记录查询
+        CREATE INDEX IF NOT EXISTS idx_records_manual_cd
+        ON records(account_id, status, record_date);
 
         CREATE INDEX IF NOT EXISTS idx_seasons_version_id ON seasons(version_id);
         CREATE INDEX IF NOT EXISTS idx_raids_season_id ON raids(season_id);
@@ -4546,8 +4593,8 @@ mod tests {
         let temp_dir = TestTempDir::new();
         let db_path = temp_dir.path().join("test.db");
         let conn = Connection::open(&db_path).expect("should open test db");
-        conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")
-            .ok();
+        apply_persistent_pragmas(&conn);
+        apply_connection_pragmas(&conn);
         (conn, db_path)
     }
 

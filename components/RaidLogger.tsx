@@ -1,17 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RaidRecord, Account, Raid } from '../types';
 import { Search, Filter, Trash2 } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
 import { db } from '../services/db';
-
-// 添加全局错误捕获
-window.onerror = function (message, source, lineno, colno, error) {
-  console.error('全局错误:', { message, source, lineno, colno, error });
-  toast.error(`发生错误: ${message}`);
-  return false;
-};
 
 // 扩展RaidRecord，添加角色信息
 interface ExtendedRaidRecord extends RaidRecord {
@@ -54,6 +47,19 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
   const safeRecords = Array.isArray(records) ? records : [];
   const safeRaids = Array.isArray(raids) ? raids : [];
+
+  // 全局错误捕获（仅在组件挂载时注册一次，避免模块级副作用）
+  useEffect(() => {
+    const handler = (message: unknown, source: string | undefined, lineno: number | undefined, colno: number | undefined, error: Error | undefined) => {
+      console.error('全局错误:', { message, source, lineno, colno, error });
+      toast.error(`发生错误: ${String(message)}`);
+      return false;
+    };
+    window.onerror = handler;
+    return () => {
+      window.onerror = null;
+    };
+  }, []);
 
   const roles = flattenRoles(safeAccounts);
 

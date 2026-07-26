@@ -102,6 +102,10 @@ export function buildTauriCliEnv(args, env = process.env, options = {}) {
   nextEnv.CARGO_PROFILE_RELEASE_CODEGEN_UNITS ??= '256';
   nextEnv.CARGO_PROFILE_RELEASE_OPT_LEVEL ??= '2';
   nextEnv.CARGO_PROFILE_RELEASE_DEBUG ??= '0';
+  // 关闭 Cargo.toml [profile.release] 中启用的 LTO/strip，避免本地反复构建被 LTO 拖慢
+  // 生产构建（CI / JX3_TAURI_FULL_LOCAL_BUILD=1）不进入此分支，会保留 Cargo.toml 的 LTO/strip 设置
+  nextEnv.CARGO_PROFILE_RELEASE_LTO ??= 'false';
+  nextEnv.CARGO_PROFILE_RELEASE_STRIP ??= 'false';
 
   const targetTriple = options.targetTriple || getTargetTriple(args, env);
   const linkerEnvKey = getTargetLinkerEnvKey(targetTriple);
@@ -127,6 +131,8 @@ export function describeLocalBuildOptimization(args, env = process.env, options 
     'release incremental',
     `codegen-units=${tauriEnv.CARGO_PROFILE_RELEASE_CODEGEN_UNITS}`,
     `opt-level=${tauriEnv.CARGO_PROFILE_RELEASE_OPT_LEVEL}`,
+    `lto=${tauriEnv.CARGO_PROFILE_RELEASE_LTO}`,
+    `strip=${tauriEnv.CARGO_PROFILE_RELEASE_STRIP}`,
   ];
 
   if (tauriEnv[linkerEnvKey]) {

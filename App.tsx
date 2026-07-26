@@ -46,6 +46,12 @@ import { toast } from './utils/toastManager';
 
 const ConfigManager = lazy(async () => import('./components/ConfigManager').then(module => ({ default: module.ConfigManager })));
 
+// PWA beforeinstallprompt 事件类型（仅在非 Tauri 环境的浏览器中触发）
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 function App() {
   const [dashboardStatsPeriod, setDashboardStatsPeriod] = useState<'week' | 'season' | 'all'>('week');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
@@ -53,7 +59,7 @@ function App() {
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);
   const [showTrialFlipDetail, setShowTrialFlipDetail] = useState(false);
 
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const initStartedRef = useRef(false);
   const updaterInitializedRef = useRef(false);
@@ -527,12 +533,12 @@ function App() {
   // 仅在浏览器环境中添加PWA相关事件监听
   useEffect(() => {
     // 检查是否是Tauri环境
-    const isTauri = typeof window !== 'undefined' && window.__tauri__ !== undefined;
+    const isTauri = typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
 
     if (!isTauri) {
-      const handler = (e: any) => {
+      const handler = (e: Event) => {
         e.preventDefault();
-        setDeferredPrompt(e);
+        setDeferredPrompt(e as BeforeInstallPromptEvent);
       };
       window.addEventListener('beforeinstallprompt', handler);
       return () => window.removeEventListener('beforeinstallprompt', handler);

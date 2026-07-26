@@ -34,6 +34,8 @@ describe('buildTauriCliEnv', () => {
     expect(env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS).toBe('256');
     expect(env.CARGO_PROFILE_RELEASE_OPT_LEVEL).toBe('2');
     expect(env.CARGO_PROFILE_RELEASE_DEBUG).toBe('0');
+    expect(env.CARGO_PROFILE_RELEASE_LTO).toBe('false');
+    expect(env.CARGO_PROFILE_RELEASE_STRIP).toBe('false');
     expect(env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER).toBe('C:/Rust/rust-lld.exe');
   });
 

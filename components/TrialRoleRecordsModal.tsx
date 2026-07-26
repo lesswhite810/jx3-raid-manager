@@ -4,7 +4,7 @@ import { TrialPlaceRecord } from '../types';
 import { X, Calendar, Trophy, Search, CheckCircle, Circle, Trash2, AlertCircle, Loader2 } from 'lucide-react';
 import { SectIcon } from './SectIcon';
 import { db } from '../services/db';
-import { JX3Equip } from '../services/jx3BoxApi';
+import { JX3Equip, JX3EquipMagicType } from '../services/jx3BoxApi';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { getTrialRecordEquipmentEntries } from '../utils/trialRecordUtils';
 
@@ -86,7 +86,7 @@ const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     };
 
     for (let i = 1; i <= 16; i++) {
-        const magicType = (item as any)[`_Magic${i}Type`];
+        const magicType = item[`_Magic${i}Type`] as JX3EquipMagicType | undefined;
         if (!magicType) continue;
 
         if (typeof magicType === 'object' && magicType.attr && Array.isArray(magicType.attr)) {
@@ -106,7 +106,7 @@ const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     }
 
     if (attrs.length === 0 && item.attributes && Array.isArray(item.attributes)) {
-        item.attributes.forEach((attr: any) => {
+        item.attributes.forEach((attr) => {
             if (attr.color === 'green' && attr.type) {
                 const label = ATTR_NAME_MAP[attr.type];
                 if (label) {

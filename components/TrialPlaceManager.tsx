@@ -408,15 +408,15 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
                                         <div className="flex items-center gap-2">
                                             <div className="text-xs text-muted flex-shrink-0">密码</div>
-                                            {(role as any).password ? ( // Cast to any or define password on Role if known
+                                            {role.password ? (
                                                 <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
                                                     <span className="text-xs text-main font-mono truncate flex-1">
-                                                        {getMaskedPassword((role as any).password)}
+                                                        {getMaskedPassword(role.password)}
                                                     </span>
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            copyToClipboard((role as any).password, `password-${role.id}`);
+                                                            copyToClipboard(role.password ?? '', `password-${role.id}`);
                                                         }}
                                                         className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
                                                             ? 'text-emerald-600'

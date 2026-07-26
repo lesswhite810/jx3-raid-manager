@@ -40,3 +40,18 @@ encoding_rs = "0.8"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# 生产构建优化（仅影响 CI 构建 + JX3_TAURI_FULL_LOCAL_BUILD=1 的本地完整构建）
+# 本地快速构建（npm run tauri build）通过 tauriCliUtils.mjs 注入环境变量覆盖 LTO/strip/codegen-units，
+# 避免本地反复构建时被 LTO 拖慢。
+[profile.release]
+# Fat LTO：跨 crate 全程序优化，缩小体积 + 提升运行时性能
+lto = "fat"
+# 仅保留对调试有用的符号，剥离其余符号以缩小二进制体积
+strip = "symbols"
+# 单 codegen unit：配合 LTO 实现最佳优化（构建更慢，产物更小更快）
+codegen-units = 1
+# 优化级别 2（默认值，显式声明便于追踪）
+opt-level = 2
+# panic 时 unwind，保留 Tauri 命令崩溃时的栈信息便于排查
+panic = "unwind"

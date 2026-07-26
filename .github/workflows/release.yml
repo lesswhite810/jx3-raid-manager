@@ -201,6 +201,13 @@ jobs:
         with:
           target: x86_64-pc-windows-msvc
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # 复用缓存键：包含 Cargo.toml 哈希，依赖变化时自动失效
+          key: release-${{ runner.os }}
+
       - name: Build Tauri App
         run: npm run tauri build -- --config tmp/tauri.release.conf.json
         env:

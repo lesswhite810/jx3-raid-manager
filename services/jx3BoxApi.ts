@@ -10,6 +10,7 @@ export interface JX3Equip {
     Quality: string;
     SubType: number;
     TypeLabel?: string;
+    BindType?: number;
     _IconID?: number;
     _Attrs?: string[];
     _AttrType?: string[];
@@ -19,11 +20,16 @@ export interface JX3Equip {
         type: string;
         label: string;
         value?: string;
-        [key: string]: any;
+        [key: string]: unknown;
     }>;
     AttributeTypes?: Record<string, string>;
-    [key: string]: any;
+    [key: string]: unknown;
 }
+
+// 装备 Magic 属性字段的运行时形态：
+// - 字符串形态：直接是属性类型标识（如 'atSkillEventHandler'）
+// - 对象形态：{ attr: string[] } 包含属性类型数组
+export type JX3EquipMagicType = string | { attr?: string[] };
 
 export interface JX3EquipResponse {
     total: number;

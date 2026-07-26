@@ -39,7 +39,11 @@ pub struct EquipSync;
 
 impl EquipSync {
     pub async fn sync_if_needed() -> Result<usize, SyncError> {
-        let season = match Self::get_current_season()? {
+        // 单连接复用：原流程 4 次 init_db（get_current_season + is_season_synced
+        // + save_equipments + mark_season_synced），合并为 1 次
+        let conn = crate::db::init_db().map_err(|e: String| SyncError::Database(e))?;
+
+        let season = match Self::get_current_season_with_conn(&conn)? {
             Some(s) => s,
             None => {
                 info!("[EquipSync] 未获取到当前赛季信息，跳过装备同步");
@@ -48,7 +52,7 @@ impl EquipSync {
         };
 
         let cache_key = format!("equip_cache_{}", season.name);
-        if Self::is_season_synced(&cache_key)? {
+        if Self::is_season_synced_with_conn(&conn, &cache_key)? {
             info!("[EquipSync] 赛季「{}」已同步，跳过", season.name);
             return Ok(0);
         }
@@ -73,8 +77,8 @@ impl EquipSync {
         let total_items = armor_items.len() + trinket_items.len() + weapon_items.len();
         info!("[EquipSync] 获取到 {} 件装备（防具: {}, 饰品: {}, 武器: {}）", total_items, armor_items.len(), trinket_items.len(), weapon_items.len());
 
-        Self::save_equipments(&armor_items, &trinket_items, &weapon_items)?;
-        Self::mark_season_synced(&cache_key)?;
+        Self::save_equipments_with_conn(&conn, &armor_items, &trinket_items, &weapon_items)?;
+        Self::mark_season_synced_with_conn(&conn, &cache_key)?;
 
         let duration = start_time.elapsed();
         info!("[EquipSync] ✓ 赛季「{}」同步完成！共同步 {} 件装备，耗时 {:?}", season.name, total_items, duration);
@@ -82,9 +86,7 @@ impl EquipSync {
         Ok(total_items)
     }
 
-    fn get_current_season() -> Result<Option<Season>, SyncError> {
-        let conn = crate::db::init_db().map_err(|e: String| SyncError::Database(e))?;
-
+    fn get_current_season_with_conn(conn: &rusqlite::Connection) -> Result<Option<Season>, SyncError> {
         // 使用 Unix 时间戳进行比较
         let now_ts = chrono::Utc::now().timestamp();
 
@@ -108,7 +110,7 @@ impl EquipSync {
 
         match result {
             Ok(season) => {
-                info!("[EquipSync] 找到当前赛季: {} (min={:?}, max={:?})", 
+                info!("[EquipSync] 找到当前赛季: {} (min={:?}, max={:?})",
                     season.name, season.trial_equip_level_min, season.trial_equip_level_max);
                 Ok(Some(season))
             },
@@ -120,9 +122,7 @@ impl EquipSync {
         }
     }
 
-    fn is_season_synced(cache_key: &str) -> Result<bool, SyncError> {
-        let conn = crate::db::init_db().map_err(|e: String| SyncError::Database(e))?;
-
+    fn is_season_synced_with_conn(conn: &rusqlite::Connection, cache_key: &str) -> Result<bool, SyncError> {
         let result: Result<String, rusqlite::Error> = conn.query_row(
             "SELECT value FROM cache WHERE key = ?",
             [cache_key],
@@ -136,8 +136,7 @@ impl EquipSync {
         }
     }
 
-    fn mark_season_synced(cache_key: &str) -> Result<(), SyncError> {
-        let conn = crate::db::init_db().map_err(|e: String| SyncError::Database(e))?;
+    fn mark_season_synced_with_conn(conn: &rusqlite::Connection, cache_key: &str) -> Result<(), SyncError> {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         conn.execute(
@@ -218,9 +217,7 @@ impl EquipSync {
         Ok(all_items)
     }
 
-    fn save_equipments(armor_items: &[serde_json::Value], trinket_items: &[serde_json::Value], weapon_items: &[serde_json::Value]) -> Result<(), SyncError> {
-        let conn = crate::db::init_db().map_err(|e: String| SyncError::Database(e))?;
-
+    fn save_equipments_with_conn(conn: &rusqlite::Connection, armor_items: &[serde_json::Value], trinket_items: &[serde_json::Value], weapon_items: &[serde_json::Value]) -> Result<(), SyncError> {
         let tx = conn.unchecked_transaction()
             .map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
 

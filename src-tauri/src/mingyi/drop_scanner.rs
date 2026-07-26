@@ -214,9 +214,10 @@ fn resolve_db_role_identity(
                     params![&account_id, &role_id],
                 ).map_err(|e| format!("更新孤儿记录 account_id 失败: {}", e))?;
                 // 同步更新 JSON data 中的 accountId 字段（前端从 data 读取）
+                // 过滤条件改用 account_id 列（已存在），避免 json_extract 全表扫描
                 conn.execute(
                     "UPDATE records SET data = json_set(data, '$.accountId', ?1) \
-                     WHERE role_id = ?2 AND json_extract(data, '$.accountId') != ?1",
+                     WHERE role_id = ?2 AND account_id != ?1",
                     params![&account_id, &role_id],
                 ).map_err(|e| format!("更新孤儿记录 JSON accountId 失败: {}", e))?;
                 log::info!(
@@ -3459,12 +3460,27 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
     let game_path = PathBuf::from(&game_dir);
     let accounts_base = game_path.join(MINGYI_ACCOUNTS_BASE_PATH);
 
-    // 预热副本配置缓存（避免每个账号重复加载）
-    if let Ok(conn) = db::init_db() {
-        if let Err(e) = get_cached_raids(&conn) {
-            log::warn!("[DropScanner] 预热副本配置缓存失败: {}", e);
+    // 预加载副本配置（一次加载，所有账号共享，跳过每个账号的 init_db + get_cached_raids）
+    // 注意：此处即使加载失败，scan_raid_drops_with_raids 内部仍会兜底重新加载（pre_loaded_raids=None 分支）
+    let preloaded_raids: Option<Vec<RaidEntry>> = match db::init_db() {
+        Ok(conn) => match get_cached_raids(&conn) {
+            Ok(raids) => {
+                log::info!(
+                    "[DropScanner] 预加载副本配置完成，共 {} 个副本，将复用于所有账号扫描",
+                    raids.len()
+                );
+                Some(raids)
+            }
+            Err(e) => {
+                log::warn!("[DropScanner] 预加载副本配置失败，降级为每账号独立加载: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("[DropScanner] 预热数据库连接失败，降级为每账号独立加载: {}", e);
+            None
         }
-    }
+    };
 
     for role in active_roles {
         let uid = &role.uid;
@@ -3499,7 +3515,16 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
             role_online
         );
 
-        let result = scan_raid_drops_internal(uid, jx3_running, role_online, process_start_ms, cd_start_ms, cd_end_ms);
+        // 传入预加载的 raids，跳过 scan_raid_drops_with_raids 内部的 init_db + get_cached_raids 调用
+        let result = scan_raid_drops_with_raids(
+            uid,
+            jx3_running,
+            role_online,
+            process_start_ms,
+            cd_start_ms,
+            cd_end_ms,
+            preloaded_raids.as_deref(),
+        );
         results.push((uid.clone(), result));
 
         // Recent 角色扫描完成后记入集合，后续轮询跳过

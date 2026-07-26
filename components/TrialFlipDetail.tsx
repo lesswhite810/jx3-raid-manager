@@ -6,9 +6,21 @@ import { TrialBossEquipmentStatsSection } from './TrialBossEquipmentStatsSection
 
 interface TrialFlipDetailProps {
   trialRecords: TrialPlaceRecord[];
-  equipments: any[];
+  equipments: Record<string, unknown>[];
   onBack: () => void;
 }
+
+// 类型安全地获取试炼记录的翻牌装备 ID（避免动态 key 访问触发 as any）
+const getTrialCardId = (record: TrialPlaceRecord, index: number): string => {
+  switch (index) {
+    case 1: return record.card1;
+    case 2: return record.card2;
+    case 3: return record.card3;
+    case 4: return record.card4;
+    case 5: return record.card5;
+    default: return '';
+  }
+};
 
 export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, equipments, onBack }) => {
   const findEquipmentById = (id: string | undefined) => {
@@ -34,12 +46,13 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
   const tradableEquipCount = useMemo(() => {
     let count = 0;
     safeTrialRecords.forEach(record => {
-      const equipId = (record as any)[`card${record.flippedIndex}`];
+      const equipId = getTrialCardId(record, record.flippedIndex);
       if (!equipId) {
         return;
       }
       const equip = findEquipmentById(equipId);
-      if (equip && (equip.BindType === 1 || equip.BindType === 2)) {
+      const bindType = equip?.BindType;
+      if (typeof bindType === 'number' && (bindType === 1 || bindType === 2)) {
         count += 1;
       }
     });
