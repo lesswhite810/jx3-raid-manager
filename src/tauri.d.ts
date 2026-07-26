@@ -1,4 +1,4 @@
-// Tauri 1.x API Type Declarations
+// Tauri 2.x API Type Declarations
 interface Window {
   __tauri__?: {
     dialog?: {
@@ -17,4 +17,8 @@ interface Window {
       readTextFile?: (path: string) => Promise<string>;
     };
   };
+  __TAURI_INTERNALS__?: unknown;
+  runAIValidations?: () => void;
+  runAIIntegrationTests?: () => void;
+  runConfigManagerTests?: () => void;
 }

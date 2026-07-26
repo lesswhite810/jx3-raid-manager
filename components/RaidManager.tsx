@@ -73,20 +73,20 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
 
   // 检查是否有角色启用了试炼之地 / 百战
-  const hasTrialEnabled = useMemo(() => {
-    return accounts.some(acc =>
-      !acc.disabled && acc.roles.some(role =>
-        !role.disabled && !role.isClient && role.visibility?.trial !== false
-      )
-    );
-  }, [accounts]);
-
-  const hasBaizhanEnabled = useMemo(() => {
-    return accounts.some(acc =>
-      !acc.disabled && acc.roles.some(role =>
-        !role.disabled && !role.isClient && role.visibility?.baizhan !== false
-      )
-    );
+  const { hasTrialEnabled, hasBaizhanEnabled } = useMemo(() => {
+    let trial = false;
+    let baizhan = false;
+    for (const acc of accounts) {
+      if (acc.disabled) continue;
+      for (const role of acc.roles) {
+        if (role.disabled || role.isClient) continue;
+        if (role.visibility?.trial !== false) trial = true;
+        if (role.visibility?.baizhan !== false) baizhan = true;
+        if (trial && baizhan) break;
+      }
+      if (trial && baizhan) break;
+    }
+    return { hasTrialEnabled: trial, hasBaizhanEnabled: baizhan };
   }, [accounts]);
 
   // 当当前页签因没有启用角色而被隐藏时，自动切回团队副本
@@ -169,7 +169,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           if (lastUpdate.getTime() > refreshTime.getTime()) {
             shouldFetch = false;
             const orderMap: Record<string, number> = {};
-            cache.value.forEach((v: string, i: number) => {
+            (cache.value as string[]).forEach((v: string, i: number) => {
               orderMap[v] = i;
             });
             setVersionOrderMap(orderMap);

@@ -16,6 +16,10 @@ export default defineConfig(async () => ({
     },
   },
   envPrefix: ['VITE_', 'TAURI_'],
+  esbuild: {
+    // 生产构建移除调试日志，保留 error/warn 用于问题排查
+    drop: process.env.NODE_ENV === 'production' ? ['console'] : [],
+  },
   // 确保所有依赖都打包到本地，不使用外部CDN
   build: {
     chunkSizeWarningLimit: 700,
@@ -30,16 +34,8 @@ export default defineConfig(async () => ({
             return 'charts-vendor';
           }
 
-          if (id.includes('react-datepicker') || id.includes('date-fns') || id.includes('dayjs')) {
+          if (id.includes('react-datepicker') || id.includes('date-fns')) {
             return 'date-vendor';
-          }
-
-          if (id.includes('antd') || id.includes('@ant-design')) {
-            return 'antd-vendor';
-          }
-
-          if (id.includes('@google/genai')) {
-            return 'ai-vendor';
           }
 
           return 'vendor';

@@ -19,6 +19,10 @@ export interface Role {
   disabled?: boolean; // 是否禁用该角色
   equipmentScore?: number; // 装备分数（装分）
   visibility?: Record<string, boolean>; // 可见性配置 { raid: true, baizhan: false, trial: true }
+  // 以下字段来自账号级配置（UI 展示复制账号密码时使用，后端通常不存储于角色表）
+  password?: string;
+  accountName?: string;
+  accountId?: string;
 }
 
 // 副本类型
@@ -209,6 +213,8 @@ export interface AIConfig {
   apiKey: string;
   model: string;
   temperature: number;
+  maxTokens?: number;
+  timeout?: number;
   proxyUrl?: string;
   proxyEnabled?: boolean;
 }

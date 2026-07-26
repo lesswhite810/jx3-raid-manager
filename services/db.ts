@@ -1,13 +1,9 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { mockInvoke } from './mockInvoke';
-import type { GameVersion, Season, RaidRecord } from '../types';
+import type { GameVersion, Season, RaidRecord, Account, Role, Raid, Config, TrialPlaceRecord, BaizhanRecord, InstanceType, RoleInstanceVisibility } from '../types';
 
 // 环境检测：如果没有注入 __TAURI_INTERNALS__ ，说明是在纯浏览器环境运行
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: any;
-  }
-}
+// __TAURI_INTERNALS__ 类型声明位于 src/tauri.d.ts
 const isBrowserEnv = !window.__TAURI_INTERNALS__ && typeof window !== 'undefined';
 
 // 包装一个通用的 invoke 函数
@@ -73,7 +69,7 @@ class DatabaseService {
 
   // ========== 账号管理 ==========
 
-  async getAccounts(): Promise<any[]> {
+  async getAccounts(): Promise<Account[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_accounts_with_roles');
@@ -84,7 +80,7 @@ class DatabaseService {
     }
   }
 
-  async saveAccounts(accounts: any[]): Promise<void> {
+  async saveAccounts(accounts: Account[]): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_accounts', { accounts: JSON.stringify(accounts) });
@@ -95,7 +91,7 @@ class DatabaseService {
   }
 
   // Structured accounts API (V1+)
-  async getAccountsStructured(): Promise<any[]> {
+  async getAccountsStructured(): Promise<Account[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_accounts_structured');
@@ -106,7 +102,7 @@ class DatabaseService {
     }
   }
 
-  async getRolesByAccount(accountId: string): Promise<any[]> {
+  async getRolesByAccount(accountId: string): Promise<Role[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_roles_by_account', { accountId });
@@ -117,7 +113,7 @@ class DatabaseService {
     }
   }
 
-  async getAllRoles(): Promise<any[]> {
+  async getAllRoles(): Promise<Role[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_all_roles');
@@ -128,7 +124,7 @@ class DatabaseService {
     }
   }
 
-  async saveAccountStructured(account: any): Promise<void> {
+  async saveAccountStructured(account: Account): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_account_structured', { accountJson: JSON.stringify(account) });
@@ -138,7 +134,7 @@ class DatabaseService {
     }
   }
 
-  async saveRoleStructured(role: any): Promise<void> {
+  async saveRoleStructured(role: Role): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_role_structured', { roleJson: JSON.stringify(role) });
@@ -196,7 +192,7 @@ class DatabaseService {
     }
   }
 
-  async getRecords(): Promise<any[]> {
+  async getRecords(): Promise<RaidRecord[]> {
     await this.init();
     try {
       const data = await invoke<string[]>('db_get_records');
@@ -218,7 +214,7 @@ class DatabaseService {
     }
   }
 
-  async saveRecords(records: any[]): Promise<void> {
+  async saveRecords(records: RaidRecord[]): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_records', { records: JSON.stringify(records) });
@@ -228,7 +224,7 @@ class DatabaseService {
     }
   }
 
-  async getRaids(): Promise<any[]> {
+  async getRaids(): Promise<Raid[]> {
     await this.init();
     try {
       const data = await invoke<string[]>('db_get_raids');
@@ -324,7 +320,7 @@ class DatabaseService {
     }
   }
 
-  async saveRaids(raids: any[]): Promise<void> {
+  async saveRaids(raids: Raid[]): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_raids', { raids: JSON.stringify(raids) });
@@ -336,7 +332,7 @@ class DatabaseService {
 
   // ========== 配置管理 ==========
 
-  async getConfig(): Promise<any | null> {
+  async getConfig(): Promise<Config | null> {
     await this.init();
     try {
       const data = await invoke<string | null>('db_get_config');
@@ -348,7 +344,7 @@ class DatabaseService {
     }
   }
 
-  async saveConfig(config: any): Promise<void> {
+  async saveConfig(config: Config): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_config', { config: JSON.stringify(config) });
@@ -358,7 +354,7 @@ class DatabaseService {
     }
   }
 
-  async addRecord(record: any): Promise<void> {
+  async addRecord(record: RaidRecord): Promise<void> {
     await this.init();
     try {
       await invoke('db_add_record', { record: JSON.stringify(record) });
@@ -378,7 +374,7 @@ class DatabaseService {
     }
   }
 
-  async getRecordsByRaid(raidId: string): Promise<any[]> {
+  async getRecordsByRaid(raidId: string): Promise<RaidRecord[]> {
     await this.init();
     try {
       const data = await invoke<string[]>('db_get_records_by_raid', { raidId });
@@ -428,7 +424,7 @@ class DatabaseService {
       return '重置配置失败: ' + String(error);
     }
   }
-  async getCache(key: string): Promise<{ value: any, updatedAt: string } | null> {
+  async getCache(key: string): Promise<{ value: unknown, updatedAt: string } | null> {
     await this.init();
     try {
       const result = await invoke<[string, string] | null>('db_get_cache', { key });
@@ -443,7 +439,7 @@ class DatabaseService {
     }
   }
 
-  async saveCache(key: string, value: any): Promise<void> {
+  async saveCache(key: string, value: unknown): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_cache', { key, value: JSON.stringify(value) });
@@ -453,7 +449,7 @@ class DatabaseService {
     }
   }
 
-  async saveEquipments(equipments: any[]): Promise<void> {
+  async saveEquipments(equipments: Record<string, unknown>[]): Promise<void> {
     await this.init();
     try {
       await invoke('db_save_equipments', { equipments: JSON.stringify(equipments) });
@@ -463,7 +459,7 @@ class DatabaseService {
     }
   }
 
-  async getEquipments(): Promise<any[]> {
+  async getEquipments(): Promise<Record<string, unknown>[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_equipments');
@@ -483,7 +479,7 @@ class DatabaseService {
     }
   }
 
-  async addTrialRecord(record: any): Promise<void> {
+  async addTrialRecord(record: TrialPlaceRecord): Promise<void> {
     await this.init();
     try {
       await invoke('db_add_trial_record', { record: JSON.stringify(record) });
@@ -493,7 +489,7 @@ class DatabaseService {
     }
   }
 
-  async getTrialRecords(): Promise<any[]> {
+  async getTrialRecords(): Promise<TrialPlaceRecord[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_trial_records');
@@ -514,7 +510,7 @@ class DatabaseService {
     }
   }
 
-  async addBaizhanRecord(record: any): Promise<void> {
+  async addBaizhanRecord(record: BaizhanRecord): Promise<void> {
     await this.init();
     try {
       await invoke('db_add_baizhan_record', { record: JSON.stringify(record) });
@@ -524,7 +520,7 @@ class DatabaseService {
     }
   }
 
-  async getBaizhanRecords(): Promise<any[]> {
+  async getBaizhanRecords(): Promise<BaizhanRecord[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_baizhan_records');
@@ -545,7 +541,7 @@ class DatabaseService {
     }
   }
 
-  async updateBaizhanRecord(record: any): Promise<void> {
+  async updateBaizhanRecord(record: BaizhanRecord): Promise<void> {
     await this.init();
     try {
       await invoke('db_update_baizhan_record', { record: JSON.stringify(record) });
@@ -600,7 +596,7 @@ class DatabaseService {
   // ========== 角色可见性配置 (V5+) ==========
 
   /// 获取所有副本类型
-  async getInstanceTypes(): Promise<any[]> {
+  async getInstanceTypes(): Promise<InstanceType[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_instance_types');
@@ -612,7 +608,7 @@ class DatabaseService {
   }
 
   /// 获取所有角色的可见性配置
-  async getAllRoleVisibility(): Promise<any[]> {
+  async getAllRoleVisibility(): Promise<RoleInstanceVisibility[]> {
     await this.init();
     try {
       const data = await invoke<string>('db_get_all_role_visibility');
