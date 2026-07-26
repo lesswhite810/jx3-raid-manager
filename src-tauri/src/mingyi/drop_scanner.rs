@@ -1007,15 +1007,8 @@ fn map_boss_names_to_ids(
     // 去重集合：同一 boss_id 只保留首次出现，避免同一 BOSS 多次拉托+击杀导致重复计数
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // 无 BOSS 配置时，直接返回去重后的击杀 BOSS 名（无 ID）
-    // 这样无 BOSS 配置的副本（如白帝江关、敖龙岛）也能在 bossNames 中显示实际击杀的 BOSS
+    // 无 BOSS 配置时，不显示 BOSS 列表（bossIds/bossNames 均为空）
     if raid_bosses.is_empty() {
-        let mut seen_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for boss_name in bosses_killed {
-            if seen_names.insert(boss_name.as_str()) {
-                boss_names.push(boss_name.clone());
-            }
-        }
         return (boss_ids, boss_names);
     }
 
