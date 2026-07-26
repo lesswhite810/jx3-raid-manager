@@ -1007,6 +1007,18 @@ fn map_boss_names_to_ids(
     // 去重集合：同一 boss_id 只保留首次出现，避免同一 BOSS 多次拉托+击杀导致重复计数
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // 无 BOSS 配置时，直接返回去重后的击杀 BOSS 名（无 ID）
+    // 这样无 BOSS 配置的副本（如白帝江关、敖龙岛）也能在 bossNames 中显示实际击杀的 BOSS
+    if raid_bosses.is_empty() {
+        let mut seen_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for boss_name in bosses_killed {
+            if seen_names.insert(boss_name.as_str()) {
+                boss_names.push(boss_name.clone());
+            }
+        }
+        return (boss_ids, boss_names);
+    }
+
     for boss_name in bosses_killed {
         // 精确匹配
         let found = raid_bosses.iter().find(|(_, name)| name == boss_name);
@@ -2412,8 +2424,10 @@ fn upsert_raid_drop_record(
 ) -> Result<(), String> {
     let now = chrono::Local::now().to_rfc3339();
 
-    // 检查 records 表是否已存在同账号、同副本、同 CD 周期的 auto_scan 记录（任意状态）
-    // 注意：raid_name 列存储的是 raids.name（如 "阆风悬城"），不是 JCL 显示名。
+    // 检查 records 表是否已存在同账号、同副本难度、同 CD 周期的 auto_scan 记录（任意状态）
+    // 注意：raid_name 列存储的是 raids.name 短名（如 "阆风悬城"），不区分 10人/25人/普通/英雄。
+    // 仅用 raid_name 匹配会导致 10人记录被 25人实例误匹配（CD 窗口起点相同）。
+    // 因此额外用 json_extract(data, '$.raidName') 匹配完整副本名（如 "25人普通阆风悬城"）。
     // 使用 CD 窗口范围匹配：同一 CD 周期内同一副本只保留一条记录。
     // 查询所有状态（含 confirmed/rejected），避免已确认/已拒绝的记录被重复创建。
     // 优先返回 pending/scanning（用于更新），其次 confirmed/rejected（用于跳过）。
@@ -2427,6 +2441,7 @@ fn upsert_raid_drop_record(
              WHERE account_id = ?1 AND raid_name = ?2
                AND record_date >= ?3 AND record_date < ?4
                AND source = 'auto_scan'
+               AND json_extract(data, '$.raidName') = ?5
              ORDER BY
                CASE status
                  WHEN 'scanning' THEN 0
@@ -2434,7 +2449,7 @@ fn upsert_raid_drop_record(
                  ELSE 2
                END
              LIMIT 1",
-            params![instance.account_id, raid_name, window_start, window_end],
+            params![instance.account_id, raid_name, window_start, window_end, raid_full_name],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .ok();
@@ -2453,68 +2468,84 @@ fn upsert_raid_drop_record(
         }
     }
 
-    // 若不存在同源 auto_scan 记录，进一步检查同 CD 窗口内是否已有手工记录。
-    // 已有手工记录时跳过 pending 创建，避免重复占用 CD。
+    // 无论是否存在 pending auto_scan 记录，都检查同 CD 窗口内是否已有手工记录。
+    // 已有手工记录时跳过 pending 创建/更新，避免重复占用 CD。
+    // 注意：之前曾用 `if existing.is_none()` 包裹此检查，导致已存在 pending 记录时
+    // 跳过手工检查，即使手工记录已存在也会继续 UPDATE pending，造成重复记录。
     //
     // 注意：手工记录的 raid_name 列存的是 JSON raidName 完整名（如 "25人英雄阆风悬城"），
     // 而 auto 记录的 raid_name 列存的是 raids.name 短名（如 "阆风悬城"）。
     // 因此不能用 raid_name 列精确匹配，需查询同账号同 CD 窗口内所有 confirmed 记录，
     // 在 Rust 中解析 JSON data 字段的 raidName 比较。
-    if existing.is_none() {
-        log::info!(
-            "[DropScanner] CD 检查: account_id={}, raid_display='{}', start_time={}, is_ten={}, window=[{}, {}]",
-            instance.account_id,
-            instance.raid_display_name,
-            instance.start_time,
-            is_ten_person,
-            window_start,
-            window_end
-        );
+    log::info!(
+        "[DropScanner] CD 检查: account_id={}, raid_display='{}', start_time={}, is_ten={}, window=[{}, {}]",
+        instance.account_id,
+        instance.raid_display_name,
+        instance.start_time,
+        is_ten_person,
+        window_start,
+        window_end
+    );
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT data FROM records
-                 WHERE account_id = ?1
-                   AND record_date >= ?2
-                   AND record_date < ?3
-                   AND status = 'confirmed'",
-            )
-            .map_err(|e| format!("准备手工记录查询失败: {}", e))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT data FROM records
+             WHERE account_id = ?1
+               AND record_date >= ?2
+               AND record_date < ?3
+               AND status = 'confirmed'",
+        )
+        .map_err(|e| format!("准备手工记录查询失败: {}", e))?;
 
-        let rows = stmt
-            .query_map(params![instance.account_id, window_start, window_end], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(|e| format!("查询手工记录失败: {}", e))?;
+    let rows = stmt
+        .query_map(params![instance.account_id, window_start, window_end], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|e| format!("查询手工记录失败: {}", e))?;
 
-        let mut manual_count = 0;
-        let mut matched = false;
-        for row in rows {
-            let data_json = match row {
-                Ok(d) => d,
-                Err(e) => {
-                    log::warn!("[DropScanner] 读取手工记录行失败: {}", e);
-                    continue;
-                }
-            };
-            manual_count += 1;
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data_json) {
-                let manual_raid_name = json["raidName"].as_str().unwrap_or("");
-                let manual_date = json["date"].as_i64().unwrap_or(0);
-                log::info!(
-                    "[DropScanner] CD 检查: 手工记录 #{}: raidName='{}', date={}, match={}",
-                    manual_count,
-                    manual_raid_name,
-                    manual_date,
-                    manual_raid_name == raid_full_name
-                );
-                if manual_raid_name == raid_full_name {
-                    matched = true;
-                }
+    let mut manual_count = 0;
+    let mut matched = false;
+    for row in rows {
+        let data_json = match row {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("[DropScanner] 读取手工记录行失败: {}", e);
+                continue;
+            }
+        };
+        manual_count += 1;
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data_json) {
+            let manual_raid_name = json["raidName"].as_str().unwrap_or("");
+            let manual_date = json["date"].as_i64().unwrap_or(0);
+            log::info!(
+                "[DropScanner] CD 检查: 手工记录 #{}: raidName='{}', date={}, match={}",
+                manual_count,
+                manual_raid_name,
+                manual_date,
+                manual_raid_name == raid_full_name
+            );
+            if manual_raid_name == raid_full_name {
+                matched = true;
             }
         }
+    }
 
-        if matched {
+    if matched {
+        // 若存在 pending auto_scan 记录但已有手工记录，删除多余的 pending 记录
+        if let Some((existing_id, _)) = &existing {
+            conn.execute(
+                "DELETE FROM records WHERE id = ?1 AND status = 'pending' AND source = 'auto_scan'",
+                params![existing_id],
+            )
+            .map_err(|e| format!("删除重复 pending 记录失败: {}", e))?;
+            log::info!(
+                "[DropScanner] CD 窗口内已存在手工记录，删除多余 pending: {} (window: {}~{}, pending_id={})",
+                instance.raid_display_name,
+                window_start,
+                window_end,
+                existing_id
+            );
+        } else {
             log::info!(
                 "[DropScanner] CD 窗口内已存在手工记录，跳过 pending: {} (window: {}~{}, 共 {} 条手工记录)",
                 instance.raid_display_name,
@@ -2522,14 +2553,14 @@ fn upsert_raid_drop_record(
                 window_end,
                 manual_count
             );
-            return Ok(());
         }
-
-        log::info!(
-            "[DropScanner] CD 检查: 未找到匹配手工记录（共 {} 条），将创建 pending",
-            manual_count
-        );
+        return Ok(());
     }
+
+    log::info!(
+        "[DropScanner] CD 检查: 未找到匹配手工记录（共 {} 条），将创建/更新 pending",
+        manual_count
+    );
 
     // 使用 existing_id（更新）或新生成的 UUID（插入）作为记录 ID。
     let record_id = existing.clone().map(|(id, _)| id).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -3253,7 +3284,7 @@ pub fn scan_raid_drops_with_raids(
             &db_identity.server,
             &db_identity.region,
             raid_name,
-            &raid_entry.raid_id,
+            &instance.raid_display_name,
             total_gold,
             total_expense,
             &filtered_jcl_files,
@@ -5566,6 +5597,332 @@ mod tests {
                 a.fight_start_ms,
                 a.fight_end_ms
             );
+        }
+    }
+
+    /// 诊断：列出本月所有账号目录下的 JCL 文件，对比 records 表，定位哪些 JCL 被漏扫
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_list_month_jcl_files -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_list_month_jcl_files() {
+        use chrono::TimeZone;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 本月时间范围
+        let start_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+        let end_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 8, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+
+        // 加载 raids 配置
+        let raids = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+        println!("[配置] 共 {} 个副本", raids.len());
+
+        // 获取游戏目录
+        let game_dir = crate::mingyi::drop_scanner::get_game_directory().expect("获取游戏目录失败");
+        let game_path = std::path::PathBuf::from(&game_dir);
+        let accounts_base = game_path.join(crate::mingyi::drop_scanner::MINGYI_ACCOUNTS_BASE_PATH);
+
+        println!("[扫描] 账号目录: {}", accounts_base.display());
+
+        // 遍历所有账号目录
+        let account_dirs = std::fs::read_dir(&accounts_base)
+            .expect("读取账号目录失败")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with("@zhcn_hd"))
+            .collect::<Vec<_>>();
+
+        println!("[扫描] 共 {} 个账号目录\n", account_dirs.len());
+
+        let mut total_jcl = 0usize;
+        let mut configured_count = 0usize;
+        let mut unconfigured_count = 0usize;
+        let mut unconfigured_raids: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+        for acc_dir in account_dirs {
+            let acc_name = acc_dir.file_name().to_string_lossy().to_string();
+            let combat_logs_dir = acc_dir.path().join("userdata").join("combat_logs");
+            if !combat_logs_dir.exists() {
+                continue;
+            }
+
+            // 用 scan_jcl_files 扫描本月 JCL（不传 process_start_ms 限制）
+            match crate::mingyi::drop_scanner::scan_jcl_files(
+                &acc_dir.path(),
+                0, // 不限制进程启动时间
+                start_ms,
+                end_ms,
+            ) {
+                Ok(jcl_files) => {
+                    if jcl_files.is_empty() {
+                        continue;
+                    }
+                    println!("[账号 {}] 本月 JCL {} 个:", acc_name, jcl_files.len());
+                    for jcl in &jcl_files {
+                        total_jcl += 1;
+                        let dt = chrono::Local.timestamp_millis_opt(jcl.timestamp).unwrap();
+                        let matched = match_raid_name(&jcl.raid_display_name, &raids);
+                        let status = if matched.is_some() {
+                            let bosses_count = matched.map(|m| m.bosses.len()).unwrap_or(0);
+                            if bosses_count == 0 {
+                                configured_count += 1;
+                                "已配置(无BOSS)"
+                            } else {
+                                configured_count += 1;
+                                "已配置(有BOSS)"
+                            }
+                        } else {
+                            unconfigured_count += 1;
+                            *unconfigured_raids.entry(jcl.raid_display_name.clone()).or_insert(0) += 1;
+                            "未配置"
+                        };
+                        println!(
+                            "  - {} | {} | {}",
+                            dt.format("%m-%d %H:%M"),
+                            jcl.raid_display_name,
+                            status
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!("[账号 {}] 扫描失败: {}", acc_name, e);
+                }
+            }
+        }
+
+        println!("\n[汇总] 总 JCL: {} | 已配置副本: {} | 未配置副本: {}", total_jcl, configured_count, unconfigured_count);
+        println!("\n[未配置副本 JCL 分布]:");
+        for (name, cnt) in unconfigured_raids.iter().collect::<std::collections::BTreeMap<_,_>>() {
+            println!("  - {} : {} 个 JCL", name, cnt);
+        }
+    }
+
+    /// 诊断：分析指定路径 JCL 的击杀判定信号，定位无 BOSS 配置副本 is_kill=false 的原因
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_analyze_unconfigured_raid_jcl -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_analyze_unconfigured_raid_jcl() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 测试 JCL：白帝江关、敖龙岛、西津渡、雷域大泽、狼牙堡·狼神殿（无 BOSS 配置）
+        // 路径模式：E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\{uid}@zhcn_hd\userdata\combat_logs\*.jcl
+        let combat_logs_dir = PathBuf::from(
+            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\432345564258532896@zhcn_hd\userdata\combat_logs",
+        );
+        assert!(combat_logs_dir.exists(), "目录不存在: {}", combat_logs_dir.display());
+
+        // 列出该目录下本月白帝江关、敖龙岛、西津渡、雷域大泽的 JCL 文件
+        let target_keywords = ["白帝江关", "敖龙岛", "西津渡", "雷域大泽", "狼牙堡·狼神殿"];
+        let mut jcl_files: Vec<String> = std::fs::read_dir(&combat_logs_dir)
+            .expect("读取目录失败")
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".jcl")
+                    && name.starts_with("2026-07-")
+                    && target_keywords.iter().any(|k| name.contains(k))
+                {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        jcl_files.sort();
+        println!("[扫描] 找到 {} 个候选 JCL 文件", jcl_files.len());
+
+        // 加载 raids 配置
+        let raids = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+
+        // 清空这些 JCL 的缓存，强制重新解析
+        for fname in &jcl_files {
+            let full_path = combat_logs_dir.join(fname);
+            let path_str = full_path.to_string_lossy().to_string();
+            conn.execute(
+                "DELETE FROM jcl_cache WHERE file_path = ?1",
+                sql_params![&path_str],
+            )
+            .expect("删除缓存失败");
+        }
+        println!("[诊断] 已清空相关 JCL 缓存\n");
+
+        for fname in &jcl_files {
+            let full_path = combat_logs_dir.join(fname);
+            // 解析文件名获取 BOSS 名和 ID
+            let parsed = parse_jcl_filename(fname).expect("解析文件名失败");
+            // 匹配 raids
+            let raid_entry = match_raid_name(&parsed.raid_display_name, &raids);
+            let raid_bosses: Vec<(String, String)> = raid_entry.map(|e| e.bosses.clone()).unwrap_or_default();
+            let in_raids = raid_entry.is_some();
+            let bosses_count = raid_bosses.len();
+
+            println!(
+                "=== JCL: {} ===",
+                fname
+            );
+            println!(
+                "  raid='{}' boss='{}'(id={}) | in_raids={} bosses_count={}",
+                parsed.raid_display_name,
+                parsed.boss_name,
+                parsed.boss_id,
+                in_raids,
+                bosses_count
+            );
+
+            // 调用 analyze_jcl 分析
+            let analysis = analyze_jcl(&full_path, &parsed.boss_name, parsed.boss_id, &raid_bosses)
+                .expect("analyze_jcl 失败");
+            println!(
+                "  → is_kill={} boss_name={:?} fight_start={} fight_end={}",
+                analysis.is_kill,
+                analysis.boss_name,
+                analysis.fight_start_ms,
+                analysis.fight_end_ms
+            );
+            println!();
+        }
+    }
+
+    /// 诊断：列出 raids 表配置 / raid_bosses 配置 / 本月扫描记录，定位"未配置 BOSS 副本被跳过"问题
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_check_unconfigured_raids -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_check_unconfigured_raids() {
+        use chrono::TimeZone;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 1. raids 表中所有副本
+        let mut stmt = conn
+            .prepare("SELECT id, name FROM raids ORDER BY name")
+            .expect("prepare raids 失败");
+        let raids: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .expect("query_map 失败")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect 失败");
+        println!("[raids] 共 {} 个副本", raids.len());
+        for (id, name) in &raids {
+            println!("  - id='{}' name='{}'", id, name);
+        }
+
+        // 2. raid_bosses 表中配置了 BOSS 的 raid_name（去重）
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT raid_name FROM raid_bosses ORDER BY raid_name")
+            .expect("prepare raid_bosses 失败");
+        let bossed: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .expect("query_map 失败")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect 失败");
+        println!("\n[raid_bosses] 已配置 BOSS 的副本短名共 {} 个:", bossed.len());
+        for n in &bossed {
+            println!("  - {}", n);
+        }
+
+        // 3. raids 表中无 BOSS 配置的副本
+        let no_boss: Vec<&(String, String)> = raids
+            .iter()
+            .filter(|(_, name)| !bossed.iter().any(|b| b == name))
+            .collect();
+        println!("\n[无 BOSS 配置] raids 表中无 BOSS 配置的副本共 {} 个:", no_boss.len());
+        for (id, name) in &no_boss {
+            println!("  - id='{}' name='{}'", id, name);
+        }
+
+        // 4. 本月扫描记录
+        let start_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+        let end_ms = chrono::Local
+            .from_local_datetime(
+                &chrono::NaiveDate::from_ymd_opt(2026, 8, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .timestamp_millis();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, account_id, raid_name, status, source, record_date,
+                        json_extract(data, '$.raidName') AS data_raidName,
+                        json_extract(data, '$.roleName') AS data_roleName,
+                        json_extract(data, '$.bossKillCount') AS bossKillCount,
+                        json_extract(data, '$.bossNames') AS bossNames
+                 FROM records
+                 WHERE record_date >= ?1 AND record_date < ?2
+                 ORDER BY record_date",
+            )
+            .expect("prepare records 失败");
+        let rows: Vec<(String, String, String, String, String, i64, String, String, Option<i64>, String)> = stmt
+            .query_map(sql_params![start_ms, end_ms], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, Option<i64>>(8)?,
+                    r.get::<_, String>(9)?,
+                ))
+            })
+            .expect("query_map 失败")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect 失败");
+        println!("\n[本月 records] 共 {} 条记录:", rows.len());
+        for (id, acc, raid_name, status, source, ts, drn, role, bkc, bns) in &rows {
+            let dt = chrono::Local.timestamp_millis_opt(*ts).unwrap();
+            println!(
+                "  - {} | acc={} | raid='{}' dataRaid='{}' role='{}' | status={} source={} | killCount={} bossNames={} | {}",
+                dt.format("%m-%d %H:%M"),
+                &acc[..acc.len().min(8)],
+                raid_name,
+                drn,
+                role,
+                status,
+                source,
+                bkc.unwrap_or(0),
+                bns,
+                &id[..id.len().min(8)]
+            );
+        }
+
+        // 5. 加载 load_raids_with_bosses 的实际结果
+        let entries = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+        let no_boss_entries: Vec<&RaidEntry> = entries.iter().filter(|e| e.bosses.is_empty()).collect();
+        println!("\n[load_raids_with_bosses] 共 {} 个 RaidEntry，其中无 BOSS 配置 {} 个:", entries.len(), no_boss_entries.len());
+        for e in &no_boss_entries {
+            println!("  - raid_id='{}' name='{}'", e.raid_id, e.name);
         }
     }
 
