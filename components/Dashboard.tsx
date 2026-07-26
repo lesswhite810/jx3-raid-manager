@@ -199,7 +199,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
 
   const luckyRole = useMemo(() => {
-    const roleMap = new Map<string, { roleName: string; server: string; totalGold: number; xuanjingCount: number }>();
+    const roleMap = new Map<string, { roleName: string; server: string; totalGold: number }>();
 
     filteredRecords.forEach(r => {
       const roleId = r.roleId || r.accountId;
@@ -207,12 +207,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const server = getBaseServerName(r.server || '未知服务器');
 
       if (!roleMap.has(roleId)) {
-        roleMap.set(roleId, { roleName, server, totalGold: 0, xuanjingCount: 0 });
+        roleMap.set(roleId, { roleName, server, totalGold: 0 });
       }
 
       const role = roleMap.get(roleId)!;
       role.totalGold += r.goldIncome;
-      if (r.hasXuanjing) role.xuanjingCount++;
     });
 
     filteredBaizhanRecords.forEach(r => {
@@ -221,14 +220,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const server = getBaseServerName(r.server || '未知服务器');
 
       if (!roleMap.has(roleId)) {
-        roleMap.set(roleId, { roleName, server, totalGold: 0, xuanjingCount: 0 });
+        roleMap.set(roleId, { roleName, server, totalGold: 0 });
       }
 
       const role = roleMap.get(roleId)!;
       role.totalGold += r.goldIncome;
     });
 
-    let maxRole: typeof roleMap extends Map<string, infer V> ? V : never = { roleName: '暂无数据', server: '', totalGold: 0, xuanjingCount: 0 };
+    let maxRole: typeof roleMap extends Map<string, infer V> ? V : never = { roleName: '暂无数据', server: '', totalGold: 0 };
     roleMap.forEach(role => {
       if (role.totalGold > maxRole.totalGold) {
         maxRole = role;
@@ -351,12 +350,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <p className="text-muted text-xs">金币收益</p>
                 <p className="text-2xl font-bold text-emerald-600 mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
               </div>
-              {luckyRole.xuanjingCount > 0 && (
-                <div className="text-right">
-                  <p className="text-muted text-xs">玄晶</p>
-                  <p className="text-2xl font-bold text-violet-600 dark:text-violet-400 mt-0.5">{luckyRole.xuanjingCount}</p>
-                </div>
-              )}
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">

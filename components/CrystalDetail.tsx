@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { RaidRecord, Account, Season } from '../types';
 import { getLastMonday } from '../utils/cooldownManager';
-import { buildSpecialDropRecords, SpecialDropRecord, SpecialDropType } from '../utils/rareDropUtils';
+import { buildSpecialDropRecords, SpecialDropRecord, SpecialDropType, SPECIAL_DROP_DEFINITIONS } from '../utils/rareDropUtils';
 import { db } from '../services/db';
 
 interface CrystalDetailProps {
@@ -22,11 +22,15 @@ interface CrystalRoleStats {
   dropTypeCounts: Map<SpecialDropType, number>;
 }
 
+const ALL_DROP_TYPES: SpecialDropType[] = SPECIAL_DROP_DEFINITIONS.map(d => d.label);
+
 export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts, initialPeriod, onPeriodChange, onBack }) => {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
   const [statsPeriod, setStatsPeriod] = useState<'week' | 'season' | 'all'>(initialPeriod);
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
   const [seasonLoaded, setSeasonLoaded] = useState(false);
+  // 掉落类型筛选：默认全部选中，点击切换
+  const [selectedTypes, setSelectedTypes] = useState<Set<SpecialDropType>>(() => new Set(ALL_DROP_TYPES));
 
   React.useEffect(() => {
     setStatsPeriod(initialPeriod);
@@ -86,6 +90,16 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     }
   };
 
+  // 获取当前版本（赛季）的时间范围
+  const getSeasonRange = (): { start: number; end: number } | null => {
+    if (!currentSeason?.startDate) return null;
+    const sd = currentSeason.startDate;
+    const start = sd > 1e12 ? sd : sd * 1000;
+    const ed = currentSeason.endDate;
+    const end = ed ? (ed > 1e12 ? ed : ed * 1000) : Date.now();
+    return { start, end };
+  };
+
   const periodStartTime = getPeriodStartTime();
 
   // 统计所有团队副本中的稀有特殊掉落
@@ -93,10 +107,48 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     return buildSpecialDropRecords(safeRecords, periodStartTime);
   }, [safeRecords, periodStartTime]);
 
+  // 按类型统计全量计数（不受类型筛选影响，用于 chip 上展示真实数量）
+  const typeCounts = useMemo(() => {
+    const map = new Map<SpecialDropType, number>();
+    allDropRecords.forEach(r => {
+      map.set(r.type, (map.get(r.type) || 0) + 1);
+    });
+    return map;
+  }, [allDropRecords]);
+
+  // 按类型筛选后的掉落记录
+  const filteredDropRecords = useMemo(() => {
+    if (selectedTypes.size === ALL_DROP_TYPES.length) {
+      return allDropRecords;
+    }
+    return allDropRecords.filter(r => selectedTypes.has(r.type));
+  }, [allDropRecords, selectedTypes]);
+
+  const toggleType = (type: SpecialDropType) => {
+    setSelectedTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllTypes = () => {
+    setSelectedTypes(prev => {
+      if (prev.size === ALL_DROP_TYPES.length) {
+        return new Set<SpecialDropType>();
+      }
+      return new Set(ALL_DROP_TYPES);
+    });
+  };
+
   const roleStats = useMemo<CrystalRoleStats[]>(() => {
     const roleMap = new Map<string, CrystalRoleStats>();
 
-    allDropRecords.forEach(record => {
+    filteredDropRecords.forEach(record => {
       const roleId = record.roleId;
 
       if (!roleMap.has(roleId)) {
@@ -118,7 +170,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     });
 
     return Array.from(roleMap.values()).sort((a, b) => b.totalCount - a.totalCount);
-  }, [allDropRecords, safeAccounts]);
+  }, [filteredDropRecords, safeAccounts]);
 
   const getBadgeClassName = (type: SpecialDropType): string => {
     if (type === '玄晶') {
@@ -144,9 +196,27 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     setExpandedRoleId(expandedRoleId === roleId ? null : roleId);
   };
 
-  const totalDrops = allDropRecords.length;
-  const xuanjingTotal = allDropRecords.filter(r => r.type === '玄晶').length;
+  const totalDrops = filteredDropRecords.length;
+  const xuanjingTotal = filteredDropRecords.filter(r => r.type === '玄晶').length;
   const totalRoles = roleStats.length;
+  const allDropsTotal = allDropRecords.length;
+  const hasTypeFilter = selectedTypes.size !== ALL_DROP_TYPES.length;
+  const noTypeSelected = selectedTypes.size === 0;
+
+  // 玄晶统计卡：始终显示当前版本（赛季）所有副本出的玄晶数量
+  // 不受时间范围切换（week/season/all）和类型筛选影响
+  const seasonRange = useMemo(() => getSeasonRange(), [currentSeason]);
+  const xuanjingTotalInSeason = useMemo(() => {
+    if (!seasonRange) {
+      // 无赛季配置时回退到当前筛选范围的玄晶数
+      return xuanjingTotal;
+    }
+    return safeRecords.filter(r => {
+      if (!r.hasXuanjing) return false;
+      const t = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
+      return t >= seasonRange.start && t <= seasonRange.end;
+    }).length;
+  }, [safeRecords, seasonRange, xuanjingTotal]);
 
   return (
     <div className="space-y-5">
@@ -161,7 +231,10 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
           <div>
             <h2 className="text-2xl font-bold text-main">稀有掉落统计</h2>
             <p className="text-sm text-muted mt-1">
-              {statsPeriod === 'week' ? '本周' : statsPeriod === 'season' ? '本赛季' : '全部'}共获取 {totalDrops} 次特殊掉落，来自 {totalRoles} 个角色
+              {statsPeriod === 'week' ? '本周' : statsPeriod === 'season' ? '本赛季' : '全部'}
+              {hasTypeFilter
+                ? `已筛选 ${totalDrops} / ${allDropsTotal} 次特殊掉落，来自 ${totalRoles} 个角色`
+                : `共获取 ${totalDrops} 次特殊掉落，来自 ${totalRoles} 个角色`}
             </p>
           </div>
         </div>
@@ -207,9 +280,9 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
         </div>
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
-            <span className="text-muted font-medium text-sm">玄晶</span>
+            <span className="text-muted font-medium text-sm">当前版本玄晶</span>
           </div>
-          <p className="text-3xl font-bold text-violet-600 dark:text-violet-400">{xuanjingTotal}</p>
+          <p className="text-3xl font-bold text-violet-600 dark:text-violet-400">{xuanjingTotalInSeason}</p>
         </div>
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
@@ -219,16 +292,70 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
         </div>
       </div>
 
+      {/* 掉落类型筛选：默认全选，点击切换。chip 上展示该类型全量数量。 */}
+      <div className="bg-surface rounded-xl shadow-sm border border-base p-4">
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-main">按类型筛选</span>
+            <span className="text-xs text-muted">
+              已选 {selectedTypes.size} / {ALL_DROP_TYPES.length} 类
+            </span>
+          </div>
+          <button
+            onClick={toggleAllTypes}
+            className="text-xs font-medium text-primary hover:text-primary-hover px-2 py-1 rounded-md hover:bg-primary/5 transition-colors"
+          >
+            {selectedTypes.size === ALL_DROP_TYPES.length ? '全部取消' : '全部选中'}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {DROP_TYPE_ORDER.map(type => {
+            const active = selectedTypes.has(type);
+            const count = typeCounts.get(type) || 0;
+            const disabled = count === 0;
+            return (
+              <button
+                key={type}
+                onClick={() => toggleType(type)}
+                disabled={disabled}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+                  active
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30'
+                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700/50'
+                } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                title={disabled ? `${type}：暂无记录` : `${active ? '隐藏' : '显示'}${type}（共 ${count} 条）`}
+              >
+                {type}×{count}
+              </button>
+            );
+          })}
+        </div>
+        {noTypeSelected && (
+          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+            未选择任何类型，列表已隐藏所有记录。点击上方标签或「全部选中」即可恢复。
+          </p>
+        )}
+      </div>
+
       <div className="bg-surface rounded-xl shadow-sm border border-base">
         {roleStats.length === 0 ? (
           <div className="text-center py-12">
             <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
               <span className="text-slate-400 dark:text-slate-500 text-xl font-bold">0</span>
             </div>
-            <p className="text-muted">暂无稀有掉落记录</p>
-            <p className="text-sm text-muted/70 mt-1">团队副本掉落特殊物品后会自动记录在这里</p>
-            {allDropRecords.length === 0 && safeRecords.length > 0 && (
+            <p className="text-muted">
+              {allDropsTotal === 0 ? '暂无稀有掉落记录' : '当前筛选条件下无匹配记录'}
+            </p>
+            <p className="text-sm text-muted/70 mt-1">
+              {allDropsTotal === 0
+                ? '团队副本掉落特殊物品后会自动记录在这里'
+                : '调整类型筛选或点击「全部选中」即可查看完整列表'}
+            </p>
+            {allDropsTotal === 0 && safeRecords.length > 0 && (
               <p className="text-xs text-muted/50 mt-2">共有 {safeRecords.length} 条副本记录，暂无特殊掉落</p>
+            )}
+            {allDropsTotal > 0 && hasTypeFilter && (
+              <p className="text-xs text-muted/50 mt-2">已隐藏 {allDropsTotal - totalDrops} 条其他类型记录</p>
             )}
           </div>
         ) : (
@@ -240,19 +367,22 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                     onClick={() => toggleExpand(stat.roleId)}
                     className="w-full flex items-center gap-4 p-4 hover:bg-base/50 transition-colors text-left"
                   >
+                    {/* 序号 - 固定宽度 */}
                     <div className="flex items-center justify-center w-8 h-8 bg-base rounded-lg font-bold text-sm text-main flex-shrink-0">
                       {index + 1}
                     </div>
-                    <div className="min-w-0 flex-shrink-0">
+                    {/* 角色信息 - 固定宽度，确保后续 tag 起始位置对齐 */}
+                    <div className="w-40 md:w-52 flex-shrink-0 min-w-0">
                       <div className="flex items-center gap-2">
                         <h4 className="font-semibold text-main truncate">{stat.roleName}</h4>
                         {index === 0 && stat.totalCount > 0 && (
-                          <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full">榜首</span>
+                          <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full flex-shrink-0">榜首</span>
                         )}
                       </div>
                       <p className="text-sm text-muted truncate">{stat.server}</p>
                     </div>
-                    <div className="flex-1 flex flex-wrap items-center gap-1.5 justify-center min-w-0">
+                    {/* 掉落 tag - flex-1，左对齐，wrap；起始位置固定，多 tag 自动换行 */}
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5 justify-start min-w-0">
                       {getOrderedDropTypes(stat.dropTypeCounts).map(({ type, count }) => (
                         <span
                           key={type}
@@ -262,9 +392,10 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                         </span>
                       ))}
                     </div>
+                    {/* 总计 + 展开箭头 - 固定宽度 */}
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-sm text-muted mr-1">掉落</span>
-                      <span className="text-lg font-bold text-main">{stat.totalCount}</span>
+                      <span className="text-lg font-bold text-main w-8 text-right">{stat.totalCount}</span>
                       <span className="text-xs text-muted">次</span>
                       <svg
                         className={`w-4 h-4 text-muted transition-transform duration-200 ${expandedRoleId === stat.roleId ? 'rotate-180' : ''}`}

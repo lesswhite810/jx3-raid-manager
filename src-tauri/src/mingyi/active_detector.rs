@@ -126,29 +126,25 @@ fn get_latest_file_mtime_in_dir(
     latest
 }
 
-/// 账号活动扫描结果（一次扫描得到两个 mtime）
+/// 账号活动扫描结果
 #[derive(Debug, Clone)]
 pub struct AccountActivityScan {
-    /// 全量数据源最新 mtime（含 info.jx3dat 登录信号），用于显示最后活动时间
+    /// 全量数据源最新 mtime（含 info.jx3dat 登录信号）
+    /// 用于显示最后活动时间，也用于排名判定当前是否仍在线
     pub latest_all: Option<(SystemTime, String)>,
-    /// 运行时数据源最新 mtime（排除 info.jx3dat），用于排名判定当前是否仍在线
-    pub latest_runtime: Option<(SystemTime, String)>,
 }
 
-/// 一次扫描账号目录的所有数据源，同时返回全量 mtime 和运行时 mtime
+/// 一次扫描账号目录的所有数据源，返回全量 mtime
 ///
 /// 数据源（实测验证）：
 /// 1. `info.jx3dat` — 登录信号（长安记银方案核心，明文可直接读取 mtime）
-///    - 仅计入 `latest_all`，不计入 `latest_runtime`
-///    - 原因：info.jx3dat 只在登录时写入一次，退出时不更新，
-///      若参与排名会让"刚退出但近期登录过"的角色误判为 active
-/// 2. `userdata/userdata.db` — 茗伊实时数据库（在线时持续更新）
+///    - 计入 `latest_all`
+///    - 登录时写入：最新登录的角色就是当前在线角色，用于排名判定
+/// 2. `userdata/userdata.db` — 茗伊实时数据库（在线时持续更新，退出后可能被插件后台写入）
 /// 3. `userdata/chat_log/` 目录 mtime + 最新 chatlog_*.v2.db 文件 mtime — 聊天日志信号
 /// 4. `userdata/gkp/` 目录 mtime + 最新 .gkp.jx3dat — 收支信号
 /// 5. `userdata/combat_logs/` 目录 mtime + 最新 .jcl — 副本信号（可能不存在）
 /// 6. 账号目录本身 — 兜底
-///
-/// 数据源 2-6 同时计入 `latest_all` 和 `latest_runtime`
 ///
 /// 性能优化：先检查 info.jx3dat + userdata.db 的 mtime（仅 stat，无 read_dir），
 /// 若两者都不在时间窗口内（说明本会话未登录该账号），跳过 chat_log/gkp/combat_logs
@@ -160,11 +156,10 @@ pub fn scan_account_activity(
     window_end: SystemTime,
 ) -> AccountActivityScan {
     let mut all_candidates: Vec<(SystemTime, String)> = Vec::new();
-    let mut runtime_candidates: Vec<(SystemTime, String)> = Vec::new();
 
     let in_window = |m: &SystemTime| *m >= window_start && *m <= window_end;
 
-    // 数据源 1: info.jx3dat（登录信号，仅计入 latest_all）
+    // 数据源 1: info.jx3dat（登录信号，计入 latest_all）
     let info_file = account_dir.join("info.jx3dat");
     let info_mtime = get_path_mtime(&info_file);
     let info_in_window = info_mtime.as_ref().map(in_window).unwrap_or(false);
@@ -180,9 +175,7 @@ pub fn scan_account_activity(
     let userdata_in_window = userdata_mtime.as_ref().map(in_window).unwrap_or(false);
     if let Some(m) = userdata_mtime {
         if userdata_in_window {
-            let entry = (m, "userdata.db".to_string());
-            all_candidates.push(entry.clone());
-            runtime_candidates.push(entry);
+            all_candidates.push((m, "userdata.db".to_string()));
         }
     }
 
@@ -206,9 +199,7 @@ pub fn scan_account_activity(
             (None, None) => None,
         };
         if let Some(m) = chat_log_candidate {
-            let entry = (m, "chat_log/".to_string());
-            all_candidates.push(entry.clone());
-            runtime_candidates.push(entry);
+            all_candidates.push((m, "chat_log/".to_string()));
         }
 
         // 数据源 4: userdata/gkp/ 目录 mtime + 最新 .gkp.jx3dat mtime
@@ -226,9 +217,7 @@ pub fn scan_account_activity(
             (None, None) => None,
         };
         if let Some(m) = gkp_candidate {
-            let entry = (m, "gkp/".to_string());
-            all_candidates.push(entry.clone());
-            runtime_candidates.push(entry);
+            all_candidates.push((m, "gkp/".to_string()));
         }
 
         // 数据源 5: userdata/combat_logs/ 目录 mtime + 最新 .jcl mtime
@@ -246,24 +235,19 @@ pub fn scan_account_activity(
             (None, None) => None,
         };
         if let Some(m) = combat_logs_candidate {
-            let entry = (m, "combat_logs/".to_string());
-            all_candidates.push(entry.clone());
-            runtime_candidates.push(entry);
+            all_candidates.push((m, "combat_logs/".to_string()));
         }
     }
 
     // 数据源 6: 账号目录本身（兜底，仅 stat）
     if let Some(m) = get_path_mtime(account_dir) {
         if in_window(&m) {
-            let entry = (m, "account_dir".to_string());
-            all_candidates.push(entry.clone());
-            runtime_candidates.push(entry);
+            all_candidates.push((m, "account_dir".to_string()));
         }
     }
 
     AccountActivityScan {
         latest_all: all_candidates.into_iter().max_by_key(|(m, _)| *m),
-        latest_runtime: runtime_candidates.into_iter().max_by_key(|(m, _)| *m),
     }
 }
 
@@ -452,10 +436,12 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
     let accounts_base = game_dir.join(MINGYI_ACCOUNTS_BASE_PATH);
 
     let mut roles: Vec<RoleActiveState> = Vec::new();
-    // 收集每个角色的 latest_runtime_mtime（用于排名判定当前在线角色）
-    // 排除 info.jx3dat：它只在登录时写入一次，退出时不更新，
-    // 若参与排名会导致"刚退出但近期登录过的角色"误判为 active
-    let mut latest_runtime_mtimes: Vec<Option<SystemTime>> = Vec::new();
+    // 收集每个角色的 latest_all_mtime（含 info.jx3dat，用于排名判定当前在线角色）
+    // info.jx3dat 在登录时写入：最新登录的角色就是当前在线角色。
+    // 不再用 latest_runtime_mtime（排除 info.jx3dat）排名：
+    // 退出角色的 userdata.db 可能被茗伊插件后台写入（晚于真正在线角色），
+    // 导致已退出角色误判为 Active，而真正在线角色被降级为 Recent。
+    let mut latest_all_mtimes: Vec<Option<SystemTime>> = Vec::new();
 
     let entries = match std::fs::read_dir(&accounts_base) {
         Ok(e) => e,
@@ -511,15 +497,14 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
             None => (String::new(), String::new(), String::new()),
         };
 
-        // 一次扫描所有数据源，同时获取 latest_all（含 info.jx3dat，用于显示）
-        // 和 latest_runtime（排除 info.jx3dat，用于排名判定当前是否仍在线）
+        // 一次扫描所有数据源，获取 latest_all（含 info.jx3dat）
+        // latest_all 同时用于显示和排名判定当前是否仍在线
         let scan = scan_account_activity(&path, window_start, window_end);
         let (latest_mtime, source) = scan
             .latest_all
             .map(|(t, s)| (Some(t), Some(s)))
             .unwrap_or((None, None));
-        let latest_runtime_mtime = scan.latest_runtime.map(|(t, _)| t);
-        latest_runtime_mtimes.push(latest_runtime_mtime);
+        latest_all_mtimes.push(latest_mtime);
 
         let active_level = determine_active_level(latest_mtime, window_start, window_end, true);
         let last_activity_time = latest_mtime.map(system_time_to_rfc3339);
@@ -537,23 +522,23 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
         });
     }
 
-    // 重新判定：取最新的 N 个 latest_runtime_mtime 角色为当前在线（active）
+    // 重新判定：取最新的 N 个 latest_all_mtime 角色为当前在线（active）
     // N = 匹配的 JX3 进程数（多开时每个进程对应一个当前在线角色）
     //
-    // 用 latest_runtime_mtime（排除 info.jx3dat）排名：
-    // - 切换角色：新角色数据源持续更新，旧角色停止 → 新角色排前
-    // - 退出角色：退出角色数据源不再更新，仍在线角色持续更新 → 在线角色排前
-    //   （关键：info.jx3dat 只在登录时写入一次，退出时不更新，
-    //    若参与排名会让"刚退出但近期登录过"的角色误判为 active）
-    // - 多开：多个角色都在线，latest_runtime_mtime 都持续更新 → 都排前
+    // 用 latest_all_mtime（含 info.jx3dat）排名：
+    // - 切换角色：新角色登录时写入 info.jx3dat → 新角色排前
+    // - 退出角色：info.jx3dat 在登录时写入，退出后不再更新；
+    //   userdata.db 可能被茗伊插件后台写入（晚于真正在线角色），
+    //   但 info.jx3dat 时间仍是登录时刻，不会误判为在线
+    // - 多开：多个角色都在线，最新登录的 N 个角色排前
     let n = runtime_status.matched_process_count as usize;
-    let mut sorted_mtimes: Vec<SystemTime> = latest_runtime_mtimes.iter().filter_map(|&m| m).collect();
+    let mut sorted_mtimes: Vec<SystemTime> = latest_all_mtimes.iter().filter_map(|&m| m).collect();
     sorted_mtimes.sort_unstable_by(|a, b| b.cmp(a)); // 降序
     let active_threshold = sorted_mtimes.get(n.saturating_sub(1)).copied();
 
     if let Some(threshold) = active_threshold {
         for (i, role) in roles.iter_mut().enumerate() {
-            let is_active = latest_runtime_mtimes
+            let is_active = latest_all_mtimes
                 .get(i)
                 .copied()
                 .flatten()
