@@ -3395,6 +3395,7 @@ fn scanned_recent_uids() -> &'static Mutex<HashSet<String>> {
 /// - `jx3_running`: 整个批量扫描共用，来自 JX3 进程状态
 /// - `role_online`: 每个账号独立计算，基于该账号 chatlog 最新 mtime（5 分钟阈值）
 pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize, String>)>, String> {
+    let scan_started_at = std::time::Instant::now();
     let game_dir = get_game_directory()?;
 
     // 1. 调用 active_detector 获取活跃检测结果（与前端 useActivePoller 一致）
@@ -3533,7 +3534,22 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
         }
     }
 
-    log::info!("[DropScanner] 批量扫描完成: 共扫描 {} 个活跃角色", results.len());
+    let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
+    let failed_count = results.len() - success_count;
+    let total_instances: usize = results
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok().copied())
+        .sum();
+    let elapsed_ms = scan_started_at.elapsed().as_millis();
+
+    log::info!(
+        "[DropScanner] 批量扫描完成：活跃角色 {} 个（成功 {}，失败 {}），副本实例 {} 个，耗时 {}ms",
+        results.len(),
+        success_count,
+        failed_count,
+        total_instances,
+        elapsed_ms
+    );
     Ok(results)
 }
 
@@ -3578,12 +3594,18 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
 /// 参数：
 /// - `start_ms`: 副本时间下限（毫秒，闭区间）
 /// - `end_ms`: 副本时间上限（毫秒，开区间）
+/// - `process_start_ms`: JX3 进程启动时间（毫秒），> 0 时按 mtime 过滤 JCL 文件，仅扫描本次会话产生的文件
 #[tauri::command]
-pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<AccountScanResult>, String> {
+pub async fn scan_raids_in_range(
+    start_ms: i64,
+    end_ms: i64,
+    process_start_ms: i64,
+) -> Result<Vec<AccountScanResult>, String> {
     tokio::task::spawn_blocking(move || {
+        let scan_started_at = std::time::Instant::now();
         log::info!(
-            "[DropScanner] 开始按时间范围扫描所有账号: start_ms={}, end_ms={}",
-            start_ms, end_ms
+            "[DropScanner] 时间范围扫描开始：start_ms={}, end_ms={}, process_start_ms={}",
+            start_ms, end_ms, process_start_ms
         );
 
         // 1. 扫描茗伊账号目录，提取所有 uid
@@ -3662,7 +3684,7 @@ pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<Accou
                                 &account_id,
                                 false, // 离线扫描：JX3 进程未运行
                                 false, // 离线扫描：角色不在线
-                                0,     // 不按 mtime 过滤
+                                process_start_ms, // > 0 时按 mtime 过滤本次会话 JCL
                                 start_ms,
                                 end_ms,
                                 Some(raids_ref),
@@ -3710,10 +3732,17 @@ pub async fn scan_raids_in_range(start_ms: i64, end_ms: i64) -> Result<Vec<Accou
         results.sort_by(|a, b| a.account_id.cmp(&b.account_id));
 
         let total_instances: usize = results.iter().filter_map(|r| r.instance_count).sum();
+        let success_count = results.iter().filter(|r| r.success).count();
+        let failed_count = results.len() - success_count;
+        let elapsed_ms = scan_started_at.elapsed().as_millis();
+
         log::info!(
-            "[DropScanner] 时间范围扫描完成: 共扫描 {} 个账号, 处理 {} 个副本实例",
+            "[DropScanner] 时间范围扫描完成：账号 {} 个（成功 {}，失败 {}），副本实例 {} 个，耗时 {}ms",
             results.len(),
-            total_instances
+            success_count,
+            failed_count,
+            total_instances,
+            elapsed_ms
         );
 
         Ok(results)
@@ -5178,7 +5207,7 @@ mod tests {
             .expect("创建 tokio runtime 失败");
 
         let results = rt
-            .block_on(async { scan_raids_in_range(start_ms, end_ms).await })
+            .block_on(async { scan_raids_in_range(start_ms, end_ms, 0).await })
             .expect("scan_raids_in_range 调用失败");
 
         println!("[本月扫描] 扫描完成，账号数: {}", results.len());
@@ -5311,7 +5340,7 @@ mod tests {
             .expect("创建 tokio runtime 失败");
 
         let results = rt
-            .block_on(async { scan_raids_in_range(start_ms, end_ms).await })
+            .block_on(async { scan_raids_in_range(start_ms, end_ms, 0).await })
             .expect("scan_raids_in_range 调用失败");
 
         println!("\n[7-12 重扫] 扫描完成，账号数: {}", results.len());

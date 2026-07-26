@@ -61,6 +61,94 @@ pub struct RoleActiveState {
     pub last_activity_source: Option<String>,
 }
 
+/// JX3 进程会话历史（一次运行到退出的时间范围）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessSession {
+    /// 进程启动时间（UNIX 时间戳，秒）
+    pub start_time_unix: u64,
+    /// 进程启动时间（RFC3339）
+    pub start_time: String,
+    /// 进程结束时间（UNIX 时间戳，秒），运行中为 None
+    pub end_time_unix: Option<u64>,
+    /// 进程结束时间（RFC3339），运行中为 None
+    pub end_time: Option<String>,
+}
+
+/// 全局 JX3 进程会话历史（内存，应用重启后清空）
+static PROCESS_SESSIONS: OnceLock<Mutex<Vec<ProcessSession>>> = OnceLock::new();
+
+fn process_sessions() -> &'static Mutex<Vec<ProcessSession>> {
+    PROCESS_SESSIONS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 获取进程会话历史的快照
+pub fn get_process_sessions() -> Vec<ProcessSession> {
+    process_sessions()
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default()
+}
+
+/// 将 SystemTime 转为 RFC3339 字符串
+fn system_time_to_rfc3339_str(t: SystemTime) -> String {
+    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0)
+        .unwrap_or_default();
+    dt.to_rfc3339()
+}
+
+/// 维护进程会话历史：
+/// - JX3 运行时：若会话列表为空或最后一个会话已关闭，添加新会话
+/// - JX3 未运行时：若最后一个会话未关闭，填充 end_time
+fn update_process_sessions(is_running: bool, start_time_unix: u64, start_time_rfc3339: &str) {
+    let mut sessions = match process_sessions().lock() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("[ActiveDetector] 锁定 process_sessions 失败: {}", e);
+            return;
+        }
+    };
+
+    if is_running {
+        // 检查是否需要新增会话：列表为空、或最后一个会话已关闭（有 end_time）
+        let need_new = sessions
+            .last()
+            .map(|s| s.end_time_unix.is_some())
+            .unwrap_or(true);
+
+        if need_new {
+            sessions.push(ProcessSession {
+                start_time_unix,
+                start_time: start_time_rfc3339.to_string(),
+                end_time_unix: None,
+                end_time: None,
+            });
+            log::info!(
+                "[ActiveDetector] 新增 JX3 进程会话: start={}, 共 {} 个历史会话",
+                start_time_rfc3339,
+                sessions.len()
+            );
+        }
+    } else {
+        // JX3 未运行：关闭最后一个未关闭的会话
+        if let Some(last) = sessions.last_mut() {
+            if last.end_time_unix.is_none() {
+                let now = SystemTime::now();
+                let now_secs = now.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let now_rfc = system_time_to_rfc3339_str(now);
+                last.end_time_unix = Some(now_secs);
+                last.end_time = Some(now_rfc.clone());
+                log::info!(
+                    "[ActiveDetector] 关闭 JX3 进程会话: start={}, end={}",
+                    last.start_time,
+                    now_rfc
+                );
+            }
+        }
+    }
+}
+
 /// 批量活跃检测的结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +167,8 @@ pub struct BatchActiveResult {
     pub roles: Vec<RoleActiveState>,
     /// 扫描耗时（毫秒）
     pub scan_duration_ms: u64,
+    /// JX3 进程会话历史（本次应用运行期间）
+    pub process_sessions: Vec<ProcessSession>,
 }
 
 /// 获取文件或目录的 mtime（SystemTime）
@@ -403,6 +493,9 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
 
     // 2. 若无匹配进程，所有角色 offline
     if !runtime_status.is_running {
+        // 维护进程会话历史：关闭最后一个未关闭的会话
+        update_process_sessions(false, 0, "");
+
         let roles: Vec<RoleActiveState> = Vec::new();
         let scan_duration_ms = scan_start
             .elapsed()
@@ -419,6 +512,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
             multi_instance_hint: runtime_status.multi_instance_hint,
             roles,
             scan_duration_ms,
+            process_sessions: get_process_sessions(),
         };
     }
 
@@ -430,6 +524,9 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
     let jx3_start_time_unix = matched.start_time_unix;
     // 进程运行中，无结束时间
     let jx3_end_time: Option<String> = None;
+
+    // 维护进程会话历史：JX3 运行时，若需要则新增会话
+    update_process_sessions(true, jx3_start_time_unix, &matched.start_time);
 
     // 4. 扫描所有茗伊账号目录
     let game_dir = PathBuf::from(game_directory);
@@ -465,6 +562,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
                 multi_instance_hint: runtime_status.multi_instance_hint,
                 roles,
                 scan_duration_ms,
+                process_sessions: get_process_sessions(),
             };
         }
     };
@@ -570,6 +668,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
         multi_instance_hint: runtime_status.multi_instance_hint,
         roles,
         scan_duration_ms,
+        process_sessions: get_process_sessions(),
     }
 }
 

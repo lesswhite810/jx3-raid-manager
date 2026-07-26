@@ -367,6 +367,14 @@ export interface Jx3RuntimeStatus {
   multiInstanceHint: string | null;
 }
 
+/** JX3 进程会话历史（一次运行到退出的时间范围） */
+export interface ProcessSession {
+  startTimeUnix: number;
+  startTime: string;
+  endTimeUnix: number | null;
+  endTime: string | null;
+}
+
 /** 批量活跃检测结果 */
 export interface BatchActiveResult {
   jx3Running: boolean;
@@ -377,6 +385,8 @@ export interface BatchActiveResult {
   multiInstanceHint: string | null;
   roles: RoleActiveState[];
   scanDurationMs: number;
+  /** JX3 进程会话历史（本次应用运行期间） */
+  processSessions: ProcessSession[];
 }
 
 /** 应用配置（来自 app_config 表） */

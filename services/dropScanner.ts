@@ -52,10 +52,19 @@ export const dropScannerService = {
    *
    * @param startMs 副本时间下限（毫秒，闭区间）
    * @param endMs 副本时间上限（毫秒，开区间）
+   * @param processStartMs JX3 进程启动时间（毫秒），> 0 时按 mtime 过滤 JCL 文件
    * @returns 每个账号的扫描结果列表
    */
-  async scanRaidsInRange(startMs: number, endMs: number): Promise<AccountScanResult[]> {
-    return invoke<AccountScanResult[]>('scan_raids_in_range', { startMs, endMs });
+  async scanRaidsInRange(
+    startMs: number,
+    endMs: number,
+    processStartMs: number = 0,
+  ): Promise<AccountScanResult[]> {
+    return invoke<AccountScanResult[]>('scan_raids_in_range', {
+      startMs,
+      endMs,
+      processStartMs,
+    });
   },
 
   /**
