@@ -1784,6 +1784,7 @@ fn analyze_jcl(
             };
         let death_ok = boss_dwid != 0
             && boss_fight_true_seen
+            && !boss_respawned
             && (bfight_false_is_kill
                 || boss_hp_zero_seen
                 || clone_leave_signal
@@ -6423,6 +6424,85 @@ mod tests {
             println!(
                 "{}: fight={}s, is_kill={} (期望={})",
                 fname, dur, analysis.is_kill, expected_kill
+            );
+            assert_eq!(
+                analysis.is_kill, *expected_kill,
+                "JCL {} 的 is_kill 判定错误: 期望 {}, 实际 {}",
+                fname, expected_kill, analysis.is_kill
+            );
+        }
+    }
+
+    /// 回归测试：respawned=true 团灭 JCL 不应被误判为击杀。
+    ///
+    /// 场景：须罗巨傀触发 state=192（死亡），但 state 又变回 0（重生），
+    /// 说明团灭后 BOSS 复位。这种情况虽然也有"分身陆续离场"信号，
+    /// 但应通过 boss_respawned=true 排除击杀判定。
+    ///
+    /// 修复前：clone_leave_signal=true 单独判定击杀，导致 4 个 respawned 团灭 JCL
+    ///        全部误判为 is_kill=true。
+    /// 修复后：death_ok 前置条件增加 !boss_respawned，团灭 JCL 正确判 false。
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_respawned_wipes_not_kill -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_respawned_wipes_not_kill() {
+        use std::path::PathBuf;
+
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 4 个 respawned=true 的团灭 JCL（分布在不同账号目录下，自动定位）
+        // (文件名, 期望is_kill)
+        let jcls: Vec<(&str, bool)> = vec![
+            ("2026-07-01-23-44-25-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", false),
+            ("2026-07-01-23-54-00-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", false),
+            ("2026-07-08-21-33-56-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", false),
+            ("2026-07-16-21-31-53-25人普通阆风悬城(794)-须罗巨傀(137067).jcl", false),
+        ];
+
+        let my_data_root = PathBuf::from(r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\Interface\MY#DATA");
+        let raids = load_raids_with_bosses(&conn).expect("加载副本配置失败");
+
+        for (fname, expected_kill) in &jcls {
+            // 跨账号定位 JCL
+            let mut found: Option<PathBuf> = None;
+            if let Ok(entries) = std::fs::read_dir(&my_data_root) {
+                for entry in entries.flatten() {
+                    let candidate = entry
+                        .path()
+                        .join("userdata")
+                        .join("combat_logs")
+                        .join(fname);
+                    if candidate.exists() {
+                        found = Some(candidate);
+                        break;
+                    }
+                }
+            }
+            let jcl_path = found.unwrap_or_else(|| {
+                panic!("未在 MY#DATA 下找到 JCL: {}", fname);
+            });
+
+            let info = parse_jcl_filename(fname).expect("文件名解析失败");
+            let raid_entry = raids.iter().find(|r| r.name == info.raid_display_name);
+            let raid_bosses: Vec<(String, String)> = raid_entry
+                .map(|e| e.bosses.clone())
+                .unwrap_or_default();
+
+            let path_str = jcl_path.to_string_lossy().to_string();
+            conn.execute("DELETE FROM jcl_cache WHERE file_path = ?1", sql_params![&path_str])
+                .expect("删除缓存失败");
+
+            let analysis = analyze_jcl_cached(&conn, &jcl_path, &info.boss_name, info.boss_id, &raid_bosses)
+                .expect("分析 JCL 失败");
+
+            println!(
+                "{}: fight={}s, is_kill={} (期望={})",
+                fname,
+                (analysis.fight_end_ms - analysis.fight_start_ms) / 1000,
+                analysis.is_kill,
+                expected_kill
             );
             assert_eq!(
                 analysis.is_kill, *expected_kill,
