@@ -21,7 +21,7 @@ const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 16;
+pub const CURRENT_SCHEMA_VERSION: i32 = 17;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);

@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "jx3-raid-manager"
-version = "2.1.48"
+version = "2.1.49"
 dependencies = [
  "chrono",
  "dirs 5.0.1",

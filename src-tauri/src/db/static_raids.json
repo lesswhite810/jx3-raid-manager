@@ -149,7 +149,7 @@
     "version": "巴蜀风云"
   },
   {
-    "name": "持国回忆录",
+    "name": "持国天王回忆录",
     "level": 80,
     "configurations": [
       {
@@ -312,17 +312,17 @@
       },
       {
         "playerCount": 10,
-        "difficulty": "英雄",
-        "isActive": false
-      },
-      {
-        "playerCount": 25,
-        "difficulty": "普通",
+        "difficulty": "挑战",
         "isActive": false
       },
       {
         "playerCount": 25,
         "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
         "isActive": false
       }
     ],
@@ -339,17 +339,17 @@
       },
       {
         "playerCount": 10,
-        "difficulty": "英雄",
-        "isActive": false
-      },
-      {
-        "playerCount": 25,
-        "difficulty": "普通",
+        "difficulty": "挑战",
         "isActive": false
       },
       {
         "playerCount": 25,
         "difficulty": "英雄",
+        "isActive": false
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "挑战",
         "isActive": false
       }
     ],

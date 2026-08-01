@@ -6,7 +6,7 @@ mod tests {
     use std::time::Duration;
     use rusqlite::Connection;
 
-    const CURRENT_SCHEMA_VERSION: i32 = 16;
+    const CURRENT_SCHEMA_VERSION: i32 = 17;
 
     fn get_test_dir() -> PathBuf {
         let app_data = std::env::var("APPDATA").expect("无法获取 APPDATA 环境变量");
