@@ -943,36 +943,152 @@ fn load_raids_with_bosses(conn: &Connection) -> Result<Vec<RaidEntry>, String> {
     Ok(entries)
 }
 
-/// 匹配 JCL 副本名到 raids.name
+/// 从 raid_id 中解析人数
+/// raid_id 格式：{playerCount}人{difficulty}{name}，如 "25人普通阆风悬城"
+fn parse_player_count_from_raid_id(raid_id: &str) -> i32 {
+    if let Some(pos) = raid_id.find('人') {
+        if let Ok(n) = raid_id[..pos].parse::<i32>() {
+            return n;
+        }
+    }
+    25 // 默认25人
+}
+
+/// 难度优先级：普通(1) < 英雄(2) < 挑战(3)
+fn difficulty_rank(raid_id: &str) -> u8 {
+    if raid_id.contains("挑战") {
+        3
+    } else if raid_id.contains("英雄") {
+        2
+    } else {
+        1 // 普通或其他
+    }
+}
+
+/// 从 JCL 副本名中解析人数前缀
+/// 返回 None 表示无人数前缀（如 "阆风悬城"）
+/// 返回 Some(n) 表示有人数前缀（如 "25人普通阆风悬城" → Some(25)）
+fn parse_jcl_player_count(jcl_raid_name: &str) -> Option<i32> {
+    let mut chars = jcl_raid_name.chars();
+    let mut num_str = String::new();
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() {
+            num_str.push(c);
+        } else if c == '人' && !num_str.is_empty() {
+            return num_str.parse().ok();
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+/// 从 JCL 副本名中检测难度前缀
+/// 返回 None 表示无难度前缀
+fn detect_jcl_difficulty(jcl_raid_name: &str) -> Option<u8> {
+    if jcl_raid_name.contains("挑战") {
+        Some(3)
+    } else if jcl_raid_name.contains("英雄") {
+        Some(2)
+    } else if jcl_raid_name.contains("普通") {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+/// 匹配 JCL 副本名到 raids 表的副本配置
 ///
-/// JCL 副本名格式：{人数}人{难度}{副本名} 或 {难度}{副本名} 或 {副本名}
-/// 匹配策略：先精确匹配 raids.id，再后缀匹配 raids.id
+/// JCL 副本名格式：
+/// - 完整格式：{人数}人{难度}{副本名}，如 "25人普通阆风悬城"
+/// - 无人数前缀：{难度}{副本名} 或 {副本名}，如 "阆风悬城"
+///
+/// 匹配策略：
+/// 1. 精确匹配 raids.id
+/// 2. 收集所有后缀匹配的候选（raids.id 双向后缀 + raids.name 后缀）
+/// 3. 单候选直接返回
+/// 4. 多候选时，根据 JCL 是否包含人数/难度前缀选择最佳匹配：
+///    - JCL 无人数前缀 → 选择最低人数的候选
+///    - JCL 无难度前缀 → 选择最低难度的候选
+///    - JCL 有人数前缀 → 优先匹配相同人数
+///    - JCL 有难度前缀 → 优先匹配相同难度
 fn match_raid_name<'a>(jcl_raid_name: &str, raids: &'a [RaidEntry]) -> Option<&'a RaidEntry> {
-    // 精确匹配 raids.id
-    // raids.id 格式：{playerCount}人{difficulty}{name}，如 "25人普通阆风悬城"
-    // JCL 副本名也是类似格式，如 "25人普通阆风悬城"
+    // 1. 精确匹配 raids.id
     for entry in raids {
         if entry.raid_id == jcl_raid_name {
             return Some(entry);
         }
     }
 
-    // 后缀匹配：raids.id 是 JCL 副本名的后缀（或反过来）
-    for entry in raids {
-        if jcl_raid_name.ends_with(&entry.raid_id) || entry.raid_id.ends_with(jcl_raid_name) {
-            return Some(entry);
-        }
+    // 2. 收集所有后缀匹配的候选
+    //    raids.id 双向后缀匹配：处理 JCL 名是 raid_id 的子串或超串的情况
+    //    raids.name 后缀匹配：处理 JCL 名包含完整副本基础名的情况
+    let mut candidates: Vec<&RaidEntry> = raids
+        .iter()
+        .filter(|e| {
+            jcl_raid_name.ends_with(&e.raid_id)
+                || e.raid_id.ends_with(jcl_raid_name)
+                || (!e.name.is_empty() && jcl_raid_name.ends_with(&e.name))
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return None;
     }
 
-    // 最后尝试用 raids.name 后缀匹配
-    // 例如 JCL="25人英雄阆风悬城"，raids.name="阆风悬城"
-    for entry in raids {
-        if jcl_raid_name.ends_with(&entry.name) && !entry.name.is_empty() {
-            return Some(entry);
-        }
+    // 3. 单候选直接返回
+    if candidates.len() == 1 {
+        return Some(candidates[0]);
     }
 
-    None
+    // 4. 多候选时，根据 JCL 前缀信息选择最佳匹配
+    //    - JCL 有人数前缀 → 人数为主排序键，难度为次排序键
+    //    - JCL 无人数前缀 → 难度为主排序键（若有），人数为次排序键
+    let jcl_player_count = parse_jcl_player_count(jcl_raid_name);
+    let jcl_difficulty = detect_jcl_difficulty(jcl_raid_name);
+
+    candidates.sort_by(|a, b| {
+        let a_pc = parse_player_count_from_raid_id(&a.raid_id);
+        let b_pc = parse_player_count_from_raid_id(&b.raid_id);
+        let a_diff = difficulty_rank(&a.raid_id);
+        let b_diff = difficulty_rank(&b.raid_id);
+
+        // 人数比较：有人数前缀时按差值升序，无前缀时按人数升序
+        let pc_cmp = match jcl_player_count {
+            Some(jcl_pc) => {
+                (a_pc - jcl_pc).abs().cmp(&(b_pc - jcl_pc).abs())
+            }
+            None => a_pc.cmp(&b_pc),
+        };
+
+        // 难度比较：有难度前缀时按差值升序，无前缀时按难度升序
+        let diff_cmp = match jcl_difficulty {
+            Some(jcl_diff) => {
+                let a_dist = (a_diff as i32 - jcl_diff as i32).abs();
+                let b_dist = (b_diff as i32 - jcl_diff as i32).abs();
+                a_dist.cmp(&b_dist)
+            }
+            None => a_diff.cmp(&b_diff),
+        };
+
+        // 有人数前缀时人数优先，否则难度优先
+        if jcl_player_count.is_some() {
+            pc_cmp.then(diff_cmp)
+        } else {
+            diff_cmp.then(pc_cmp)
+        }
+    });
+
+    log::debug!(
+        "[DropScanner] match_raid_name 多候选匹配: jcl='{}', jcl_pc={:?}, jcl_diff={:?}, candidates={:?}, selected='{}'",
+        jcl_raid_name,
+        jcl_player_count,
+        jcl_difficulty,
+        candidates.iter().map(|c| c.raid_id.as_str()).collect::<Vec<_>>(),
+        candidates.first().map(|c| c.raid_id.as_str()).unwrap_or("")
+    );
+
+    candidates.first().copied()
 }
 
 /// 判断 JCL BOSS 名是否为有效 BOSS（精确/模糊匹配 raid_bosses 表）
@@ -1221,8 +1337,11 @@ fn analyze_jcl(
     let mut real_boss_name: Option<String> = None;
     let mut real_boss_fight_true_seen = false;
     let mut real_boss_fight_false_seen = false;
-    // 路径 B 使用：真实 BOSS（如唐怀仁）击杀时可能无 bFight=false，需 leave_scene 兜底
-    let mut real_boss_leave_scene_seen = false;
+    // 路径 B 使用：真实 BOSS（如唐怀仁）击杀时可能无 bFight=false，需 leave_scene 兜底。
+    // 记录最后一次 LEAVE_SCENE 时间戳，用于区分"中途离场"与"击杀后离场"：
+    // BOSS 可能在战斗中途阶段转换/瞬移时触发 LEAVE_SCENE（此时 state=0 存活），
+    // 仅当 LEAVE_SCENE 发生在 BOSS 死亡（state=192）之后才作为击杀信号。
+    let mut real_boss_leave_scene_ms: i64 = 0;
     let mut real_boss_hp_zero_seen = false;
 
     // 路径 B 使用：追踪真实 BOSS 死亡/重生状态
@@ -1231,6 +1350,20 @@ fn analyze_jcl(
     // 实测：7月7日团灭JCL中唐怀仁 state 192→0（重生），7月3日/7月7日击杀均无重生。
     let mut real_boss_entered_dead_state = false;
     let mut real_boss_respawned = false;
+    // 真实 BOSS 首次进入死亡状态（state=192）的时间戳。
+    // 用于校验 LEAVE_SCENE 是否发生在死亡之后，排除中途离场误判。
+    let mut real_boss_death_ms: i64 = 0;
+
+    // 路径 A 使用：追踪主 BOSS 死亡/重生状态（与路径 B 同理，用于校验 leave_scene_is_kill）
+    // 唐怀仁等 BOSS 的 JCL 走路径 A（文件名 BOSS 在配置中），但击杀时有 state=192 信号；
+    // 拉脱/转阶段时 BOSS 会在战斗中途 LEAVE_SCENE（state=0 存活），需用 state=192 区分。
+    let mut boss_entered_dead_state = false;
+    let mut boss_respawned = false;
+    // 主 BOSS LEAVE_SCENE 时间戳（用于校验离场发生在死亡之后还是中途转阶段）
+    let mut boss_leave_scene_ms: i64 = 0;
+    // 主 BOSS 首次进入死亡状态（state=192）的时间戳。
+    // 用于校验 LEAVE_SCENE 是否发生在死亡之后，排除中途离场误判（与路径 B 同理）。
+    let mut boss_death_ms: i64 = 0;
 
     // 同名 NPC 追踪（BOSS 分身/幻影）
     // 某些 BOSS（如"笑妆娘"、"柳公子"）有多个 templateId 的同名 NPC（分身/幻影），
@@ -1399,20 +1532,43 @@ fn analyze_jcl(
                     same_name_dwids.insert(dwid);
                 }
 
-                // 用途 5：追踪真实 BOSS 死亡/重生状态（仅路径 B）
+                // 用途 5：追踪 BOSS 死亡/重生状态
                 // NPC_INFO 格式: { dwID, name, templateID, employer, nX, nY, nZ, state }
                 // state=0 表示存活，state=192 表示死亡。
                 // 团灭时 BOSS 会重生（state 从 192 回到 0），击杀时不会重生。
                 // 注意：文件 BOSS（小怪）在战斗中会反复死亡/重生，不能用作团灭信号，
                 //       仅追踪真实 BOSS（如唐怀仁）的重生。
+                // 路径 A 也追踪主 BOSS 的 state，用于校验 leave_scene_is_kill
+                // （区分"击杀后离场"与"转阶段/拉脱中途离场"）。
+                let state: i64 = if fields.len() >= 8 {
+                    fields[7].trim().parse().unwrap_or(-1)
+                } else {
+                    -1
+                };
+                if file_boss_in_config
+                    && boss_dwid != 0
+                    && dwid == boss_dwid
+                {
+                    if state == 192 {
+                        boss_entered_dead_state = true;
+                        // 记录首次死亡时间，用于校验 LEAVE_SCENE 是否发生在死亡之后
+                        if boss_death_ms == 0 {
+                            boss_death_ms = timestamp_sec * 1000;
+                        }
+                    } else if state == 0 && boss_entered_dead_state {
+                        boss_respawned = true;
+                    }
+                }
                 if !file_boss_in_config
-                    && fields.len() >= 8
                     && real_boss_dwid != 0
                     && dwid == real_boss_dwid
                 {
-                    let state: i64 = fields[7].trim().parse().unwrap_or(-1);
                     if state == 192 {
                         real_boss_entered_dead_state = true;
+                        // 记录首次死亡时间，用于校验 LEAVE_SCENE 是否发生在死亡之后
+                        if real_boss_death_ms == 0 {
+                            real_boss_death_ms = timestamp_sec * 1000;
+                        }
                     } else if state == 0 && real_boss_entered_dead_state {
                         real_boss_respawned = true;
                     }
@@ -1471,10 +1627,13 @@ fn analyze_jcl(
                 // 文件名 BOSS 离开场景
                 if boss_dwid != 0 && dwid == boss_dwid {
                     boss_leave_scene_seen = true;
+                    // 记录离场时间戳，用于校验离场发生在死亡之后还是中途转阶段
+                    boss_leave_scene_ms = timestamp_sec * 1000;
                 }
                 // 真实 BOSS 离开场景（仅路径 B 使用）
+                // 记录最后一次离场时间，用于区分中途离场与击杀后离场
                 if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
-                    real_boss_leave_scene_seen = true;
+                    real_boss_leave_scene_ms = timestamp_sec * 1000;
                 }
                 // 同名 NPC 离开场景（BOSS 分身/幻影离场）
                 // 追踪分身（非主 BOSS）的离场时间戳，用于计算时间跨度区分击杀/团灭。
@@ -1594,7 +1753,35 @@ fn analyze_jcl(
         // - 有 BOSS 配置：柳公子等 BOSS 击杀时 NPC_FIGHT_HINT 仅有 bFight=true，
         //   无宝箱 NPC、无 bFight=false，但主 BOSS LEAVE_SCENE
         // 仅当没有 bFight=false 时才使用 LEAVE_SCENE，避免误判拉托为击杀。
-        let leave_scene_is_kill = boss_leave_scene_seen && !boss_fight_false_seen;
+        //
+        // **state=192 校验**（与路径 B 同理，修复唐怀仁拉脱误判为击杀的问题）：
+        // 唐怀仁等 BOSS 拉脱/转阶段时会在战斗中途 LEAVE_SCENE（state=0 存活），
+        // 仅当 LEAVE_SCENE 发生在 BOSS 死亡（state=192）之后才作为击杀信号。
+        // - 若 BOSS 重生（state 192→0）：团灭，不算击杀。
+        // - 若有 state=192 信号：LEAVE_SCENE 必须 >= boss_death_ms。
+        // - 若无 state=192 信号：LEAVE_SCENE 不单独作为击杀信号。
+        //
+        // **不依赖时间的判定原则**：
+        // 击杀的本质是 BOSS 死亡，应由"死亡状态/HP归零/宝箱掉落"等本质信号判定，
+        // 而非用战斗时长或离场时间间隔这类时间阈值兜底——不同副本/团队节奏差异大，
+        // 时间阈值容易误判（如唐怀仁拉脱 +95s 离场后战斗持续到 +270s）。
+        // 无 state=192 时，仅由 bfight_false_is_kill / hp_zero / treasure 等本质信号承担击杀判定。
+        let fight_duration_sec = if fight_start_ms > 0 && fight_end_ms >= fight_start_ms {
+            (fight_end_ms - fight_start_ms) / 1000
+        } else {
+            0
+        };
+        let leave_scene_is_kill = boss_leave_scene_seen
+            && !boss_fight_false_seen
+            && !boss_respawned
+            && if boss_entered_dead_state {
+                // 有死亡状态信号：LEAVE_SCENE 必须发生在死亡之后
+                boss_leave_scene_ms > 0 && boss_leave_scene_ms >= boss_death_ms
+            } else {
+                // 无死亡状态信号：LEAVE_SCENE 不作为击杀信号，
+                // 避免唐怀仁等 BOSS 中途转阶段离场被误判为击杀。
+                false
+            };
         let death_ok = boss_dwid != 0
             && boss_fight_true_seen
             && (bfight_false_is_kill
@@ -1608,6 +1795,7 @@ fn analyze_jcl(
             "[JCL诊断] 路径A jcl_boss='{}' file_boss_in_config={} → is_kill={}
             | boss_dwid={} boss_fight_true={} boss_fight_false={} boss_leave_scene={} boss_hp_zero={}
             | bfight_false_is_kill={} leave_scene_is_kill={} clone_leave_signal={} (count={}, span={}ms)
+            | boss_entered_dead={} boss_respawned={} boss_death_ms={} boss_leave_scene_ms={} fight_duration={}s
             | treasure_ok={} (treasure_box_bosses={:?})
             | death_ok={}",
             jcl_boss_name,
@@ -1623,6 +1811,11 @@ fn analyze_jcl(
             clone_leave_signal,
             same_name_leave_scene_count,
             if first_clone_leave_ms > 0 { last_clone_leave_ms - first_clone_leave_ms } else { 0 },
+            boss_entered_dead_state,
+            boss_respawned,
+            boss_death_ms,
+            boss_leave_scene_ms,
+            fight_duration_sec,
             treasure_ok,
             treasure_box_bosses,
             death_ok,
@@ -1645,13 +1838,63 @@ fn analyze_jcl(
             let file_boss_died = boss_dwid != 0
                 && boss_fight_true_seen
                 && (boss_fight_false_seen || boss_leave_scene_seen || boss_hp_zero_seen);
+            // 真实 BOSS 死亡信号：
+            // 1. state=192 且未重生（NPC_INFO 死亡状态，最可靠的击杀信号）
+            // 2. bFight=false（脱战）
+            // 3. HP=0（实体状态归零）
+            // 4. LEAVE_SCENE：仅当发生在 state=192 死亡之后才算击杀信号，
+            //    排除中途阶段转换/瞬移导致的离场（此时 BOSS 仍存活）。
+            //    无 state=192 时 LEAVE_SCENE 不作为击杀信号（不依赖时间阈值兜底，
+            //    击杀判定由 state=192 / bFight=false / HP=0 等本质信号承担）。
+            let real_boss_state_death = real_boss_entered_dead_state && !real_boss_respawned;
+            let real_boss_leave_scene_is_kill = if real_boss_death_ms > 0 {
+                // 有死亡状态信号：LEAVE_SCENE 必须发生在死亡之后
+                real_boss_leave_scene_ms > 0 && real_boss_leave_scene_ms >= real_boss_death_ms
+            } else {
+                // 无死亡状态信号：LEAVE_SCENE 不作为击杀信号
+                false
+            };
             let real_boss_died = real_boss_dwid != 0
                 && real_boss_fight_true_seen
                 && !real_boss_respawned
                 && (real_boss_fight_false_seen
-                    || real_boss_leave_scene_seen
+                    || real_boss_state_death
+                    || real_boss_leave_scene_is_kill
                     || real_boss_hp_zero_seen);
-            real_treasure_ok || (file_boss_died && real_boss_died)
+            let result = real_treasure_ok || (file_boss_died && real_boss_died);
+            // 路径 B 详细诊断日志
+            eprintln!(
+                "[JCL诊断] 路径B jcl_boss='{}' real_boss='{:?}' → is_kill={}
+                | file_boss_dwid={} file_boss_fight_true={} file_boss_fight_false={} file_boss_leave_scene={} file_boss_hp_zero={}
+                | real_boss_dwid={} real_boss_fight_true={} real_boss_fight_false={} real_boss_leave_scene_ms={} real_boss_hp_zero={}
+                | real_boss_entered_dead={} real_boss_respawned={} real_boss_death_ms={} real_boss_state_death={}
+                | real_boss_leave_scene_is_kill={} (death_ms={} vs leave_scene_ms={})
+                | file_boss_died={} real_boss_died={} real_treasure_ok={}",
+                jcl_boss_name,
+                real_boss_name,
+                result,
+                boss_dwid,
+                boss_fight_true_seen,
+                boss_fight_false_seen,
+                boss_leave_scene_seen,
+                boss_hp_zero_seen,
+                real_boss_dwid,
+                real_boss_fight_true_seen,
+                real_boss_fight_false_seen,
+                real_boss_leave_scene_ms,
+                real_boss_hp_zero_seen,
+                real_boss_entered_dead_state,
+                real_boss_respawned,
+                real_boss_death_ms,
+                real_boss_state_death,
+                real_boss_leave_scene_is_kill,
+                real_boss_death_ms,
+                real_boss_leave_scene_ms,
+                file_boss_died,
+                real_boss_died,
+                real_treasure_ok,
+            );
+            result
         }
     };
 
@@ -4286,6 +4529,84 @@ mod tests {
     }
 
     #[test]
+    fn test_match_raid_name_multi_candidates_no_prefix() {
+        // JCL 无人数和难度前缀（如 "阆风悬城"），应匹配最低人数+最低难度
+        let raids = vec![
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "25人普通阆风悬城".to_string(),
+                bosses: vec![],
+            },
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "10人普通阆风悬城".to_string(),
+                bosses: vec![],
+            },
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "25人英雄阆风悬城".to_string(),
+                bosses: vec![],
+            },
+        ];
+
+        let result = match_raid_name("阆风悬城", &raids);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().raid_id, "10人普通阆风悬城");
+    }
+
+    #[test]
+    fn test_match_raid_name_multi_candidates_with_player_count() {
+        // JCL 有人数无难度（如 "25人阆风悬城"），应匹配相同人数+最低难度
+        let raids = vec![
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "10人普通阆风悬城".to_string(),
+                bosses: vec![],
+            },
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "25人普通阆风悬城".to_string(),
+                bosses: vec![],
+            },
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "25人英雄阆风悬城".to_string(),
+                bosses: vec![],
+            },
+        ];
+
+        let result = match_raid_name("25人阆风悬城", &raids);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().raid_id, "25人普通阆风悬城");
+    }
+
+    #[test]
+    fn test_match_raid_name_multi_candidates_with_difficulty() {
+        // JCL 有难度无人数（如 "英雄阆风悬城"），应匹配最低人数+相同难度
+        let raids = vec![
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "10人普通阆风悬城".to_string(),
+                bosses: vec![],
+            },
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "25人普通阆风悬城".to_string(),
+                bosses: vec![],
+            },
+            RaidEntry {
+                name: "阆风悬城".to_string(),
+                raid_id: "25人英雄阆风悬城".to_string(),
+                bosses: vec![],
+            },
+        ];
+
+        let result = match_raid_name("英雄阆风悬城", &raids);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().raid_id, "25人英雄阆风悬城");
+    }
+
+    #[test]
     fn test_cluster_raid_instances_single() {
         let jcl_files = vec![
             JclFileInfo {
@@ -5976,6 +6297,138 @@ mod tests {
         println!("\n[load_raids_with_bosses] 共 {} 个 RaidEntry，其中无 BOSS 配置 {} 个:", entries.len(), no_boss_entries.len());
         for e in &no_boss_entries {
             println!("  - raid_id='{}' name='{}'", e.raid_id, e.name);
+        }
+    }
+
+    /// 验证须罗巨傀 JCL（路径 B：文件名 BOSS 不在配置中，真实 BOSS 为唐怀仁）的击杀判定。
+    ///
+    /// 场景：唐怀仁在 +97s 中途离场（阶段转换，state=0 存活），+394s 才真正死亡（state=192），
+    ///       +441s 击杀后离场。修复前用 +97s 中途离场误判为击杀信号，修复后要求
+    ///       LEAVE_SCENE 发生在 state=192 死亡之后，并以 state=192 作为直接死亡信号。
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_analyze_xuluojuwei_tanghuairen -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_analyze_xuluojuwei_tanghuairen() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        let jcl_path = PathBuf::from(
+            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\Interface\MY#DATA\432345564255147961@zhcn_hd\userdata\combat_logs\2026-07-29-21-52-04-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl",
+        );
+        assert!(jcl_path.exists(), "JCL 文件不存在: {}", jcl_path.display());
+
+        // 加载 raids 配置
+        let raids = load_raids_with_bosses(&conn).expect("加载副本配置失败");
+        let raid_entry = raids
+            .iter()
+            .find(|r| r.raid_id == "25人英雄阆风悬城")
+            .expect("应找到 25人英雄阆风悬城 配置");
+        let raid_bosses: Vec<(String, String)> = raid_entry.bosses.clone();
+        println!("raid_bosses={:?}", raid_bosses);
+
+        // 须罗巨傀 template_id=137175（从 JCL 文件名提取）
+        let boss_template_id: i64 = 137175;
+
+        // 删除 JCL 缓存（强制重新解析）
+        let path_str = jcl_path.to_string_lossy().to_string();
+        conn.execute(
+            "DELETE FROM jcl_cache WHERE file_path = ?1",
+            sql_params![&path_str],
+        )
+        .expect("删除缓存失败");
+
+        let analysis = analyze_jcl_cached(
+            &conn,
+            &jcl_path,
+            "须罗巨傀",
+            boss_template_id,
+            &raid_bosses,
+        )
+        .expect("分析 JCL 失败");
+
+        println!("\n=== 须罗巨傀 JCL 分析结果 ===");
+        println!("boss_name: {:?}", analysis.boss_name);
+        println!("fight_start_ms: {}", analysis.fight_start_ms);
+        println!("fight_end_ms: {}", analysis.fight_end_ms);
+        println!("is_kill: {}", analysis.is_kill);
+
+        // 须罗巨傀不在 raid_bosses 配置中，应通过路径 B 识别真实 BOSS 为唐怀仁
+        assert_eq!(
+            analysis.boss_name.as_deref(),
+            Some("唐怀仁"),
+            "应识别真实 BOSS 为唐怀仁"
+        );
+        // 唐怀仁在 +394s state=192 死亡且未重生，应判定为击杀
+        assert!(
+            analysis.is_kill,
+            "唐怀仁被击杀（state=192 且未重生），is_kill 应为 true"
+        );
+    }
+
+    /// 回归测试：糯闪 8/1 阆风悬城唐怀仁多 JCL 场景。
+    ///
+    /// 场景：4 个唐怀仁 JCL（唐怀仁/须罗巨傀 交替），前 3 个为拉脱，
+    /// 唐怀仁在战斗中途阶段转换 LEAVE_SCENE（state=0 存活），无 state=192 死亡信号。
+    /// 修复前：无 state=192 时 LEAVE_SCENE 被当作击杀信号，拉脱 JCL 误判为 is_kill=true。
+    /// 修复后：无 state=192 时 LEAVE_SCENE 不作为击杀信号（不依赖时间阈值），
+    ///        击杀判定由 state=192 / bFight=false / HP=0 等本质信号承担。
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_nuoshan_0801_tanghuairen_wipes -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_nuoshan_0801_tanghuairen_wipes() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        let base = r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\Interface\MY#DATA\342273571708094124@zhcn_hd\userdata\combat_logs";
+
+        // (文件名, 文件名BOSS, template_id, 期望is_kill)
+        let jcls: Vec<(&str, &str, i64, bool)> = vec![
+            // 22:45 唐怀仁 — 12s 拉脱（战斗过短）
+            ("2026-08-01-22-45-34-25人英雄阆风悬城(795)-唐怀仁(137163).jcl", "唐怀仁", 137163, false),
+            // 22:47 须罗巨傀（唐怀仁）— 371s 拉脱，+97s 中途离场
+            ("2026-08-01-22-47-44-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", "须罗巨傀", 137175, false),
+            // 22:56 唐怀仁 — 270s 拉脱，+95s 中途离场
+            ("2026-08-01-22-56-36-25人英雄阆风悬城(795)-唐怀仁(137163).jcl", "唐怀仁", 137163, false),
+            // 23:07 须罗巨傀（唐怀仁）— 481s 击杀，state=192 + 死亡后离场
+            ("2026-08-01-23-07-04-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", "须罗巨傀", 137175, true),
+        ];
+
+        let raids = load_raids_with_bosses(&conn).expect("加载副本配置失败");
+        let raid_entry = raids
+            .iter()
+            .find(|r| r.raid_id == "25人英雄阆风悬城")
+            .expect("应找到 25人英雄阆风悬城 配置");
+        let raid_bosses: Vec<(String, String)> = raid_entry.bosses.clone();
+
+        for (fname, file_boss, template_id, expected_kill) in &jcls {
+            let jcl_path = PathBuf::from(base).join(fname);
+            assert!(jcl_path.exists(), "JCL 文件不存在: {}", jcl_path.display());
+
+            let path_str = jcl_path.to_string_lossy().to_string();
+            conn.execute("DELETE FROM jcl_cache WHERE file_path = ?1", sql_params![&path_str])
+                .expect("删除缓存失败");
+
+            let analysis = analyze_jcl_cached(&conn, &jcl_path, file_boss, *template_id, &raid_bosses)
+                .expect("分析 JCL 失败");
+
+            let dur = if analysis.fight_end_ms > analysis.fight_start_ms {
+                (analysis.fight_end_ms - analysis.fight_start_ms) / 1000
+            } else {
+                0
+            };
+            println!(
+                "{}: fight={}s, is_kill={} (期望={})",
+                fname, dur, analysis.is_kill, expected_kill
+            );
+            assert_eq!(
+                analysis.is_kill, *expected_kill,
+                "JCL {} 的 is_kill 判定错误: 期望 {}, 实际 {}",
+                fname, expected_kill, analysis.is_kill
+            );
         }
     }
 
