@@ -170,12 +170,14 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   }, [searchedRecords, activeTab]);
 
   const stats = useMemo(() => {
+    const clientAccountIds = buildClientAccountIdSet(safeAccounts);
     const totalIncome = confirmedRecords.reduce((acc, r) => acc + r.goldIncome, 0);
-    const totalExpense = confirmedRecords.reduce((acc, r) => acc + (r.goldExpense || 0), 0);
+    // 总支出仅统计本人账号,代清账号的支出由老板承担,不计入本人支出
+    const totalExpense = confirmedRecords
+      .filter(r => !clientAccountIds.has(r.accountId))
+      .reduce((acc, r) => acc + (r.goldExpense || 0), 0);
     const netIncome = totalIncome - totalExpense;
     const xuanjingCount = confirmedRecords.filter(r => r.hasXuanjing).length;
-
-    const clientAccountIds = buildClientAccountIdSet(safeAccounts);
     const clientIncome = confirmedRecords
       .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + r.goldIncome, 0);
