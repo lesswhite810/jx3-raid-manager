@@ -46,6 +46,14 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
   const [showPathError, setShowPathError] = useState(false);
   const [clearingJclCache, setClearingJclCache] = useState(false);
   const [showClearJclCacheConfirm, setShowClearJclCacheConfirm] = useState(false);
+  // 切换数据目录时目标已存在数据库文件的冲突提示
+  // pendingDirConflict.path = 用户选择的目标目录
+  // pendingDirConflict.action = 'set' | 'reset'，决定确认后调用哪个 API
+  const [pendingDirConflict, setPendingDirConflict] = useState<{
+    path: string;
+    action: 'set' | 'reset';
+  } | null>(null);
+  const [switchingDir, setSwitchingDir] = useState(false);
   // Debug 模式：从全局 DebugContext 获取，仅本次会话有效不持久化
   const { debugEnabled, setDebugEnabled } = useDebug();
   const versionClickCountRef = useRef(0);
@@ -173,10 +181,13 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
       });
       if (typeof selected === 'string') {
         const customPath = selected;
-        await db.setCustomDataDir(customPath);
-        toast.success(`已将数据目录修改为: ${customPath}`);
-        toast.info('修改将在重启应用后生效，重启时会自动迁移数据库和日志文件');
-        await loadDataDirInfo();
+        // 先检查目标目录是否已存在数据库文件
+        const hasDb = await db.checkTargetDirHasDb(customPath);
+        if (hasDb) {
+          setPendingDirConflict({ path: customPath, action: 'set' });
+          return;
+        }
+        await applySwitchDir(customPath, 'set', false);
       }
     } catch (error) {
       console.error('Failed to set custom data dir:', error);
@@ -186,13 +197,47 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
 
   const handleResetCustomDataDir = async () => {
     try {
-      const targetPath = await db.resetCustomDataDir();
-      toast.success(`已恢复默认数据目录: ${targetPath}`);
-      toast.info('修改将在重启应用后生效，重启时会自动迁移数据库和日志文件');
-      await loadDataDirInfo();
+      // 先获取默认目录路径（不写入配置），检查是否已有 db 文件
+      const defaultPath = await db.getDefaultDataDir();
+      const hasDb = await db.checkTargetDirHasDb(defaultPath);
+      if (hasDb) {
+        setPendingDirConflict({ path: defaultPath, action: 'reset' });
+        return;
+      }
+      await applySwitchDir(defaultPath, 'reset', false);
     } catch (error) {
       console.error('Failed to reset custom data dir:', error);
       toast.error('恢复默认目录失败: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+
+  // 应用目录切换：根据 action 调用对应 API，forceOverwrite 控制是否覆盖目标已有数据库
+  const applySwitchDir = async (
+    path: string,
+    action: 'set' | 'reset',
+    forceOverwrite: boolean
+  ) => {
+    setSwitchingDir(true);
+    try {
+      if (action === 'set') {
+        await db.setCustomDataDir(path, forceOverwrite);
+        toast.success(`已将数据目录修改为: ${path}`);
+      } else {
+        await db.resetCustomDataDir(forceOverwrite);
+        toast.success(`已恢复默认数据目录: ${path}`);
+      }
+      const overwriteMsg = forceOverwrite ? '，重启时会覆盖目标目录已有的数据库文件' : '';
+      toast.info(`修改将在重启应用后生效，重启时会自动迁移数据库和日志文件${overwriteMsg}`);
+      await loadDataDirInfo();
+    } catch (error) {
+      console.error('Failed to apply switch dir:', error);
+      toast.error(
+        action === 'set' ? '设置自定义目录失败: ' : '恢复默认目录失败: ' +
+        (error instanceof Error ? error.message : String(error))
+      );
+    } finally {
+      setSwitchingDir(false);
+      setPendingDirConflict(null);
     }
   };
 
@@ -668,6 +713,62 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                   className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
                 >
                   {clearingJclCache ? '清理中...' : '确认清理'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 目标目录已有数据库文件冲突确认弹窗 */}
+      {pendingDirConflict && (
+        <>
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]"
+            onClick={() => !switchingDir && setPendingDirConflict(null)}
+          />
+          <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
+            <div className="bg-surface rounded-xl border border-base shadow-lg p-6 max-w-md w-full pointer-events-auto">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-9 h-9 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-bold text-main mb-1">目标目录已有数据库文件</h3>
+                  <p className="text-sm text-muted">
+                    <span className="font-mono text-xs break-all">{pendingDirConflict.path}</span>
+                  </p>
+                </div>
+              </div>
+              <div className="text-sm text-muted mb-5 space-y-2">
+                <p>
+                  该目录中已存在 <span className="font-mono text-main">jx3-raid-manager.db</span> 文件。请选择处理方式：
+                </p>
+                <div className="bg-base/30 rounded-lg p-3 space-y-1.5">
+                  <p className="text-xs text-main">
+                    <span className="font-semibold text-amber-700">覆盖目标文件：</span>
+                    用当前数据替换目标目录中的旧数据库，目标原有数据将丢失。
+                  </p>
+                  <p className="text-xs text-main">
+                    <span className="font-semibold text-muted">取消：</span>
+                    不切换目录，当前数据不受影响。
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setPendingDirConflict(null)}
+                  disabled={switchingDir}
+                  className="btn btn-secondary text-sm"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => applySwitchDir(pendingDirConflict.path, pendingDirConflict.action, true)}
+                  disabled={switchingDir}
+                  className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {switchingDir ? '处理中...' : '覆盖目标文件'}
                 </button>
               </div>
             </div>

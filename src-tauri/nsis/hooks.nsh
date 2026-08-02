@@ -22,8 +22,9 @@ FunctionEnd
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $DeleteAppDataCheckboxState = 1
   ${AndIf} $UpdateMode <> 1
-    ReadINIStr $0 "$LOCALAPPDATA\jx3-raid-manager\data-dir.ini" "data" "effectiveDataDir"
-    ReadINIStr $1 "$LOCALAPPDATA\jx3-raid-manager\data-dir.ini" "data" "resolvedTargetDir"
+    ; 读取安装版专属的 bootstrap 状态文件（data-dir-installer.ini）
+    ReadINIStr $0 "$LOCALAPPDATA\jx3-raid-manager\data-dir-installer.ini" "data" "effectiveDataDir"
+    ReadINIStr $1 "$LOCALAPPDATA\jx3-raid-manager\data-dir-installer.ini" "data" "resolvedTargetDir"
 
     Push "$INSTDIR"
     Call un.DeleteManagedDataFilesInDir
@@ -46,6 +47,9 @@ FunctionEnd
       Call un.DeleteManagedDataFilesInDir
     ${EndIf}
 
+    ; 清理安装版专属配置和旧版共享遗留配置（不影响便携版的 data-dir-portable.*）
+    Delete "$LOCALAPPDATA\jx3-raid-manager\data-dir-installer.ini"
+    Delete "$LOCALAPPDATA\jx3-raid-manager\data-dir-installer.json"
     Delete "$LOCALAPPDATA\jx3-raid-manager\data-dir.ini"
     Delete "$LOCALAPPDATA\jx3-raid-manager\data-dir.json"
     RMDir "$LOCALAPPDATA\jx3-raid-manager"

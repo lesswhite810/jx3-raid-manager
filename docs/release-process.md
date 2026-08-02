@@ -45,6 +45,8 @@ GitHub Actions 已经会在发布前自动校验这 4 个版本。
 - Release 页面中，`latest.json` 标签应显示为“自动更新元数据”，`.sig` 标签应显示为“自动更新签名文件”
 - Windows 安装器定制统一维护在 `src-tauri/nsis/hooks.nsh` 与 `src-tauri/nsis/SimpChinese.nsh`，不要再单独维护整份 `installer.nsi` 模板
 - 安装目录选择页追加应用名称依赖 Tauri 默认 NSIS 模板行为，如需调整，先验证生成的 `target/release/nsis/x64/installer.nsi`
+- bootstrap 配置文件按 runtime mode 隔离：安装版使用 `data-dir-installer.json` / `data-dir-installer.ini`，便携版使用 `data-dir-portable.json` / `data-dir-portable.ini`，旧版共享的 `data-dir.json` / `data-dir.ini` 仅用于一次性历史迁移，不再读写
+- NSIS 卸载钩子（`hooks.nsh`）读取安装版专属的 `data-dir-installer.ini`，并清理安装版配置和旧版共享遗留配置，不影响便携版的 `data-dir-portable.*`
 - 如果使用 `workflow_dispatch` 重发已存在版本，workflow 会复用现有 tag，不再删除重建
 - 如果目标 Release 已经存在，workflow 会强制刷新正文、解除 draft / prerelease 状态，并重新上传资产
 - `workflow_dispatch` 手动重发时，构建内容以当前分支/当前提交为准，不再强依赖旧 tag checkout，避免修好的发布说明和流程脚本被旧 tag 覆盖

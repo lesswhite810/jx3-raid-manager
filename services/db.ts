@@ -674,10 +674,11 @@ class DatabaseService {
   }
 
   /// 设置自定义数据目录
-  async setCustomDataDir(path: string): Promise<string> {
+  /// forceOverwrite=true 时，重启迁移会覆盖目标目录已存在的数据库文件
+  async setCustomDataDir(path: string, forceOverwrite: boolean = false): Promise<string> {
     await this.init();
     try {
-      return await invoke<string>('db_set_custom_data_dir', { path });
+      return await invoke<string>('db_set_custom_data_dir', { path, forceOverwrite });
     } catch (error) {
       console.error('Failed to set custom data dir:', error);
       throw error;
@@ -685,12 +686,35 @@ class DatabaseService {
   }
 
   /// 恢复默认数据目录
-  async resetCustomDataDir(): Promise<string> {
+  /// forceOverwrite=true 时，重启迁移会覆盖目标目录已存在的数据库文件
+  async resetCustomDataDir(forceOverwrite: boolean = false): Promise<string> {
     await this.init();
     try {
-      return await invoke<string>('db_reset_custom_data_dir');
+      return await invoke<string>('db_reset_custom_data_dir', { forceOverwrite });
     } catch (error) {
       console.error('Failed to reset custom data dir:', error);
+      throw error;
+    }
+  }
+
+  /// 检查目标目录是否已存在数据库文件（用于切换目录前的冲突提示）
+  async checkTargetDirHasDb(path: string): Promise<boolean> {
+    await this.init();
+    try {
+      return await invoke<boolean>('db_check_target_dir_has_db', { path });
+    } catch (error) {
+      console.error('Failed to check target dir has db:', error);
+      throw error;
+    }
+  }
+
+  /// 获取默认数据目录路径（不写入配置，用于切换目录前的冲突检查）
+  async getDefaultDataDir(): Promise<string> {
+    await this.init();
+    try {
+      return await invoke<string>('db_get_default_data_dir');
+    } catch (error) {
+      console.error('Failed to get default data dir:', error);
       throw error;
     }
   }

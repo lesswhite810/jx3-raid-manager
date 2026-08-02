@@ -290,6 +290,8 @@ fn main() {
             db::db_save_raid_role_visibility,
             // 数据目录管理
             db::db_get_data_dir_info,
+            db::db_get_default_data_dir,
+            db::db_check_target_dir_has_db,
             db::db_set_custom_data_dir,
             db::db_reset_custom_data_dir,
             updater::updater_get_runtime_info,

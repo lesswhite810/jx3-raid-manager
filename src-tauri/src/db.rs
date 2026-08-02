@@ -17,8 +17,9 @@ mod upgrade_tests;
 
 const DATABASE_NAME: &str = "jx3-raid-manager.db";
 const LOG_FILE_NAME: &str = "jx3-raid-manager.log";
-const DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
-const DATA_DIR_INSTALLER_STATE_FILE: &str = "data-dir.ini";
+// 旧版 bootstrap 文件名（安装版与便携版共享同一份配置，切换版本时会互相串数据）
+// 升级后按 runtime mode 隔离配置，此常量仅用于一次性历史迁移
+const LEGACY_DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 
 /// 当前数据库 schema 版本
 pub const CURRENT_SCHEMA_VERSION: i32 = 17;
@@ -36,6 +37,10 @@ pub fn get_local_timestamp() -> String {
 struct DataDirBootstrapConfig {
     custom_data_dir: Option<String>,
     pending_migration_from: Option<String>,
+    /// 用户已确认覆盖目标目录中已存在的数据库文件
+    /// 设置后，下次迁移时遇到目标文件冲突会强制覆盖，迁移完成后清除
+    #[serde(default)]
+    force_overwrite_target: bool,
 }
 
 /// 检测是否为安装版（通过检查同目录下是否有 uninstall.exe）
@@ -44,6 +49,16 @@ fn is_install_mode() -> bool {
         runtime_mode::detect_current_runtime_mode(),
         Ok(RuntimeMode::Installer)
     )
+}
+
+/// 返回当前 runtime mode 的文件名后缀，用于 bootstrap 配置按 mode 隔离
+/// 安装版与便携版各自维护独立的 bootstrap 文件，避免切换版本时互相串数据
+fn runtime_mode_suffix() -> &'static str {
+    if is_install_mode() {
+        "installer"
+    } else {
+        "portable"
+    }
 }
 
 /// 获取安装目录（仅在安装版中有效）
@@ -67,6 +82,52 @@ fn get_home_app_dir() -> Result<PathBuf, String> {
     Ok(home_dir.join(".jx3-raid-manager"))
 }
 
+/// 一次性从旧版共享 bootstrap 文件迁移到 mode-specific 文件
+///
+/// 旧版安装版与便携版共享同一份 data-dir.json，切换版本时会互相串数据。
+/// 升级后按 runtime mode 隔离配置：首次启动时把旧文件复制到 mode-specific 文件。
+/// 只保留 custom_data_dir（用户显式设置的自定义目录，与 mode 无关），
+/// 清空 pending_migration_from（旧 mode 的迁移源不应跨 mode 触发数据迁移）。
+/// 不复制 .ini 状态文件（effectiveDataDir 是 mode-specific 的，跨 mode 复制会串数据）。
+fn migrate_legacy_bootstrap_if_needed(mode_specific_path: &Path) -> Result<(), String> {
+    if mode_specific_path.exists() {
+        return Ok(());
+    }
+    let legacy_path = mode_specific_path
+        .parent()
+        .ok_or_else(|| "无法获取 bootstrap 目录".to_string())?
+        .join(LEGACY_DATA_DIR_BOOTSTRAP_FILE);
+    if !legacy_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&legacy_path)
+        .map_err(|e| format!("读取旧版 bootstrap 配置失败: {} ({})", legacy_path.display(), e))?;
+    let mut legacy_config: DataDirBootstrapConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("解析旧版 bootstrap 配置失败: {} ({})", legacy_path.display(), e))?;
+
+    // 只保留 custom_data_dir（用户显式设置，与 mode 无关）
+    // 清空 pending_migration_from（旧 mode 的迁移源不应跨 mode 触发迁移）
+    legacy_config.pending_migration_from = None;
+
+    let mode_specific_content = serde_json::to_string_pretty(&legacy_config)
+        .map_err(|e| format!("序列化 mode-specific 配置失败: {}", e))?;
+    fs::write(mode_specific_path, mode_specific_content).map_err(|e| {
+        format!(
+            "写入 mode-specific 配置失败: {} ({})",
+            mode_specific_path.display(),
+            e
+        )
+    })?;
+
+    log::info!(
+        "[Bootstrap] 已从旧版共享配置迁移到 mode-specific: {:?} -> {:?}（已清空 pending_migration_from 避免跨 mode 串数据）",
+        legacy_path,
+        mode_specific_path
+    );
+    Ok(())
+}
+
 fn get_data_dir_bootstrap_path() -> Result<PathBuf, String> {
     let base_dir = dirs::data_local_dir()
         .or_else(dirs::config_local_dir)
@@ -74,7 +135,11 @@ fn get_data_dir_bootstrap_path() -> Result<PathBuf, String> {
 
     let bootstrap_dir = base_dir.join("jx3-raid-manager");
     ensure_directory_exists(&bootstrap_dir)?;
-    Ok(bootstrap_dir.join(DATA_DIR_BOOTSTRAP_FILE))
+
+    let mode_specific_name = format!("data-dir-{}.json", runtime_mode_suffix());
+    let mode_specific_path = bootstrap_dir.join(&mode_specific_name);
+    migrate_legacy_bootstrap_if_needed(&mode_specific_path)?;
+    Ok(mode_specific_path)
 }
 
 fn get_data_dir_installer_state_path() -> Result<PathBuf, String> {
@@ -82,7 +147,8 @@ fn get_data_dir_installer_state_path() -> Result<PathBuf, String> {
     let bootstrap_dir = bootstrap_path
         .parent()
         .ok_or_else(|| "无法获取数据目录状态文件所在目录".to_string())?;
-    Ok(bootstrap_dir.join(DATA_DIR_INSTALLER_STATE_FILE))
+    let mode_specific_name = format!("data-dir-{}.ini", runtime_mode_suffix());
+    Ok(bootstrap_dir.join(&mode_specific_name))
 }
 
 fn read_data_dir_bootstrap_config() -> Result<DataDirBootstrapConfig, String> {
@@ -255,7 +321,11 @@ fn move_file_with_fallback(source: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
-fn migrate_managed_app_data_files(source: &Path, target: &Path) -> Result<bool, String> {
+fn migrate_managed_app_data_files(
+    source: &Path,
+    target: &Path,
+    force_overwrite: bool,
+) -> Result<bool, String> {
     if !source.exists() {
         return Ok(false);
     }
@@ -275,7 +345,19 @@ fn migrate_managed_app_data_files(source: &Path, target: &Path) -> Result<bool, 
         let target_path = target.join(file_name);
 
         if target_path.exists() {
-            if target_file_is_authoritative(&source_path, &target_path)? {
+            if force_overwrite {
+                // 用户已确认覆盖：直接用源文件替换目标文件
+                fs::remove_file(&target_path).map_err(|e| {
+                    format!("覆盖目标文件失败 {}: {}", target_path.display(), e)
+                })?;
+                move_file_with_fallback(&source_path, &target_path)?;
+                changed = true;
+                log::warn!(
+                    "已按用户确认强制覆盖目标数据文件: {:?} -> {:?}",
+                    source_path,
+                    target_path
+                );
+            } else if target_file_is_authoritative(&source_path, &target_path)? {
                 fs::remove_file(&source_path)
                     .map_err(|e| format!("删除源文件失败 {}: {}", source_path.display(), e))?;
                 changed = true;
@@ -408,10 +490,11 @@ fn maybe_migrate_app_data(
         }
     }
 
-    let home_dir = get_home_app_dir()?;
-    if home_dir != target_dir {
-        migration_sources.push(home_dir);
-    }
+    // 不再把 get_home_app_dir() 作为迁移源：
+    // 便携版默认目录是 ~/.jx3-raid-manager，若保留此迁移源，安装版启动时会把便携版
+    // 的数据迁移到安装目录，导致跨 mode 串数据。bootstrap 配置已按 mode 隔离，
+    // 同一 mode 内的目录变更通过 pending_migration_from 和 mode-specific .ini
+    // 的 effectiveDataDir 记录，足以覆盖自定义目录切换场景。
 
     if let Some(previous_dir) = read_previous_effective_data_dir()? {
         if previous_dir != *target_dir && !migration_sources.contains(&previous_dir) {
@@ -421,6 +504,7 @@ fn maybe_migrate_app_data(
     }
 
     let mut migrated = false;
+    let force_overwrite = config.force_overwrite_target;
     for source_dir in migration_sources {
         if !source_dir.exists() {
             continue;
@@ -430,7 +514,7 @@ fn maybe_migrate_app_data(
             continue;
         }
 
-        if migrate_managed_app_data_files(&source_dir, target_dir)? {
+        if migrate_managed_app_data_files(&source_dir, target_dir, force_overwrite)? {
             migrated = true;
             log::info!("已迁移数据目录内容: {:?} -> {:?}", source_dir, target_dir);
         }
@@ -447,16 +531,59 @@ fn maybe_migrate_app_data(
     } else if migrated && config.pending_migration_from.is_some() {
         log::warn!("数据迁移后源目录仍保留文件，保留待迁移状态以便后续继续处理");
     }
+
+    // 强制覆盖是一次性标记，迁移完成后立即清除，避免后续误覆盖
+    if migrated && config.force_overwrite_target {
+        config.force_overwrite_target = false;
+        log::info!("[Bootstrap] 已清除 force_overwrite_target 标记");
+    }
     Ok(())
 }
 
 pub fn get_app_dir() -> Result<PathBuf, String> {
+    let config = read_data_dir_bootstrap_config()?;
+    let (target_dir, location, _) = resolve_target_app_dir(&config)?;
+    ensure_directory_exists(&target_dir)?;
+    // 注意：此处不再调用 maybe_migrate_app_data。
+    // 迁移逻辑已移至 init_db 启动阶段显式执行，避免应用运行期间任何 get_app_dir/get_db_path
+    // 调用意外触发迁移，导致用户通过 db_set_custom_data_dir 设置的 force_overwrite 标记
+    // 和 pending_migration_from 在写入后被立即消费清除。
+    write_data_dir_installer_state(&config, &target_dir, &location)?;
+    Ok(target_dir)
+}
+
+/// 在应用启动阶段显式执行数据目录迁移。
+///
+/// 仅在 init_db 中调用一次，确保迁移不会在应用运行期间被其他 get_app_dir 调用触发。
+fn ensure_app_data_migrated() -> Result<(), String> {
     let mut config = read_data_dir_bootstrap_config()?;
     let (target_dir, location, _) = resolve_target_app_dir(&config)?;
     ensure_directory_exists(&target_dir)?;
     maybe_migrate_app_data(&target_dir, &mut config)?;
     write_data_dir_bootstrap_config(&config)?;
     write_data_dir_installer_state(&config, &target_dir, &location)?;
+    Ok(())
+}
+
+/// 获取当前正在使用的应用数据目录，但不触发迁移。
+///
+/// 与 `get_app_dir` 的区别：仅读取配置确定当前有效目录，不会执行迁移逻辑。
+/// 用于 `db_set_custom_data_dir` / `db_reset_custom_data_dir` 等场景，
+/// 避免在写入新配置前意外触发旧配置的迁移，导致 `force_overwrite` 标记被忽略。
+///
+/// 逻辑：
+/// - 若 `pending_migration_from` 不为空，说明上一次切换目录的迁移尚未完成，
+///   当前数据仍在迁移源目录，返回该源目录。
+/// - 否则返回 `resolve_target_app_dir` 的目标目录。
+fn get_current_app_dir_no_migrate() -> Result<PathBuf, String> {
+    let config = read_data_dir_bootstrap_config()?;
+    if let Some(source) = config.pending_migration_from.as_ref() {
+        let source_path = PathBuf::from(source.trim());
+        if !source_path.as_os_str().is_empty() && source_path.exists() {
+            return Ok(source_path);
+        }
+    }
+    let (target_dir, _, _) = resolve_target_app_dir(&config)?;
     Ok(target_dir)
 }
 
@@ -645,6 +772,11 @@ pub fn init_db() -> Result<Connection, String> {
         log::warn!("[INIT] 数据库文件缺失或为空，重新初始化");
         *initialized = false;
     }
+
+    // 完整初始化路径：先执行数据目录迁移，再获取 db_path。
+    // 迁移只在启动阶段执行一次，避免运行期间 get_app_dir 调用意外触发迁移
+    // 导致 db_set_custom_data_dir 写入的 force_overwrite 标记被提前消费清除。
+    ensure_app_data_migrated()?;
 
     let path = get_db_path()?;
 
@@ -2704,7 +2836,7 @@ fn upsert_account_from_join_row(
             .unwrap_or_else(|| default_vis_map.clone());
         let role_json = serde_json::json!({
             "id": role.role_id,
-            "account_id": role.account_id,
+            "accountId": role.account_id,
             "name": role.name,
             "server": role.server,
             "region": role.region,
@@ -4295,21 +4427,52 @@ pub fn db_get_data_dir_info() -> Result<DataDirInfo, String> {
     })
 }
 
+/// 获取默认数据目录路径（不写入配置，用于切换目录前的冲突检查）
+/// 安装版返回 exe 同目录，非安装版返回 ~/.jx3-raid-manager
+#[tauri::command]
+pub fn db_get_default_data_dir() -> Result<String, String> {
+    let install_mode = is_install_mode();
+    let default_dir = if install_mode {
+        get_install_dir().ok_or_else(|| "无法获取安装目录".to_string())?
+    } else {
+        get_home_app_dir()?
+    };
+    Ok(default_dir.to_string_lossy().to_string())
+}
+
 fn write_custom_data_dir_config(
     path: Option<&Path>,
     migration_source: Option<&Path>,
+    force_overwrite: bool,
 ) -> Result<(), String> {
     let mut config = read_data_dir_bootstrap_config()?;
     config.custom_data_dir = path.map(|item| item.to_string_lossy().to_string());
     config.pending_migration_from = migration_source
         .filter(|item| !item.as_os_str().is_empty())
         .map(|item| item.to_string_lossy().to_string());
+    config.force_overwrite_target = force_overwrite;
     write_data_dir_bootstrap_config(&config)
+}
+
+/// 检查目标目录是否已存在数据库文件（用于切换目录前的冲突提示）
+#[tauri::command]
+pub fn db_check_target_dir_has_db(path: String) -> Result<bool, String> {
+    let dir_path = PathBuf::from(&path);
+    if dir_path.as_os_str().is_empty() {
+        return Ok(false);
+    }
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return Ok(false);
+    }
+    Ok(has_persisted_app_data(&dir_path))
 }
 
 /// 设置自定义数据目录（持久化保存，重启后生效）
 #[tauri::command]
-pub fn db_set_custom_data_dir(path: String) -> Result<String, String> {
+pub fn db_set_custom_data_dir(
+    path: String,
+    force_overwrite: Option<bool>,
+) -> Result<String, String> {
     let dir_path = PathBuf::from(&path);
 
     if dir_path.as_os_str().is_empty() {
@@ -4317,7 +4480,9 @@ pub fn db_set_custom_data_dir(path: String) -> Result<String, String> {
     }
 
     ensure_directory_exists(&dir_path)?;
-    let current_dir = get_app_dir()?;
+    // 使用不触发迁移的方式获取当前目录，避免在写入新配置前意外触发旧配置的迁移，
+    // 导致 force_overwrite 标记被忽略（get_app_dir 内部会调用 maybe_migrate_app_data）。
+    let current_dir = get_current_app_dir_no_migrate()?;
 
     let migration_source = if directories_match(&current_dir, &dir_path)? {
         None
@@ -4325,15 +4490,25 @@ pub fn db_set_custom_data_dir(path: String) -> Result<String, String> {
         Some(current_dir.as_path())
     };
 
-    write_custom_data_dir_config(Some(dir_path.as_path()), migration_source)?;
-    log::info!("自定义数据目录已保存，将在重启后启用: {:?}", dir_path);
+    write_custom_data_dir_config(
+        Some(dir_path.as_path()),
+        migration_source,
+        force_overwrite.unwrap_or(false),
+    )?;
+    log::info!(
+        "自定义数据目录已保存，将在重启后启用: {:?}（force_overwrite={}）",
+        dir_path,
+        force_overwrite.unwrap_or(false)
+    );
     Ok(dir_path.to_string_lossy().to_string())
 }
 
 /// 恢复默认数据目录（安装版为安装目录，非安装版为用户目录）
 #[tauri::command]
-pub fn db_reset_custom_data_dir() -> Result<String, String> {
-    let current_dir = get_app_dir()?;
+pub fn db_reset_custom_data_dir(force_overwrite: Option<bool>) -> Result<String, String> {
+    // 使用不触发迁移的方式获取当前目录，避免在写入新配置前意外触发旧配置的迁移，
+    // 导致 force_overwrite 标记被忽略（get_app_dir 内部会调用 maybe_migrate_app_data）。
+    let current_dir = get_current_app_dir_no_migrate()?;
     let install_mode = is_install_mode();
     let default_dir = if install_mode {
         get_install_dir().ok_or_else(|| "无法获取安装目录".to_string())?
@@ -4348,8 +4523,12 @@ pub fn db_reset_custom_data_dir() -> Result<String, String> {
     };
 
     ensure_directory_exists(&default_dir)?;
-    write_custom_data_dir_config(None, migration_source)?;
-    log::info!("已恢复默认数据目录，将在重启后启用: {:?}", default_dir);
+    write_custom_data_dir_config(None, migration_source, force_overwrite.unwrap_or(false))?;
+    log::info!(
+        "已恢复默认数据目录，将在重启后启用: {:?}（force_overwrite={}）",
+        default_dir,
+        force_overwrite.unwrap_or(false)
+    );
     Ok(default_dir.to_string_lossy().to_string())
 }
 
@@ -4482,6 +4661,7 @@ mod tests {
         let mut config = DataDirBootstrapConfig {
             custom_data_dir: Some(target_dir.to_string_lossy().to_string()),
             pending_migration_from: Some(source_dir.to_string_lossy().to_string()),
+            force_overwrite_target: false,
         };
 
         maybe_migrate_app_data(&target_dir, &mut config).expect("migration should succeed");
@@ -4523,7 +4703,7 @@ mod tests {
         fs::write(unrelated_dir.join("note.txt"), "keep")
             .expect("unrelated file should be written");
 
-        let changed = migrate_managed_app_data_files(&source_dir, &target_dir)
+        let changed = migrate_managed_app_data_files(&source_dir, &target_dir, false)
             .expect("migration should succeed for nested target");
 
         assert!(changed, "managed files should be moved");
@@ -4562,7 +4742,7 @@ mod tests {
         fs::create_dir_all(&source_dir).expect("source dir should exist");
         fs::write(source_dir.join(DATABASE_NAME), "db-content").expect("db file should be written");
 
-        let changed = migrate_managed_app_data_files(&source_dir, &target_dir)
+        let changed = migrate_managed_app_data_files(&source_dir, &target_dir, false)
             .expect("same directory alias should not error");
 
         assert!(!changed, "same directory should not trigger migration");
