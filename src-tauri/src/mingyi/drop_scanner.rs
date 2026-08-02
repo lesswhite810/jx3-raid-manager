@@ -1337,33 +1337,33 @@ fn analyze_jcl(
     let mut real_boss_name: Option<String> = None;
     let mut real_boss_fight_true_seen = false;
     let mut real_boss_fight_false_seen = false;
-    // 路径 B 使用：真实 BOSS（如唐怀仁）击杀时可能无 bFight=false，需 leave_scene 兜底。
-    // 记录最后一次 LEAVE_SCENE 时间戳，用于区分"中途离场"与"击杀后离场"：
-    // BOSS 可能在战斗中途阶段转换/瞬移时触发 LEAVE_SCENE（此时 state=0 存活），
-    // 仅当 LEAVE_SCENE 发生在 BOSS 死亡（state=192）之后才作为击杀信号。
-    let mut real_boss_leave_scene_ms: i64 = 0;
+    // 真实 BOSS HP=0 信号（NPC_FIGHT_HINT fCurrentLife=0）
     let mut real_boss_hp_zero_seen = false;
+    // 真实 BOSS 死亡事件（SYS_MSG_UI_OME_DEATH_NOTIFY type=28）
+    // 茗伊源码: D.InsertLog(LOG_TYPE.SYS_MSG_UI_OME_DEATH_NOTIFY, { dwCharacterID, dwKiller })
+    // 这是 JCL 中唯一的真正死亡事件，fields[0]=死亡目标ID
+    let mut real_boss_death_notify_seen = false;
+    // 真实 BOSS 的 nFaceDirection 状态追踪（辅助区分击杀/团灭）
+    // 茗伊源码确认 NPC_INFO fields[7] 是 nFaceDirection（朝向方向），不是存活/死亡状态。
+    // 但实测发现：击杀时 face_dir 呈现 192 后不再回 0 的模式，
+    //            团灭时 face_dir 呈现 192→0 的模式（BOSS 重置）。
+    // 在缺乏 DEATH_NOTIFY/HP=0 等可靠死亡信号时，作为辅助判定保留。
+    let mut real_boss_face_dir_dead = false;
+    let mut real_boss_face_dir_respawned = false;
 
-    // 路径 B 使用：追踪真实 BOSS 死亡/重生状态
-    // NPC_INFO 最后一个字段为状态码（0=存活, 192=死亡）。
-    // 团灭时 BOSS 会重生（state 从 192 回到 0），击杀时 BOSS 保持死亡或直接离场。
-    // 实测：7月7日团灭JCL中唐怀仁 state 192→0（重生），7月3日/7月7日击杀均无重生。
-    let mut real_boss_entered_dead_state = false;
-    let mut real_boss_respawned = false;
-    // 真实 BOSS 首次进入死亡状态（state=192）的时间戳。
-    // 用于校验 LEAVE_SCENE 是否发生在死亡之后，排除中途离场误判。
-    let mut real_boss_death_ms: i64 = 0;
-
-    // 路径 A 使用：追踪主 BOSS 死亡/重生状态（与路径 B 同理，用于校验 leave_scene_is_kill）
-    // 唐怀仁等 BOSS 的 JCL 走路径 A（文件名 BOSS 在配置中），但击杀时有 state=192 信号；
-    // 拉脱/转阶段时 BOSS 会在战斗中途 LEAVE_SCENE（state=0 存活），需用 state=192 区分。
-    let mut boss_entered_dead_state = false;
-    let mut boss_respawned = false;
-    // 主 BOSS LEAVE_SCENE 时间戳（用于校验离场发生在死亡之后还是中途转阶段）
+    // 路径 A 使用：主 BOSS 死亡事件信号
+    // SYS_MSG_UI_OME_DEATH_NOTIFY (type=28): JCL 中唯一的真正死亡事件
+    let mut boss_death_notify_seen = false;
+    // 主 BOSS 的 nFaceDirection 状态追踪（辅助区分击杀/团灭，同上）
+    let mut boss_face_dir_dead = false;
+    let mut boss_face_dir_respawned = false;
+    // 主 BOSS LEAVE_SCENE 时间戳（用于校验离场发生在 face_dir=192 之后）
     let mut boss_leave_scene_ms: i64 = 0;
-    // 主 BOSS 首次进入死亡状态（state=192）的时间戳。
-    // 用于校验 LEAVE_SCENE 是否发生在死亡之后，排除中途离场误判（与路径 B 同理）。
-    let mut boss_death_ms: i64 = 0;
+    // 主 BOSS 首次 face_dir=192 的时间戳
+    let mut boss_face_dir_dead_ms: i64 = 0;
+    // 真实 BOSS LEAVE_SCENE 时间戳和首次 face_dir=192 时间戳
+    let mut real_boss_leave_scene_ms: i64 = 0;
+    let mut real_boss_face_dir_dead_ms: i64 = 0;
 
     // 同名 NPC 追踪（BOSS 分身/幻影）
     // 某些 BOSS（如"笑妆娘"、"柳公子"）有多个 templateId 的同名 NPC（分身/幻影），
@@ -1408,8 +1408,8 @@ fn analyze_jcl(
             continue;
         }
 
-        // 解析事件类型，处理相关类型：
-        // 1=FIGHT_TIME, 5=实体状态（含HP=0），7=NPC_LEAVE_SCENE, 8=NPC_INFO, 9=NPC_FIGHT_HINT
+        // 解析事件类型，处理相关类型（基于茗伊 MY_CombatLogs.lua 源码）：
+        // 1=FIGHT_TIME, 7=NPC_LEAVE_SCENE, 8=NPC_INFO, 9=NPC_FIGHT_HINT, 28=SYS_MSG_UI_OME_DEATH_NOTIFY
         let event_type: u8 = match std::str::from_utf8(parts[4])
             .ok()
             .and_then(|s| s.parse().ok())
@@ -1418,10 +1418,10 @@ fn analyze_jcl(
             None => continue,
         };
         if event_type != 1
-            && event_type != 5
             && event_type != 7
             && event_type != 8
             && event_type != 9
+            && event_type != 28
         {
             continue;
         }
@@ -1531,57 +1531,52 @@ fn analyze_jcl(
                 if file_boss_in_config && name_trimmed == jcl_boss_name {
                     same_name_dwids.insert(dwid);
                 }
-
-                // 用途 5：追踪 BOSS 死亡/重生状态
-                // NPC_INFO 格式: { dwID, name, templateID, employer, nX, nY, nZ, state }
-                // state=0 表示存活，state=192 表示死亡。
-                // 团灭时 BOSS 会重生（state 从 192 回到 0），击杀时不会重生。
-                // 注意：文件 BOSS（小怪）在战斗中会反复死亡/重生，不能用作团灭信号，
-                //       仅追踪真实 BOSS（如唐怀仁）的重生。
-                // 路径 A 也追踪主 BOSS 的 state，用于校验 leave_scene_is_kill
-                // （区分"击杀后离场"与"转阶段/拉脱中途离场"）。
-                let state: i64 = if fields.len() >= 8 {
+                // 用途 5：nFaceDirection 辅助判定
+                // 茗伊源码确认 fields[7] 是 nFaceDirection（朝向方向），不是存活/死亡状态。
+                // 但实测发现：击杀时 face_dir=192 后不再回 0，团灭时 face_dir 192→0（BOSS 重置）。
+                // 在缺乏 DEATH_NOTIFY/HP=0 时，作为辅助区分击杀/团灭的信号。
+                let face_dir: i64 = if fields.len() >= 8 {
                     fields[7].trim().parse().unwrap_or(-1)
                 } else {
                     -1
                 };
-                if file_boss_in_config
-                    && boss_dwid != 0
-                    && dwid == boss_dwid
-                {
-                    if state == 192 {
-                        boss_entered_dead_state = true;
-                        // 记录首次死亡时间，用于校验 LEAVE_SCENE 是否发生在死亡之后
-                        if boss_death_ms == 0 {
-                            boss_death_ms = timestamp_sec * 1000;
+                if file_boss_in_config && boss_dwid != 0 && dwid == boss_dwid {
+                    if face_dir == 192 {
+                        boss_face_dir_dead = true;
+                        if boss_face_dir_dead_ms == 0 {
+                            boss_face_dir_dead_ms = timestamp_sec * 1000;
                         }
-                    } else if state == 0 && boss_entered_dead_state {
-                        boss_respawned = true;
+                    } else if face_dir == 0 && boss_face_dir_dead {
+                        boss_face_dir_respawned = true;
                     }
                 }
-                if !file_boss_in_config
-                    && real_boss_dwid != 0
-                    && dwid == real_boss_dwid
-                {
-                    if state == 192 {
-                        real_boss_entered_dead_state = true;
-                        // 记录首次死亡时间，用于校验 LEAVE_SCENE 是否发生在死亡之后
-                        if real_boss_death_ms == 0 {
-                            real_boss_death_ms = timestamp_sec * 1000;
+                if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
+                    if face_dir == 192 {
+                        real_boss_face_dir_dead = true;
+                        if real_boss_face_dir_dead_ms == 0 {
+                            real_boss_face_dir_dead_ms = timestamp_sec * 1000;
                         }
-                    } else if state == 0 && real_boss_entered_dead_state {
-                        real_boss_respawned = true;
+                    } else if face_dir == 0 && real_boss_face_dir_dead {
+                        real_boss_face_dir_respawned = true;
                     }
                 }
             }
             9 => {
-                // NPC_FIGHT_HINT: { dwID, bFight, fCurrentLife, fMaxLife, ... }
-                // 跟踪 BOSS（文件名 BOSS + 真实 BOSS）的战斗开始/结束信号
+                // NPC_FIGHT_HINT: { dwID, bFight, fCurrentLife, fMaxLife, nCurrentMana, nMaxMana }
+                // 茗伊源码: D.InsertLog(LOG_TYPE.NPC_FIGHT_HINT, { dwID, bFight, fCurrentLife, fMaxLife, ... })
+                // 跟踪 BOSS 的战斗开始/结束信号 + HP=0 击杀信号
                 if fields.len() < 2 {
                     continue;
                 }
                 let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
                 let bfight = fields[1].trim() == "true";
+                // fCurrentLife=0 是可靠击杀信号（BOSS 血量归零）
+                let hp: f64 = if fields.len() >= 3 {
+                    fields[2].trim().parse().unwrap_or(-1.0)
+                } else {
+                    -1.0
+                };
+                let hp_zero = hp == 0.0;
 
                 // 文件名 BOSS（小怪路径下是小怪 dwID）的 bFight 状态
                 if boss_dwid != 0 && dwid == boss_dwid {
@@ -1589,6 +1584,9 @@ fn analyze_jcl(
                         boss_fight_true_seen = true;
                     } else {
                         boss_fight_false_seen = true;
+                    }
+                    if hp_zero {
+                        boss_hp_zero_seen = true;
                     }
                 }
                 // 无 BOSS 配置时，同名 NPC（不同 templateID 的分身/阶段）的 bFight 也算
@@ -1604,6 +1602,9 @@ fn analyze_jcl(
                     } else {
                         boss_fight_false_seen = true;
                     }
+                    if hp_zero {
+                        boss_hp_zero_seen = true;
+                    }
                 }
                 // 真实 BOSS（小怪路径下追踪唐怀仁等配置 BOSS）的 bFight 状态
                 if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
@@ -1612,11 +1613,15 @@ fn analyze_jcl(
                     } else {
                         real_boss_fight_false_seen = true;
                     }
+                    if hp_zero {
+                        real_boss_hp_zero_seen = true;
+                    }
                 }
             }
             7 => {
                 // NPC_LEAVE_SCENE: { dwID }
-                // 主 BOSS LEAVE_SCENE 不可靠（拉托时也会离场），路径 A 不使用。
+                // 茗伊源码: D.InsertLog(LOG_TYPE.NPC_LEAVE_SCENE, { dwID })
+                // 主 BOSS LEAVE_SCENE 不可靠（拉托时也会离场），路径 A 不单独使用。
                 // 路径 B（小怪 JCL）使用：真实 BOSS 击杀时可能无 bFight=false，需 leave_scene 兜底。
                 // 同名 NPC 分身离场：需结合离场时间跨度区分击杀/团灭（见下方 clone_leave_signal）。
                 if fields.is_empty() {
@@ -1627,11 +1632,9 @@ fn analyze_jcl(
                 // 文件名 BOSS 离开场景
                 if boss_dwid != 0 && dwid == boss_dwid {
                     boss_leave_scene_seen = true;
-                    // 记录离场时间戳，用于校验离场发生在死亡之后还是中途转阶段
                     boss_leave_scene_ms = timestamp_sec * 1000;
                 }
                 // 真实 BOSS 离开场景（仅路径 B 使用）
-                // 记录最后一次离场时间，用于区分中途离场与击杀后离场
                 if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
                     real_boss_leave_scene_ms = timestamp_sec * 1000;
                 }
@@ -1648,25 +1651,26 @@ fn analyze_jcl(
                     }
                 }
             }
-            5 => {
-                // 实体状态: { dwID, alive_flag, hp_current, hp_max, ?, ? }
-                // 例如死亡时 hp_current=0, hp_max=0, alive_flag=false
-                // 用于 HP=0 击杀兜底信号
-                if fields.len() < 4 {
+            28 => {
+                // SYS_MSG_UI_OME_DEATH_NOTIFY: { dwCharacterID, dwKiller }
+                // 茗伊源码: D.InsertLog(LOG_TYPE.SYS_MSG_UI_OME_DEATH_NOTIFY, { dwCharacterID, dwKiller })
+                // 这是 JCL 中唯一的真正死亡事件，fields[0]=死亡目标ID
+                // 注意：多阶段 BOSS（如笑妆娘）有多个同名分身，分身被击杀时也会触发此事件，
+                //       需匹配 same_name_dwids 才能正确识别。
+                if fields.is_empty() {
                     continue;
                 }
-                let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
-                let flag = fields[1].trim();
-                let hp: i64 = fields[2].trim().parse().unwrap_or(-1);
-                let hp_max: i64 = fields[3].trim().parse().unwrap_or(-1);
-
-                if flag == "false" && hp == 0 && hp_max == 0 {
-                    if boss_dwid != 0 && dwid == boss_dwid {
-                        boss_hp_zero_seen = true;
-                    }
-                    if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
-                        real_boss_hp_zero_seen = true;
-                    }
+                let dead_dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                // 主 BOSS 或同名分身死亡
+                if boss_dwid != 0
+                    && (dead_dwid == boss_dwid
+                        || (file_boss_in_config && same_name_dwids.contains(&dead_dwid)))
+                {
+                    boss_death_notify_seen = true;
+                }
+                // 真实 BOSS 死亡（路径 B）
+                if !file_boss_in_config && real_boss_dwid != 0 && dead_dwid == real_boss_dwid {
+                    real_boss_death_notify_seen = true;
                 }
             }
             _ => {}
@@ -1675,60 +1679,39 @@ fn analyze_jcl(
 
     // 通关判定逻辑（3 类分类：击杀 / 拉托 / 小怪）
     //
-    // **死亡信号的可靠性**（实测验证）：
-    // - NPC_LEAVE_SCENE（主 BOSS 离开场景）**不能**区分击杀与拉托！
-    //   实测发现拉托时 BOSS 也会 LEAVE_SCENE（墨家机侍拉托时有 1 条 LEAVE_SCENE）。
-    // - NPC_FIGHT_HINT bFight true→false 是可靠死亡信号：
-    //   击杀时 BOSS 会触发 bFight=false（唐醉、阿史那承庆均有此信号），
-    //   拉托时 BOSS 不会触发 bFight=false（墨家机侍拉托时无此信号）。
-    // - 同名 NPC 分身 LEAVE_SCENE **不能**单独区分击杀与拉托！
-    //   某些 BOSS（笑妆娘、柳公子）击杀时主 BOSS 不触发 bFight=false，
-    //   其同名分身/幻影会 LEAVE_SCENE；但团灭时分身也会集中离场。
-    //   可靠区分信号：分身离场时间跨度（clone_leave_span）。
-    //     - 击杀：分身陆续离场，跨度 >= 120 秒（实测 229~374 秒）
-    //     - 团灭：分身集中离场，跨度 < 120 秒（实测 56 秒）
-    // - 实体状态 HP=0 是可靠死亡信号：BOSS 血量为 0 时才会触发（本批数据未出现）。
+    // **死亡信号可靠性**（基于茗伊 MY_CombatLogs.lua 源码校验）：
+    // 1. SYS_MSG_UI_OME_DEATH_NOTIFY (type=28): JCL 中唯一的真正死亡事件
+    //    源码: D.InsertLog(LOG_TYPE.SYS_MSG_UI_OME_DEATH_NOTIFY, { dwCharacterID, dwKiller })
+    //    fields[0]=死亡目标ID，是最可靠的击杀信号。
+    // 2. NPC_FIGHT_HINT (type=9) fCurrentLife=0: BOSS 血量归零
+    //    源码: D.InsertLog(LOG_TYPE.NPC_FIGHT_HINT, { dwID, bFight, fCurrentLife, fMaxLife, ... })
+    // 3. bFight true→false（无 LEAVE_SCENE）: BOSS 死在原地不消失
+    //    拉托时 BOSS 会先 bFight=false（脱战）再 LEAVE_SCENE，
+    //    所以 bFight=false + 无 LEAVE = 击杀，bFight=false + 有 LEAVE = 拉托。
+    // 4. clone_leave_signal: 分身离场时间跨度>=120s（击杀）vs <120s（团灭）
+    // 5. LEAVE_SCENE + face_dir=192（辅助）: BOSS 被击杀后直接消失
+    //    nFaceDirection(192) 后不回 0 = 击杀，192→0 = 团灭（BOSS 重置）。
+    //
+    // 注意：NPC_INFO fields[7] 是 nFaceDirection（朝向方向），不是存活/死亡状态（茗伊源码确认）。
+    //       但实测发现其值变化模式能辅助区分击杀/团灭，在缺乏 DEATH_NOTIFY/HP=0 时作为兜底。
+    //       type=5 (PLAYER_FIGHT_HINT) 的 dwID 是玩家ID，不匹配 NPC，不使用。
     //
     // 路径 A：文件名 BOSS 在 raid_bosses 配置中（普通 BOSS 如"唐醉"、"笑妆娘"）
     //   1) 宝箱路径（首选）：该 BOSS 名+"宝箱" NPC 出现
-    //   2) 死亡路径：必须同时满足
-    //      - boss_dwid 已追踪到（!= 0）
-    //      - boss_fight_true_seen（确认 BOSS 真的进入过战斗）
-    //      - **bfight_false_is_kill 或 boss_hp_zero_seen 或 clone_leave_signal 或 leave_scene_is_kill**
-    //        （bFight=false无离场 / HP 归零 / 分身长时间跨度离场 / 无脱战离场，任一即可确认死亡）
-    //   击杀/拉托判定矩阵（bFight=false × LEAVE_SCENE）：
-    //     bFight=false + 无 LEAVE  → 击杀（bfight_false_is_kill）
-    //     bFight=false + 有 LEAVE  → 拉托（BOSS 脱战后离场回原位）
-    //     无 bFight=false + 有 LEAVE → 击杀（leave_scene_is_kill，BOSS 被击杀后直接消失）
-    //     无 bFight=false + 无 LEAVE → 无死亡信号
-    //   适用 BOSS：柳公子击杀时无宝箱、无 bFight=false，但主 BOSS LEAVE_SCENE。
+    //   2) 死亡路径：boss_dwid!=0 + boss_fight_true_seen + 任一击杀信号
+    //   注意：clone_leave_signal 不受 face_dir_respawned 影响（笑妆娘多阶段 BOSS 修复）
     //
     // 路径 B：文件名 BOSS 不在配置中（小怪 JCL 如"须罗巨傀"对应唐怀仁战斗）
-    //   Q1: JCL 中能找到配置 BOSS 吗？
-    //     - 否 → 识别为"小怪"（仅小怪战斗，无副本 BOSS）
-    //     - 是 → 进入 Q2
-    //   Q2: 该配置 BOSS 是否真正进入战斗（bFight=true）？
-    //     - 否 → 识别为"小怪"（配置 BOSS 路过没打/剧情短暂出场）
-    //     - 是 → 进入击杀/拉托判定
-    //   击杀条件（任一即可）：
-    //     ① 配置 BOSS 宝箱出现
-    //     ② 双 BOSS 都死亡：文件 BOSS（小怪）+ 真实 BOSS（配置 BOSS）
-    //        死亡路径要求 bFight=true + (bFight=false 或 leave_scene 或 hp_zero)
-    //   团灭排除：真实 BOSS 重生（NPC_INFO state 192→0）时判定为团灭，不算击杀。
-    //   注意：路径 B **使用** leave_scene 兜底，因为真实 BOSS（如唐怀仁）击杀时
-    //   可能无 bFight=false。团灭时 BOSS 也会 leave_scene，但会同时触发重生信号，
-    //   通过 real_boss_respawned 排除团灭情况。
+    //   Q1: JCL 中能找到配置 BOSS 吗？→ 否 → 小怪
+    //   Q2: 配置 BOSS 进入战斗了吗？→ 否 → 小怪
+    //   Q3: 双 BOSS 都死亡？→ 击杀
     let is_kill = if file_boss_in_config {
         // 路径 A
-        // 无 BOSS 配置时，任何宝箱 NPC 出现都算击杀信号（不限于"BOSS名+宝箱"）
-        // 例如白帝江关的宫傲击杀后掉落"武林通鉴宝箱"，不包含"宫傲"二字
         let treasure_ok = if raid_bosses.is_empty() {
             !treasure_box_bosses.is_empty()
         } else {
             treasure_box_bosses.contains(jcl_boss_name)
         };
-        // 分身离场时间跨度信号：分身陆续离场（跨度>=120s）判定为击杀，
-        // 集中离场（跨度<120s）判定为团灭。仅当有分身离场时才计算。
         let clone_leave_span_sec = if first_clone_leave_ms > 0 {
             (last_clone_leave_ms - first_clone_leave_ms) / 1000
         } else {
@@ -1736,166 +1719,56 @@ fn analyze_jcl(
         };
         let clone_leave_signal =
             same_name_leave_scene_count > 0 && clone_leave_span_sec >= 120;
-        // bFight=false 是击杀信号，但若同时有 LEAVE_SCENE 则是拉托脱战（BOSS脱战后离场回原位）。
-        // 实测：16-34-59 阿史那承庆 bFight=false(HP=91.7%) + LEAVE_SCENE = 拉托；
-        //       16-43-09 阿史那承庆 bFight=false(HP满) + 无LEAVE = 击杀。
         let bfight_false_is_kill = boss_fight_false_seen && !boss_leave_scene_seen;
-        // LEAVE_SCENE 作为击杀信号（当没有 bFight=false 时）：
-        // 完整的击杀/拉托判定矩阵（基于 bFight=false × LEAVE_SCENE）：
-        //   bFight=false + 无 LEAVE  → 击杀（BOSS 死在原地，bfight_false_is_kill）
-        //   bFight=false + 有 LEAVE  → 拉托（BOSS 脱战后离场回原位）
-        //   无 bFight=false + 有 LEAVE → 击杀（BOSS 被击杀后直接消失，无脱战过程）
-        //   无 bFight=false + 无 LEAVE → 无死亡信号
-        // 原理：拉托时 BOSS 会先触发 bFight=false（脱战）再离场；
-        //       击杀时 BOSS 直接死亡消失，不触发 bFight=false。
-        // 适用场景：
-        // - 无 BOSS 配置：白帝江关的宇文灭、姜集苦等击杀后无 bFight=false 但会 LEAVE_SCENE
-        // - 有 BOSS 配置：柳公子等 BOSS 击杀时 NPC_FIGHT_HINT 仅有 bFight=true，
-        //   无宝箱 NPC、无 bFight=false，但主 BOSS LEAVE_SCENE
-        // 仅当没有 bFight=false 时才使用 LEAVE_SCENE，避免误判拉托为击杀。
-        //
-        // **state=192 校验**（与路径 B 同理，修复唐怀仁拉脱误判为击杀的问题）：
-        // 唐怀仁等 BOSS 拉脱/转阶段时会在战斗中途 LEAVE_SCENE（state=0 存活），
-        // 仅当 LEAVE_SCENE 发生在 BOSS 死亡（state=192）之后才作为击杀信号。
-        // - 若 BOSS 重生（state 192→0）：团灭，不算击杀。
-        // - 若有 state=192 信号：LEAVE_SCENE 必须 >= boss_death_ms。
-        // - 若无 state=192 信号：LEAVE_SCENE 不单独作为击杀信号。
-        //
-        // **不依赖时间的判定原则**：
-        // 击杀的本质是 BOSS 死亡，应由"死亡状态/HP归零/宝箱掉落"等本质信号判定，
-        // 而非用战斗时长或离场时间间隔这类时间阈值兜底——不同副本/团队节奏差异大，
-        // 时间阈值容易误判（如唐怀仁拉脱 +95s 离场后战斗持续到 +270s）。
-        // 无 state=192 时，仅由 bfight_false_is_kill / hp_zero / treasure 等本质信号承担击杀判定。
-        let fight_duration_sec = if fight_start_ms > 0 && fight_end_ms >= fight_start_ms {
-            (fight_end_ms - fight_start_ms) / 1000
-        } else {
-            0
-        };
+        // leave_scene_is_kill 受 face_dir 校验：仅当 face_dir=192 后未重生且 LEAVE_SCENE 在之后
         let leave_scene_is_kill = boss_leave_scene_seen
             && !boss_fight_false_seen
-            && !boss_respawned
-            && if boss_entered_dead_state {
-                // 有死亡状态信号：LEAVE_SCENE 必须发生在死亡之后
-                boss_leave_scene_ms > 0 && boss_leave_scene_ms >= boss_death_ms
+            && !boss_face_dir_respawned
+            && if boss_face_dir_dead {
+                boss_leave_scene_ms > 0 && boss_leave_scene_ms >= boss_face_dir_dead_ms
             } else {
-                // 无死亡状态信号：LEAVE_SCENE 不作为击杀信号，
-                // 避免唐怀仁等 BOSS 中途转阶段离场被误判为击杀。
                 false
             };
+        // death_ok: clone_leave_signal 不受 face_dir_respawned 影响（笑妆娘修复）
         let death_ok = boss_dwid != 0
             && boss_fight_true_seen
-            && !boss_respawned
-            && (bfight_false_is_kill
+            && (boss_death_notify_seen
                 || boss_hp_zero_seen
+                || bfight_false_is_kill
                 || clone_leave_signal
                 || leave_scene_is_kill);
-        let result = treasure_ok || death_ok;
-        // 路径 A 详细诊断日志（用于调试笑妆娘等 BOSS is_kill=false 的根因）
-        // 使用 eprintln! 输出到 stderr，cargo test --nocapture 可直接看到
-        eprintln!(
-            "[JCL诊断] 路径A jcl_boss='{}' file_boss_in_config={} → is_kill={}
-            | boss_dwid={} boss_fight_true={} boss_fight_false={} boss_leave_scene={} boss_hp_zero={}
-            | bfight_false_is_kill={} leave_scene_is_kill={} clone_leave_signal={} (count={}, span={}ms)
-            | boss_entered_dead={} boss_respawned={} boss_death_ms={} boss_leave_scene_ms={} fight_duration={}s
-            | treasure_ok={} (treasure_box_bosses={:?})
-            | death_ok={}",
-            jcl_boss_name,
-            file_boss_in_config,
-            result,
-            boss_dwid,
-            boss_fight_true_seen,
-            boss_fight_false_seen,
-            boss_leave_scene_seen,
-            boss_hp_zero_seen,
-            bfight_false_is_kill,
-            leave_scene_is_kill,
-            clone_leave_signal,
-            same_name_leave_scene_count,
-            if first_clone_leave_ms > 0 { last_clone_leave_ms - first_clone_leave_ms } else { 0 },
-            boss_entered_dead_state,
-            boss_respawned,
-            boss_death_ms,
-            boss_leave_scene_ms,
-            fight_duration_sec,
-            treasure_ok,
-            treasure_box_bosses,
-            death_ok,
-        );
-        result
+        treasure_ok || death_ok
     } else {
         // 路径 B
         if real_boss_dwid == 0 || !real_boss_fight_true_seen {
-            // 配置 BOSS 不存在或未进入战斗 → 小怪
             false
         } else {
             let real_treasure_ok = real_boss_name
                 .as_ref()
                 .map(|n| treasure_box_bosses.contains(n))
                 .unwrap_or(false);
-            // 死亡路径：bFight=true + (bFight=false 或 leave_scene 或 hp_zero)
-            // 路径 B 的真实 BOSS（如唐怀仁）击杀时可能无 bFight=false，需 leave_scene 兜底。
-            // 团灭排除：真实 BOSS 重生（state 192→0）说明团灭后 BOSS 复位，不算击杀。
-            // 实测：7月7日团灭JCL中唐怀仁 state 192→0（重生），7月3日/7月7日击杀均无重生。
             let file_boss_died = boss_dwid != 0
                 && boss_fight_true_seen
-                && (boss_fight_false_seen || boss_leave_scene_seen || boss_hp_zero_seen);
-            // 真实 BOSS 死亡信号：
-            // 1. state=192 且未重生（NPC_INFO 死亡状态，最可靠的击杀信号）
-            // 2. bFight=false（脱战）
-            // 3. HP=0（实体状态归零）
-            // 4. LEAVE_SCENE：仅当发生在 state=192 死亡之后才算击杀信号，
-            //    排除中途阶段转换/瞬移导致的离场（此时 BOSS 仍存活）。
-            //    无 state=192 时 LEAVE_SCENE 不作为击杀信号（不依赖时间阈值兜底，
-            //    击杀判定由 state=192 / bFight=false / HP=0 等本质信号承担）。
-            let real_boss_state_death = real_boss_entered_dead_state && !real_boss_respawned;
-            let real_boss_leave_scene_is_kill = if real_boss_death_ms > 0 {
-                // 有死亡状态信号：LEAVE_SCENE 必须发生在死亡之后
-                real_boss_leave_scene_ms > 0 && real_boss_leave_scene_ms >= real_boss_death_ms
+                && (boss_death_notify_seen
+                    || boss_hp_zero_seen
+                    || boss_fight_false_seen
+                    || boss_leave_scene_seen);
+            // 真实 BOSS 死亡信号（face_dir 辅助区分击杀/团灭）
+            let real_boss_face_dir_death = real_boss_face_dir_dead && !real_boss_face_dir_respawned;
+            let real_boss_leave_scene_is_kill = if real_boss_face_dir_dead_ms > 0 {
+                real_boss_leave_scene_ms > 0 && real_boss_leave_scene_ms >= real_boss_face_dir_dead_ms
             } else {
-                // 无死亡状态信号：LEAVE_SCENE 不作为击杀信号
                 false
             };
             let real_boss_died = real_boss_dwid != 0
                 && real_boss_fight_true_seen
-                && !real_boss_respawned
-                && (real_boss_fight_false_seen
-                    || real_boss_state_death
-                    || real_boss_leave_scene_is_kill
-                    || real_boss_hp_zero_seen);
-            let result = real_treasure_ok || (file_boss_died && real_boss_died);
-            // 路径 B 详细诊断日志
-            eprintln!(
-                "[JCL诊断] 路径B jcl_boss='{}' real_boss='{:?}' → is_kill={}
-                | file_boss_dwid={} file_boss_fight_true={} file_boss_fight_false={} file_boss_leave_scene={} file_boss_hp_zero={}
-                | real_boss_dwid={} real_boss_fight_true={} real_boss_fight_false={} real_boss_leave_scene_ms={} real_boss_hp_zero={}
-                | real_boss_entered_dead={} real_boss_respawned={} real_boss_death_ms={} real_boss_state_death={}
-                | real_boss_leave_scene_is_kill={} (death_ms={} vs leave_scene_ms={})
-                | file_boss_died={} real_boss_died={} real_treasure_ok={}",
-                jcl_boss_name,
-                real_boss_name,
-                result,
-                boss_dwid,
-                boss_fight_true_seen,
-                boss_fight_false_seen,
-                boss_leave_scene_seen,
-                boss_hp_zero_seen,
-                real_boss_dwid,
-                real_boss_fight_true_seen,
-                real_boss_fight_false_seen,
-                real_boss_leave_scene_ms,
-                real_boss_hp_zero_seen,
-                real_boss_entered_dead_state,
-                real_boss_respawned,
-                real_boss_death_ms,
-                real_boss_state_death,
-                real_boss_leave_scene_is_kill,
-                real_boss_death_ms,
-                real_boss_leave_scene_ms,
-                file_boss_died,
-                real_boss_died,
-                real_treasure_ok,
-            );
-            result
+                && !real_boss_face_dir_respawned
+                && (real_boss_death_notify_seen
+                    || real_boss_hp_zero_seen
+                    || real_boss_fight_false_seen
+                    || real_boss_face_dir_death
+                    || real_boss_leave_scene_is_kill);
+            real_treasure_ok || (file_boss_died && real_boss_died)
         }
     };
 
@@ -6452,12 +6325,16 @@ mod tests {
 
         let conn = crate::db::init_db().expect("初始化数据库失败");
 
-        // 4 个 respawned=true 的团灭 JCL（分布在不同账号目录下，自动定位）
+        // 4 个 JCL（分布在不同账号目录下，自动定位）
+        // 使用 match_raid_name 查找 raid 配置（与生产代码一致），须罗巨傀走路径 B（真实 BOSS 为唐怀仁）。
         // (文件名, 期望is_kill)
+        // - JCL 1/2: 唐怀仁重生或无死亡信号 → 团灭/未击杀
+        // - JCL 3: 唐怀仁 state=192 后未重生且离场 → 合法击杀（旧路径 A 误判为灭团因追踪了须罗巨傀小怪的重生）
+        // - JCL 4: 待验证
         let jcls: Vec<(&str, bool)> = vec![
             ("2026-07-01-23-44-25-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", false),
             ("2026-07-01-23-54-00-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", false),
-            ("2026-07-08-21-33-56-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", false),
+            ("2026-07-08-21-33-56-25人英雄阆风悬城(795)-须罗巨傀(137175).jcl", true),
             ("2026-07-16-21-31-53-25人普通阆风悬城(794)-须罗巨傀(137067).jcl", false),
         ];
 
@@ -6485,7 +6362,7 @@ mod tests {
             });
 
             let info = parse_jcl_filename(fname).expect("文件名解析失败");
-            let raid_entry = raids.iter().find(|r| r.name == info.raid_display_name);
+            let raid_entry = match_raid_name(&info.raid_display_name, &raids);
             let raid_bosses: Vec<(String, String)> = raid_entry
                 .map(|e| e.bosses.clone())
                 .unwrap_or_default();
@@ -6510,6 +6387,254 @@ mod tests {
                 fname, expected_kill, analysis.is_kill
             );
         }
+    }
+
+    /// 诊断：分析用户指定的 2026-08-01 25人英雄阆风悬城 笑妆娘 JCL 为何未识别为击杀。
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_analyze_0801_xiaozhuangniang -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_analyze_0801_xiaozhuangniang() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        let jcl_path = PathBuf::from(
+            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\342273571708094124@zhcn_hd\userdata\combat_logs\2026-08-01-22-03-28-25人英雄阆风悬城(795)-笑妆娘(137205).jcl",
+        );
+        assert!(jcl_path.exists(), "JCL 文件不存在: {}", jcl_path.display());
+
+        let raids = load_raids_with_bosses(&conn).expect("加载副本配置失败");
+        let raid_entry = raids
+            .iter()
+            .find(|r| r.raid_id == "25人英雄阆风悬城")
+            .expect("应找到 25人英雄阆风悬城 配置");
+        let raid_bosses: Vec<(String, String)> = raid_entry.bosses.clone();
+        println!("raid_bosses={:?}", raid_bosses);
+
+        // 笑妆娘 template_id=137205（从 JCL 文件名提取）
+        let boss_template_id: i64 = 137205;
+
+        // 删除该 JCL 的缓存（强制重新解析）
+        let path_str = jcl_path.to_string_lossy().to_string();
+        conn.execute(
+            "DELETE FROM jcl_cache WHERE file_path = ?1",
+            sql_params![&path_str],
+        )
+        .expect("删除缓存失败");
+        println!("[诊断] 已删除该 JCL 缓存，准备重新解析");
+
+        let analysis = analyze_jcl_cached(
+            &conn,
+            &jcl_path,
+            "笑妆娘",
+            boss_template_id,
+            &raid_bosses,
+        )
+        .expect("分析 JCL 失败");
+
+        println!("\n=== 0801 笑妆娘 JCL 分析结果 ===");
+        println!("boss_name: {:?}", analysis.boss_name);
+        println!("fight_start_ms: {}", analysis.fight_start_ms);
+        println!("fight_end_ms: {}", analysis.fight_end_ms);
+        println!("fight_duration: {}s",
+            if analysis.fight_end_ms > analysis.fight_start_ms {
+                (analysis.fight_end_ms - analysis.fight_start_ms) / 1000
+            } else { 0 });
+        println!("is_kill: {}", analysis.is_kill);
+        // 修复前 is_kill=false（boss_respawned=true 阻止 clone_leave_signal 生效），
+        // 修复后 is_kill=true（clone_leave_signal=true, 20 个分身跨度 199s）。
+        assert!(analysis.is_kill, "笑妆娘 0801 JCL 应判定为击杀");
+    }
+
+    /// 全量扫描所有 JCL 文件，检查击杀识别是否正确
+    ///
+    /// 两阶段策略：
+    /// 1. 阶段1：用现有缓存快速扫描所有 JCL，统计识别情况
+    /// 2. 阶段2：对 is_kill=false 的已配置副本 JCL，清空缓存重新解析，确认修复后是否仍为 false
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_scan_all_jcl_check_kill -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_scan_all_jcl_check_kill() {
+        use std::collections::HashMap;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 加载 raids 配置
+        let raids = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+        println!("[配置] 共 {} 个副本配置", raids.len());
+
+        // 获取游戏目录：优先从配置读取，失败时使用硬编码路径（测试环境后备）
+        let game_dir = crate::mingyi::drop_scanner::get_game_directory()
+            .unwrap_or_else(|_| r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd".to_string());
+        let game_path = std::path::PathBuf::from(&game_dir);
+        let accounts_base = game_path.join(crate::mingyi::drop_scanner::MINGYI_ACCOUNTS_BASE_PATH);
+        println!("[扫描] 游戏目录: {}", game_dir);
+        println!("[扫描] 账号目录: {}\n", accounts_base.display());
+
+        // 遍历所有账号目录
+        let account_dirs: Vec<std::fs::DirEntry> = std::fs::read_dir(&accounts_base)
+            .expect("读取账号目录失败")
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && e.file_name().to_string_lossy().contains("@zhcn_hd")
+            })
+            .collect();
+        println!("[扫描] 共 {} 个账号目录\n", account_dirs.len());
+
+        // 统计数据
+        let mut total_jcl = 0usize;
+        let mut configured_jcl = 0usize;
+        let mut unconfigured_jcl = 0usize;
+        let mut kill_count = 0usize;
+        let mut wipe_count = 0usize;
+        let mut parse_fail_count = 0usize;
+        // 按副本名分组统计：(击杀数, 拉托数)
+        let mut raid_stats: HashMap<String, (usize, usize)> = HashMap::new();
+        // 需要重新解析的 JCL（is_kill=false 的已配置副本）
+        let mut need_reparse: Vec<(std::path::PathBuf, String, i64, Vec<(String, String)>)> = Vec::new();
+
+        // 阶段1：用缓存快速扫描
+        println!("=== 阶段1：用缓存快速扫描所有 JCL ===");
+        for acc_dir in &account_dirs {
+            let acc_name = acc_dir.file_name().to_string_lossy().to_string();
+            let jcl_files = match scan_jcl_files(&acc_dir.path(), 0, 0, 0) {
+                Ok(f) => f,
+                Err(e) => {
+                    println!("[账号 {}] 扫描失败: {}", acc_name, e);
+                    continue;
+                }
+            };
+            if jcl_files.is_empty() {
+                continue;
+            }
+            println!("[账号 {}] JCL 文件数: {}", acc_name, jcl_files.len());
+
+            for jcl in &jcl_files {
+                total_jcl += 1;
+                let full_path = acc_dir.path()
+                    .join("userdata")
+                    .join("combat_logs")
+                    .join(&jcl.file_name);
+                let raid_entry = match_raid_name(&jcl.raid_display_name, &raids);
+                let raid_bosses: Vec<(String, String)> = raid_entry
+                    .map(|e| e.bosses.clone())
+                    .unwrap_or_default();
+
+                if raid_entry.is_none() {
+                    unconfigured_jcl += 1;
+                    continue;
+                }
+                configured_jcl += 1;
+
+                // 调用 analyze_jcl_cached（利用缓存）
+                let analysis = analyze_jcl_cached(
+                    &conn,
+                    &full_path,
+                    &jcl.boss_name,
+                    jcl.boss_id,
+                    &raid_bosses,
+                );
+
+                match analysis {
+                    Some(a) => {
+                        if a.is_kill {
+                            kill_count += 1;
+                            let stat = raid_stats.entry(jcl.raid_display_name.clone()).or_insert((0, 0));
+                            stat.0 += 1;
+                        } else {
+                            wipe_count += 1;
+                            let stat = raid_stats.entry(jcl.raid_display_name.clone()).or_insert((0, 0));
+                            stat.1 += 1;
+                            // 记录需要重新解析的 JCL
+                            need_reparse.push((full_path, jcl.boss_name.clone(), jcl.boss_id, raid_bosses.clone()));
+                        }
+                    }
+                    None => {
+                        parse_fail_count += 1;
+                    }
+                }
+            }
+        }
+
+        println!("\n=== 阶段1 统计结果 ===");
+        println!("总 JCL 数: {}", total_jcl);
+        println!("已配置副本 JCL: {}", configured_jcl);
+        println!("未配置副本 JCL: {}", unconfigured_jcl);
+        println!("击杀 (is_kill=true): {}", kill_count);
+        println!("拉托 (is_kill=false): {}", wipe_count);
+        println!("解析失败 (None): {}", parse_fail_count);
+        println!("需要重新解析的 JCL (is_kill=false): {}", need_reparse.len());
+
+        println!("\n[按副本名分组统计] (击杀/拉托):");
+        let mut sorted_stats: Vec<_> = raid_stats.iter().collect();
+        sorted_stats.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, (kill, wipe)) in &sorted_stats {
+            println!("  - {}: 击杀={}, 拉托={}", name, kill, wipe);
+        }
+
+        // 阶段2：清空缓存重新解析 is_kill=false 的 JCL
+        if need_reparse.is_empty() {
+            println!("\n=== 阶段2：无需重新解析，所有已配置副本 JCL 均为击杀 ===");
+            return;
+        }
+
+        println!("\n=== 阶段2：清空缓存重新解析 is_kill=false 的 JCL ===");
+        let mut reparse_kill = 0usize;
+        let mut reparse_wipe = 0usize;
+        let mut reparse_fail = 0usize;
+        let mut still_wipe: Vec<(String, bool)> = Vec::new();
+
+        for (path, boss_name, boss_id, raid_bosses) in &need_reparse {
+            let path_str = path.to_string_lossy().to_string();
+            // 清空该 JCL 的缓存
+            let _ = conn.execute(
+                "DELETE FROM jcl_cache WHERE file_path = ?1",
+                sql_params![&path_str],
+            );
+            // 重新解析
+            match analyze_jcl(path, boss_name, *boss_id, raid_bosses) {
+                Some(a) => {
+                    if a.is_kill {
+                        reparse_kill += 1;
+                        still_wipe.push((path.file_name().unwrap_or_default().to_string_lossy().to_string(), false));
+                    } else {
+                        reparse_wipe += 1;
+                        still_wipe.push((path.file_name().unwrap_or_default().to_string_lossy().to_string(), true));
+                    }
+                }
+                None => {
+                    reparse_fail += 1;
+                    still_wipe.push((path.file_name().unwrap_or_default().to_string_lossy().to_string(), false));
+                }
+            }
+        }
+
+        println!("\n=== 阶段2 重新解析结果 ===");
+        println!("重新解析 JCL 数: {}", need_reparse.len());
+        println!("修复后变为击杀: {}", reparse_kill);
+        println!("仍为拉托: {}", reparse_wipe);
+        println!("解析失败: {}", reparse_fail);
+
+        if reparse_wipe > 0 {
+            println!("\n[仍为拉托的 JCL 列表] (可能为真实团灭):");
+            for (name, is_wipe) in &still_wipe {
+                if *is_wipe {
+                    println!("  - {}", name);
+                }
+            }
+        }
+
+        // 最终统计
+        println!("\n=== 最终统计 ===");
+        println!("总 JCL 数: {}", total_jcl);
+        println!("已配置副本 JCL: {}", configured_jcl);
+        println!("未配置副本 JCL: {}", unconfigured_jcl);
+        println!("最终击杀数: {}", kill_count + reparse_kill);
+        println!("最终拉托数: {}", reparse_wipe);
+        println!("解析失败数: {}", parse_fail_count + reparse_fail);
     }
 
 }
