@@ -141,3 +141,29 @@ export const sortRoles = (roles: Role[]): Role[] => {
         return a.name.localeCompare(b.name, 'zh-CN');
     });
 };
+
+/**
+ * 在装分刷新等"重载"场景下保持角色原有顺序，避免按新装分重新排序打乱用户已习惯的顺序。
+ * - 已有角色（按 id 匹配）：保留旧顺序
+ * - 新增角色：追加到末尾，按名称排序
+ */
+export const preserveRoleOrder = (oldRoles: Role[], newRoles: Role[]): Role[] => {
+    const oldIndexMap = new Map(oldRoles.map((role, index) => [role.id, index]));
+    const existing: Role[] = [];
+    const added: Role[] = [];
+
+    for (const role of newRoles) {
+        if (oldIndexMap.has(role.id)) {
+            existing.push(role);
+        } else {
+            added.push(role);
+        }
+    }
+
+    // 已有角色按旧顺序排
+    existing.sort((a, b) => (oldIndexMap.get(a.id) ?? 0) - (oldIndexMap.get(b.id) ?? 0));
+    // 新增角色按名称排
+    added.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+    return [...existing, ...added];
+};

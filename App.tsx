@@ -36,7 +36,7 @@ import {
   DEFAULT_CONFIG
 } from './utils/configUtils';
 import { injectDefaultBossesForRaids } from './data/raidBosses';
-import { sortAccounts } from './utils/accountUtils';
+import { sortAccounts, preserveRoleOrder } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
 import { analyzeRoles } from './services/gameDirectoryScanner';
@@ -127,8 +127,19 @@ function App() {
             visibility: buildVisibilityMap(role.id, loadedRoleVisibility, instanceTypes)
           }))
         }));
-        const sortedAccounts = sortAccounts(accountsWithVisibility);
-        setAccounts(sortedAccounts);
+        // 装分刷新后保持角色原有顺序，避免按新装分重新排序导致顺序错乱
+        // 账号顺序仍由 sortAccounts 维持，角色顺序按旧 accounts 的 role.id 顺序归并
+        setAccounts(prev => {
+          const sortedAccounts = sortAccounts(accountsWithVisibility);
+          return sortedAccounts.map(newAcc => {
+            const oldAcc = prev.find(a => a.id === newAcc.id);
+            if (!oldAcc) return newAcc;
+            return {
+              ...newAcc,
+              roles: preserveRoleOrder(oldAcc.roles || [], newAcc.roles || [])
+            };
+          });
+        });
       } else {
         setAccounts([]);
       }
