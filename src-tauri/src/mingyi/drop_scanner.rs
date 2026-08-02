@@ -3142,6 +3142,14 @@ pub fn scan_raid_drops_with_raids(
                 continue;
             }
         };
+        // 当 JCL 文件名不含人数/难度时（如 "阆风悬城(793)"），match_raid_name 已按
+        // 人数/难度优先级匹配到正确副本（如 10人普通阆风悬城）。用匹配到的完整副本名
+        // （raid_entry.raid_id，格式 "{playerCount}人{difficulty}{name}"）覆盖原始 JCL 显示名，
+        // 确保：
+        // 1. records.data.raidName 与手工记录格式一致（手工记录用 constructRaidName 生成完整名）
+        // 2. is_ten_person 判断（contains("10人")）正确选择 10/25 人 CD 周期
+        // 3. 前端 RaidDetail/RoleRecordsModal 按 playerCount/difficulty 过滤时能命中
+        instance.raid_display_name = raid_entry.raid_id.clone();
         let raid_name = &raid_entry.name;
         let raid_bosses = &raid_entry.bosses;
 
@@ -6635,6 +6643,930 @@ mod tests {
         println!("最终击杀数: {}", kill_count + reparse_kill);
         println!("最终拉托数: {}", reparse_wipe);
         println!("解析失败数: {}", parse_fail_count + reparse_fail);
+    }
+
+    /// 诊断：分析 7-26 阿史那承庆 JCL 的击杀判定信号
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_analyze_0726_ashina -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_analyze_0726_ashina() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        // 获取 raid_bosses 配置
+        let raids = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+        let raid_entry = match_raid_name("25人英雄阆风悬城", &raids)
+            .expect("未匹配到 25人英雄阆风悬城");
+        let raid_bosses = raid_entry.bosses.clone();
+        println!("raid_id={}", raid_entry.raid_id);
+        println!("raid_bosses={:?}", raid_bosses);
+
+        let jcl_path = PathBuf::from(
+            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\432345564255147961@zhcn_hd\userdata\combat_logs\2026-07-26-15-42-35-25人英雄阆风悬城(795)-阿史那承庆(137130).jcl",
+        );
+        assert!(jcl_path.exists(), "JCL 文件不存在: {}", jcl_path.display());
+
+        // 清空缓存
+        let path_str = jcl_path.to_string_lossy().to_string();
+        let _ = conn.execute(
+            "DELETE FROM jcl_cache WHERE file_path = ?1",
+            sql_params![&path_str],
+        );
+        println!("[诊断] 已删除该 JCL 缓存，准备重新解析\n");
+
+        let analysis = analyze_jcl(&jcl_path, "阿史那承庆", 137130, &raid_bosses)
+            .expect("analyze_jcl 失败");
+
+        println!("=== 7-26 阿史那承庆 JCL 分析结果 ===");
+        println!("boss_name: {:?}", analysis.boss_name);
+        println!("fight_start_ms: {}", analysis.fight_start_ms);
+        println!("fight_end_ms: {}", analysis.fight_end_ms);
+        println!("fight_duration: {}s",
+            if analysis.fight_end_ms > analysis.fight_start_ms {
+                (analysis.fight_end_ms - analysis.fight_start_ms) / 1000
+            } else { 0 });
+        println!("is_kill: {}", analysis.is_kill);
+
+        // 进一步分析 JCL 原始事件，统计各类事件
+        use std::io::BufRead;
+        let file = std::fs::File::open(&jcl_path).expect("打开文件失败");
+        let reader = std::io::BufReader::new(file);
+        let gbk = encoding_rs::GBK;
+
+        let mut event_counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut boss_npc_info_count = 0u32;
+        let mut boss_fight_hint_count = 0u32;
+        let mut boss_enter_scene_count = 0u32;
+        let mut boss_leave_scene_count = 0u32;
+        let mut boss_death_notify_count = 0u32;
+        let mut boss_face_dir_192_count = 0u32;
+        let mut boss_face_dir_changes: Vec<(i64, i64)> = Vec::new();
+        let mut boss_fight_states: Vec<(i64, bool, i64)> = Vec::new();
+        let mut boss_hp_zero_times: Vec<i64> = Vec::new();
+        let mut same_name_npc_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut same_name_leave_times: Vec<i64> = Vec::new();
+        let mut treasure_box_seen = false;
+        let mut boss_dwid_found: i64 = 0;
+
+        for line in reader.split(b'\n') {
+            let line_bytes = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
+            let mut start = 0;
+            for (i, &b) in line_bytes.iter().enumerate() {
+                if b == b'\t' {
+                    parts.push(&line_bytes[start..i]);
+                    start = i + 1;
+                    if parts.len() >= 5 {
+                        break;
+                    }
+                }
+            }
+            parts.push(&line_bytes[start..]);
+            if parts.len() < 5 {
+                continue;
+            }
+            let event_type: u32 = std::str::from_utf8(parts[4])
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            *event_counts.entry(event_type).or_insert(0) += 1;
+
+            let lua_str = gbk.decode(parts[5]).0;
+            let lua_trimmed = lua_str.trim();
+            let lua_inner = lua_trimmed
+                .strip_prefix('{')
+                .and_then(|s| s.strip_suffix('}'))
+                .unwrap_or(lua_trimmed);
+            let fields: Vec<&str> = lua_inner.split(',').collect();
+            let ts_sec: i64 = std::str::from_utf8(parts[2])
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            match event_type {
+                6 => {
+                    // NPC_ENTER_SCENE: { dwID, szName, dwTemplateID, ... }
+                    if fields.len() >= 2 {
+                        let name = fields[1].trim().trim_matches('"');
+                        if name == "阿史那承庆" {
+                            boss_enter_scene_count += 1;
+                        }
+                    }
+                }
+                7 => {
+                    // NPC_LEAVE_SCENE: { dwID, szName, ... }
+                    if fields.len() >= 2 {
+                        let name = fields[1].trim().trim_matches('"');
+                        let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                        if name == "阿史那承庆" {
+                            boss_leave_scene_count += 1;
+                            same_name_leave_times.push(ts_sec);
+                        }
+                    }
+                }
+                8 => {
+                    // NPC_INFO: { dwID, szName, dwTemplateID, dwEmployer, nX, nY, nZ, nFaceDirection }
+                    if fields.len() >= 3 {
+                        let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                        let name = fields[1].trim().trim_matches('"');
+                        let template_id: i64 = fields[2].trim().parse().unwrap_or(0);
+                        if name == "阿史那承庆" {
+                            boss_npc_info_count += 1;
+                            same_name_npc_ids.insert(dwid);
+                            if boss_dwid_found == 0 && template_id == 137130 {
+                                boss_dwid_found = dwid;
+                            }
+                            if fields.len() >= 8 {
+                                let face_dir: i64 = fields[7].trim().parse().unwrap_or(-1);
+                                if face_dir == 192 {
+                                    boss_face_dir_192_count += 1;
+                                }
+                                boss_face_dir_changes.push((ts_sec, face_dir));
+                            }
+                        }
+                        if name.ends_with("宝箱") && name.contains("阿史那承庆") {
+                            treasure_box_seen = true;
+                        }
+                    }
+                }
+                9 => {
+                    // NPC_FIGHT_HINT: { bFight, szName, ..., nCurrentLife }
+                    // 注意：茗伊源码 fields 顺序需验证
+                    if fields.len() >= 2 {
+                        let name = fields[1].trim().trim_matches('"');
+                        if name == "阿史那承庆" {
+                            boss_fight_hint_count += 1;
+                            let b_fight = fields[0].trim() == "true";
+                            // nCurrentLife 可能在 fields[2] 或其他位置
+                            let n_current_life: i64 = if fields.len() >= 3 {
+                                fields[2].trim().parse().unwrap_or(-1)
+                            } else {
+                                -1
+                            };
+                            boss_fight_states.push((ts_sec, b_fight, n_current_life));
+                            if n_current_life == 0 {
+                                boss_hp_zero_times.push(ts_sec);
+                            }
+                        }
+                    }
+                }
+                28 => {
+                    // SYS_MSG_UI_OME_DEATH_NOTIFY: { dwCharacterID, dwKiller }
+                    if fields.len() >= 1 {
+                        let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                        if same_name_npc_ids.contains(&dwid) {
+                            boss_death_notify_count += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        println!("\n=== JCL 原始事件统计 ===");
+        println!("[事件类型分布]:");
+        let mut sorted_events: Vec<_> = event_counts.iter().collect();
+        sorted_events.sort_by_key(|(k, _)| **k);
+        for (evt, cnt) in &sorted_events {
+            println!("  type={}: {}", evt, cnt);
+        }
+        println!("\n[阿史那承庆相关事件]:");
+        println!("  NPC_ENTER_SCENE: {}", boss_enter_scene_count);
+        println!("  NPC_LEAVE_SCENE: {}", boss_leave_scene_count);
+        println!("  NPC_INFO: {}", boss_npc_info_count);
+        println!("  NPC_FIGHT_HINT: {}", boss_fight_hint_count);
+        println!("  DEATH_NOTIFY: {}", boss_death_notify_count);
+        println!("  face_dir=192 次数: {}", boss_face_dir_192_count);
+        println!("  宝箱 NPC 出现: {}", treasure_box_seen);
+        println!("  BOSS dwID: {}", boss_dwid_found);
+        println!("  同名 NPC dwID 数: {}", same_name_npc_ids.len());
+        println!("  同名 NPC 离场次数: {}", same_name_leave_times.len());
+        if !same_name_leave_times.is_empty() {
+            let span = same_name_leave_times.last().unwrap() - same_name_leave_times.first().unwrap();
+            println!("  同名 NPC 离场跨度: {}s", span);
+        }
+
+        println!("\n[face_dir 变化（前30个）]:");
+        for (ts, fd) in boss_face_dir_changes.iter().take(30) {
+            println!("  ts={} face_dir={}", ts, fd);
+        }
+        if boss_face_dir_changes.len() > 30 {
+            println!("  ...");
+            println!("[face_dir 变化（最后10个）]:");
+            for (ts, fd) in boss_face_dir_changes.iter().rev().take(10) {
+                println!("  ts={} face_dir={}", ts, fd);
+            }
+        }
+
+        println!("\n[FIGHT_HINT 状态变化（前20个）]:");
+        for (ts, bf, hp) in boss_fight_states.iter().take(20) {
+            println!("  ts={} bFight={} hp={}", ts, bf, hp);
+        }
+        if boss_fight_states.len() > 20 {
+            println!("  ...");
+            println!("[FIGHT_HINT 状态变化（最后10个）]:");
+            for (ts, bf, hp) in boss_fight_states.iter().rev().take(10) {
+                println!("  ts={} bFight={} hp={}", ts, bf, hp);
+            }
+        }
+
+        if !boss_hp_zero_times.is_empty() {
+            println!("\n[HP=0 时刻]:");
+            for ts in &boss_hp_zero_times {
+                println!("  ts={}", ts);
+            }
+        }
+
+        // 查询数据库中该账号 7-26 的记录
+        println!("\n=== 数据库记录查询 ===");
+
+        // 先查 accounts 表
+        println!("[accounts 表中包含 '432345564' 的账号]:");
+        let mut stmt_acc = conn
+            .prepare("SELECT id, account_name FROM accounts WHERE id LIKE '%432345564%' OR account_name LIKE '%432345564%'")
+            .expect("查询 accounts 失败");
+        let acc_rows = stmt_acc
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .expect("查询 accounts 失败");
+        let mut target_acc_id: Option<String> = None;
+        for row in acc_rows {
+            let (id, name) = row.unwrap();
+            println!("  id={} account_name={}", id, name);
+            target_acc_id = Some(id);
+        }
+
+        // 查 7-25 ~ 7-27 的记录（record_date 是毫秒时间戳）
+        let ts_start = chrono::NaiveDate::from_ymd_opt(2026, 7, 25)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
+        let ts_end = chrono::NaiveDate::from_ymd_opt(2026, 7, 28)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
+
+        // 先查所有 pending 记录
+        println!("\n=== 所有 pending 记录 ===");
+        let mut stmt_pending = conn
+            .prepare(
+                "SELECT id, account_id, raid_name, record_date, status, source, data
+                 FROM records
+                 WHERE status = 'pending' OR status = 'scanning'
+                 ORDER BY record_date DESC",
+            )
+            .expect("查询 pending 失败");
+        let pending_rows = stmt_pending
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .expect("查询 pending 失败");
+        for row in pending_rows {
+            let (id, acc, raid, date_ts, status, source, data) = row.unwrap();
+            let date_str = chrono::DateTime::from_timestamp_millis(date_ts)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| date_ts.to_string());
+            println!("\n  --- pending id={} ---", id);
+            println!("  acc={} raid={} date={} status={} source={}", acc, raid, date_str, status, source);
+            // 解析 data JSON 的关键字段
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                println!("  raidName: {:?}", v.get("raidName").and_then(|x| x.as_str()));
+                println!("  bossNames: {:?}", v.get("bossNames"));
+                println!("  bossKillCount: {:?}", v.get("bossKillCount"));
+                println!("  dropsCount: {:?}", v.get("dropsCount"));
+                println!("  jclFiles: {:?}", v.get("jclFiles"));
+            }
+        }
+
+        println!("\n[7-25 ~ 7-27 records 表记录] (ts {}~{}):", ts_start, ts_end);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, account_id, raid_name, record_date, status, source,
+                        json_extract(data, '$.raidName') as raid_full,
+                        json_extract(data, '$.bossNames') as boss_names,
+                        json_extract(data, '$.bossKillCount') as boss_kill_count,
+                        data
+                 FROM records
+                 WHERE record_date >= ?1 AND record_date < ?2
+                 ORDER BY record_date",
+            )
+            .expect("查询失败");
+        let rows = stmt
+            .query_map(sql_params![ts_start, ts_end], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            })
+            .expect("查询失败");
+        for row in rows {
+            let (
+                id,
+                account_id,
+                raid_name,
+                record_date_ts,
+                status,
+                source,
+                raid_full,
+                boss_names,
+                boss_kill_count,
+                data,
+            ) = row.unwrap();
+            let date_str = chrono::DateTime::from_timestamp_millis(record_date_ts)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| record_date_ts.to_string());
+            println!(
+                "\n  --- record id={} ---\n  acc={} raid={} date={} status={} source={}",
+                id, account_id, raid_name, date_str, status, source
+            );
+            println!("    raidFull={:?}", raid_full);
+            println!("    bossNames={:?}", boss_names);
+            println!("    bossKillCount={:?}", boss_kill_count);
+            // 解析完整 data
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                println!("    dropsCount: {:?}", v.get("dropsCount"));
+                println!("    jclFiles: {:?}", v.get("jclFiles"));
+                if let Some(boss_names_arr) = v.get("bossNames").and_then(|x| x.as_array()) {
+                    println!("    bossNames (array):");
+                    for (i, bn) in boss_names_arr.iter().enumerate() {
+                        println!("      [{}] {:?}", i, bn);
+                    }
+                }
+            }
+        }
+
+        // 查 jcl_cache 中阿史那承庆的缓存
+        println!("\n[jcl_cache 中阿史那承庆的缓存]:");
+        let mut stmt_cache = conn
+            .prepare(
+                "SELECT file_path, is_kill, boss_name
+                 FROM jcl_cache
+                 WHERE file_path LIKE '%432345564%' AND file_path LIKE '%阿史那承庆%'
+                 ORDER BY file_path",
+            )
+            .expect("查询 jcl_cache 失败");
+        let cache_rows = stmt_cache
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("查询 jcl_cache 失败");
+        for row in cache_rows {
+            let (file_path, is_kill, boss_name) = row.unwrap();
+            println!("  is_kill={} boss={} file={}", is_kill, boss_name, file_path);
+        }
+
+        // 查该账号 7-25~7-27 的所有 records（不限于阆风悬城）
+        if let Some(acc_id) = target_acc_id {
+            println!("\n[该账号 7-25~7-27 所有 records]:");
+            let mut stmt2 = conn
+                .prepare(
+                    "SELECT id, raid_name, record_date, status, source,
+                            json_extract(data, '$.bossNames') as boss_names
+                     FROM records
+                     WHERE account_id = ?1 AND record_date >= ?2 AND record_date < ?3
+                     ORDER BY record_date",
+                )
+                .expect("查询失败");
+            let rows2 = stmt2
+                .query_map(sql_params![acc_id, ts_start, ts_end], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                })
+                .expect("查询失败");
+            for row in rows2 {
+                let (id, raid_name, date_ts, status, source, boss_names) = row.unwrap();
+                let date_str = chrono::DateTime::from_timestamp_millis(date_ts)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| date_ts.to_string());
+            println!("  id={} raid={} date={} status={} source={} bossNames={:?}",
+                id, raid_name, date_str, status, source, boss_names);
+            }
+        }
+
+        // 查所有账号
+        println!("\n[所有 accounts]:");
+        let mut stmt_all_acc = conn
+            .prepare("SELECT id, account_name FROM accounts ORDER BY id")
+            .expect("查询 accounts 失败");
+        let all_acc_rows = stmt_all_acc
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .expect("查询 accounts 失败");
+        for row in all_acc_rows {
+            let (id, name) = row.unwrap();
+            println!("  id={} name={}", id, name);
+        }
+
+        // 查最近10条 records
+        println!("\n[最近 10 条 records]:");
+        let mut stmt_recent = conn
+            .prepare(
+                "SELECT id, account_id, raid_name, record_date, status, source,
+                        json_extract(data, '$.bossNames') as boss_names
+                 FROM records
+                 ORDER BY record_date DESC
+                 LIMIT 10",
+            )
+            .expect("查询 records 失败");
+        let recent_rows = stmt_recent
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })
+            .expect("查询 records 失败");
+        for row in recent_rows {
+            let (id, acc, raid, date_ts, status, source, boss_names) = row.unwrap();
+            let date_str = chrono::DateTime::from_timestamp_millis(date_ts)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| date_ts.to_string());
+            println!("  id={} acc={} raid={} date={} status={} source={} bossNames={:?}",
+                id, acc, raid, date_str, status, source, boss_names);
+        }
+
+        // 查 jcl_cache 总数
+        let cache_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jcl_cache", [], |row| row.get(0))
+            .unwrap_or(0);
+        println!("\n[jcl_cache 总记录数]: {}", cache_count);
+
+        // 查 7-26 confirmed 手动记录的 bossIds
+        println!("\n[7-26 confirmed 手动记录的 bossIds]:");
+        let mut stmt_bossids = conn
+            .prepare(
+                "SELECT id, account_id, raid_name,
+                        json_extract(data, '$.raidName') as raid_full,
+                        json_extract(data, '$.bossIds') as boss_ids,
+                        json_extract(data, '$.bossNames') as boss_names,
+                        json_extract(data, '$.jclFiles') as jcl_files
+                 FROM records
+                 WHERE record_date >= ?1 AND record_date < ?2
+                   AND status = 'confirmed'
+                 ORDER BY record_date",
+            )
+            .expect("查询失败");
+        let bossids_rows = stmt_bossids
+            .query_map(sql_params![ts_start, ts_end], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })
+            .expect("查询失败");
+        for row in bossids_rows {
+            let (id, acc, raid, raid_full, boss_ids, boss_names, jcl_files) = row.unwrap();
+            println!("\n  id={} acc={} raid={} raidFull={:?}", id, acc, raid, raid_full);
+            println!("    bossIds={:?}", boss_ids);
+            println!("    bossNames={:?}", boss_names);
+            if let Some(jf) = jcl_files {
+                if jf.contains("阿史那承庆") {
+                    println!("    jclFiles含阿史那承庆: YES");
+                }
+            }
+        }
+    }
+
+    /// 诊断：分析 7-29 阿史那承庆 JCL 的击杀判定信号
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_analyze_0729_ashina -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_analyze_0729_ashina() {
+        use std::path::PathBuf;
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+
+        let raids = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+        let raid_entry = match_raid_name("25人英雄阆风悬城", &raids)
+            .expect("未匹配到 25人英雄阆风悬城");
+        let raid_bosses = raid_entry.bosses.clone();
+
+        let jcl_files = vec![
+            (
+                "21:40:23",
+                PathBuf::from(
+                    r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\432345564255147961@zhcn_hd\userdata\combat_logs\2026-07-29-21-40-23-25人英雄阆风悬城(795)-阿史那承庆(137130).jcl",
+                ),
+            ),
+            (
+                "21:41:54",
+                PathBuf::from(
+                    r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data\432345564255147961@zhcn_hd\userdata\combat_logs\2026-07-29-21-41-54-25人英雄阆风悬城(795)-阿史那承庆(137130).jcl",
+                ),
+            ),
+        ];
+
+        for (label, jcl_path) in &jcl_files {
+            println!("\n\n========== JCL {} ==========", label);
+            if !jcl_path.exists() {
+                println!("文件不存在，跳过");
+                continue;
+            }
+            let file_size = std::fs::metadata(jcl_path).map(|m| m.len()).unwrap_or(0);
+            println!("文件大小: {} bytes", file_size);
+
+            let path_str = jcl_path.to_string_lossy().to_string();
+            let _ = conn.execute(
+                "DELETE FROM jcl_cache WHERE file_path = ?1",
+                sql_params![&path_str],
+            );
+
+            let analysis = analyze_jcl(&jcl_path, "阿史那承庆", 137130, &raid_bosses)
+                .expect("analyze_jcl 失败");
+
+            println!("fight_start_ms: {}", analysis.fight_start_ms);
+            println!("fight_end_ms: {}", analysis.fight_end_ms);
+            println!("fight_duration: {}s",
+                if analysis.fight_end_ms > analysis.fight_start_ms {
+                    (analysis.fight_end_ms - analysis.fight_start_ms) / 1000
+                } else { 0 });
+            println!("is_kill: {}", analysis.is_kill);
+
+            // 分析原始事件
+            use std::io::BufRead;
+            let file = std::fs::File::open(jcl_path).expect("打开文件失败");
+            let reader = std::io::BufReader::new(file);
+            let gbk = encoding_rs::GBK;
+
+            let mut event_counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+            let mut boss_npc_info_count = 0u32;
+            let mut boss_fight_hint_count = 0u32;
+            let mut boss_enter_scene_count = 0u32;
+            let mut boss_leave_scene_count = 0u32;
+            let mut boss_death_notify_count = 0u32;
+            let mut boss_face_dir_192_count = 0u32;
+            let mut boss_face_dir_changes: Vec<(i64, i64)> = Vec::new();
+            let mut boss_fight_states: Vec<(i64, bool, i64)> = Vec::new();
+            let mut boss_hp_zero_times: Vec<i64> = Vec::new();
+            let mut same_name_npc_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+            let mut same_name_leave_times: Vec<i64> = Vec::new();
+            let mut treasure_box_seen = false;
+            let mut boss_dwid_found: i64 = 0;
+            let mut all_npc_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut player_fight_states: Vec<(i64, bool)> = Vec::new();
+            let mut death_notify_events: Vec<(i64, String)> = Vec::new();
+            let mut _boss_last_npc_info: Vec<(i64, String)> = Vec::new();
+            let mut all_boss_npc_info: Vec<(i64, String)> = Vec::new();
+            // 统计涉及 BOSS dwID 的技能事件
+            let boss_dwid_const: i64 = 1074278014;
+            let mut boss_skill_effect_count = 0u32;
+            let mut boss_skill_effect_times: Vec<(i64, bool, bool)> = Vec::new();
+            let mut boss_skill_hit_count = 0u32;
+            let mut boss_skill_hit_times: Vec<(i64, bool, bool)> = Vec::new();
+            let mut boss_skill_cast_count = 0u32;
+            let mut boss_skill_cast_times: Vec<i64> = Vec::new();
+            // 统计所有事件的时间分布，检测记录中断
+            let mut all_event_times: Vec<i64> = Vec::new();
+            let mut total_line_count = 0u32;
+
+            for line in reader.split(b'\n') {
+                let line_bytes = match line {
+                    Ok(l) => l,
+                    Err(_) => continue,
+                };
+                let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
+                let mut start = 0;
+                for (i, &b) in line_bytes.iter().enumerate() {
+                    if b == b'\t' {
+                        parts.push(&line_bytes[start..i]);
+                        start = i + 1;
+                        if parts.len() >= 5 {
+                            break;
+                        }
+                    }
+                }
+                parts.push(&line_bytes[start..]);
+                if parts.len() < 5 {
+                    continue;
+                }
+                let event_type: u32 = std::str::from_utf8(parts[4])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                *event_counts.entry(event_type).or_insert(0) += 1;
+                total_line_count += 1;
+
+                let lua_str = gbk.decode(parts[5]).0;
+                let lua_trimmed = lua_str.trim();
+                let lua_inner = lua_trimmed
+                    .strip_prefix('{')
+                    .and_then(|s| s.strip_suffix('}'))
+                    .unwrap_or(lua_trimmed);
+                let fields: Vec<&str> = lua_inner.split(',').collect();
+                let ts_sec: i64 = std::str::from_utf8(parts[2])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                all_event_times.push(ts_sec);
+
+                match event_type {
+                    1 => {
+                        if fields.len() >= 1 {
+                            let b_fight = fields[0].trim() == "true";
+                            player_fight_states.push((ts_sec, b_fight));
+                        }
+                    }
+                    6 => {
+                        if fields.len() >= 2 {
+                            let name = fields[1].trim().trim_matches('"');
+                            if name == "阿史那承庆" {
+                                boss_enter_scene_count += 1;
+                            }
+                        }
+                    }
+                    7 => {
+                        if fields.len() >= 2 {
+                            let name = fields[1].trim().trim_matches('"');
+                            if name == "阿史那承庆" {
+                                boss_leave_scene_count += 1;
+                                same_name_leave_times.push(ts_sec);
+                            }
+                        }
+                    }
+                    8 => {
+                        if fields.len() >= 3 {
+                            let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                            let name = fields[1].trim().trim_matches('"');
+                            let template_id: i64 = fields[2].trim().parse().unwrap_or(0);
+                            if name == "阿史那承庆" {
+                                boss_npc_info_count += 1;
+                                same_name_npc_ids.insert(dwid);
+                                if boss_dwid_found == 0 && template_id == 137130 {
+                                    boss_dwid_found = dwid;
+                                }
+                                if fields.len() >= 8 {
+                                    let face_dir: i64 = fields[7].trim().parse().unwrap_or(-1);
+                                    if face_dir == 192 {
+                                        boss_face_dir_192_count += 1;
+                                    }
+                                    boss_face_dir_changes.push((ts_sec, face_dir));
+                                }
+                                // 记录所有 BOSS NPC_INFO 的完整字段
+                                all_boss_npc_info.push((ts_sec, lua_inner.to_string()));
+                            }
+                            all_npc_names.insert(name.to_string());
+                            if name.contains("宝箱") {
+                                treasure_box_seen = true;
+                                println!("[!] 发现宝箱NPC: {} ts={}", name, ts_sec);
+                            }
+                        }
+                    }
+                    9 => {
+                        if fields.len() >= 2 {
+                            let name = fields[1].trim().trim_matches('"');
+                            if name == "阿史那承庆" {
+                                boss_fight_hint_count += 1;
+                                let b_fight = fields[0].trim() == "true";
+                                let n_current_life: i64 = if fields.len() >= 3 {
+                                    fields[2].trim().parse().unwrap_or(-1)
+                                } else { -1 };
+                                boss_fight_states.push((ts_sec, b_fight, n_current_life));
+                                if n_current_life == 0 {
+                                    boss_hp_zero_times.push(ts_sec);
+                                }
+                            }
+                        }
+                    }
+                    28 => {
+                        // 记录所有 DEATH_NOTIFY 事件
+                        death_notify_events.push((ts_sec, lua_inner.to_string()));
+                        if fields.len() >= 1 {
+                            let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                            if same_name_npc_ids.contains(&dwid) {
+                                boss_death_notify_count += 1;
+                                println!("[!] DEATH_NOTIFY 匹配 BOSS dwID={} ts={}", dwid, ts_sec);
+                            }
+                        }
+                    }
+                    19 => {
+                        // SKILL_CAST_LOG: fields[0]=施法者dwID
+                        if fields.len() >= 1 {
+                            let caster: i64 = fields[0].trim().parse().unwrap_or(0);
+                            if caster == boss_dwid_const {
+                                boss_skill_cast_count += 1;
+                                boss_skill_cast_times.push(ts_sec);
+                            }
+                        }
+                    }
+                    21 => {
+                        // SKILL_EFFECT_LOG: fields[0]=施法者, fields[1]=目标
+                        if fields.len() >= 2 {
+                            let caster: i64 = fields[0].trim().parse().unwrap_or(0);
+                            let target: i64 = fields[1].trim().parse().unwrap_or(0);
+                            if caster == boss_dwid_const || target == boss_dwid_const {
+                                boss_skill_effect_count += 1;
+                                boss_skill_effect_times.push((ts_sec, caster == boss_dwid_const, target == boss_dwid_const));
+                            }
+                        }
+                    }
+                    25 => {
+                        // SKILL_HIT_LOG: fields[0]=施法者, fields[1]=目标
+                        if fields.len() >= 2 {
+                            let caster: i64 = fields[0].trim().parse().unwrap_or(0);
+                            let target: i64 = fields[1].trim().parse().unwrap_or(0);
+                            if caster == boss_dwid_const || target == boss_dwid_const {
+                                boss_skill_hit_count += 1;
+                                boss_skill_hit_times.push((ts_sec, caster == boss_dwid_const, target == boss_dwid_const));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            println!("\n[事件类型分布]:");
+            let mut sorted_events: Vec<_> = event_counts.iter().collect();
+            sorted_events.sort_by_key(|(k, _)| **k);
+            for (evt, cnt) in &sorted_events {
+                println!("  type={}: {}", evt, cnt);
+            }
+            println!("\n[阿史那承庆相关事件]:");
+            println!("  NPC_ENTER_SCENE: {}", boss_enter_scene_count);
+            println!("  NPC_LEAVE_SCENE: {}", boss_leave_scene_count);
+            println!("  NPC_INFO: {}", boss_npc_info_count);
+            println!("  NPC_FIGHT_HINT: {}", boss_fight_hint_count);
+            println!("  DEATH_NOTIFY(匹配BOSS): {}", boss_death_notify_count);
+            println!("  face_dir=192 次数: {}", boss_face_dir_192_count);
+            println!("  宝箱 NPC 出现: {}", treasure_box_seen);
+            println!("  BOSS dwID: {}", boss_dwid_found);
+            println!("  同名 NPC dwID 数: {}", same_name_npc_ids.len());
+            println!("  同名 NPC 离场次数: {}", same_name_leave_times.len());
+            if !same_name_leave_times.is_empty() {
+                let span = same_name_leave_times.last().unwrap() - same_name_leave_times.first().unwrap();
+                println!("  同名 NPC 离场跨度: {}s", span);
+            }
+
+            println!("\n[含宝箱/阿史/承庆的 NPC 名称]:");
+            let mut names: Vec<_> = all_npc_names.iter().collect();
+            names.sort();
+            for n in names {
+                if n.contains("宝箱") || n.contains("阿史") || n.contains("承庆") {
+                    println!("  {}", n);
+                }
+            }
+
+            println!("\n[face_dir 变化（前20个）]:");
+            for (ts, fd) in boss_face_dir_changes.iter().take(20) {
+                println!("  ts={} face_dir={}", ts, fd);
+            }
+            if boss_face_dir_changes.len() > 20 {
+                println!("  ...");
+                println!("[face_dir 变化（最后10个）]:");
+                for (ts, fd) in boss_face_dir_changes.iter().rev().take(10) {
+                    println!("  ts={} face_dir={}", ts, fd);
+                }
+            }
+
+            println!("\n[FIGHT_HINT 状态变化（前20个）]:");
+            for (ts, bf, hp) in boss_fight_states.iter().take(20) {
+                println!("  ts={} bFight={} hp={}", ts, bf, hp);
+            }
+            if boss_fight_states.len() > 20 {
+                println!("  ...");
+                println!("[FIGHT_HINT 状态变化（最后10个）]:");
+                for (ts, bf, hp) in boss_fight_states.iter().rev().take(10) {
+                    println!("  ts={} bFight={} hp={}", ts, bf, hp);
+                }
+            }
+
+            if !boss_hp_zero_times.is_empty() {
+                println!("\n[HP=0 时刻]:");
+                for ts in &boss_hp_zero_times {
+                    println!("  ts={}", ts);
+                }
+            }
+
+            println!("\n[玩家 FIGHT_TIME 状态变化]:");
+            for (ts, bf) in player_fight_states.iter().take(10) {
+                println!("  ts={} bFight={}", ts, bf);
+            }
+            if player_fight_states.len() > 10 {
+                println!("  ...");
+                for (ts, bf) in player_fight_states.iter().rev().take(5) {
+                    println!("  ts={} bFight={}", ts, bf);
+                }
+            }
+
+            // 打印所有 DEATH_NOTIFY 事件
+            println!("\n[所有 DEATH_NOTIFY 事件]:");
+            for (ts, data) in &death_notify_events {
+                println!("  ts={} data={}", ts, data);
+            }
+
+            // 打印所有 BOSS NPC_INFO 的完整字段
+            println!("\n[所有阿史那承庆 NPC_INFO 完整字段]:");
+            for (ts, data) in &all_boss_npc_info {
+                println!("  ts={} fields={}", ts, data);
+            }
+
+            // 打印涉及 BOSS 的技能事件统计
+            println!("\n[涉及BOSS的技能事件统计]:");
+            println!("  SKILL_CAST(BOSS施法): {}", boss_skill_cast_count);
+            println!("  SKILL_EFFECT(BOSS参与): {}", boss_skill_effect_count);
+            println!("  SKILL_HIT(BOSS参与): {}", boss_skill_hit_count);
+            println!("  总事件行数: {}", total_line_count);
+
+            // 统计所有事件的时间分布，检测记录中断
+            if !all_event_times.is_empty() {
+                all_event_times.sort();
+                let first_ts = *all_event_times.first().unwrap();
+                let last_ts = *all_event_times.last().unwrap();
+                let total_span = last_ts - first_ts;
+                println!("\n[所有事件时间分布（检测记录中断）]:");
+                println!("  首事件 ts={}", first_ts);
+                println!("  末事件 ts={}", last_ts);
+                println!("  时间跨度: {}s", total_span);
+                println!("  平均事件密度: {:.1} 次/秒", all_event_times.len() as f64 / total_span as f64);
+                // 按30秒一个桶统计
+                println!("  [按30秒桶分布]:");
+                let mut bucket = first_ts;
+                loop {
+                    let bucket_end = bucket + 30;
+                    let count = all_event_times.iter().filter(|ts| **ts >= bucket && **ts < bucket_end).count();
+                    let skill_effect_in_bucket = boss_skill_effect_times.iter()
+                        .filter(|(ts, _, _)| *ts >= bucket && *ts < bucket_end)
+                        .count();
+                    println!("    ts={}~{}: 总事件={}次, BOSS技能事件={}次", bucket, bucket_end, count, skill_effect_in_bucket);
+                    if bucket_end >= last_ts {
+                        break;
+                    }
+                    bucket = bucket_end;
+                }
+            }
+            if !boss_skill_effect_times.is_empty() {
+                let first = boss_skill_effect_times.first().unwrap().0;
+                let last = boss_skill_effect_times.last().unwrap().0;
+                println!("  SKILL_EFFECT 时间范围: ts={} ~ ts={} (跨度{}s)", first, last, last - first);
+                // 按时间段统计：每60秒一个桶
+                let bucket_start = first;
+                let mut bucket = bucket_start;
+                println!("  [SKILL_EFFECT 按时间段分布(每60秒)]:");
+                loop {
+                    let bucket_end = bucket + 60;
+                    let count = boss_skill_effect_times.iter().filter(|(ts, _, _)| *ts >= bucket && *ts < bucket_end).count();
+                    if count > 0 {
+                        println!("    ts={}~{}: {}次", bucket, bucket_end, count);
+                    }
+                    if bucket_end >= last {
+                        break;
+                    }
+                    bucket = bucket_end;
+                }
+            }
+            if !boss_skill_hit_times.is_empty() {
+                let first = boss_skill_hit_times.first().unwrap().0;
+                let last = boss_skill_hit_times.last().unwrap().0;
+                println!("  SKILL_HIT 时间范围: ts={} ~ ts={} (跨度{}s)", first, last, last - first);
+            }
+        }
     }
 
 }
