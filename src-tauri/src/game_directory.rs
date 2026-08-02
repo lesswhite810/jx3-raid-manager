@@ -227,6 +227,329 @@ pub fn lookup_role_name_by_uid(game_directory: &Path, uid: &str) -> Option<Strin
     }
 }
 
+/// 从角色目录的 userdata.db 解析出的角色统计信息
+///
+/// 字段来源：茗伊插件 MY_RoleStatistics_RoleStat.lua 的 COLUMN_LIST
+/// BLOB 由 JX3 引擎 EncodeByteData API 序列化，顶层结构为 `{ d=<数据 table>, v=<版本号> }`
+/// 其中 d 包含所有角色统计字段，v 为数据格式版本号（如 "29.0.0"）
+#[derive(Debug, Clone)]
+struct RoleStatData {
+    // ===== 标识字段 =====
+    guid: String,
+    #[allow(dead_code)]
+    account: String,
+    #[allow(dead_code)]
+    region: String,
+    server: String,
+    name: String,
+
+    // ===== 基础属性 =====
+    force_id: i32,
+    #[allow(dead_code)]
+    level: i32,
+    equip_score: i32,
+    #[allow(dead_code)]
+    achievement_score: i32,
+    #[allow(dead_code)]
+    pet_score: i32,
+
+    // ===== 货币 =====
+    #[allow(dead_code)]
+    money_gold: i64,
+    #[allow(dead_code)]
+    money_silver: i64,
+    #[allow(dead_code)]
+    money_copper: i64,
+    #[allow(dead_code)]
+    justice: i32,
+
+    // ===== 体力/精力 =====
+    #[allow(dead_code)]
+    account_stamina_current: i32,
+    #[allow(dead_code)]
+    account_stamina_max: i32,
+    #[allow(dead_code)]
+    role_stamina_current: i32,
+    #[allow(dead_code)]
+    role_stamina_max: i32,
+
+    // ===== 元数据 =====
+    #[allow(dead_code)]
+    time: i64,
+    #[allow(dead_code)]
+    version: String,
+}
+
+/// KLua BLOB 类型标记字节
+/// 这些标记紧跟在 key 字符串之后，标识字段值的类型
+const KLUA_NUMBER: u8 = 0x6e; // 'n' — 8 字节 little-endian double
+const KLUA_STRING: u8 = 0x73; // 's' — 无长度前缀，以下一个 0x73 标记结束
+
+/// 在 haystack 中查找 needle 子序列，返回起始位置
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// 从 KLua 序列化的 BLOB 中提取数值字段
+///
+/// KLua 格式：key 字符串 + 'n'(0x6e) + 8字节 little-endian double
+/// 注意：key 可能是其他字段名的子串（如 "name" 在 "contribution_remain" 中），
+/// 因此需要遍历所有匹配位置，找到真正紧跟 'n' 标记的那个
+fn extract_double_from_blob(buf: &[u8], key: &str) -> Option<f64> {
+    let key_bytes = key.as_bytes();
+    let mut search_start = 0;
+    while let Some(idx) = find_subsequence(&buf[search_start..], key_bytes) {
+        let abs_idx = search_start + idx;
+        let after = &buf[abs_idx + key_bytes.len()..];
+        if !after.is_empty() && after[0] == KLUA_NUMBER && after.len() >= 9 {
+            let bytes: [u8; 8] = after[1..9].try_into().ok()?;
+            return Some(f64::from_le_bytes(bytes));
+        }
+        search_start = abs_idx + 1;
+    }
+    None
+}
+
+/// 从 KLua 序列化的 BLOB 中提取字符串字段
+///
+/// KLua 格式：key 字符串 + 's'(0x73) + 类型字节(0x06/0x08等) + 字符串内容 + 下一个 's'(0x73) 标记
+/// 字符串无长度前缀，以下一个字段起始标记 's'(0x73) 作为结束
+fn extract_string_from_blob(buf: &[u8], key: &str) -> Option<String> {
+    let key_bytes = key.as_bytes();
+    let mut search_start = 0;
+    while let Some(idx) = find_subsequence(&buf[search_start..], key_bytes) {
+        let abs_idx = search_start + idx;
+        let after = &buf[abs_idx + key_bytes.len()..];
+        // 字符串标记：'s'(0x73) + 非零类型字节（0x06/0x08 等均可能出现）
+        if after.len() >= 2 && after[0] == KLUA_STRING && after[1] != 0x00 {
+            let content_start = 2;
+            // 查找下一个 's'(0x73) 作为字符串结束
+            let content_end = after[content_start..]
+                .iter()
+                .position(|&b| b == KLUA_STRING)
+                .map(|p| content_start + p)
+                .unwrap_or(after.len());
+            let bytes = &after[content_start..content_end];
+            if bytes.is_empty() {
+                return None;
+            }
+            // 茗伊中文字符串以 GBK 或 UTF-8 存储，尝试 UTF-8 解码失败时回退 GBK
+            // 注意：BLOB 中字符串内容可能包含前导 0x00 空字节，需同时去除首尾空字节
+            return match std::str::from_utf8(bytes) {
+                Ok(s) => Some(s.trim_matches('\0').to_string()),
+                Err(_) => {
+                    let (cow, _, _) = encoding_rs::GBK.decode(bytes);
+                    Some(cow.trim_matches('\0').to_string())
+                }
+            };
+        }
+        search_start = abs_idx + 1;
+    }
+    None
+}
+
+/// 在父字段之后搜索嵌套 table 中的数值子字段
+///
+/// 用于解析 KLua 嵌套 table，如 `account_stamina = { current=100, max=200 }`
+/// 先定位父字段 parent_key 的位置，再在其后搜索 child_key + 'n' + double
+fn extract_nested_double(buf: &[u8], parent_key: &str, child_key: &str) -> Option<f64> {
+    let parent_bytes = parent_key.as_bytes();
+    let parent_pos = find_subsequence(buf, parent_bytes)?;
+    let search_start = parent_pos + parent_bytes.len();
+    if search_start >= buf.len() {
+        return None;
+    }
+    let child_bytes = child_key.as_bytes();
+    let child_idx = find_subsequence(&buf[search_start..], child_bytes)?;
+    let abs_idx = search_start + child_idx;
+    let after = &buf[abs_idx + child_bytes.len()..];
+    if !after.is_empty() && after[0] == KLUA_NUMBER && after.len() >= 9 {
+        let bytes: [u8; 8] = after[1..9].try_into().ok()?;
+        return Some(f64::from_le_bytes(bytes));
+    }
+    None
+}
+
+/// 解析 MY_RoleStatistics_RoleStat.tAlertTodayVal 的 BLOB 内容
+///
+/// BLOB 顶层结构为 `{ d=<数据 table>, v=<版本号 string> }`（由茗伊 Storage.UserSettings.lua 确认）
+/// d 包含所有角色统计字段，v 为数据格式版本号
+fn parse_role_stat_blob(blob: &[u8]) -> Option<RoleStatData> {
+    // 顶层版本号 v（字符串），仅用于日志和兼容性校验
+    // 注意："v" 是单字节 key(0x76)，在 double 数据流中极易误匹配
+    // 因此对解析结果做版本号格式校验（仅接受数字和点），不合法则丢弃
+    let version = extract_string_from_blob(blob, "v")
+        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.'));
+
+    // 标识字段
+    let name = extract_string_from_blob(blob, "name")?;
+    let guid = extract_string_from_blob(blob, "guid").unwrap_or_default();
+    let account = extract_string_from_blob(blob, "account").unwrap_or_default();
+    let region = extract_string_from_blob(blob, "region").unwrap_or_default();
+    let server = extract_string_from_blob(blob, "server").unwrap_or_default();
+
+    // 基础属性
+    let force_id = extract_double_from_blob(blob, "force").unwrap_or(0.0) as i32;
+    let level = extract_double_from_blob(blob, "level").unwrap_or(0.0) as i32;
+    let equip_score = extract_double_from_blob(blob, "equip_score").unwrap_or(0.0) as i32;
+    let achievement_score = extract_double_from_blob(blob, "achievement_score").unwrap_or(0.0) as i32;
+    let pet_score = extract_double_from_blob(blob, "pet_score").unwrap_or(0.0) as i32;
+
+    // 货币（money 为嵌套 table { nGold, nSilver, nCopper }，通过父字段定位子字段避免误匹配）
+    let money_gold = extract_nested_double(blob, "money", "nGold").unwrap_or(0.0) as i64;
+    let money_silver = extract_nested_double(blob, "money", "nSilver").unwrap_or(0.0) as i64;
+    let money_copper = extract_nested_double(blob, "money", "nCopper").unwrap_or(0.0) as i64;
+    let justice = extract_double_from_blob(blob, "justice").unwrap_or(0.0) as i32;
+
+    // 体力/精力（嵌套 table { current, max }，current/max 子字段名太通用，必须通过父字段定位）
+    let account_stamina_current =
+        extract_nested_double(blob, "account_stamina", "current").unwrap_or(0.0) as i32;
+    let account_stamina_max =
+        extract_nested_double(blob, "account_stamina", "max").unwrap_or(0.0) as i32;
+    let role_stamina_current =
+        extract_nested_double(blob, "role_stamina", "current").unwrap_or(0.0) as i32;
+    let role_stamina_max = extract_nested_double(blob, "role_stamina", "max").unwrap_or(0.0) as i32;
+
+    // 元数据
+    let time = extract_double_from_blob(blob, "time").unwrap_or(0.0) as i64;
+
+    if name.is_empty() {
+        return None;
+    }
+
+    log::debug!(
+        "[AnalyzeRoles] 解析角色: {} (server={}, force={}, level={}, equip={}, v={})",
+        name,
+        server,
+        force_id,
+        level,
+        equip_score,
+        version.as_deref().unwrap_or("")
+    );
+
+    Some(RoleStatData {
+        guid,
+        account,
+        region,
+        server,
+        name,
+        force_id,
+        level,
+        equip_score,
+        achievement_score,
+        pet_score,
+        money_gold,
+        money_silver,
+        money_copper,
+        justice,
+        account_stamina_current,
+        account_stamina_max,
+        role_stamina_current,
+        role_stamina_max,
+        time,
+        version: version.unwrap_or_default(),
+    })
+}
+
+/// 遍历所有 *@zhcn_hd/userdata/userdata.db，从 RoleStat BLOB 读取角色装分
+///
+/// 覆盖所有角色目录（含非满级、未登录角色），与 !all-users 全局库互补。
+/// 返回 HashMap<角色名, RoleStatData>，键为角色名（不含服务器后缀）。
+fn read_role_stat_from_all_userdata(game_directory: &Path) -> Vec<RoleStatData> {
+    let my_data_path = game_directory.join(GKP_BASE_PATH);
+    let mut results = Vec::new();
+    let mut seen_guids = std::collections::HashSet::new();
+
+    let entries = match read_directory_entries(&my_data_path) {
+        Ok(e) => e,
+        Err(err) => {
+            log::warn!("[AnalyzeRoles] 读取 MY#DATA 目录失败: {}", err);
+            return results;
+        }
+    };
+
+    for entry in entries {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        // 只处理 *@zhcn_hd 目录，跳过 !all-users、#cache 等
+        if !dir_name.ends_with("@zhcn_hd") || dir_name.starts_with('!') || dir_name.starts_with('#')
+        {
+            continue;
+        }
+
+        let db_path = entry.path().join("userdata").join("userdata.db");
+        if !db_path.exists() {
+            continue;
+        }
+
+        let conn = match rusqlite::Connection::open(&db_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!(
+                    "[AnalyzeRoles] 打开 {} 失败: {}",
+                    db_path.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        let blob: Vec<u8> = match conn.query_row(
+            "SELECT value FROM data WHERE key = 'MY_RoleStatistics_RoleStat.tAlertTodayVal'",
+            [],
+            |row| row.get(0),
+        ) {
+            Ok(b) => b,
+            Err(_) => continue, // 该角色目录无 RoleStat 数据
+        };
+
+        log::info!(
+            "[AnalyzeRoles] 目录 {} 的 RoleStat BLOB 长度 {}",
+            dir_name,
+            blob.len()
+        );
+
+        match parse_role_stat_blob(&blob) {
+            Some(stat) => {
+                // 按 guid 去重（同一角色可能在多个目录出现）
+                if !stat.guid.is_empty() && seen_guids.contains(&stat.guid) {
+                    continue;
+                }
+                if !stat.guid.is_empty() {
+                    seen_guids.insert(stat.guid.clone());
+                }
+                log::info!(
+                    "[AnalyzeRoles] 解析成功: {} (server={}, score={})",
+                    stat.name,
+                    stat.server,
+                    stat.equip_score
+                );
+                results.push(stat);
+            }
+            None => {
+                log::warn!(
+                    "[AnalyzeRoles] 目录 {} 的 BLOB 解析失败",
+                    dir_name
+                );
+            }
+        }
+    }
+
+    log::info!(
+        "[AnalyzeRoles] 从角色目录 userdata.db 读取到 {} 个角色统计",
+        results.len()
+    );
+    results
+}
+
 fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, String> {
     let db_path = game_directory.join(MING_YI_DB_PATH);
 
@@ -1204,60 +1527,166 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
     let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
     let timestamp = db::get_local_timestamp();
 
-    // 读取茗伊数据库
+    // 数据源1：茗伊全局库（!all-users），含心法解析但仅满级角色
     let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
         Ok(roles) => {
-            log::info!("从茗伊数据库读取到 {} 个角色信息", roles.len());
+            log::info!("[AnalyzeRoles] 从茗伊全局库读取到 {} 个角色信息", roles.len());
             roles
         }
         Err(e) => {
-            log::warn!("读取茗伊数据库失败: {}", e);
+            log::warn!("[AnalyzeRoles] 读取茗伊全局库失败: {}", e);
             Vec::new()
         }
     };
+
+    // 数据源2：各角色目录的 userdata.db，覆盖全量角色（含非满级、未登录）
+    let role_stats = read_role_stat_from_all_userdata(&runtime_path);
+    log::info!(
+        "[AnalyzeRoles] 角色目录 userdata.db 读取到 {} 个角色统计",
+        role_stats.len()
+    );
 
     let updated_accounts = 0;
     let new_roles = 0;
     let mut updated_roles = 0;
 
-    for mingyi_role in &mingyi_roles {
+    // 已通过角色目录处理过的角色名集合（避免重复处理）
+    let mut processed_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // 第一阶段：用角色目录 userdata.db 的装分更新所有匹配的已有角色
+    for stat in &role_stats {
         // 按角色名和服务器查找已有角色
-        let old_role_id: Option<String> = conn
+        let role_id: Option<String> = conn
             .query_row(
                 "SELECT id FROM roles WHERE name = ? AND server = ?",
-                params![mingyi_role.owner_name.clone(), mingyi_role.server_name.clone()],
+                params![stat.name, stat.server],
                 |row| row.get(0),
             )
-            .ok();
+            .ok()
+            .or_else(|| {
+                // 回退：仅按 name 查找（server 可能为空或不一致）
+                conn.query_row(
+                    "SELECT id FROM roles WHERE name = ?",
+                    params![stat.name],
+                    |row| row.get(0),
+                )
+                .ok()
+            });
 
-        if let Some(existing_role_id) = old_role_id {
-            // 更新已有角色的门派、心法、装分
-            let force_name = kungfu_data::get_force_name(mingyi_role.force_id);
-            let current_score = mingyi_role
-                .scores
-                .get((mingyi_role.effective_suit - 1) as usize)
-                .copied()
-                .unwrap_or(0);
+        if let Some(existing_role_id) = role_id {
+            processed_names.insert(stat.name.clone());
 
-            conn.execute(
-                "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
-                params![
-                    force_name.unwrap_or_default(),
-                    mingyi_role.kungfu_name.clone().unwrap_or_default(),
-                    current_score as i64,
-                    timestamp,
-                    existing_role_id,
-                ],
-            )
-            .map_err(|e| format!("更新角色信息失败: {}", e))?;
-            updated_roles += 1;
+            let force_name = kungfu_data::get_force_name(stat.force_id);
+            if stat.equip_score > 0 {
+                log::info!(
+                    "[AnalyzeRoles] 第一阶段更新: {} ({}) score={}",
+                    stat.name,
+                    stat.server,
+                    stat.equip_score
+                );
+                conn.execute(
+                    "UPDATE roles SET sect = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                    params![
+                        force_name.unwrap_or_default(),
+                        stat.equip_score as i64,
+                        timestamp,
+                        existing_role_id,
+                    ],
+                )
+                .map_err(|e| format!("更新角色装分失败: {}", e))?;
+                updated_roles += 1;
+            } else {
+                log::warn!(
+                    "[AnalyzeRoles] 角色 {} 的装分为0，跳过 equipment_score 更新",
+                    stat.name
+                );
+            }
+        } else {
+            log::warn!(
+                "[AnalyzeRoles] 第一阶段未匹配: {} ({})",
+                stat.name,
+                stat.server
+            );
         }
-        // 如果没有找到对应角色，不插入新角色（角色分析只更新已有角色）
+    }
+
+    // 第二阶段：用茗伊全局库补充心法信息（角色目录无心法数据）
+    // 仅处理已通过角色目录更新过的角色，避免重复处理
+    for mingyi_role in &mingyi_roles {
+        if processed_names.contains(&mingyi_role.owner_name) {
+            // 已通过角色目录更新装分，这里只补充心法
+            let old_role_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM roles WHERE name = ? AND server = ?",
+                    params![mingyi_role.owner_name, mingyi_role.server_name],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            if let Some(existing_role_id) = old_role_id {
+                let force_name = kungfu_data::get_force_name(mingyi_role.force_id);
+                conn.execute(
+                    "UPDATE roles SET sect = ?, martial = ?, updated_at = ? WHERE id = ?",
+                    params![
+                        force_name.unwrap_or_default(),
+                        mingyi_role.kungfu_name.clone().unwrap_or_default(),
+                        timestamp,
+                        existing_role_id,
+                    ],
+                )
+                .map_err(|e| format!("更新角色心法失败: {}", e))?;
+            }
+        } else {
+            // 角色目录未处理的角色（可能在全局库有但目录无），用全局库装分更新
+            let old_role_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM roles WHERE name = ? AND server = ?",
+                    params![mingyi_role.owner_name, mingyi_role.server_name],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            if let Some(existing_role_id) = old_role_id {
+                let force_name = kungfu_data::get_force_name(mingyi_role.force_id);
+                let current_score = mingyi_role
+                    .scores
+                    .get((mingyi_role.effective_suit - 1) as usize)
+                    .copied()
+                    .unwrap_or(0);
+
+                if current_score > 0 {
+                    conn.execute(
+                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                        params![
+                            force_name.unwrap_or_default(),
+                            mingyi_role.kungfu_name.clone().unwrap_or_default(),
+                            current_score as i64,
+                            timestamp,
+                            existing_role_id,
+                        ],
+                    )
+                    .map_err(|e| format!("更新角色信息失败: {}", e))?;
+                    updated_roles += 1;
+                } else {
+                    conn.execute(
+                        "UPDATE roles SET sect = ?, martial = ?, updated_at = ? WHERE id = ?",
+                        params![
+                            force_name.unwrap_or_default(),
+                            mingyi_role.kungfu_name.clone().unwrap_or_default(),
+                            timestamp,
+                            existing_role_id,
+                        ],
+                    )
+                    .map_err(|e| format!("更新角色门派心法失败: {}", e))?;
+                }
+            }
+        }
     }
 
     log::info!(
-        "角色分析完成：更新 {} 个角色",
-        updated_roles
+        "[AnalyzeRoles] 角色分析完成：更新 {} 个角色（角色目录 {} + 全局库补充）",
+        updated_roles,
+        role_stats.len()
     );
 
     Ok(AutoParseResult {
