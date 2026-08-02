@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { RaidRecord, Account } from '../types';
 import { dropScannerService } from '../services/dropScanner';
+import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { formatGoldAmount } from '../utils/recordUtils';
@@ -309,8 +310,28 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     void handleScan(getMonthStart(now).getTime(), getMonthEnd(now).getTime(), '本月');
   }, [handleScan]);
 
+  /** 扫描本赛季（按数据库配置的赛季时间范围） */
+  const handleScanThisSeason = useCallback(async () => {
+    try {
+      const season = await db.getCurrentSeason();
+      if (!season || !season.startDate) {
+        toast.error('未找到当前赛季配置');
+        return;
+      }
+      const startMs = season.startDate * 1000;
+      // endDate 为 0/undefined 表示赛季尚未结束，使用当前时间作为上限
+      const endMs = season.endDate && season.endDate > 0
+        ? season.endDate * 1000
+        : Date.now();
+      void handleScan(startMs, endMs, '本赛季');
+    } catch (error) {
+      console.error('获取当前赛季失败:', error);
+      toast.error('获取当前赛季失败，请重试');
+    }
+  }, [handleScan]);
+
   const scanMenu = debugEnabled ? (
-    // Debug 模式：保留下拉框，提供「扫描本周」+「扫描本月」两个选项
+    // Debug 模式：保留下拉框，提供「扫描本周」+「扫描本月」+「扫描本赛季」三个选项
     <div className="relative" ref={scanMenuRef}>
       <button
         onClick={() => setIsScanMenuOpen(!isScanMenuOpen)}
@@ -341,6 +362,13 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
           >
             <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             <span>扫描本月</span>
+          </button>
+          <button
+            onClick={handleScanThisSeason}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+          >
+            <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>扫描本赛季</span>
           </button>
         </div>
       )}
