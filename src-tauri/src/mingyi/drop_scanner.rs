@@ -2455,7 +2455,9 @@ fn is_role_online(account_dir: &Path, jx3_running: bool) -> bool {
 /// 2. 出现底薪结算消息：has_salary = true（聊天记录中检测到"每人底薪：XXX金"）
 /// 3. JX3 进程退出：jx3_running = false
 /// 4. 角色离线：role_online = false（chatlog mtime > 5 分钟未更新）
-/// 5. 时间兜底：副本最后一个 JCL 距今超过 RAID_STALE_THRESHOLD_MS（6 小时），
+/// 5. 副本已切换：has_next_jcl = true（存在比当前实例 last_jcl_time 更晚的 JCL 时间戳，
+///    说明用户已切换到其他副本，当前副本必然已结束。与 chatlog_end 截断逻辑保持一致）
+/// 6. 时间兜底：副本最后一个 JCL 距今超过 RAID_STALE_THRESHOLD_MS（6 小时），
 ///    无论进程/角色状态如何均视为已完成。避免历史副本因当前 JX3 运行而被误判为"进行中"。
 ///
 /// 由于通关判定改为基于 JCL 数据（NPC_FIGHT_HINT 的 bFight True→False），
@@ -2466,6 +2468,7 @@ fn is_raid_complete(
     has_salary: bool,
     jx3_running: bool,
     role_online: bool,
+    has_next_jcl: bool,
 ) -> bool {
     // 条件 1：配置中的 BOSS 全部击杀
     // 只统计 bosses_killed 中属于 raid_bosses 配置列表的 BOSS，避免非配置 BOSS（如小怪、特殊 NPC）
@@ -2496,7 +2499,19 @@ fn is_raid_complete(
     if !role_online {
         return true;
     }
-    // 条件 5：时间兜底 — 副本最后一个 JCL 距今超过阈值，视为已完成
+    // 条件 5：副本已切换 — 存在比当前实例 last_jcl_time 更晚的 JCL 时间戳
+    // 说明用户已经切换到其他副本（或开始新副本），当前副本必然已结束。
+    // 与 chatlog_end 截断逻辑保持一致：next_jcl_time.is_some() 即视为新副本活动已开始。
+    // 解决场景：用户在第一个副本中途退出（未全清、无底薪）后进入第二个副本，
+    // JX3 仍在运行、角色仍在线、6 小时兜底未触发，导致第一个副本一直显示"进行中"。
+    if has_next_jcl {
+        log::info!(
+            "[DropScanner] 副本切换: 副本 '{}' 后续存在更晚的 JCL，判定已完成",
+            instance.raid_display_name
+        );
+        return true;
+    }
+    // 条件 6：时间兜底 — 副本最后一个 JCL 距今超过阈值，视为已完成
     // 防止历史副本因当前 JX3 运行中 + 角色在线而被误判为"进行中"（scanning）
     if instance.last_jcl_time > 0 {
         let now_ms = chrono::Local::now().timestamp_millis();
@@ -3378,11 +3393,12 @@ pub fn scan_raid_drops_with_raids(
             base_salary.is_some(),
             jx3_running,
             role_online,
+            next_jcl_time.is_some(),
         );
         let record_status = if raid_complete { "pending" } else { "scanning" };
 
         log::info!(
-            "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, boss_all_killed={}, has_salary={}, jx3_running={}, role_online={} -> status='{}'",
+            "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, boss_all_killed={}, has_salary={}, jx3_running={}, role_online={}, has_next_jcl={} -> status='{}'",
             instance.raid_display_name,
             instance.boss_kill_count,
             raid_bosses.len(),
@@ -3390,6 +3406,7 @@ pub fn scan_raid_drops_with_raids(
             base_salary.is_some(),
             jx3_running,
             role_online,
+            next_jcl_time.is_some(),
             record_status
         );
 

@@ -97,7 +97,9 @@ fn is_prepare_install_data_mode() -> bool {
 }
 
 fn run_prepare_install_data() -> Result<(), String> {
-    db::init_db().map(|_| ())
+    // 使用跳过迁移的版本，避免安装时迁移副作用导致数据丢失。
+    // 迁移逻辑留给应用正常启动时的 init_db 处理。
+    db::init_db_skip_migration().map(|_| ())
 }
 
 fn main() {

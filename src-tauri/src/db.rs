@@ -283,26 +283,6 @@ fn files_are_identical(left: &Path, right: &Path) -> Result<bool, String> {
     }
 }
 
-fn target_file_is_authoritative(source: &Path, target: &Path) -> Result<bool, String> {
-    if files_are_identical(source, target)? {
-        return Ok(true);
-    }
-
-    let source_modified = fs::metadata(source)
-        .map_err(|e| format!("读取文件信息失败 {}: {}", source.display(), e))?
-        .modified()
-        .ok();
-    let target_modified = fs::metadata(target)
-        .map_err(|e| format!("读取文件信息失败 {}: {}", target.display(), e))?
-        .modified()
-        .ok();
-
-    Ok(matches!(
-        (source_modified, target_modified),
-        (Some(source_time), Some(target_time)) if target_time >= source_time
-    ))
-}
-
 fn move_file_with_fallback(source: &Path, target: &Path) -> Result<(), String> {
     match fs::rename(source, target) {
         Ok(_) => Ok(()),
@@ -357,14 +337,19 @@ fn migrate_managed_app_data_files(
                     source_path,
                     target_path
                 );
-            } else if target_file_is_authoritative(&source_path, &target_path)? {
+            } else if files_are_identical(&source_path, &target_path)? {
+                // 文件完全相同：安全删除源文件（内容已存在于目标）
                 fs::remove_file(&source_path)
                     .map_err(|e| format!("删除源文件失败 {}: {}", source_path.display(), e))?;
                 changed = true;
-                log::info!("已清理旧数据文件: {:?} -> {:?}", source_path, target_path);
+                log::info!("已清理重复数据文件: {:?} -> {:?}", source_path, target_path);
             } else {
+                // 文件内容不同：保留源文件，避免有数据的 db 被空 db 覆盖丢失。
+                // 之前基于修改时间的 target_file_is_authoritative 判断不安全：
+                // 新创建的空 db 修改时间新于有数据的旧 db，会误判并删除有数据的源文件。
+                // 保留两者，让用户手动处理冲突（源文件保留在原目录作为备份）。
                 log::warn!(
-                    "跳过冲突数据文件迁移，目标目录已存在无法安全覆盖的文件: {:?} -> {:?}",
+                    "跳过冲突数据文件迁移（源与目标内容不同，保留源文件作为备份）: {:?} -> {:?}",
                     source_path,
                     target_path
                 );
@@ -832,6 +817,80 @@ pub fn init_db() -> Result<Connection, String> {
 
     *initialized = true;
     log::info!("[INIT] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
+
+    Ok(conn)
+}
+
+/// 安装阶段预创建数据库（不触发数据目录迁移）
+///
+/// 供 `--prepare-install-data` 使用。与 `init_db` 的区别：
+/// - **跳过 `ensure_app_data_migrated`**，避免安装时迁移副作用导致数据丢失
+/// - 迁移逻辑留给应用正常启动时的 `init_db` 处理
+///
+/// 背景：安装时 `--prepare-install-data` 调用 `init_db` 会触发迁移，
+/// 如果目标目录已存在空 db（修改时间新于有数据的源 db），
+/// `target_file_is_authoritative` 会误判并删除有数据的源 db，导致数据丢失。
+pub fn init_db_skip_migration() -> Result<Connection, String> {
+    let mut initialized = DB_INITIALIZED.lock().map_err(|e| e.to_string())?;
+
+    if *initialized {
+        let path = get_db_path()?;
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if metadata.len() > 0 {
+                let conn = Connection::open(path).map_err(|e| e.to_string())?;
+                apply_connection_pragmas(&conn);
+                return Ok(conn);
+            }
+        }
+        log::warn!("[INIT] 数据库文件缺失或为空，重新初始化");
+        *initialized = false;
+    }
+
+    // 注意：不调用 ensure_app_data_migrated，避免安装时迁移副作用
+    let path = get_db_path()?;
+    let db_exists = path.exists();
+
+    log::info!(
+        "[INIT] 安装阶段预创建数据库，DB路径: {:?}, db_exists: {}",
+        path, db_exists
+    );
+
+    let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    apply_persistent_pragmas(&conn);
+    apply_connection_pragmas(&conn);
+
+    ensure_version_tables(&conn)?;
+
+    let current_version = get_schema_version(&conn)?;
+
+    if !db_exists {
+        install_fresh_db(&conn)?;
+    } else if current_version > CURRENT_SCHEMA_VERSION {
+        log::warn!(
+            "[INIT] 数据库版本 V{} 高于应用版本 V{}，将执行表结构修复",
+            current_version, CURRENT_SCHEMA_VERSION
+        );
+        ensure_baseline_tables(&conn)?;
+        ensure_equipment_columns(&conn)?;
+        ensure_critical_columns(&conn)?;
+    } else if current_version < CURRENT_SCHEMA_VERSION {
+        upgrade_db(&conn, current_version)?;
+    } else {
+        log::info!("[INIT] 已是最新版本 V{}，无需迁移", current_version);
+    }
+
+    ensure_raid_bosses_table(&conn)?;
+    ensure_records_columns(&conn)?;
+    ensure_jcl_cache_table(&conn)?;
+    ensure_drop_items_table(&conn)?;
+    ensure_critical_columns(&conn)?;
+    migration::init_static_raids(&conn)?;
+    ensure_equipment_columns(&conn)?;
+    ensure_app_config_table(&conn)?;
+    auto_complete_setup_for_legacy_users(&conn)?;
+
+    *initialized = true;
+    log::info!("[INIT] 安装阶段数据库预创建完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
 
     Ok(conn)
 }
