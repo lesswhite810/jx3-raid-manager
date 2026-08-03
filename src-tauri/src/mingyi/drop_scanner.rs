@@ -1904,7 +1904,8 @@ fn normalize_role_name(name: &str) -> String {
 /// purchased_items 为当前角色花钱购买的物品名列表（来自"花费了...购买了"格式消息）。
 /// 调用方根据 base_salary 是否存在决定最终收入：
 ///   - 有底薪 → 在 income_records 中找 gold >= base_salary 的第一条记录，用该 gold 作为收入
-///   - 无底薪 → 在 income_records 中找最后一个 BOSS 后最近的一条记录，用该 gold 作为收入
+///   - 无底薪 → 在 income_records 中找 time_sec > last_jcl_sec 的第一条记录（拍卖工资只发一次）
+///     找不到时回退到收入总和
 #[allow(dead_code)]
 fn extract_drops_from_chatlog(
     chatlog_path: &PathBuf,
@@ -3327,9 +3328,9 @@ pub fn scan_raid_drops_with_raids(
         // 最终收入计算：
         // - 有底薪：在收入记录中找金额 >= 底薪值的第一条记录，用该金额作为收入
         //   （团长发放底薪时的"你获得：XXX金"记录，金额通常等于或略大于底薪）
-        // - 无底薪：使用收入记录总和作为收入
-        //   （无底薪参考时，单条记录可能是小额系统消息，总和相关收入更可靠）
-        // - 找不到匹配记录时回退：有底薪回退到底薪值，无底薪使用收入总和
+        // - 无底薪：取最后一个 JCL 之后的第一条非 BOSS 10金收入记录作为收入
+        //   （拍卖工资发放只发一次，即为最后一个 JCL 之后的第一条收入记录）
+        // - 找不到匹配记录时回退：有底薪回退到底薪值，无底薪回退到收入总和
         all_income_records.sort_by_key(|(t, _)| *t);
         let last_jcl_sec = instance.last_jcl_time / 1000;
         let total_gold = if let Some(salary) = base_salary {
@@ -3351,12 +3352,23 @@ pub fn scan_raid_drops_with_raids(
                 }
             }
         } else {
-            // 无底薪：使用收入记录总和
-            log::info!(
-                "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 使用收入总和 {} (共 {} 条记录) -> 收入={}",
-                last_jcl_sec, other_income, all_income_records.len(), other_income
-            );
-            other_income
+            // 无底薪：取最后一个 JCL 之后的第一条收入记录（拍卖工资只发一次）
+            match all_income_records.iter().find(|(t, _)| *t > last_jcl_sec) {
+                Some((t, g)) => {
+                    log::info!(
+                        "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 取 last_jcl 后第一条收入 gold={} time={} -> 收入={}",
+                        last_jcl_sec, g, t, g
+                    );
+                    *g
+                }
+                None => {
+                    log::info!(
+                        "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 无后续收入记录, 回退到收入总和 {} (共 {} 条记录) -> 收入={}",
+                        last_jcl_sec, other_income, all_income_records.len(), other_income
+                    );
+                    other_income
+                }
+            }
         };
         log::info!(
             "[DropScanner] 收入汇总: 底薪={:?}, 其他收入总和={}, 最终收入={}, 支出={}, 收入记录数={}",
