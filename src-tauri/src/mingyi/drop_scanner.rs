@@ -1369,18 +1369,12 @@ fn analyze_jcl(
     // 某些 BOSS（如"笑妆娘"、"柳公子"）有多个 templateId 的同名 NPC（分身/幻影），
     // 击杀时主 BOSS 可能不触发 bFight=false，但分身/幻影会 LEAVE_SCENE。
     // 注意：团灭时分身也会集中离场，因此不能仅凭"有分身离场"判定击杀。
-    // 可靠区分信号：分身离场时间跨度（clone_leave_span）。
-    //   - 击杀：分身在整个战斗过程中陆续离场，跨度大（实测 229~374 秒）
-    //   - 团灭：分身在战斗结束时集中离场，跨度小（实测 56 秒）
-    //   阈值 120 秒可完美区分两类情况。
-    //   注意：此机制仅适用于有多个分身的 BOSS（如笑妆娘）。
-    //   柳公子只有 1 个分身（跨度=0），不满足此信号，
-    //   但可通过 leave_scene_is_kill（无脱战离场）判定击杀。
+    // 辅助区分信号：主 BOSS 的死亡迹象（face_dir=192 / HP=0 / DEATH_NOTIFY）+ 之后无重生。
+    //   - 击杀：BOSS 有死亡迹象且之后没有再出现 BOSS 活动（face_dir 没从 192 回到 0）
+    //   - 团灭：BOSS 无死亡迹象，或 BOSS 重生（face_dir 从 192 回到 0）
+    // 不再使用分身离场时间跨度（clone_leave_span）——柳公子团灭时跨度也可达 145~226s，无法可靠区分。
     let mut same_name_dwids: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let mut same_name_leave_scene_count: u32 = 0;
-    // 分身（非主 BOSS 的同名 NPC）离场时间戳，用于计算离场时间跨度
-    let mut first_clone_leave_ms: i64 = 0;
-    let mut last_clone_leave_ms: i64 = 0;
 
     for line in reader.split(b'\n') {
         let line_bytes: Vec<u8> = match line {
@@ -1639,16 +1633,8 @@ fn analyze_jcl(
                     real_boss_leave_scene_ms = timestamp_sec * 1000;
                 }
                 // 同名 NPC 离开场景（BOSS 分身/幻影离场）
-                // 追踪分身（非主 BOSS）的离场时间戳，用于计算时间跨度区分击杀/团灭。
                 if file_boss_in_config && same_name_dwids.contains(&dwid) {
                     same_name_leave_scene_count += 1;
-                    if dwid != boss_dwid {
-                        let ts_ms = timestamp_sec * 1000;
-                        if first_clone_leave_ms == 0 {
-                            first_clone_leave_ms = ts_ms;
-                        }
-                        last_clone_leave_ms = ts_ms;
-                    }
                 }
             }
             28 => {
@@ -1688,7 +1674,7 @@ fn analyze_jcl(
     // 3. bFight true→false（无 LEAVE_SCENE）: BOSS 死在原地不消失
     //    拉托时 BOSS 会先 bFight=false（脱战）再 LEAVE_SCENE，
     //    所以 bFight=false + 无 LEAVE = 击杀，bFight=false + 有 LEAVE = 拉托。
-    // 4. clone_leave_signal: 分身离场时间跨度>=120s（击杀）vs <120s（团灭）
+    // 4. clone_leave_signal: 分身离场 + 主 BOSS 有死亡迹象（face_dir=192/HP=0/DEATH_NOTIFY）+ 之后无重生
     // 5. LEAVE_SCENE + face_dir=192（辅助）: BOSS 被击杀后直接消失
     //    nFaceDirection(192) 后不回 0 = 击杀，192→0 = 团灭（BOSS 重置）。
     //
@@ -1699,7 +1685,8 @@ fn analyze_jcl(
     // 路径 A：文件名 BOSS 在 raid_bosses 配置中（普通 BOSS 如"唐醉"、"笑妆娘"）
     //   1) 宝箱路径（首选）：该 BOSS 名+"宝箱" NPC 出现
     //   2) 死亡路径：boss_dwid!=0 + boss_fight_true_seen + 任一击杀信号
-    //   注意：clone_leave_signal 不受 face_dir_respawned 影响（笑妆娘多阶段 BOSS 修复）
+    //   注意：clone_leave_signal 需要分身离场 + 死亡迹象 + 未重生三重条件，
+    //         避免柳公子团灭时分身离场跨度大导致误判。
     //
     // 路径 B：文件名 BOSS 不在配置中（小怪 JCL 如"须罗巨傀"对应唐怀仁战斗）
     //   Q1: JCL 中能找到配置 BOSS 吗？→ 否 → 小怪
@@ -1712,13 +1699,17 @@ fn analyze_jcl(
         } else {
             treasure_box_bosses.contains(jcl_boss_name)
         };
-        let clone_leave_span_sec = if first_clone_leave_ms > 0 {
-            (last_clone_leave_ms - first_clone_leave_ms) / 1000
-        } else {
-            0
-        };
+        // clone_leave_signal: 分身离场 + 主 BOSS 有死亡迹象 + 之后无重生（无 BOSS 活动）。
+        // 不再使用 clone_leave_span_sec>=120 阈值——该阈值过于特殊，
+        // 柳公子团灭时分身离场跨度也可达 145~226s，无法可靠区分击杀/团灭。
+        // 改为依赖"死亡迹象 + 未重生"组合：face_dir=192/HP=0/DEATH_NOTIFY 表明 BOSS 已死，
+        // !boss_face_dir_respawned 表明之后没有再出现 BOSS 活动（face_dir 没有从 192 回到 0）。
+        // 历史数据验证：柳公子 17 个 JCL 新旧逻辑一致；笑妆娘击杀基本都有宝箱（treasure_ok）保护。
+        let has_death_sign = boss_death_notify_seen
+            || boss_hp_zero_seen
+            || boss_face_dir_dead;
         let clone_leave_signal =
-            same_name_leave_scene_count > 0 && clone_leave_span_sec >= 120;
+            same_name_leave_scene_count > 0 && has_death_sign && !boss_face_dir_respawned;
         let bfight_false_is_kill = boss_fight_false_seen && !boss_leave_scene_seen;
         // leave_scene_is_kill 受 face_dir 校验：仅当 face_dir=192 后未重生且 LEAVE_SCENE 在之后
         let leave_scene_is_kill = boss_leave_scene_seen
