@@ -124,6 +124,20 @@ Release Notes 站在用户角度写，不写“做了哪些代码改动”，而
 14. GitHub Actions 在 release 成功后会自动把仓库版本推进到下一个补丁版本，并生成新的空白 `release-notes/v<next>.md` 模板，便于后续继续开发。
 15. 最后用 GitHub API 或网页再次确认正文没有乱码，并确认 GitHub release 里已上传安装包、便携版、`latest.json` 与签名文件；同时确认 Gitee `updater-assets` 分支已同步 `updater/latest.json`、安装包和 `.sig` 文件。
 
+## 禁止未发布推高版本号
+
+本地 `npm run version:prepare` 和 `scripts/prepare-next-version.mjs` 都已加入发布状态校验：
+
+- 运行前会检查当前 `package.json` 中的版本号是否已存在 git tag `v<version>`。
+- 如果当前版本号尚未发布（不存在 tag），脚本会直接抛错拒绝推高版本号，避免出现"占位版本"。
+- 例外：补救历史遗留状态时可显式传入 `--force` 标志绕过：
+
+  ```bash
+  npm run version:prepare -- 2.1.51 --force
+  ```
+
+CI 端的 `Prepare next patch version` 步骤只在 tag 触发并发布成功后执行，不会产生占位版本。本地手动推高版本后，若没有真正发布，必须将仓库版本回退到上一个已发布版本，不要保留"未发布的下一个版本"占位。
+
 ---
 
 ## 常见问题

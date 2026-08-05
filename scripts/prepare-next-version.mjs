@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
@@ -43,6 +44,41 @@ function updateCargoLockVersion(content, version) {
     /(\[\[package\]\]\r?\nname = "jx3-raid-manager"\r?\nversion = )"[^"]+"/,
     `$1"${version}"`
   );
+}
+
+/**
+ * 检查指定版本是否已发布（存在 git tag v<version>）。
+ *
+ * 用于防止本地在版本未发布时手动推高版本号造成"占位版本"。
+ * 检查策略：
+ * 1. 优先检查 git 本地 tag（git rev-parse v<version>）。
+ * 2. 如果本地不存在，再调用 git ls-remote 检查远程 tag。
+ *
+ * @param {string} version - 待检查的版本号
+ * @param {string} rootDir - 仓库根目录
+ * @returns {boolean} 是否已发布
+ */
+export function isVersionPublished(version, rootDir = process.cwd()) {
+  if (!isValidVersion(version)) {
+    return false;
+  }
+  const tag = `v${version}`;
+  try {
+    execFileSync('git', ['rev-parse', tag], { cwd: rootDir, stdio: 'ignore' });
+    return true;
+  } catch {
+    // 本地 tag 不存在，继续检查远程
+  }
+  try {
+    const output = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`], {
+      cwd: rootDir,
+      encoding: 'utf8',
+    }).trim();
+    return output.length > 0;
+  } catch {
+    // 无法访问远程（无网络/无 origin），保守起见视为未发布
+    return false;
+  }
 }
 
 export function syncVersionFiles(version, rootDir = process.cwd()) {
@@ -91,12 +127,17 @@ export function ensureReleaseNotesTemplate(version, rootDir = process.cwd()) {
 function parseArgs(args) {
   let explicitVersion = null;
   let nextPatchFrom = null;
+  let force = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
     if (value === '--next-patch-from') {
       nextPatchFrom = args[index + 1] ?? null;
       index += 1;
+      continue;
+    }
+    if (value === '--force' || value === '-f') {
+      force = true;
       continue;
     }
 
@@ -114,14 +155,39 @@ function parseArgs(args) {
 
   const resolvedVersion = explicitVersion ?? (nextPatchFrom ? bumpPatchVersion(nextPatchFrom) : null);
   if (!resolvedVersion) {
-    throw new Error('Usage: node scripts/prepare-next-version.mjs <version> | --next-patch-from <version>');
+    throw new Error(
+      'Usage: node scripts/prepare-next-version.mjs <version> | --next-patch-from <version> [--force]'
+    );
   }
 
-  return resolvedVersion;
+  return { version: resolvedVersion, force };
 }
 
+/**
+ * 准备下一个版本的发布配置（同步版本号 + 生成 release notes 模板）。
+ *
+ * 强制要求：当前仓库的版本号必须已经发布（存在 git tag v<currentVersion>），
+ * 否则禁止推高版本号，避免出现"占位版本"。
+ *
+ * 例外：使用 `--force` 标志可绕过此检查，用于补救历史遗留的版本状态。
+ *
+ * @param {string[]} args - 命令行参数
+ * @param {string} rootDir - 仓库根目录
+ */
 export function prepareNextVersion(args, rootDir = process.cwd()) {
-  const version = parseArgs(args);
+  const { version, force } = parseArgs(args);
+
+  if (!force) {
+    const packageJsonPath = path.join(rootDir, 'package.json');
+    const currentVersion = readJson(packageJsonPath).version;
+    if (currentVersion && isValidVersion(currentVersion) && !isVersionPublished(currentVersion, rootDir)) {
+      throw new Error(
+        `禁止推高版本号：当前仓库版本 ${currentVersion} 尚未发布（git tag v${currentVersion} 不存在）。\n` +
+          `如需继续推高，请先在 GitHub 上发布当前版本，或使用 --force 标志绕过此检查。`
+      );
+    }
+  }
+
   syncVersionFiles(version, rootDir);
   const notesPath = ensureReleaseNotesTemplate(version, rootDir);
   return { version, notesPath };

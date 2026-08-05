@@ -148,6 +148,7 @@ npm run version:prepare -- --next-patch-from 2.1.19
 
 - 发版前必须同步 git tag、`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`。
 - GitHub Actions 已增加发版前版本一致性校验。
+- **禁止未发布推高版本号**：本地 `npm run version:prepare` 会先检查当前 `package.json` 版本号是否已有对应 git tag（`v<version>`），未发布时拒绝推高版本。补救时可显式传入 `--force` 绕过。CI 自动推进（`Prepare next patch version`）只在 tag 成功发布后才执行，不会产生占位版本。
 
 ### 9.2 Release Notes
 

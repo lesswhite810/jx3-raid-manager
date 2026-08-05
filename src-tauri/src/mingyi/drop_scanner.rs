@@ -7589,4 +7589,325 @@ mod tests {
         }
     }
 
+    /// 提取 JCL 关键信号（简化版，用于新旧逻辑对比）
+    /// 只提取 is_kill 判定所需的信号，不处理 real_boss 路径（路径 B）
+    struct KillSignals {
+        treasure_box_count: u32,
+        boss_fight_true_seen: bool,
+        boss_fight_false_seen: bool,
+        boss_hp_zero_seen: bool,
+        boss_death_notify_seen: bool,
+        boss_face_dir_dead: bool,
+        boss_face_dir_respawned: bool,
+        boss_leave_scene_seen: bool,
+        same_name_leave_scene_count: u32,
+        clone_leave_span_sec: i64,
+    }
+
+    fn extract_kill_signals(
+        jcl_path: &std::path::Path,
+        boss_name: &str,
+        boss_template_id: i64,
+        raid_bosses: &[(String, String)],
+    ) -> Option<KillSignals> {
+        use std::io::BufRead;
+        let file = std::fs::File::open(jcl_path).ok()?;
+        let reader = std::io::BufReader::new(file);
+        let gbk = encoding_rs::GBK;
+
+        let file_boss_in_config = is_valid_boss(boss_name, raid_bosses);
+
+        let mut boss_dwid: i64 = 0;
+        let mut boss_fight_true_seen = false;
+        let mut boss_fight_false_seen = false;
+        let mut boss_hp_zero_seen = false;
+        let mut boss_death_notify_seen = false;
+        let mut boss_face_dir_dead = false;
+        let mut boss_face_dir_respawned = false;
+        let mut boss_leave_scene_seen = false;
+        let mut treasure_box_count: u32 = 0;
+        let mut same_name_dwids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut same_name_leave_scene_count: u32 = 0;
+        let mut first_clone_leave_ms: i64 = 0;
+        let mut last_clone_leave_ms: i64 = 0;
+
+        for line in reader.split(b'\n') {
+            let line_bytes = line.ok()?;
+            let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
+            let mut start = 0;
+            for (i, &b) in line_bytes.iter().enumerate() {
+                if b == b'\t' {
+                    parts.push(&line_bytes[start..i]);
+                    start = i + 1;
+                    if parts.len() >= 5 { break; }
+                }
+            }
+            if parts.len() >= 5 { parts.push(&line_bytes[start..]); }
+            if parts.len() < 6 { continue; }
+
+            let event_type: u8 = match std::str::from_utf8(parts[4]).ok().and_then(|s| s.parse().ok()) {
+                Some(t) => t,
+                None => continue,
+            };
+            if event_type != 1 && event_type != 7 && event_type != 8 && event_type != 9 && event_type != 28 {
+                continue;
+            }
+
+            let timestamp_sec: i64 = match std::str::from_utf8(parts[2]).ok().and_then(|s| s.parse().ok()) {
+                Some(t) => t,
+                None => continue,
+            };
+
+            let lua_str = gbk.decode(parts[5]).0;
+            let lua_trimmed = lua_str.trim();
+            let lua_inner = lua_trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or(lua_trimmed);
+            let fields: Vec<&str> = lua_inner.split(',').collect();
+
+            match event_type {
+                1 => {
+                    if !fields.is_empty() {
+                        let bfight = fields[0].trim() == "true";
+                        if raid_bosses.is_empty() && bfight {
+                            boss_fight_true_seen = true;
+                        }
+                    }
+                }
+                8 => {
+                    if fields.len() < 3 { continue; }
+                    let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                    let name = fields[1].trim();
+                    let template_id: i64 = fields[2].trim().parse().unwrap_or(0);
+                    let name_trimmed = name.trim_matches('"');
+
+                    if boss_dwid == 0 && boss_template_id != 0 && template_id == boss_template_id {
+                        boss_dwid = dwid;
+                    }
+
+                    // 同名 NPC（分身/幻影）
+                    if file_boss_in_config && name_trimmed == boss_name {
+                        same_name_dwids.insert(dwid);
+                    }
+
+                    // 宝箱检测
+                    if name_trimmed.ends_with("宝箱") {
+                        let prefix_len = name_trimmed.len() - "宝箱".len();
+                        let prefix = &name_trimmed[..prefix_len];
+                        for (_bid, bname) in raid_bosses {
+                            if prefix == *bname {
+                                treasure_box_count += 1;
+                                break;
+                            }
+                        }
+                        if raid_bosses.is_empty() && !boss_name.is_empty() && prefix.contains(boss_name) {
+                            treasure_box_count += 1;
+                        }
+                    }
+
+                    // face_dir 追踪
+                    if boss_dwid != 0 && dwid == boss_dwid && fields.len() >= 8 {
+                        let face_dir: i64 = fields[7].trim().parse().unwrap_or(0);
+                        if face_dir == 192 {
+                            boss_face_dir_dead = true;
+                        } else if face_dir == 0 && boss_face_dir_dead {
+                            boss_face_dir_respawned = true;
+                        }
+                    }
+                }
+                9 => {
+                    if fields.len() < 3 { continue; }
+                    let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                    let bfight = fields[1].trim() == "true";
+                    let hp: f64 = fields[2].trim().parse().unwrap_or(-1.0);
+                    if same_name_dwids.contains(&dwid) || dwid == boss_dwid {
+                        if bfight { boss_fight_true_seen = true; } else { boss_fight_false_seen = true; }
+                        if hp == 0.0 { boss_hp_zero_seen = true; }
+                    }
+                }
+                28 => {
+                    if fields.is_empty() { continue; }
+                    let dead_dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                    if same_name_dwids.contains(&dead_dwid) || dead_dwid == boss_dwid {
+                        boss_death_notify_seen = true;
+                    }
+                }
+                7 => {
+                    if fields.is_empty() { continue; }
+                    let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                    if dwid == boss_dwid {
+                        boss_leave_scene_seen = true;
+                    } else if same_name_dwids.contains(&dwid) {
+                        same_name_leave_scene_count += 1;
+                        let ts_ms = timestamp_sec * 1000;
+                        if first_clone_leave_ms == 0 { first_clone_leave_ms = ts_ms; }
+                        last_clone_leave_ms = ts_ms;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let clone_leave_span_sec = if first_clone_leave_ms > 0 {
+            (last_clone_leave_ms - first_clone_leave_ms) / 1000
+        } else {
+            0
+        };
+
+        Some(KillSignals {
+            treasure_box_count,
+            boss_fight_true_seen,
+            boss_fight_false_seen,
+            boss_hp_zero_seen,
+            boss_death_notify_seen,
+            boss_face_dir_dead,
+            boss_face_dir_respawned,
+            boss_leave_scene_seen,
+            same_name_leave_scene_count,
+            clone_leave_span_sec,
+        })
+    }
+
+    /// 计算新旧 is_kill
+    /// use_new=true 用新逻辑（!respawned），use_new=false 用旧逻辑（span>=120）
+    fn eval_is_kill_with_signals(s: &KillSignals, use_new: bool) -> bool {
+        let treasure_ok = s.treasure_box_count > 0;
+        let has_death_sign = s.boss_death_notify_seen || s.boss_hp_zero_seen || s.boss_face_dir_dead;
+        let no_respawn = !s.boss_face_dir_respawned;
+
+        let clone_leave_signal = if use_new {
+            s.same_name_leave_scene_count > 0 && has_death_sign && no_respawn
+        } else {
+            s.same_name_leave_scene_count > 0 && s.clone_leave_span_sec >= 120 && has_death_sign
+        };
+
+        let bfight_false_is_kill = s.boss_fight_false_seen && !s.boss_leave_scene_seen;
+        let leave_scene_is_kill = s.boss_leave_scene_seen && !s.boss_fight_false_seen && no_respawn && s.boss_face_dir_dead;
+
+        let death_ok = s.boss_fight_true_seen
+            && (s.boss_death_notify_seen
+                || s.boss_hp_zero_seen
+                || bfight_false_is_kill
+                || clone_leave_signal
+                || leave_scene_is_kill);
+
+        treasure_ok || death_ok
+    }
+
+    /// 一致性测试：扫描所有 JCL，对比新旧 clone_leave_signal 逻辑的 is_kill 判定
+    ///
+    /// 运行：
+    ///   cargo test --bin jx3-raid-manager test_consistency_old_vs_new -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_consistency_old_vs_new() {
+        let conn = crate::db::init_db().expect("初始化数据库失败");
+        let raids = load_raids_with_bosses(&conn).expect("load_raids_with_bosses 失败");
+
+        let game_dir = crate::mingyi::drop_scanner::get_game_directory()
+            .unwrap_or_else(|_| r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd".to_string());
+        let game_path = std::path::PathBuf::from(&game_dir);
+        let accounts_base = game_path.join(crate::mingyi::drop_scanner::MINGYI_ACCOUNTS_BASE_PATH);
+
+        let account_dirs: Vec<std::fs::DirEntry> = std::fs::read_dir(&accounts_base)
+            .expect("读取账号目录失败")
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && e.file_name().to_string_lossy().contains("@zhcn_hd")
+            })
+            .collect();
+
+        let mut total = 0usize;
+        let mut changed = 0usize;
+        let mut old_kill_new_false = 0usize; // 旧误判为击杀，新修正为拉托
+        let mut old_false_new_kill = 0usize; // 旧漏判，新识别为击杀
+        let mut by_boss: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut details: Vec<(String, String, bool, bool, KillSignals)> = Vec::new();
+
+        for acc_dir in &account_dirs {
+            let acc_name = acc_dir.file_name().to_string_lossy().to_string();
+            let jcl_files = match scan_jcl_files(&acc_dir.path(), 0, 0, 0) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            if jcl_files.is_empty() { continue; }
+
+            for jcl in &jcl_files {
+                let raid_entry = match_raid_name(&jcl.raid_display_name, &raids);
+                if raid_entry.is_none() { continue; }
+                let raid_bosses = raid_entry.unwrap().bosses.clone();
+
+                let full_path = acc_dir.path()
+                    .join("userdata")
+                    .join("combat_logs")
+                    .join(&jcl.file_name);
+
+                total += 1;
+
+                let signals = match extract_kill_signals(&full_path, &jcl.boss_name, jcl.boss_id, &raid_bosses) {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let old_kill = eval_is_kill_with_signals(&signals, false);
+                let new_kill = eval_is_kill_with_signals(&signals, true);
+
+                if old_kill != new_kill {
+                    changed += 1;
+                    if old_kill && !new_kill { old_kill_new_false += 1; }
+                    else { old_false_new_kill += 1; }
+                    *by_boss.entry(jcl.boss_name.clone()).or_insert(0) += 1;
+                    details.push((acc_name.clone(), jcl.file_name.clone(), old_kill, new_kill, signals));
+                }
+            }
+        }
+
+        println!("\n=== JCL is_kill 新旧逻辑一致性报告 ===");
+        println!("总 JCL 文件数: {}", total);
+        println!("判定变化文件数: {}", changed);
+        println!("  旧=True->新=False (旧误判为击杀，新修正): {}", old_kill_new_false);
+        println!("  旧=False->新=True (新逻辑多识别): {}", old_false_new_kill);
+
+        if !by_boss.is_empty() {
+            println!("\n按 BOSS 分类变化数:");
+            let mut sorted: Vec<_> = by_boss.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, count) in &sorted {
+                println!("  {} : {} 个", name, count);
+            }
+        }
+
+        if !details.is_empty() {
+            println!("\n=== 不一致详情 ===");
+            let mut report = String::new();
+            report.push_str(&format!("=== JCL is_kill 新旧逻辑一致性报告 ===\n"));
+            report.push_str(&format!("总 JCL 文件数: {}\n", total));
+            report.push_str(&format!("判定变化文件数: {}\n", changed));
+            report.push_str(&format!("  旧=True->新=False (旧误判为击杀，新修正): {}\n", old_kill_new_false));
+            report.push_str(&format!("  旧=False->新=True (新逻辑多识别): {}\n", old_false_new_kill));
+            report.push_str(&format!("\n按 BOSS 分类变化数:\n"));
+            let mut sorted: Vec<_> = by_boss.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, count) in &sorted {
+                report.push_str(&format!("  {} : {} 个\n", name, count));
+            }
+            report.push_str("\n=== 不一致详情 ===\n");
+            for (acc, file, old_k, new_k, s) in &details {
+                let line = format!("\n[{}] {}\n  信号: hp0={} death={} face192={} respawn={} box={} fight_false={} leave={} clone={} span={}s\n  旧 IS_KILL={} -> 新 IS_KILL={}\n",
+                    acc, file,
+                    s.boss_hp_zero_seen, s.boss_death_notify_seen, s.boss_face_dir_dead,
+                    s.boss_face_dir_respawned, s.treasure_box_count,
+                    s.boss_fight_false_seen, s.boss_leave_scene_seen,
+                    s.same_name_leave_scene_count, s.clone_leave_span_sec,
+                    old_k, new_k);
+                report.push_str(&line);
+                print!("{}", line);
+            }
+            let report_path = std::env::temp_dir().join("jcl_consistency_report.txt");
+            std::fs::write(&report_path, &report).expect("写入报告失败");
+            println!("\n报告已写入: {}", report_path.display());
+        } else {
+            println!("\n*** 所有 JCL 新旧逻辑完全一致 ***");
+        }
+    }
+
 }
