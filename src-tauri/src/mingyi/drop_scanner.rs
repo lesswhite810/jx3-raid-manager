@@ -483,6 +483,44 @@ fn scan_jcl_files(
     Ok(jcl_files)
 }
 
+/// 查找指定账号在 `after_ms` 时间戳之后的第一个 JCL 文件时间戳
+///
+/// 用于历史记录复核：判断某副本实例之后是否产生了新 JCL（副本切换信号）。
+/// 仅遍历目录并解析文件名，不读取文件内容。
+///
+/// - `account_dir`：茗伊账号目录（如 `.../{uid}@zhcn_hd`）
+/// - `after_ms`：JCL 时间戳下限（毫秒），查找 timestamp > after_ms 的最小时间戳
+///
+/// 返回 `Ok(None)` 表示无后续 JCL 或目录不存在。
+fn find_next_jcl_time_after(account_dir: &Path, after_ms: i64) -> Result<Option<i64>, String> {
+    let combat_logs_dir = account_dir.join("userdata").join("combat_logs");
+    if !combat_logs_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut next: Option<i64> = None;
+    let entries = std::fs::read_dir(&combat_logs_dir).map_err(|e| {
+        format!("读取 combat_logs 目录失败: {} - {}", combat_logs_dir.display(), e)
+    })?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jcl") {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if let Some(jcl) = parse_jcl_filename(file_name) {
+            if jcl.timestamp > after_ms {
+                next = Some(next.map_or(jcl.timestamp, |n| n.min(jcl.timestamp)));
+            }
+        }
+    }
+    Ok(next)
+}
+
 /// 将 JCL 文件列表聚类为副本实例
 ///
 /// 聚类规则（基于 JCL 内容分析的方案）：
@@ -2445,11 +2483,14 @@ fn is_role_online(account_dir: &Path, jx3_running: bool) -> bool {
 /// 1. 配置中的 BOSS 全部击杀：bosses_killed 中属于 raid_bosses 配置的 BOSS 数量 >= raid_bosses.len()
 ///    （只统计配置内的 BOSS，避免把"墨家机侍""狼牙士兵"等非配置 BOSS 的 JCL 计入）
 /// 2. 出现底薪结算消息：has_salary = true（聊天记录中检测到"每人底薪：XXX金"）
-/// 3. JX3 进程退出：jx3_running = false
-/// 4. 角色离线：role_online = false（chatlog mtime > 5 分钟未更新）
-/// 5. 副本已切换：has_next_jcl = true（存在比当前实例 last_jcl_time 更晚的 JCL 时间戳，
+/// 3. 收入命中 + 存在掉落分配：income_matched = true 且 has_drops = true
+///    （无底薪副本已匹配到最后一个 JCL 后的第一条工资收入且已有掉落分配，
+///    说明拍卖与结算完成，无需等待进程退出、角色离线或 6 小时兜底）
+/// 4. JX3 进程退出：jx3_running = false
+/// 5. 角色离线：role_online = false（聊天记录 mtime > 5 分钟未更新）
+/// 6. 副本已切换：has_next_jcl = true（存在比当前实例 last_jcl_time 更晚的 JCL 时间戳，
 ///    说明用户已切换到其他副本，当前副本必然已结束。与 chatlog_end 截断逻辑保持一致）
-/// 6. 时间兜底：副本最后一个 JCL 距今超过 RAID_STALE_THRESHOLD_MS（6 小时），
+/// 7. 时间兜底：副本最后一个 JCL 距今超过 RAID_STALE_THRESHOLD_MS（6 小时），
 ///    无论进程/角色状态如何均视为已完成。避免历史副本因当前 JX3 运行而被误判为"进行中"。
 ///
 /// 由于通关判定改为基于 JCL 数据（NPC_FIGHT_HINT 的 bFight True→False），
@@ -2461,6 +2502,8 @@ fn is_raid_complete(
     jx3_running: bool,
     role_online: bool,
     has_next_jcl: bool,
+    income_matched: bool,
+    has_drops: bool,
 ) -> bool {
     // 条件 1：配置中的 BOSS 全部击杀
     // 只统计 bosses_killed 中属于 raid_bosses 配置列表的 BOSS，避免非配置 BOSS（如小怪、特殊 NPC）
@@ -2483,15 +2526,25 @@ fn is_raid_complete(
     if has_salary {
         return true;
     }
-    // 条件 3：JX3 进程退出
+    // 条件 3：收入命中 + 存在掉落分配（无底薪副本的结算完成信号）
+    // 无底薪副本没有底薪消息、也常因 BOSS 未全清而不满足条件 1；当已匹配到最后一条
+    // JCL 后的工资收入且已有掉落分配时，拍卖与结算均已完成，无需再等进程退出或 6 小时兜底。
+    if income_matched && has_drops {
+        log::info!(
+            "[DropScanner] 收入命中+有分配: 副本 '{}' 已匹配收入且存在掉落分配，判定已完成",
+            instance.raid_display_name
+        );
+        return true;
+    }
+    // 条件 4：JX3 进程退出
     if !jx3_running {
         return true;
     }
-    // 条件 4：角色离线
+    // 条件 5：角色离线
     if !role_online {
         return true;
     }
-    // 条件 5：副本已切换 — 存在比当前实例 last_jcl_time 更晚的 JCL 时间戳
+    // 条件 6：副本已切换 — 存在比当前实例 last_jcl_time 更晚的 JCL 时间戳
     // 说明用户已经切换到其他副本（或开始新副本），当前副本必然已结束。
     // 与 chatlog_end 截断逻辑保持一致：next_jcl_time.is_some() 即视为新副本活动已开始。
     // 解决场景：用户在第一个副本中途退出（未全清、无底薪）后进入第二个副本，
@@ -2503,7 +2556,7 @@ fn is_raid_complete(
         );
         return true;
     }
-    // 条件 6：时间兜底 — 副本最后一个 JCL 距今超过阈值，视为已完成
+    // 条件 7：时间兜底 — 副本最后一个 JCL 距今超过阈值，视为已完成
     // 防止历史副本因当前 JX3 运行中 + 角色在线而被误判为"进行中"（scanning）
     if instance.last_jcl_time > 0 {
         let now_ms = chrono::Local::now().timestamp_millis();
@@ -3321,10 +3374,12 @@ pub fn scan_raid_drops_with_raids(
         //   （团长发放底薪时的"你获得：XXX金"记录，金额通常等于或略大于底薪）
         // - 无底薪：取最后一个 JCL 之后的第一条非 BOSS 10金收入记录作为收入
         //   （拍卖工资发放只发一次，即为最后一个 JCL 之后的第一条收入记录）
-        // - 找不到匹配记录时回退：有底薪回退到底薪值，无底薪回退到收入总和
+        // - 找不到匹配记录时：有底薪回退到底薪值，无底薪收入记为 0（不虚高）
+        // 返回 (total_gold, income_matched)：income_matched 表示是否命中真实收入记录，
+        // 供副本完成判定使用（无底薪场景"收入命中 + 有掉落分配"即视为结算完成）
         all_income_records.sort_by_key(|(t, _)| *t);
         let last_jcl_sec = instance.last_jcl_time / 1000;
-        let total_gold = if let Some(salary) = base_salary {
+        let (total_gold, income_matched) = if let Some(salary) = base_salary {
             // 有底薪：找金额 >= 底薪的第一条收入记录
             match all_income_records.iter().find(|(_, g)| *g >= salary) {
                 Some((t, g)) => {
@@ -3332,14 +3387,14 @@ pub fn scan_raid_drops_with_raids(
                         "[DropScanner] 收入匹配(底薪): 底薪={}, 匹配记录 gold={} time={} -> 收入={}",
                         salary, g, t, g
                     );
-                    *g
+                    (*g, true)
                 }
                 None => {
                     log::info!(
                         "[DropScanner] 收入匹配(底薪): 底薪={}, 无匹配记录, 回退到底薪值 -> 收入={}",
                         salary, salary
                     );
-                    salary
+                    (salary, false)
                 }
             }
         } else {
@@ -3350,14 +3405,14 @@ pub fn scan_raid_drops_with_raids(
                         "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 取 last_jcl 后第一条收入 gold={} time={} -> 收入={}",
                         last_jcl_sec, g, t, g
                     );
-                    *g
+                    (*g, true)
                 }
                 None => {
                     log::info!(
-                        "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 无后续收入记录, 回退到收入总和 {} (共 {} 条记录) -> 收入={}",
-                        last_jcl_sec, other_income, all_income_records.len(), other_income
+                        "[DropScanner] 收入匹配(无底薪): last_jcl_sec={}, 无后续收入记录, 收入记为 0 (收入总和 {} 条记录不再回退)",
+                        last_jcl_sec, all_income_records.len()
                     );
-                    other_income
+                    (0, false)
                 }
             }
         };
@@ -3397,11 +3452,13 @@ pub fn scan_raid_drops_with_raids(
             jx3_running,
             role_online,
             next_jcl_time.is_some(),
+            income_matched,
+            !drops.is_empty(),
         );
         let record_status = if raid_complete { "pending" } else { "scanning" };
 
         log::info!(
-            "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, boss_all_killed={}, has_salary={}, jx3_running={}, role_online={}, has_next_jcl={} -> status='{}'",
+            "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, boss_all_killed={}, has_salary={}, jx3_running={}, role_online={}, has_next_jcl={}, income_matched={}, has_drops={} -> status='{}'",
             instance.raid_display_name,
             instance.boss_kill_count,
             raid_bosses.len(),
@@ -3410,6 +3467,8 @@ pub fn scan_raid_drops_with_raids(
             jx3_running,
             role_online,
             next_jcl_time.is_some(),
+            income_matched,
+            !drops.is_empty(),
             record_status
         );
 
@@ -3540,14 +3599,81 @@ fn scanned_recent_uids() -> &'static Mutex<HashSet<String>> {
 /// - `jx3_running`: 整个批量扫描共用，来自 JX3 进程状态
 /// - `role_online`: 每个账号独立计算，基于该账号 chatlog 最新 mtime（5 分钟阈值）
 pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize, String>)>, String> {
-    let scan_started_at = std::time::Instant::now();
-    let game_dir = get_game_directory()?;
+    let scan_started_at_outer = std::time::Instant::now();
+    let game_dir_outer = get_game_directory()?;
 
-    // 1. 调用 active_detector 获取活跃检测结果（与前端 useActivePoller 一致）
-    let active_result = crate::mingyi::active_detector::detect_accounts_active_internal(&game_dir);
-    if !active_result.jx3_running {
+    // 1. 调用 active_detector 获取活跃检测结果
+    let active_result_outer = crate::mingyi::active_detector::detect_accounts_active_internal(&game_dir_outer);
+    if !active_result_outer.jx3_running {
         return Err("JX3 进程未运行".to_string());
     }
+
+    // cutoff_ms：本次 JX3 启动时间（毫秒）
+    // 轮询只在 JX3 运行时触发，jx3_start_time_unix 必然存在
+    let cutoff_ms = (active_result_outer.jx3_start_time_unix as i64) * 1000;
+
+    // 预加载副本配置（复核阶段和本次会话扫描共用）
+    let preloaded_raids_outer: Option<Vec<RaidEntry>> = match db::init_db() {
+        Ok(conn) => match get_cached_raids(&conn) {
+            Ok(raids) => {
+                log::info!(
+                    "[DropScanner] 预加载副本配置完成，共 {} 个副本，将复用于复核和扫描",
+                    raids.len()
+                );
+                Some(raids)
+            }
+            Err(e) => {
+                log::warn!("[DropScanner] 预加载副本配置失败，降级为每账号独立加载: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("[DropScanner] 预热数据库连接失败，降级为每账号独立加载: {}", e);
+            None
+        }
+    };
+
+    // ===== 复核阶段：处理历史遗留记录 =====
+    let verify_started_at = std::time::Instant::now();
+    let verify_result = verify_stale_records(
+        cutoff_ms,
+        &game_dir_outer,
+        preloaded_raids_outer.as_deref(),
+    );
+    match &verify_result {
+        Ok(stats) => {
+            if stats.total > 0 {
+                log::info!(
+                    "[DropScanner] 复核阶段完成：共 {} 条, 翻转/补充 {} 条, 保留原数据 {} 条, 保留原状 {} 条, 失败 {} 条, 耗时 {}ms",
+                    stats.total, stats.flipped, stats.preserved, stats.kept, stats.failed,
+                    verify_started_at.elapsed().as_millis()
+                );
+            }
+        }
+        Err(e) => {
+            log::warn!("[DropScanner] 复核阶段失败，继续本次会话扫描: {}", e);
+        }
+    }
+    // ===== 复核阶段结束 =====
+
+    // 委托给内部实现，避免重复 active_detector 调用
+    scan_all_active_raid_drops_internal_impl(
+        game_dir_outer,
+        active_result_outer,
+        preloaded_raids_outer.as_deref(),
+        scan_started_at_outer,
+    )
+}
+
+/// `scan_all_active_raid_drops_internal` 的内部实现
+///
+/// 接收外部已获取的 active_result 和 preloaded_raids，避免复核阶段重复调用。
+fn scan_all_active_raid_drops_internal_impl(
+    game_dir: String,
+    active_result: crate::mingyi::active_detector::BatchActiveResult,
+    preloaded_raids: Option<&[RaidEntry]>,
+    scan_started_at: std::time::Instant,
+) -> Result<Vec<(String, Result<usize, String>)>, String> {
     let jx3_running = active_result.jx3_running;
 
     // 从 active_result 获取进程启动时间（用于过滤 JCL 文件，只扫描本次会话产生的）
@@ -3606,28 +3732,6 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
     let game_path = PathBuf::from(&game_dir);
     let accounts_base = game_path.join(MINGYI_ACCOUNTS_BASE_PATH);
 
-    // 预加载副本配置（一次加载，所有账号共享，跳过每个账号的 init_db + get_cached_raids）
-    // 注意：此处即使加载失败，scan_raid_drops_with_raids 内部仍会兜底重新加载（pre_loaded_raids=None 分支）
-    let preloaded_raids: Option<Vec<RaidEntry>> = match db::init_db() {
-        Ok(conn) => match get_cached_raids(&conn) {
-            Ok(raids) => {
-                log::info!(
-                    "[DropScanner] 预加载副本配置完成，共 {} 个副本，将复用于所有账号扫描",
-                    raids.len()
-                );
-                Some(raids)
-            }
-            Err(e) => {
-                log::warn!("[DropScanner] 预加载副本配置失败，降级为每账号独立加载: {}", e);
-                None
-            }
-        },
-        Err(e) => {
-            log::warn!("[DropScanner] 预热数据库连接失败，降级为每账号独立加载: {}", e);
-            None
-        }
-    };
-
     for role in active_roles {
         let uid = &role.uid;
         let account_dir = accounts_base.join(format!("{}@zhcn_hd", uid));
@@ -3669,7 +3773,7 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
             process_start_ms,
             cd_start_ms,
             cd_end_ms,
-            preloaded_raids.as_deref(),
+            preloaded_raids,
         );
         results.push((uid.clone(), result));
 
@@ -3696,6 +3800,319 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
         elapsed_ms
     );
     Ok(results)
+}
+
+/// 待复核的历史记录（status='scanning' 或 无掉落无工资的 pending）
+struct StaleRecord {
+    id: String,
+    account_id: String,
+    data: String,
+    drops: String,
+    // created_at 用于查询筛选，复核逻辑当前不直接读取（保留用于未来扩展）
+    #[allow(dead_code)]
+    created_at: i64,
+    status: String,
+}
+
+/// 查询需要复核的历史记录
+///
+/// 复核范围：
+/// - `status='scanning'`：上次会话未收尾的副本，需判定是否已结束
+/// - `status='pending' AND drops='[]' AND goldIncome=0`：孤儿 pending 记录，需补充掉落/工资
+///
+/// 通过 `created_at < cutoff_ms` 隔离本次 JX3 会话产生的记录（交给原轮询逻辑）。
+fn query_stale_records_for_verify(
+    conn: &Connection,
+    cutoff_ms: i64,
+) -> Result<Vec<StaleRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, account_id, data, drops, created_at, status FROM records
+             WHERE created_at < ?1 AND (
+               status = 'scanning'
+               OR (status = 'pending' AND drops = '[]' AND json_extract(data, '$.goldIncome') = 0)
+             )",
+        )
+        .map_err(|e| format!("查询待复核记录失败: {}", e))?;
+
+    let records = stmt
+        .query_map(params![cutoff_ms], |row| {
+            Ok(StaleRecord {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                data: row.get(2)?,
+                drops: row.get(3)?,
+                created_at: row.get(4)?,
+                status: row.get(5)?,
+            })
+        })
+        .map_err(|e| format!("遍历待复核记录失败: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(records)
+}
+
+/// 复核阶段统计
+struct VerifyStats {
+    /// 待复核记录总数
+    total: usize,
+    /// scanning→pending 或 pending 补充了数据
+    flipped: usize,
+    /// 新扫描未识别到掉落/工资，保留了原数据（仅 scanning 翻转 status）
+    preserved: usize,
+    /// 保留原状（pending 空记录仍空，或 scanning 仍 scanning）
+    kept: usize,
+    /// 复核失败的记录数
+    failed: usize,
+}
+
+/// 单条记录复核结果
+#[derive(Debug)]
+enum VerifyOutcome {
+    /// scanning→pending 或 pending 补充了数据
+    Flipped,
+    /// 新扫描未识别到掉落/工资，保留了原数据
+    PreservedOriginal,
+    /// 保留原状（无变化）
+    Kept,
+}
+
+/// 复核历史遗留记录的入口函数
+///
+/// 在 `scan_all_active_raid_drops_internal` 的本次会话扫描之前调用。
+/// 对每条历史记录复用 `scan_raid_drops_with_raids` 重扫其副本实例时间范围，
+/// 并采用"按需保留原数据"策略防止数据丢失。
+///
+/// - `cutoff_ms`：本次 JX3 启动时间（毫秒），只复核 `created_at < cutoff_ms` 的记录
+/// - `game_dir`：游戏目录
+/// - `preloaded_raids`：预加载的副本配置（与本次会话扫描共用）
+fn verify_stale_records(
+    cutoff_ms: i64,
+    game_dir: &str,
+    preloaded_raids: Option<&[RaidEntry]>,
+) -> Result<VerifyStats, String> {
+    let conn = db::init_db()?;
+    let stale_records = query_stale_records_for_verify(&conn, cutoff_ms)?;
+    drop(conn);
+
+    if stale_records.is_empty() {
+        return Ok(VerifyStats {
+            total: 0,
+            flipped: 0,
+            preserved: 0,
+            kept: 0,
+            failed: 0,
+        });
+    }
+
+    log::info!(
+        "[DropScanner] 轮询开始：发现 {} 条历史记录待复核",
+        stale_records.len()
+    );
+
+    let game_path = PathBuf::from(game_dir);
+    let accounts_base = game_path.join(MINGYI_ACCOUNTS_BASE_PATH);
+
+    let mut stats = VerifyStats {
+        total: stale_records.len(),
+        flipped: 0,
+        preserved: 0,
+        kept: 0,
+        failed: 0,
+    };
+
+    for record in &stale_records {
+        match verify_single_record(record, &accounts_base, preloaded_raids) {
+            Ok(VerifyOutcome::Flipped) => stats.flipped += 1,
+            Ok(VerifyOutcome::PreservedOriginal) => stats.preserved += 1,
+            Ok(VerifyOutcome::Kept) => stats.kept += 1,
+            Err(e) => {
+                log::warn!(
+                    "[DropScanner] 复核记录 [{}] 失败: {}",
+                    record.id,
+                    e
+                );
+                stats.failed += 1;
+            }
+        }
+    }
+
+    Ok(stats)
+}
+
+/// 复核单条历史记录
+///
+/// 流程：
+/// 1. 保存原记录的 data/drops（用于按需保留）
+/// 2. 从 data 字段解析副本实例时间范围
+/// 3. 动态计算 scan_end_ms（有下一个 JCL 用 next_jcl_time，否则 last_jcl_time + 2h）
+/// 4. 调用 scan_raid_drops_with_raids 重扫（process_start_ms=0 绕过 mtime 过滤）
+/// 5. 比较新旧数据，新扫描未识别到掉落/工资但原记录有 → 恢复原 data/drops，只改 status
+/// 6. 否则接受 upsert 的结果
+fn verify_single_record(
+    record: &StaleRecord,
+    accounts_base: &Path,
+    preloaded_raids: Option<&[RaidEntry]>,
+) -> Result<VerifyOutcome, String> {
+    // 1. 保存原记录的 data 和 drops（用于按需保留）
+    let original_data = record.data.clone();
+    let original_drops = record.drops.clone();
+    let original_has_data = has_drops_or_salary(&original_data, &original_drops);
+    let was_scanning = record.status == "scanning";
+
+    // 2. 解析 data 字段
+    let data: serde_json::Value = serde_json::from_str(&record.data)
+        .map_err(|e| format!("解析 data JSON 失败: {}", e))?;
+
+    let scan_start_ms = data["date"].as_i64().unwrap_or(0);
+    if scan_start_ms == 0 {
+        return Err("data.date 为 0，无法确定扫描起始时间".to_string());
+    }
+
+    // 3. 从 jclFiles 解析 last_jcl_time（成功击杀 JCL 的最大时间戳）
+    let last_jcl_time = data["jclFiles"]
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|f| f.as_str())
+                .filter_map(|name| parse_jcl_filename(name).map(|j| j.timestamp))
+                .max()
+        })
+        .unwrap_or(scan_start_ms);
+
+    // 4. 查找下一个 JCL 时间戳
+    let account_dir = accounts_base.join(format!("{}@zhcn_hd", record.account_id));
+    if !account_dir.exists() {
+        return Err(format!("账号目录不存在: {}", account_dir.display()));
+    }
+
+    let next_jcl_time = find_next_jcl_time_after(&account_dir, last_jcl_time)?;
+
+    // 5. 动态计算 scan_end_ms
+    // - 有下一个 JCL → 副本已切换，scan 范围到切换点即可
+    // - 无下一个 JCL → 最后一个实例，+2h 兜底工资记录（chatlog flush 延迟）
+    let scan_end_ms = if let Some(next_t) = next_jcl_time {
+        next_t
+    } else {
+        last_jcl_time + 2 * 3600 * 1000
+    };
+
+    log::info!(
+        "[DropScanner] 复核记录 [{}]: account={}, status={}, scan_range=[{},{}], next_jcl={:?}",
+        record.id,
+        record.account_id,
+        record.status,
+        scan_start_ms,
+        scan_end_ms,
+        next_jcl_time
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "None".to_string())
+    );
+
+    // 6. 复用 scan_raid_drops_with_raids 重扫
+    // - jx3_running=true：复核只在 JX3 运行时触发
+    // - role_online：用 is_role_online 实际检测（基于 chatlog mtime）
+    // - process_start_ms=0：绕过 mtime 过滤，必须扫到历史 JCL
+    let role_online = is_role_online(&account_dir, true);
+    let result = scan_raid_drops_with_raids(
+        &record.account_id,
+        true, // jx3_running
+        role_online,
+        0, // process_start_ms=0，绕过 mtime 过滤
+        scan_start_ms,
+        scan_end_ms,
+        preloaded_raids,
+    );
+
+    match result {
+        Ok(_instance_count) => {
+            // 7. 扫描后查询新记录的 data、drops、status
+            let conn = db::init_db()?;
+            let row_result: rusqlite::Result<(String, String, String)> = conn.query_row(
+                "SELECT data, drops, status FROM records WHERE id = ?1",
+                params![&record.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            );
+
+            match row_result {
+                Ok((new_data, new_drops, new_status)) => {
+                    let new_has_data = has_drops_or_salary(&new_data, &new_drops);
+
+                    // 8. 按需保留原数据
+                    //    新扫描未识别到掉落/工资，但原记录有 → 恢复原 data/drops，只改 status
+                    if !new_has_data && original_has_data {
+                        let now_ms = chrono::Local::now().timestamp_millis();
+                        // 对于 scanning 记录，翻转 status='pending'
+                        // 对于 pending 记录，status 保持 'pending'（恢复原数据即可）
+                        conn.execute(
+                            "UPDATE records SET data = ?1, drops = ?2, status = ?3, updated_at = ?4 WHERE id = ?5",
+                            params![original_data, original_drops, "pending", now_ms, &record.id],
+                        )
+                        .map_err(|e| format!("恢复原数据失败: {}", e))?;
+
+                        log::info!(
+                            "[DropScanner] 复核记录 [{}]: 新扫描未识别到掉落/工资，保留原数据，status='pending'",
+                            record.id
+                        );
+                        return Ok(VerifyOutcome::PreservedOriginal);
+                    }
+
+                    // 9. 新扫描有数据或原记录也无数据 → 接受 upsert 的结果
+                    let outcome = if was_scanning && new_status == "pending" {
+                        VerifyOutcome::Flipped // scanning→pending
+                    } else if !was_scanning && new_has_data {
+                        VerifyOutcome::Flipped // pending 补充了数据
+                    } else if !was_scanning && !new_has_data {
+                        VerifyOutcome::Kept // pending 空记录仍空
+                    } else {
+                        VerifyOutcome::Kept // scanning 保留 scanning
+                    };
+
+                    log::info!(
+                        "[DropScanner] 复核记录 [{}]: {} (status={})",
+                        record.id,
+                        match &outcome {
+                            VerifyOutcome::Flipped => "翻转/补充",
+                            VerifyOutcome::PreservedOriginal => "保留原数据",
+                            VerifyOutcome::Kept => "保留原状",
+                        },
+                        new_status
+                    );
+                    Ok(outcome)
+                }
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    // upsert 可能删除了该记录（如同 CD 窗口出现手工 confirmed 记录）
+                    log::info!(
+                        "[DropScanner] 复核记录 [{}]: 记录已被删除（可能被手工记录冲突清理）",
+                        record.id
+                    );
+                    Ok(VerifyOutcome::Kept)
+                }
+                Err(e) => Err(format!("查询复核后记录失败: {}", e)),
+            }
+        }
+        Err(e) => Err(format!("重扫失败: {}", e)),
+    }
+}
+
+/// 判断记录是否有掉落或工资数据
+///
+/// 用于"按需保留原数据"策略：比较新旧记录是否识别到掉落/工资。
+/// - drops 不为空数组
+/// - 或 goldIncome > 0
+/// - 或 goldExpense > 0
+fn has_drops_or_salary(data: &str, drops: &str) -> bool {
+    let drops_nonempty = drops != "[]" && !drops.is_empty();
+    let gold_income = serde_json::from_str::<serde_json::Value>(data)
+        .ok()
+        .and_then(|v| v["goldIncome"].as_i64())
+        .unwrap_or(0);
+    let gold_expense = serde_json::from_str::<serde_json::Value>(data)
+        .ok()
+        .and_then(|v| v["goldExpense"].as_i64())
+        .unwrap_or(0);
+    drops_nonempty || gold_income > 0 || gold_expense > 0
 }
 
 /// Tauri 命令：批量扫描所有活跃账号的掉落记录
@@ -7910,4 +8327,93 @@ mod tests {
         }
     }
 
+    /// 构造"进行中"的测试副本实例：last_jcl_time 为 1 小时前，不会触发 6 小时时间兜底
+    fn build_incomplete_scan_raid_instance() -> RaidInstance {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        RaidInstance {
+            account_id: "test_account".to_string(),
+            raid_display_name: "测试副本".to_string(),
+            map_id: 0,
+            start_time: now_ms - 3600_000,
+            end_time: now_ms - 1800_000,
+            last_jcl_time: now_ms - 3600_000,
+            bosses_killed: vec![],
+            jcl_files: vec![],
+            jcl_boss_names: vec![],
+            boss_kill_count: 0,
+            first_gold_time: now_ms - 3600_000,
+        }
+    }
+
+    /// 验证无底薪 + 收入命中 + 已有掉落分配 → 立即判定完成 (pending)
+    #[test]
+    fn test_is_raid_complete_income_hit_with_drops_pending() {
+        let instance = build_incomplete_scan_raid_instance();
+        let empty_bosses: Vec<(String, String)> = vec![];
+        assert!(is_raid_complete(
+            &instance,
+            &empty_bosses,
+            false, // 无底薪
+            true,  // jx3_running
+            true,  // role_online
+            false, // has_next_jcl
+            true,  // income_matched
+            true,  // has_drops
+        ));
+    }
+
+    /// 验证有分配但收入未命中（老一刚分配工资未发，或新 JCL 更新 last_jcl 后旧收入不再匹配）
+    /// → 保持 scanning，不误判完成
+    #[test]
+    fn test_is_raid_complete_drops_without_income_stays_scanning() {
+        let instance = build_incomplete_scan_raid_instance();
+        let empty_bosses: Vec<(String, String)> = vec![];
+        assert!(!is_raid_complete(
+            &instance,
+            &empty_bosses,
+            false,
+            true,
+            true,
+            false,
+            false, // income_matched = false
+            true,  // has_drops = true
+        ));
+    }
+
+    /// 验证收入命中但无任何分配记录 → 保持 scanning（不因误命中收入提前完成）
+    #[test]
+    fn test_is_raid_complete_income_hit_without_drops_stays_scanning() {
+        let instance = build_incomplete_scan_raid_instance();
+        let empty_bosses: Vec<(String, String)> = vec![];
+        assert!(!is_raid_complete(
+            &instance,
+            &empty_bosses,
+            false,
+            true,
+            true,
+            false,
+            true,  // income_matched
+            false, // has_drops = false
+        ));
+    }
+
+    /// 回归保护：有底薪时底薪条件恒优先，不受新增 income_matched 参数影响
+    #[test]
+    fn test_is_raid_complete_salary_flow_unchanged() {
+        let instance = build_incomplete_scan_raid_instance();
+        let empty_bosses: Vec<(String, String)> = vec![];
+        assert!(is_raid_complete(
+            &instance,
+            &empty_bosses,
+            true, // 有底薪 → 条件 2 直接判定完成
+            true,
+            true,
+            false,
+            false, // income_matched = false
+            false, // has_drops = false
+        ));
+    }
 }
