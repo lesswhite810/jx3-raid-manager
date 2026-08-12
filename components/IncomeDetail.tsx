@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend, LabelList } from 'recharts';
-import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen } from 'lucide-react';
+import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen, Boxes } from 'lucide-react';
 import { RaidRecord, Account, BaizhanRecord, Season } from '../types';
 import { toast } from '../utils/toastManager';
 import { getLastMonday } from '../utils/cooldownManager';
@@ -44,6 +44,10 @@ interface EnhancedRecord {
   isTrial?: boolean;
   source?: 'auto' | 'manual';
   status?: 'pending' | 'confirmed' | 'rejected' | 'scanning';
+  // 散件老板字段
+  scrapsItems?: RaidRecord['scrapsItems'];
+  scrapsValue?: number;
+  isScrapsBoss?: boolean;
 }
 
 export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanRecords, accounts, initialPeriod, onPeriodChange, onBack, onDeleteRecord, onEditRecord, onEditBaizhanRecord }) => {
@@ -752,7 +756,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                         <div className="space-y-3 pt-2 border-t border-base/50">
 
                           {/* Income & Expense Breakdown */}
-                          <div className="flex gap-6 text-sm">
+                          <div className="flex gap-6 text-sm flex-wrap">
                             <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 px-2 py-1 rounded">
                               <TrendingUp className="w-3.5 h-3.5" />
                               <span className="font-medium">收入: {formatGold(record.goldIncome)}</span>
@@ -761,6 +765,18 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                               <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/10 px-2 py-1 rounded">
                                 <TrendingDown className="w-3.5 h-3.5" />
                                 <span className="font-medium">支出: {formatGold(record.goldExpense || 0)}</span>
+                              </div>
+                            )}
+                            {record.scrapsItems && record.scrapsItems.length > 0 && (
+                              <div
+                                className="flex items-center gap-2 text-muted bg-base px-2 py-1 rounded"
+                                title={record.isScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}
+                              >
+                                <Boxes className="w-3.5 h-3.5" />
+                                <span className="font-medium">
+                                  散件估价: {formatGold(record.scrapsValue || 0)}
+                                  {record.isScrapsBoss && <span className="text-emerald-600 ml-1">*</span>}
+                                </span>
                               </div>
                             )}
                           </div>

@@ -63,6 +63,16 @@ export interface Account {
   disabled?: boolean; // 是否禁用该账户
 }
 
+/** 散件清单项（散件老板功能，自动扫描计算 + 用户手填单价） */
+export interface ScrapsItem {
+  name: string;
+  count: number;
+  /** 单价（金）。null 表示需用户在前端手填 */
+  unitPrice: number | null;
+  category: 'material' | 'equipment';
+  priceSource: 'jx3box' | 'npc' | 'manual';
+}
+
 export interface RaidRecord {
   id: string;
   transactionId?: string;
@@ -94,6 +104,12 @@ export interface RaidRecord {
   status?: 'pending' | 'confirmed' | 'rejected' | 'scanning'; // 确认状态，默认 'confirmed'；'scanning' 表示副本进行中，UI 锁定不可确认
   drops?: string[]; // 掉落物原始物品名列表（自动扫描）
   jclFiles?: string[]; // 关联 JCL 文件名列表（自动扫描溯源）
+  /** 散件清单（散件老板功能，自动扫描计算） */
+  scrapsItems?: ScrapsItem[];
+  /** 散件估价总和（扫描时快照；unitPrice 未填齐时为部分和） */
+  scrapsValue?: number;
+  /** 是否为散件老板（用户在确认弹窗勾选，默认 false） */
+  isScrapsBoss?: boolean;
 }
 
 export interface TrialPlaceRecord {

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
-import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock, AlertTriangle } from 'lucide-react';
+import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock, AlertTriangle, Boxes } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
 import { getLastMonday, getNextMonday, getTenPersonCycle } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
@@ -100,6 +100,10 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   const totalIncome = confirmedRoleRecords.reduce((sum, r) => sum + (Number(r.goldIncome) || 0), 0);
   const totalExpense = confirmedRoleRecords.reduce((sum, r) => sum + (Number(r.goldExpense) || 0), 0);
   const xuanjingCount = confirmedRoleRecords.filter(r => r.hasXuanjing).length;
+  // 散件估价合计：仅统计 isScrapsBoss=true 的记录（与设计文档 §7.2 一致）
+  const totalScrapsValue = confirmedRoleRecords
+    .filter(r => r.isScrapsBoss)
+    .reduce((sum, r) => sum + (Number(r.scrapsValue) || 0), 0);
   const totalNet = totalIncome - totalExpense;
 
   const bossCooldowns = useMemo(() => {
@@ -319,6 +323,12 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                   {xuanjingCount}
                 </span>
               )}
+              {totalScrapsValue > 0 && (
+                <div className="flex items-center gap-1 text-muted text-xs" title={`散件估价合计（仅含 isScrapsBoss=true 的记录）`}>
+                  <Boxes className="w-3.5 h-3.5" />
+                  <span className="font-mono font-semibold text-main">{formatGoldAmount(totalScrapsValue)}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col flex-shrink-0">
@@ -411,6 +421,15 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                             <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{formatGoldAmount(record.goldExpense)}</span>
                           </div>
                         ) : null}
+                        {record.scrapsItems && record.scrapsItems.length > 0 && (
+                          <div className="flex items-center gap-1" title={record.isScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}>
+                            <Boxes className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+                            <span className="text-sm font-semibold text-main">{formatGoldAmount(record.scrapsValue || 0)}</span>
+                            {record.isScrapsBoss && (
+                              <span className="text-[11px] text-emerald-600 dark:text-emerald-400">*</span>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex flex-col gap-2">

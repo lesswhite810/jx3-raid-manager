@@ -37,6 +37,123 @@ static PURCHASED_ITEM_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex
 /// 当团长手动分配物品时使用此格式，有时不生成"花费购买了"消息
 static ALLOCATE_TO_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]将\[([^\]]+)\]以\[([^\]]+)\]记录给了\[([^\]]+)\]").unwrap());
 
+/// 散件材料白名单（硬编码 7 种副本材料）
+/// 这些材料无人竞拍时通常由散件老板统一接收
+const SCRAPS_MATERIAL_WHITELIST: [&str; 7] = [
+    "上品茶饼·兑", "维峰丹", "玛瑙", "猫眼石",
+    "叁级五彩石", "五行石（六级）", "肆级五彩石",
+];
+
+/// 当前角色购买物品的信息（同物品多次购买累加）
+#[derive(Debug, Clone, Default)]
+struct PurchaseInfo {
+    /// 购买次数（同物品多次购买累加）
+    count: u32,
+    /// 累计购买价（用于判断 0 金购买=散件）
+    total_price: i64,
+}
+
+/// 散件清单项（写入 RaidRecord JSON 的 scrapsItems）
+#[derive(Debug, Clone, serde::Serialize)]
+struct ScrapsItem {
+    name: String,
+    count: u32,
+    /// 单价（金）。None 表示需用户在前端手填
+    unit_price: Option<i64>,
+    /// "material" | "equipment"
+    category: String,
+    /// "jx3box" | "npc" | "manual"
+    price_source: String,
+}
+
+/// 查询 drop_items 表中已缓存物品的单价（装备估价用）
+///
+/// 返回 (item_name -> price) 的映射，仅包含已缓存的物品。
+/// 调用方对未命中的物品保持 unit_price = None（前端手填）。
+fn query_prices_by_names(conn: &Connection, names: &[String]) -> HashMap<String, i64> {
+    let mut result = HashMap::new();
+    for name in names {
+        if let Ok(price) = conn.query_row(
+            "SELECT price FROM drop_items WHERE item_name = ?1 AND price IS NOT NULL",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        ) {
+            result.insert(name.clone(), price);
+        }
+    }
+    result
+}
+
+/// 计算散件清单 + 估价
+///
+/// 输入：
+/// - purchased_items：当前角色购买的物品映射（来自 chatlog 解析）
+/// - item_categories：物品名 -> 分类（来自 classify_drops_sync）
+///
+/// 规则：
+/// - 散件材料：物品名 ∈ 白名单
+/// - 散件装备：category == "equipment" && total_price == 0
+///
+/// 估价：
+/// - 散件材料：当前阶段（JX3Box 价格 API 不可用）unit_price = None, price_source = "manual"
+/// - 散件装备：从 drop_items.Price 读取（NPC 卖价），未命中时 unit_price = None
+///
+/// 返回：散件清单（已按名称排序）和 scrapsValue（仅含已获取单价的物品）
+fn compute_scraps_items(
+    conn: &Connection,
+    purchased_items: &HashMap<String, PurchaseInfo>,
+    item_categories: &HashMap<String, String>,
+) -> (Vec<ScrapsItem>, i64) {
+    if purchased_items.is_empty() {
+        return (Vec::new(), 0);
+    }
+
+    // 收集所有购买的物品名，用于批量查 drop_items.Price（仅装备会用）
+    let purchased_names: Vec<String> = purchased_items.keys().cloned().collect();
+    let price_map = query_prices_by_names(conn, &purchased_names);
+
+    let mut items: Vec<ScrapsItem> = Vec::new();
+    let mut total_value: i64 = 0;
+
+    for (name, info) in purchased_items {
+        let category = item_categories.get(name).map(|s| s.as_str()).unwrap_or("");
+        let is_material = SCRAPS_MATERIAL_WHITELIST.contains(&name.as_str());
+        let is_zero_price_equipment = category == "equipment" && info.total_price == 0;
+
+        if !is_material && !is_zero_price_equipment {
+            continue;
+        }
+
+        let (unit_price, price_source) = if is_material {
+            // JX3Box 价格 API 当前不可用（P2 阶段降级为手填）
+            (None, "manual".to_string())
+        } else {
+            // 散件装备：从 drop_items.Price 取 NPC 卖价
+            match price_map.get(name).copied() {
+                Some(p) => (Some(p), "npc".to_string()),
+                None => (None, "manual".to_string()),
+            }
+        };
+
+        if let Some(p) = unit_price {
+            total_value += info.count as i64 * p;
+        }
+
+        items.push(ScrapsItem {
+            name: name.clone(),
+            count: info.count,
+            unit_price,
+            category: if is_material { "material".to_string() } else { "equipment".to_string() },
+            price_source,
+        });
+    }
+
+    // 按名称排序，保证输出稳定
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+
+    (items, total_value)
+}
+
 /// JCL 文件名解析结果
 #[derive(Debug, Clone)]
 struct JclFileInfo {
@@ -1930,7 +2047,7 @@ fn normalize_role_name(name: &str) -> String {
 /// 返回 (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items)。
 /// income_records 为非 BOSS 10金的收入记录列表 (time_sec, gold)，用于精确收入匹配。
 /// boss_kill_times 为每个 BOSS 击杀（10金收入）的 time_sec 列表，用于击杀数验证。
-/// purchased_items 为当前角色花钱购买的物品名列表（来自"花费了...购买了"格式消息）。
+/// purchased_items 为当前角色购买的物品映射（物品名 → PurchaseInfo），用于散件老板功能。
 /// 调用方根据 base_salary 是否存在决定最终收入：
 ///   - 有底薪 → 在 income_records 中找 gold >= base_salary 的第一条记录，用该 gold 作为收入
 ///   - 无底薪 → 在 income_records 中找 time_sec > last_jcl_sec 的第一条记录（拍卖工资只发一次）
@@ -1941,9 +2058,9 @@ fn extract_drops_from_chatlog(
     start_time_ms: i64,
     end_time_ms: i64,
     role_name: &str,
-) -> Result<(Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>, Vec<String>), String> {
+) -> Result<(Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>, HashMap<String, PurchaseInfo>), String> {
     if !chatlog_path.exists() {
-        return Ok((Vec::new(), None, 0, 0, 0, Vec::new(), Vec::new(), Vec::new()));
+        return Ok((Vec::new(), None, 0, 0, 0, Vec::new(), Vec::new(), HashMap::new()));
     }
 
     let conn = Connection::open(chatlog_path)
@@ -2084,12 +2201,16 @@ fn preload_chatlog_records(
 ///
 /// 这是 extract_drops_from_chatlog 的核心逻辑，接受预加载的记录列表，
 /// 通过二分查找定位时间范围内的记录，避免重复打开 SQLite 连接。
+///
+/// 返回 (drops, base_salary, other_income_gold, expense_gold, boss_kill_count,
+///       income_records, boss_kill_times, purchased_items)。
+/// purchased_items 为当前角色购买的物品映射（物品名 → PurchaseInfo），用于散件老板功能。
 fn extract_drops_from_records(
     records: &[ChatlogRecord],
     start_time_ms: i64,
     end_time_ms: i64,
     role_name: &str,
-) -> (Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>, Vec<String>) {
+) -> (Vec<String>, Option<i64>, i64, i64, u32, Vec<(i64, i64)>, Vec<i64>, HashMap<String, PurchaseInfo>) {
     let start_sec = start_time_ms / 1000;
     let end_sec = end_time_ms / 1000;
 
@@ -2118,8 +2239,8 @@ fn extract_drops_from_records(
     // 时间窗口：30秒内的相同物品+金额视为同一笔交易
     let mut expense_dedup: HashSet<(String, i64, i64)> = HashSet::new();
 
-    // 当前角色花钱购买的物品名集合（用于 notes 显示）
-    let mut purchased_items_set: HashSet<String> = HashSet::new();
+    // 当前角色花钱购买的物品映射（物品名 → PurchaseInfo，用于散件老板功能）
+    let mut purchased_items_map: HashMap<String, PurchaseInfo> = HashMap::new();
 
     for record in relevant {
         let msg_type = &record.msg_type;
@@ -2177,8 +2298,10 @@ fn extract_drops_from_records(
                         if !expense_dedup.contains(&prev_bucket) && !expense_dedup.contains(&next_bucket) {
                             expense_gold += amount;
                             expense_dedup.insert(dedup_key);
-                            // 记录购买的物品名（用于 notes 显示）
-                            purchased_items_set.insert(item_name.clone());
+                            // 记录购买的物品（累加 count 和 total_price，用于散件老板功能）
+                            let info = purchased_items_map.entry(item_name.clone()).or_default();
+                            info.count += 1;
+                            info.total_price += amount;
                             // 当前角色购买的物品也加入 drops（属于副本掉落物分配）
                             drops_set.insert(item_name);
                         }
@@ -2207,23 +2330,26 @@ fn extract_drops_from_records(
 
     // HashSet 转 Vec
     let drops: Vec<String> = drops_set.into_iter().collect();
-    let purchased_items: Vec<String> = purchased_items_set.into_iter().collect();
 
     // 铜转金（整数，截断银铜部分）
     let other_income_gold = other_income_copper / 10000;
 
+    // 购买物品总件数（含重复购买）
+    let purchased_total_count: u32 = purchased_items_map.values().map(|i| i.count).sum();
+
     log::info!(
-        "[DropScanner] chatlog 提取完成: {} 个物品分配, {} 条金币获得, 底薪={:?}, 其他收入 {} 金, 支出 {} 金, BOSS击杀奖励 {} 次, 购买物品 {} 件",
+        "[DropScanner] chatlog 提取完成: {} 个物品分配, {} 条金币获得, 底薪={:?}, 其他收入 {} 金, 支出 {} 金, BOSS击杀奖励 {} 次, 购买物品 {} 种 {} 件",
         item_count,
         money_count,
         base_salary,
         other_income_gold,
         expense_gold,
         boss_kill_count,
-        purchased_items.len()
+        purchased_items_map.len(),
+        purchased_total_count
     );
 
-    (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items)
+    (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items_map)
 }
 
 /// 扫描账号目录下所有 chatlog 数据库文件
@@ -2579,7 +2705,7 @@ fn upsert_raid_drop_record(
     conn: &Connection,
     instance: &RaidInstance,
     drops: &[String],
-    purchased_items: &[String],
+    purchased_items: &HashMap<String, PurchaseInfo>,
     boss_ids: &[String],
     boss_names: &[String],
     role_id: &Option<String>,
@@ -2819,7 +2945,7 @@ fn upsert_raid_drop_record(
             special_drops.push(name.as_str());
         }
     }
-    for name in purchased_items {
+    for name in purchased_items.keys() {
         if let Some(cat) = item_categories.get(name) {
             if cat == "equipment" {
                 purchased_equipment.push(name.as_str());
@@ -2828,6 +2954,17 @@ fn upsert_raid_drop_record(
     }
     special_drops.sort();
     purchased_equipment.sort();
+
+    // 计算散件清单 + 估价（白名单材料 + 0 金装备，详见 compute_scraps_items）
+    let (scraps_items, scraps_value) = compute_scraps_items(conn, purchased_items, &item_categories);
+    if !scraps_items.is_empty() {
+        log::info!(
+            "[DropScanner] 副本 {} 散件清单: {} 项, 估价 {} 金（isScrapsBoss 默认 false，待用户在确认弹窗勾选）",
+            instance.raid_display_name,
+            scraps_items.len(),
+            scraps_value
+        );
+    }
 
     let notes = {
         let mut parts: Vec<String> = Vec::new();
@@ -2877,6 +3014,9 @@ fn upsert_raid_drop_record(
         "drops": drops,
         "dropTable": drop_table,
         "jclFiles": filtered_jcl_files,
+        "scrapsItems": scraps_items,
+        "scrapsValue": scraps_value,
+        "isScrapsBoss": false,
         "notes": notes,
     });
 
@@ -3290,14 +3430,19 @@ pub fn scan_raid_drops_with_raids(
         let mut all_income_records: Vec<(i64, i64)> = Vec::new();
         // 累加所有 chatlog 文件的 boss_kill_times，用于击杀数验证
         let mut all_boss_kill_times: Vec<i64> = Vec::new();
-        // 合并所有 chatlog 文件的购买物品名（用于 notes 显示）
-        let mut all_purchased_items: HashSet<String> = HashSet::new();
+        // 合并所有 chatlog 文件的购买物品映射（物品名 → PurchaseInfo，用于散件老板功能）
+        let mut all_purchased_items: HashMap<String, PurchaseInfo> = HashMap::new();
 
         // 单次调用处理预加载记录，时间范围 [chatlog_start, chatlog_end] 通过二分查找定位
         let (chatlog_drops, salary, income, expense, _, income_records, boss_kill_times, purchased_items) =
             extract_drops_from_records(&preloaded_records, chatlog_start, chatlog_end, &db_identity.role_name);
         drops.extend(chatlog_drops);
-        all_purchased_items.extend(purchased_items);
+        // 合并购买物品映射：同物品累加 count 和 total_price
+        for (name, info) in purchased_items {
+            let entry = all_purchased_items.entry(name).or_default();
+            entry.count += info.count;
+            entry.total_price += info.total_price;
+        }
         if salary.is_some() {
             base_salary = salary;
         }
@@ -3474,13 +3619,12 @@ pub fn scan_raid_drops_with_raids(
 
         let role_id_opt: Option<String> = Some(db_identity.role_id.clone());
         let drops_vec: Vec<String> = drops.into_iter().collect();
-        let purchased_items_vec: Vec<String> = all_purchased_items.into_iter().collect();
 
         if let Err(e) = upsert_raid_drop_record(
             &conn,
             instance,
             &drops_vec,
-            &purchased_items_vec,
+            &all_purchased_items,
             &boss_ids,
             &boss_names,
             &role_id_opt,
@@ -5257,6 +5401,242 @@ mod tests {
         assert_eq!(parse_expense_amount("1金砖6000金"), 16000, "1金砖6000金=16000金");
         assert_eq!(parse_expense_amount("9金砖9000金"), 99000, "9金砖9000金=99000金");
         assert_eq!(parse_expense_amount("2金砖9000金"), 29000, "2金砖9000金=29000金");
+    }
+
+    // ============== compute_scraps_items 单元测试 ==============
+
+    /// 测试辅助：确保 drop_items 表存在（init_db_with_path 当前未创建该表）
+    fn ensure_drop_items_table_for_test(conn: &rusqlite::Connection) {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS drop_items (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_type         INTEGER NOT NULL,
+                item_id           INTEGER NOT NULL,
+                item_name         TEXT NOT NULL UNIQUE,
+                price             INTEGER,
+                category          TEXT NOT NULL DEFAULT 'unknown',
+                created_at        TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("should ensure drop_items table");
+    }
+
+    /// 插入测试用 drop_items 记录
+    fn insert_test_drop_item(
+        conn: &rusqlite::Connection,
+        name: &str,
+        price: Option<i64>,
+        category: &str,
+    ) {
+        ensure_drop_items_table_for_test(conn);
+        let now = chrono::Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO drop_items (item_type, item_id, item_name, price, category, created_at)
+             VALUES (5, 0, ?1, ?2, ?3, ?4)",
+            sql_params![name, price, category, now],
+        )
+        .expect("should insert drop_item");
+    }
+
+    /// 构造购买记录
+    fn make_purchase(count: u32, total_price: i64) -> PurchaseInfo {
+        PurchaseInfo { count, total_price }
+    }
+
+    /// 测试：空购买记录应返回空散件清单
+    #[test]
+    fn test_compute_scraps_items_empty() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let purchased: HashMap<String, PurchaseInfo> = HashMap::new();
+        let categories: HashMap<String, String> = HashMap::new();
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert!(items.is_empty(), "空购买记录应返回空散件清单");
+        assert_eq!(value, 0, "空清单估价应为 0");
+    }
+
+    /// 测试：白名单材料识别正确（JX3Box API 不可用 → manual 手填）
+    #[test]
+    fn test_compute_scraps_items_whitelist_material() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let mut purchased = HashMap::new();
+        purchased.insert("维峰丹".to_string(), make_purchase(2, 0));
+        let categories = HashMap::new();
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert_eq!(items.len(), 1, "应识别 1 项白名单材料");
+        assert_eq!(items[0].name, "维峰丹");
+        assert_eq!(items[0].count, 2, "count 应为 2");
+        assert_eq!(items[0].category, "material");
+        assert_eq!(items[0].unit_price, None, "JX3Box 不可用时 unitPrice=None");
+        assert_eq!(items[0].price_source, "manual");
+        assert_eq!(value, 0, "unitPrice=None 按 0 计入");
+    }
+
+    /// 测试：白名单材料非 0 金购买也计入（按设计 §1.2：0 金或非 0 金都算）
+    #[test]
+    fn test_compute_scraps_items_whitelist_material_nonzero_price() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let mut purchased = HashMap::new();
+        // 玛瑙 500 金购买（白名单材料，无论价格都计入）
+        purchased.insert("玛瑙".to_string(), make_purchase(1, 500));
+        let categories = HashMap::new();
+        let (items, _value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert_eq!(items.len(), 1, "白名单材料无论价格都应计入散件");
+        assert_eq!(items[0].name, "玛瑙");
+        assert_eq!(items[0].category, "material");
+    }
+
+    /// 测试：0 金装备（drop_items 有 Price）→ npc 卖价
+    #[test]
+    fn test_compute_scraps_items_zero_price_equipment_npc() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        insert_test_drop_item(&conn, "流漓腰带", Some(25000), "equipment");
+        let mut purchased = HashMap::new();
+        purchased.insert("流漓腰带".to_string(), make_purchase(1, 0));
+        let mut categories = HashMap::new();
+        categories.insert("流漓腰带".to_string(), "equipment".to_string());
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "流漓腰带");
+        assert_eq!(items[0].category, "equipment");
+        assert_eq!(items[0].unit_price, Some(25000));
+        assert_eq!(items[0].price_source, "npc");
+        assert_eq!(value, 25000);
+    }
+
+    /// 测试：0 金装备（drop_items 无 Price）→ manual 手填
+    #[test]
+    fn test_compute_scraps_items_zero_price_equipment_no_price() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        insert_test_drop_item(&conn, "无价装备", None, "equipment");
+        let mut purchased = HashMap::new();
+        purchased.insert("无价装备".to_string(), make_purchase(1, 0));
+        let mut categories = HashMap::new();
+        categories.insert("无价装备".to_string(), "equipment".to_string());
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].unit_price, None);
+        assert_eq!(items[0].price_source, "manual");
+        assert_eq!(value, 0);
+    }
+
+    /// 测试：非 0 金装备不计入散件
+    #[test]
+    fn test_compute_scraps_items_nonzero_equipment_excluded() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        insert_test_drop_item(&conn, "竞拍装备", Some(50000), "equipment");
+        let mut purchased = HashMap::new();
+        purchased.insert("竞拍装备".to_string(), make_purchase(1, 50000));
+        let mut categories = HashMap::new();
+        categories.insert("竞拍装备".to_string(), "equipment".to_string());
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert!(items.is_empty(), "非 0 金装备不应计入散件");
+        assert_eq!(value, 0);
+    }
+
+    /// 测试：不在白名单的材料不计入散件
+    #[test]
+    fn test_compute_scraps_items_non_whitelist_material_excluded() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let mut purchased = HashMap::new();
+        // 副本外的杂物材料（不在白名单）
+        purchased.insert("杂物材料".to_string(), make_purchase(1, 0));
+        let mut categories = HashMap::new();
+        categories.insert("杂物材料".to_string(), "material".to_string());
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert!(items.is_empty(), "不在白名单的材料不应计入散件");
+        assert_eq!(value, 0);
+    }
+
+    /// 测试：0 金装备但 category 非 equipment 不计入
+    #[test]
+    fn test_compute_scraps_items_zero_price_non_equipment_excluded() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        insert_test_drop_item(&conn, "神秘物品", Some(1000), "unknown");
+        let mut purchased = HashMap::new();
+        purchased.insert("神秘物品".to_string(), make_purchase(1, 0));
+        let mut categories = HashMap::new();
+        categories.insert("神秘物品".to_string(), "unknown".to_string());
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert!(items.is_empty(), "0 金但非 equipment 类别不应计入散件");
+        assert_eq!(value, 0);
+    }
+
+    /// 测试：0 金装备但 drop_items 无 category 记录 → 保守策略不计入（设计 §8.4）
+    #[test]
+    fn test_compute_scraps_items_zero_price_no_category_excluded() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        // 不插入 drop_items 记录，category 缺失
+        let mut purchased = HashMap::new();
+        purchased.insert("未知装备".to_string(), make_purchase(1, 0));
+        let categories = HashMap::new();
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert!(items.is_empty(), "category 缺失时按保守策略不计入散件");
+        assert_eq!(value, 0);
+    }
+
+    /// 测试：同物品多次购买 count 累加正确
+    #[test]
+    fn test_compute_scraps_items_count_accumulation() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let mut purchased = HashMap::new();
+        // 模拟同物品多次购买：count=3, total_price=0（3 次 0 金购买）
+        purchased.insert("维峰丹".to_string(), make_purchase(3, 0));
+        let categories = HashMap::new();
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].count, 3, "count 应累加为 3");
+        assert_eq!(value, 0, "unitPrice=None 时 scrapsValue=0");
+    }
+
+    /// 测试：混合场景（白名单材料 + 0 金装备 + 非 0 金装备 + 非白名单材料）
+    /// 验证 scrapsValue 求和正确性（含 unitPrice=None 按 0 计入）
+    #[test]
+    fn test_compute_scraps_items_mixed() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        // drop_items 记录
+        insert_test_drop_item(&conn, "流漓腰带", Some(25000), "equipment");
+        insert_test_drop_item(&conn, "无价装备", None, "equipment");
+        // 购买记录
+        let mut purchased = HashMap::new();
+        purchased.insert("维峰丹".to_string(), make_purchase(2, 0));     // 白名单材料 ×2
+        purchased.insert("玛瑙".to_string(), make_purchase(1, 500));     // 白名单材料（非 0 金也计入）
+        purchased.insert("流漓腰带".to_string(), make_purchase(1, 0));   // 0 金装备（NPC 估价 25000）
+        purchased.insert("无价装备".to_string(), make_purchase(1, 0));   // 0 金装备（无价 → manual）
+        purchased.insert("竞拍装备".to_string(), make_purchase(1, 50000)); // 非 0 金装备（不计入）
+        purchased.insert("杂物材料".to_string(), make_purchase(1, 0));   // 非白名单材料（不计入）
+        // 分类
+        let mut categories = HashMap::new();
+        categories.insert("流漓腰带".to_string(), "equipment".to_string());
+        categories.insert("无价装备".to_string(), "equipment".to_string());
+        categories.insert("竞拍装备".to_string(), "equipment".to_string());
+        categories.insert("杂物材料".to_string(), "material".to_string());
+        let (items, value) = compute_scraps_items(&conn, &purchased, &categories);
+        // 应识别 4 项（维峰丹、玛瑙、流漓腰带、无价装备）
+        assert_eq!(items.len(), 4, "应识别 4 项散件（白名单材料 2 + 0 金装备 2）");
+        // 按名称排序：无价装备、流漓腰带、玛瑙、维峰丹
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["无价装备", "流漓腰带", "玛瑙", "维峰丹"], "应按名称排序");
+        // 估价：流漓腰带 1×25000 + 玛瑙 1×0 + 维峰丹 2×0 + 无价装备 1×0 = 25000
+        assert_eq!(value, 25000, "scrapsValue 应为 25000（仅含已获取单价的物品）");
+    }
+
+    /// 测试：输出按名称排序（UTF-8 字节序）
+    #[test]
+    fn test_compute_scraps_items_sorted_by_name() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let mut purchased = HashMap::new();
+        // 故意以乱序插入
+        purchased.insert("猫眼石".to_string(), make_purchase(1, 0));
+        purchased.insert("维峰丹".to_string(), make_purchase(1, 0));
+        purchased.insert("玛瑙".to_string(), make_purchase(1, 0));
+        let categories = HashMap::new();
+        let (items, _) = compute_scraps_items(&conn, &purchased, &categories);
+        assert_eq!(items.len(), 3);
+        // 期望按 UTF-8 字节序排序：猫眼石、玛瑙、维峰丹
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["猫眼石", "玛瑙", "维峰丹"], "应按名称排序");
     }
 
 

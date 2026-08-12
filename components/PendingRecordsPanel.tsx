@@ -4,8 +4,9 @@ import {
   Clock, Check, X, Loader2, AlertTriangle, Package,
   TrendingUp, TrendingDown, Coins, Sparkles, Anchor, Ghost, Package as PackageIcon,
   Flag, Shirt, Crown, BookOpen, FileText, Pencil, Skull, Calendar, ChevronDown,
+  Boxes, PencilLine,
 } from 'lucide-react';
-import { RaidRecord, Account } from '../types';
+import { RaidRecord, ScrapsItem, Account } from '../types';
 import { dropScannerService } from '../services/dropScanner';
 import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
@@ -41,6 +42,18 @@ interface EditFormData {
   hasSecretBook: boolean;
   notes: string;
   bossNames: string[];
+  /** 是否为散件老板（用户在确认弹窗勾选，默认 false） */
+  isScrapsBoss: boolean;
+  /** 散件清单（拷贝自 record.scrapsItems，允许用户编辑单价） */
+  scrapsItems: ScrapsItem[];
+}
+
+/** 根据当前散件清单计算估价合计（unitPrice=null 按 0 计入） */
+function computeScrapsValue(items: ScrapsItem[]): number {
+  return items.reduce((sum, item) => {
+    if (item.unitPrice == null) return sum;
+    return sum + item.count * item.unitPrice;
+  }, 0);
 }
 
 /**
@@ -165,6 +178,9 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       hasSecretBook: record.hasSecretBook || false,
       notes: record.notes || '',
       bossNames: record.bossNames ?? [],
+      isScrapsBoss: record.isScrapsBoss ?? false,
+      // 深拷贝散件清单（避免直接修改 record 引用导致 React state 异常）
+      scrapsItems: (record.scrapsItems ?? []).map(item => ({ ...item })),
     });
   }, []);
 
@@ -213,6 +229,8 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     if (!editingRecord || !editForm) return;
     setPendingActionId(editingRecord.id);
     try {
+      // 散件清单：按用户当前编辑的 unitPrice 重新计算 scrapsValue
+      const scrapsValue = computeScrapsValue(editForm.scrapsItems);
       await dropScannerService.confirmRecord(editingRecord.id, {
         goldIncome: editForm.goldIncome,
         goldExpense: editForm.goldExpense,
@@ -226,6 +244,9 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         hasSecretBook: editForm.hasSecretBook,
         notes: editForm.notes.trim() || undefined,
         bossNames: editForm.bossNames,
+        scrapsItems: editForm.scrapsItems,
+        scrapsValue,
+        isScrapsBoss: editForm.isScrapsBoss,
       });
       onRefreshRecords?.();
       toast.success('记录已确认');
@@ -490,6 +511,18 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                           {formatGoldAmount(record.goldExpense || 0)}
                         </span>
                       </span>
+                      {record.scrapsItems && record.scrapsItems.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Boxes className="w-3.5 h-3.5 text-muted" />
+                          <span className="text-muted text-xs">散件</span>
+                          <span className="font-mono font-semibold text-main">{record.scrapsItems.length}</span>
+                          {(record.scrapsValue ?? 0) > 0 && (
+                            <span className="text-muted text-xs ml-1">
+                              ≈ {formatGoldAmount(record.scrapsValue ?? 0)}金
+                            </span>
+                          )}
+                        </span>
+                      )}
                       {record.drops && record.drops.length > 0 && (
                         <span className="flex items-center gap-1 ml-auto">
                           <Package className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
@@ -568,7 +601,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
           onClick={closeEditModal}
         >
           <div
-            className="bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in"
+            className="bg-surface rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in"
             onClick={e => e.stopPropagation()}
           >
             {/* 标题栏 */}
@@ -698,6 +731,100 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                     </label>
                   </div>
                 ))}
+              </div>
+
+              {/* 散件老板 */}
+              <div className="p-3 bg-base rounded-lg border border-base space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editForm.isScrapsBoss}
+                    onChange={e => setEditForm({ ...editForm, isScrapsBoss: e.target.checked })}
+                    id="edit-isScrapsBoss"
+                    className="w-4 h-4 text-emerald-600 rounded border-base focus:ring-emerald-500"
+                  />
+                  <label htmlFor="edit-isScrapsBoss" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
+                    <Boxes className="w-4 h-4 text-emerald-600" />
+                    <span>我是散件老板</span>
+                    <span className="text-xs text-muted">（勾选后散件估价计入收支统计）</span>
+                  </label>
+                </div>
+
+                {editForm.scrapsItems.length > 0 ? (
+                  <div>
+                    <div className="text-xs text-muted mb-1.5">
+                      散件清单（{editForm.scrapsItems.length} 项）
+                    </div>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {editForm.scrapsItems.map((item, idx) => {
+                        const isReadOnly = item.priceSource === 'npc';
+                        const isManual = item.unitPrice == null;
+                        const categoryLabel = item.category === 'material' ? '材料' : '装备';
+                        const sourceLabel = item.priceSource === 'npc'
+                          ? 'NPC'
+                          : item.priceSource === 'jx3box'
+                            ? 'JX3Box'
+                            : '手填';
+                        return (
+                          <div
+                            key={`${item.name}-${idx}`}
+                            className="flex items-center gap-2 px-2 py-1.5 bg-surface rounded border border-base"
+                          >
+                            <span className="text-sm text-main flex-1 min-w-0 truncate" title={item.name}>
+                              {item.name}
+                              <span className="ml-1 text-muted text-xs">×{item.count}</span>
+                            </span>
+                            <span className="text-[11px] text-muted whitespace-nowrap">
+                              {categoryLabel}·{sourceLabel}
+                            </span>
+                            <div className="relative w-24">
+                              <Coins className={`absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${isReadOnly ? 'text-slate-400' : 'text-emerald-500'}`} />
+                              <input
+                                type="number"
+                                min="0"
+                                readOnly={isReadOnly}
+                                value={item.unitPrice ?? ''}
+                                placeholder={isManual ? '手填' : ''}
+                                onChange={e => {
+                                  const raw = e.target.value;
+                                  const next = raw === '' ? null : Math.max(0, Number(raw));
+                                  const items = editForm.scrapsItems.slice();
+                                  items[idx] = { ...item, unitPrice: next };
+                                  setEditForm({ ...editForm, scrapsItems: items });
+                                }}
+                                className={`w-full pl-7 pr-2 py-1 rounded text-sm font-mono text-[1rem] border focus:outline-none focus:ring-1 ${
+                                  isReadOnly
+                                    ? 'bg-base text-muted border-base cursor-not-allowed'
+                                    : isManual
+                                      ? 'bg-surface border-amber-300 dark:border-amber-700 text-main placeholder:text-amber-500 focus:ring-amber-400'
+                                      : 'bg-surface border-emerald-300 dark:border-emerald-700 text-main focus:ring-emerald-400'
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-base">
+                      <div className="flex items-center gap-1.5 text-xs text-muted">
+                        <PencilLine className="w-3.5 h-3.5" />
+                        <span>
+                          {editForm.scrapsItems.some(i => i.unitPrice == null)
+                            ? '未填单价项按 0 计入，可点击单价框补充'
+                            : '所有单价已就绪'}
+                        </span>
+                      </div>
+                      <div className="text-sm">
+                        <span className="text-muted mr-1">散件估价合计</span>
+                        <span className="font-mono font-semibold text-main">
+                          {formatGoldAmount(computeScrapsValue(editForm.scrapsItems))}金
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted">无散件物品</div>
+                )}
               </div>
 
               {/* 备注 */}
