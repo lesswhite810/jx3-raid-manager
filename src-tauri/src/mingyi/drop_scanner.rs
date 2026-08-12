@@ -3808,9 +3808,10 @@ struct StaleRecord {
     account_id: String,
     data: String,
     drops: String,
-    // created_at 用于查询筛选，复核逻辑当前不直接读取（保留用于未来扩展）
+    // record_date 为副本开始时间（INTEGER 毫秒），用于查询筛选；
+    // 复核逻辑当前不直接读取（保留用于未来扩展）
     #[allow(dead_code)]
-    created_at: i64,
+    record_date: i64,
     status: String,
 }
 
@@ -3820,15 +3821,22 @@ struct StaleRecord {
 /// - `status='scanning'`：上次会话未收尾的副本，需判定是否已结束
 /// - `status='pending' AND drops='[]' AND goldIncome=0`：孤儿 pending 记录，需补充掉落/工资
 ///
-/// 通过 `created_at < cutoff_ms` 隔离本次 JX3 会话产生的记录（交给原轮询逻辑）。
+/// 通过 `record_date < cutoff_ms` 隔离本次 JX3 会话产生的记录（交给原轮询逻辑）。
+///
+/// 为什么用 record_date 而非 created_at：
+/// - `record_date` 为 INTEGER 毫秒，与 cutoff_ms 类型匹配，比较语义正确
+/// - `created_at` 为 TEXT (ISO 8601 字符串)，与 INTEGER 比较时 SQLite 做字典序比较，
+///   导致 "2026-08-03..." > "1723376400000"（'2' > '1'），历史记录永远进不了复核
+/// - `record_date` 在 INSERT 时必有值；`created_at` 在 V14 迁移未回填旧记录，可能为 NULL
+/// - 现有 `idx_records_pending(status, record_date DESC)` 复合索引完美匹配查询模式
 fn query_stale_records_for_verify(
     conn: &Connection,
     cutoff_ms: i64,
 ) -> Result<Vec<StaleRecord>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, account_id, data, drops, created_at, status FROM records
-             WHERE created_at < ?1 AND (
+            "SELECT id, account_id, data, drops, record_date, status FROM records
+             WHERE record_date < ?1 AND (
                status = 'scanning'
                OR (status = 'pending' AND drops = '[]' AND json_extract(data, '$.goldIncome') = 0)
              )",
@@ -3842,7 +3850,7 @@ fn query_stale_records_for_verify(
                 account_id: row.get(1)?,
                 data: row.get(2)?,
                 drops: row.get(3)?,
-                created_at: row.get(4)?,
+                record_date: row.get(4)?,
                 status: row.get(5)?,
             })
         })
@@ -3884,7 +3892,7 @@ enum VerifyOutcome {
 /// 对每条历史记录复用 `scan_raid_drops_with_raids` 重扫其副本实例时间范围，
 /// 并采用"按需保留原数据"策略防止数据丢失。
 ///
-/// - `cutoff_ms`：本次 JX3 启动时间（毫秒），只复核 `created_at < cutoff_ms` 的记录
+/// - `cutoff_ms`：本次 JX3 启动时间（毫秒），只复核 `record_date < cutoff_ms` 的记录
 /// - `game_dir`：游戏目录
 /// - `preloaded_raids`：预加载的副本配置（与本次会话扫描共用）
 fn verify_stale_records(
