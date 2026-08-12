@@ -77,3 +77,13 @@ tmp/
 # 临时目录
 MY_temp/
 .tmp_luadata_probe/
+
+# AI 工具状态目录（不入版本控制）
+.omc/
+.omo/
+.qoder/
+
+# 一次性调试脚本（项目根目录）
+/probe*.js
+/debug-fix-*.mjs
+/baidu_pwd.png
