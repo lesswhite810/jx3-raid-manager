@@ -85,11 +85,64 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'db_get_records':
           result = MOCK_RECORDS.map(r => JSON.stringify(r));
           break;
+        case 'db_get_pending_records':
+          result = [
+            JSON.stringify({
+              id: 'mock-pending-1',
+              accountId: 'mock-acc-1',
+              roleId: 'mock-role-1',
+              roleName: '欧神再临',
+              server: '梦江南',
+              raidName: '25人普通冷龙峰',
+              date: Date.now(),
+              goldIncome: 54000,
+              goldExpense: 8000,
+              source: 'auto',
+              status: 'pending',
+              bossNames: ['骨犀', '武云飞'],
+              drops: ['流漓腰带', '维峰丹', '玛瑙'],
+              isScrapsBoss: false,
+              scrapsValue: 0,
+              scrapsItems: [
+                { name: '维峰丹', count: 2, unitPrice: null, category: 'material', priceSource: 'manual' },
+                { name: '玛瑙', count: 1, unitPrice: null, category: 'material', priceSource: 'manual' },
+                { name: '流漓腰带', count: 1, unitPrice: 25000, category: 'equipment', priceSource: 'npc' },
+              ],
+            }),
+          ];
+          break;
         case 'db_get_raids':
-          result = [];
+          result = [
+            JSON.stringify({
+              name: '冷龙峰',
+              difficulty: '普通',
+              playerCount: 25,
+              version: '丝路风雨',
+              isActive: true,
+              static: true,
+              bosses: [
+                { id: 'leng-long-feng-b1', name: '骨犀', order: 1 },
+                { id: 'leng-long-feng-b2', name: '武云飞', order: 2 },
+                { id: 'leng-long-feng-b3', name: '月泉淮', order: 3 },
+              ],
+            }),
+            JSON.stringify({
+              name: '冷龙峰',
+              difficulty: '英雄',
+              playerCount: 25,
+              version: '丝路风雨',
+              isActive: true,
+              static: true,
+              bosses: [
+                { id: 'leng-long-feng-h-b1', name: '骨犀', order: 1 },
+                { id: 'leng-long-feng-h-b2', name: '武云飞', order: 2 },
+                { id: 'leng-long-feng-h-b3', name: '月泉淮', order: 3 },
+              ],
+            }),
+          ];
           break;
         case 'db_get_raid_versions':
-          result = [];
+          result = ['丝路风雨'];
           break;
         case 'db_get_current_raid_version_info':
           result = {
@@ -128,6 +181,30 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           break;
         case 'db_get_all_role_visibility':
           result = JSON.stringify([]);
+          break;
+        case 'db_get_raid_role_visibility':
+          // 返回空数组表示所有角色默认可见
+          result = JSON.stringify([]);
+          break;
+        case 'db_save_role_visibility':
+        case 'db_save_raid_role_visibility':
+          result = null;
+          break;
+        case 'get_app_config':
+          result = {
+            gameDirectory: 'mock://browser-preview',
+            setupCompleted: true,
+            lastScanMingyiAt: null,
+            autoScanEnabled: false,
+            autoRefreshEquipScore: true,
+          };
+          break;
+        case 'complete_setup':
+        case 'set_game_directory':
+        case 'reset_setup':
+        case 'set_auto_scan_enabled':
+        case 'set_auto_refresh_equip_score_enabled':
+          result = null;
           break;
         default:
           console.warn(`[Mock Invoke] Unhandled command: ${cmd}`);

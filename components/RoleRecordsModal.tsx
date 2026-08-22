@@ -421,7 +421,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                             <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{formatGoldAmount(record.goldExpense)}</span>
                           </div>
                         ) : null}
-                        {record.scrapsItems && record.scrapsItems.length > 0 && (
+                        {((record.scrapsItems && record.scrapsItems.length > 0) || (record.scrapsValue ?? 0) > 0) && (
                           <div className="flex items-center gap-1" title={record.isScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}>
                             <Boxes className="w-3.5 h-3.5 text-muted flex-shrink-0" />
                             <span className="text-sm font-semibold text-main">{formatGoldAmount(record.scrapsValue || 0)}</span>

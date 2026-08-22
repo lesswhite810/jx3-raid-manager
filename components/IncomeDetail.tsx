@@ -767,7 +767,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                                 <span className="font-medium">支出: {formatGold(record.goldExpense || 0)}</span>
                               </div>
                             )}
-                            {record.scrapsItems && record.scrapsItems.length > 0 && (
+                            {((record.scrapsItems && record.scrapsItems.length > 0) || (record.scrapsValue ?? 0) > 0) && (
                               <div
                                 className="flex items-center gap-2 text-muted bg-base px-2 py-1 rounded"
                                 title={record.isScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}

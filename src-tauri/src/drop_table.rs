@@ -1,11 +1,14 @@
+use futures::future::join_all;
 use log::{info, warn};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 const JX3BOX_DROP_API_BASE: &str = "https://node.jx3box.com/fb/drop/v2";
 const JX3BOX_ITEM_MERGED_API_BASE: &str = "https://node.jx3box.com/item_merged/id";
+const JX3BOX_PRICE_API_BASE: &str = "https://next2.jx3box.com/api/item-price";
 const ITEM_MERGED_PER_PAGE: usize = 50;
 
 /// 独立的 tokio runtime，供同步上下文（如 spawn_blocking 线程）调用 async HTTP 请求。
@@ -22,6 +25,27 @@ fn sync_runtime() -> &'static tokio::runtime::Runtime {
             .build()
             .expect("[DropTable] 创建同步 tokio runtime 失败")
     })
+}
+
+/// 全局 HTTP Client（复用连接池，避免每次请求重建连接）
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("[DropTable] 创建全局 HTTP Client 失败")
+    })
+}
+
+/// 材料价格内存缓存（key: "ItemType_ItemID|server"，value: (单价金, 缓存时间)）
+/// TTL 1 小时，过期后重新查询。不持久化（材料价格每日变动，长期存储无意义）。
+static MATERIAL_PRICE_CACHE: OnceLock<Mutex<HashMap<String, (i64, Instant)>>> = OnceLock::new();
+const MATERIAL_PRICE_CACHE_TTL: Duration = Duration::from_secs(3600);
+
+fn material_price_cache() -> &'static Mutex<HashMap<String, (i64, Instant)>> {
+    MATERIAL_PRICE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// JX3Box 掉落表接口（drop/v2）返回的单条掉落记录
@@ -341,13 +365,10 @@ pub async fn classify_drops(
 /// 注意：drop/v2 接口一次性返回全部数据，无分页。
 async fn fetch_drop_table_from_api(map_id: i64) -> Result<Vec<DropItem>, DropTableError> {
     let url = format!("{}?client=std", slash_join(JX3BOX_DROP_API_BASE, map_id));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()?;
-
-    let resp = client
+    let resp = http_client()
         .get(&url)
         .header("Accept", "application/json")
+        .timeout(Duration::from_secs(15))
         .send()
         .await?;
 
@@ -379,9 +400,7 @@ async fn fetch_drop_table_from_api(map_id: i64) -> Result<Vec<DropItem>, DropTab
 async fn fetch_item_merged_batch(
     item_keys: &[String],
 ) -> Result<Vec<ItemMerged>, DropTableError> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    let client = http_client();
 
     // 将 item_keys 合并为逗号分隔的字符串
     let ids_param = item_keys.join(",");
@@ -523,7 +542,7 @@ fn save_items_to_db(
         let mut stmt = tx
             .prepare(
                 r#"
-                INSERT OR IGNORE INTO drop_items (
+                INSERT OR REPLACE INTO drop_items (
                     map_id, item_type, item_id, item_ext_id, boss_name, applicable_school_ids,
                     ui_id, source, source_id, item_name, description, genre, sub_type, detail_type,
                     price, level, bind_type, max_durability, abrade_rate, max_exist_time, max_exist_amount,
@@ -680,6 +699,211 @@ fn slash_join(base: &str, id: i64) -> String {
     } else {
         format!("{}/{}", base, id)
     }
+}
+
+// ============== JX3Box 交易行价格查询 ==============
+
+/// 价格接口单条成交记录
+#[derive(Debug, Deserialize)]
+struct PriceRecord {
+    /// 成交时间戳（秒）
+    #[serde(default)]
+    #[allow(dead_code)]
+    created: i64,
+    /// 成交数量
+    #[serde(default)]
+    #[allow(dead_code)]
+    n_count: i64,
+    /// 服务器名
+    #[serde(default)]
+    #[allow(dead_code)]
+    server: String,
+    /// 单价（铜，需 ÷10000 转金）
+    #[serde(default)]
+    unit_price: i64,
+}
+
+/// 价格接口响应
+#[derive(Debug, Deserialize)]
+struct PriceApiResponse {
+    #[serde(default)]
+    #[allow(dead_code)]
+    code: i64,
+    #[serde(default)]
+    #[allow(dead_code)]
+    msg: String,
+    data: Option<PriceApiData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PriceApiData {
+    #[serde(default)]
+    prices: Vec<PriceRecord>,
+}
+
+/// 计算成交价格的中位数（金），并四舍五入到整数金。
+///
+/// 接口返回的 prices 里常混有异常值：
+/// - unit_price = 1 亿（= 1 砖 = 10000 金）的封顶哨兵值；
+/// - 洗钱/恶意挂单产生的次级异常高价（实测玛瑙出现 100 金、800 金的成交）。
+/// 算术/加权平均都会被这些离群值严重拉高（实测绝代天骄玛瑙均价被拉到 45~5220 金，
+/// 而真实主流价仅约 3 金），中位数对离群值天然稳健，能反映市场主流成交价。
+///
+/// 仅 unit_price > 0 且 n_count > 0 的记录参与；无有效数据时返回 None。
+fn median_price_gold(prices: &[PriceRecord]) -> Option<i64> {
+    let mut valid: Vec<i64> = prices
+        .iter()
+        .filter(|p| p.unit_price > 0 && p.n_count > 0)
+        .map(|p| p.unit_price)
+        .collect();
+
+    if valid.is_empty() {
+        return None;
+    }
+
+    valid.sort_unstable();
+    let mid = valid.len() / 2;
+    let median = if valid.len() % 2 == 0 {
+        (valid[mid - 1] + valid[mid]) / 2
+    } else {
+        valid[mid]
+    };
+
+    // 铜 → 金，四舍五入
+    Some((median + 5000) / 10000)
+}
+
+/// 查询物品的交易行价格（成交价中位数，铜 → 金）
+///
+/// 接口：GET https://next2.jx3box.com/api/item-price/{ItemType_ItemID}/detail?server={server}
+///
+/// 返回成交价中位数（金）。无有效成交数据时返回 None。
+async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, DropTableError> {
+    let url = format!("{}/{}/detail?server={}", JX3BOX_PRICE_API_BASE, item_key, server);
+
+    let resp = http_client()
+        .get(&url)
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        warn!(
+            "[DropTable] 价格接口返回非 2xx: {} (item_key={})",
+            resp.status(),
+            item_key
+        );
+        return Ok(None);
+    }
+
+    let body: PriceApiResponse = resp.json().await?;
+
+    let prices = body.data.map(|d| d.prices).unwrap_or_default();
+
+    match median_price_gold(&prices) {
+        Some(gold) => {
+            info!(
+                "[DropTable] 物品 {} 中位价: {} 金 (server={}, {} 条成交)",
+                item_key, gold, server, prices.len()
+            );
+            Ok(Some(gold))
+        }
+        None => {
+            info!(
+                "[DropTable] 物品 {} 无有效成交数据 (server={})",
+                item_key, server
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// 同步版本：批量查询材料交易行价格
+///
+/// 返回 (item_name -> 单价金) 映射。查询失败的物品不会出现在返回值中。
+pub fn fetch_material_prices_sync(
+    conn: &Connection,
+    item_names: &[String],
+    server: &str,
+) -> HashMap<String, i64> {
+    if item_names.is_empty() || server.is_empty() {
+        return HashMap::new();
+    }
+
+    // 1. 从 drop_items 表查 item_type + item_id，拼成 "ItemType_ItemID"
+    let mut name_to_key: HashMap<String, String> = HashMap::new();
+    for name in item_names {
+        if let Ok((item_type, item_id)) = conn.query_row(
+            "SELECT item_type, item_id FROM drop_items WHERE item_name = ?1 LIMIT 1",
+            params![name],
+            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i64>(1)?)),
+        ) {
+            name_to_key.insert(name.clone(), format!("{}_{}", item_type, item_id));
+        }
+    }
+
+    if name_to_key.is_empty() {
+        info!("[DropTable] 散件材料均未在 drop_items 表中找到 item_key，跳过价格查询");
+        return HashMap::new();
+    }
+
+    // 2. 先查内存缓存（TTL 1 小时），未命中的物品才发起网络请求
+    let cache = material_price_cache();
+    let cache_read_at = Instant::now();
+    let mut result: HashMap<String, i64> = HashMap::new();
+    let mut to_fetch: Vec<(String, String)> = Vec::new(); // (name, item_key)
+
+    {
+        let cache_guard = cache.lock().unwrap();
+        for (name, key) in &name_to_key {
+            let cache_key = format!("{}|{}", key, server);
+            match cache_guard.get(&cache_key) {
+                Some((price, cached_at))
+                    if cache_read_at.duration_since(*cached_at) < MATERIAL_PRICE_CACHE_TTL =>
+                {
+                    result.insert(name.clone(), *price);
+                }
+                _ => {
+                    to_fetch.push((name.clone(), key.clone()));
+                }
+            }
+        }
+    }
+
+    // 3. 并发查询未命中的物品（材料种类少，通常 <= 7，全部并发无压力）
+    if !to_fetch.is_empty() {
+        let fetched = sync_runtime().handle().block_on(async {
+            let futures = to_fetch.into_iter().map(|(name, key)| {
+                let server = server.to_string();
+                async move {
+                    let price = fetch_item_price(&key, &server).await;
+                    (name, price)
+                }
+            });
+            join_all(futures).await
+        });
+
+        let mut cache_guard = cache.lock().unwrap();
+        for (name, price_result) in fetched {
+            match price_result {
+                Ok(Some(gold)) => {
+                    if let Some(key) = name_to_key.get(&name) {
+                        cache_guard.insert(format!("{}|{}", key, server), (gold, Instant::now()));
+                    }
+                    result.insert(name, gold);
+                }
+                Ok(None) => {
+                    info!("[DropTable] 材料 {} 无交易行数据，降级为手填", name);
+                }
+                Err(e) => {
+                    warn!("[DropTable] 材料 {} 价格查询失败: {}，降级为手填", name, e);
+                }
+            }
+        }
+    }
+
+    result
 }
 
 /// 纯字段分类函数（无名称前缀依赖）
@@ -843,6 +1067,77 @@ mod tests {
     fn test_slash_join() {
         assert_eq!(slash_join("https://a.com/b", 795), "https://a.com/b/795");
         assert_eq!(slash_join("https://a.com/b/", 795), "https://a.com/b/795");
+    }
+
+    /// 构造一条价格成交记录（用于中位数单测）
+    fn price_record(unit_price: i64, n_count: i64) -> PriceRecord {
+        PriceRecord {
+            created: 0,
+            n_count,
+            server: "test".to_string(),
+            unit_price,
+        }
+    }
+
+    #[test]
+    fn test_median_price_gold_empty() {
+        assert_eq!(median_price_gold(&[]), None);
+    }
+
+    #[test]
+    fn test_median_price_gold_invalid_filtered() {
+        // unit_price 或 n_count <= 0 的记录不参与
+        let prices = [price_record(0, 10), price_record(5000, 0)];
+        assert_eq!(median_price_gold(&prices), None);
+    }
+
+    #[test]
+    fn test_median_price_gold_single() {
+        // 单条 10 金 → 中位数 10 金
+        let prices = [price_record(100000, 5)];
+        assert_eq!(median_price_gold(&prices), Some(10));
+    }
+
+    #[test]
+    fn test_median_price_gold_odd() {
+        // 奇数条：10 金、30 金、20 金 → 排序后中位数 20 金
+        let prices = [
+            price_record(100000, 1),
+            price_record(300000, 1),
+            price_record(200000, 1),
+        ];
+        assert_eq!(median_price_gold(&prices), Some(20));
+    }
+
+    #[test]
+    fn test_median_price_gold_even() {
+        // 偶数条：10 金、20 金 → 中位数 (10+20)/2 = 15 金
+        let prices = [price_record(100000, 1), price_record(200000, 1)];
+        assert_eq!(median_price_gold(&prices), Some(15));
+    }
+
+    #[test]
+    fn test_median_price_gold_outlier_robust() {
+        // 绝代天骄玛瑙真实成交数据：混有封顶哨兵（1 亿铜）与次级异常价（800 金/100 金），
+        // 中位数应落在正常价位约 3.2 金，不受离群值影响（加权平均会被拉到 45 金）。
+        let prices = [
+            price_record(100_000_000, 85),
+            price_record(8_002_300, 5),
+            price_record(8_002_100, 15),
+            price_record(1_002_300, 1000),
+            price_record(1_000_000, 105),
+            price_record(32_300, 36),
+            price_record(32_299, 11),
+            price_record(32_000, 13),
+            price_record(31_900, 1),
+            price_record(31_200, 30),
+            price_record(31_199, 947),
+            price_record(31_000, 8),
+            price_record(22_357, 718),
+            price_record(22_200, 67),
+            price_record(100_000_000, 85),
+        ];
+        assert_eq!(median_price_gold(&prices), Some(3));
     }
 
     #[test]

@@ -4,7 +4,7 @@ import {
   Clock, Check, X, Loader2, AlertTriangle, Package,
   TrendingUp, TrendingDown, Coins, Sparkles, Anchor, Ghost, Package as PackageIcon,
   Flag, Shirt, Crown, BookOpen, FileText, Pencil, Skull, Calendar, ChevronDown,
-  Boxes, PencilLine,
+  Boxes,
 } from 'lucide-react';
 import { RaidRecord, ScrapsItem, Account } from '../types';
 import { dropScannerService } from '../services/dropScanner';
@@ -12,9 +12,11 @@ import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { formatGoldAmount } from '../utils/recordUtils';
+import { computeScrapsValue } from '../utils/scrapsUtils';
 import { toast } from '../utils/toastManager';
 import { getDefaultBosses } from '../data/raidBosses';
 import { useDebug } from '../contexts/DebugContext';
+import { ScrapsItemsEditor } from './ScrapsItemsEditor';
 
 interface PendingRecordsPanelProps {
   records: RaidRecord[];
@@ -46,14 +48,6 @@ interface EditFormData {
   isScrapsBoss: boolean;
   /** 散件清单（拷贝自 record.scrapsItems，允许用户编辑单价） */
   scrapsItems: ScrapsItem[];
-}
-
-/** 根据当前散件清单计算估价合计（unitPrice=null 按 0 计入） */
-function computeScrapsValue(items: ScrapsItem[]): number {
-  return items.reduce((sum, item) => {
-    if (item.unitPrice == null) return sum;
-    return sum + item.count * item.unitPrice;
-  }, 0);
 }
 
 /**
@@ -734,97 +728,29 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
               </div>
 
               {/* 散件老板 */}
-              <div className="p-3 bg-base rounded-lg border border-base space-y-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={editForm.isScrapsBoss}
-                    onChange={e => setEditForm({ ...editForm, isScrapsBoss: e.target.checked })}
-                    id="edit-isScrapsBoss"
-                    className="w-4 h-4 text-emerald-600 rounded border-base focus:ring-emerald-500"
-                  />
-                  <label htmlFor="edit-isScrapsBoss" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                    <Boxes className="w-4 h-4 text-emerald-600" />
-                    <span>我是散件老板</span>
-                    <span className="text-xs text-muted">（勾选后散件估价计入收支统计）</span>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="edit-isScrapsBoss" className="flex items-center gap-2 cursor-pointer select-none">
+                    <div className="w-1 h-4 bg-primary rounded"></div>
+                    <input
+                      type="checkbox"
+                      checked={editForm.isScrapsBoss}
+                      onChange={e => setEditForm({ ...editForm, isScrapsBoss: e.target.checked })}
+                      id="edit-isScrapsBoss"
+                      className="w-4 h-4 text-emerald-600 rounded border-base focus:ring-emerald-500"
+                    />
+                    <Boxes className={`w-3.5 h-3.5 ${editForm.isScrapsBoss ? 'text-emerald-600' : 'text-muted'}`} />
+                    <h3 className="text-sm font-semibold text-main">散件老板</h3>
                   </label>
+                  <span className="text-[10px] text-muted">勾选后估价计入统计</span>
                 </div>
-
-                {editForm.scrapsItems.length > 0 ? (
-                  <div>
-                    <div className="text-xs text-muted mb-1.5">
-                      散件清单（{editForm.scrapsItems.length} 项）
-                    </div>
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {editForm.scrapsItems.map((item, idx) => {
-                        const isReadOnly = item.priceSource === 'npc';
-                        const isManual = item.unitPrice == null;
-                        const categoryLabel = item.category === 'material' ? '材料' : '装备';
-                        const sourceLabel = item.priceSource === 'npc'
-                          ? 'NPC'
-                          : item.priceSource === 'jx3box'
-                            ? 'JX3Box'
-                            : '手填';
-                        return (
-                          <div
-                            key={`${item.name}-${idx}`}
-                            className="flex items-center gap-2 px-2 py-1.5 bg-surface rounded border border-base"
-                          >
-                            <span className="text-sm text-main flex-1 min-w-0 truncate" title={item.name}>
-                              {item.name}
-                              <span className="ml-1 text-muted text-xs">×{item.count}</span>
-                            </span>
-                            <span className="text-[11px] text-muted whitespace-nowrap">
-                              {categoryLabel}·{sourceLabel}
-                            </span>
-                            <div className="relative w-24">
-                              <Coins className={`absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${isReadOnly ? 'text-slate-400' : 'text-emerald-500'}`} />
-                              <input
-                                type="number"
-                                min="0"
-                                readOnly={isReadOnly}
-                                value={item.unitPrice ?? ''}
-                                placeholder={isManual ? '手填' : ''}
-                                onChange={e => {
-                                  const raw = e.target.value;
-                                  const next = raw === '' ? null : Math.max(0, Number(raw));
-                                  const items = editForm.scrapsItems.slice();
-                                  items[idx] = { ...item, unitPrice: next };
-                                  setEditForm({ ...editForm, scrapsItems: items });
-                                }}
-                                className={`w-full pl-7 pr-2 py-1 rounded text-sm font-mono text-[1rem] border focus:outline-none focus:ring-1 ${
-                                  isReadOnly
-                                    ? 'bg-base text-muted border-base cursor-not-allowed'
-                                    : isManual
-                                      ? 'bg-surface border-amber-300 dark:border-amber-700 text-main placeholder:text-amber-500 focus:ring-amber-400'
-                                      : 'bg-surface border-emerald-300 dark:border-emerald-700 text-main focus:ring-emerald-400'
-                                }`}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-base">
-                      <div className="flex items-center gap-1.5 text-xs text-muted">
-                        <PencilLine className="w-3.5 h-3.5" />
-                        <span>
-                          {editForm.scrapsItems.some(i => i.unitPrice == null)
-                            ? '未填单价项按 0 计入，可点击单价框补充'
-                            : '所有单价已就绪'}
-                        </span>
-                      </div>
-                      <div className="text-sm">
-                        <span className="text-muted mr-1">散件估价合计</span>
-                        <span className="font-mono font-semibold text-main">
-                          {formatGoldAmount(computeScrapsValue(editForm.scrapsItems))}金
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-xs text-muted">无散件物品</div>
-                )}
+                <ScrapsItemsEditor
+                  items={editForm.scrapsItems}
+                  onChange={items => setEditForm({ ...editForm, scrapsItems: items })}
+                  editable={false}
+                  showSourceLabel
+                  isScrapsBoss={editForm.isScrapsBoss}
+                />
               </div>
 
               {/* 备注 */}

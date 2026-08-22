@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Raid, RaidRecord } from '../types';
-import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag, BookOpen } from 'lucide-react';
+import { Raid, RaidRecord, ScrapsItem } from '../types';
+import { X, Calendar, Coins, Sparkles, FileText, TrendingUp, TrendingDown, AlertCircle, Shirt, Crown, Package, Ghost, Anchor, Flag, BookOpen, Boxes, ScrollText, Swords, Check } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { DateTimePicker } from './DateTimePicker';
+import { computeScrapsValue } from '../utils/scrapsUtils';
+import { ScrapsItemsEditor } from './ScrapsItemsEditor';
 
 interface RoleWithStatus {
   id: string;
@@ -26,6 +28,27 @@ interface AddRecordModalProps {
   role: RoleWithStatus;
   initialData?: RaidRecord;
 }
+
+/** 8 种特殊掉落项配置：图标颜色 + 文案，便于渲染卡片式复选框 */
+const SPECIAL_DROP_ITEMS: Array<{
+  id: string;
+  key: keyof Pick<
+    RaidRecord,
+    'hasXuanjing' | 'hasMaJu' | 'hasPet' | 'hasPendant' | 'hasMount' | 'hasAppearance' | 'hasTitle' | 'hasSecretBook'
+  >;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconColor: string;
+}> = [
+  { id: 'xuanjing',    key: 'hasXuanjing',   label: '玄晶', icon: Sparkles,  iconColor: 'text-amber-500' },
+  { id: 'maju',        key: 'hasMaJu',       label: '马具', icon: Anchor,    iconColor: 'text-blue-500' },
+  { id: 'pet',         key: 'hasPet',        label: '宠物', icon: Ghost,     iconColor: 'text-purple-500' },
+  { id: 'pendant',     key: 'hasPendant',    label: '挂件', icon: Package,   iconColor: 'text-orange-500' },
+  { id: 'mount',       key: 'hasMount',      label: '坐骑', icon: Flag,      iconColor: 'text-green-500' },
+  { id: 'appearance',  key: 'hasAppearance', label: '外观', icon: Shirt,     iconColor: 'text-pink-500' },
+  { id: 'title',       key: 'hasTitle',      label: '称号', icon: Crown,     iconColor: 'text-yellow-600' },
+  { id: 'secretbook',  key: 'hasSecretBook', label: '秘籍', icon: BookOpen,  iconColor: 'text-cyan-600' },
+];
 
 export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   isOpen,
@@ -50,6 +73,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedBossIds, setSelectedBossIds] = useState<string[]>([]);
   const [recordDate, setRecordDate] = useState<string>('');
+  const [isScrapsBoss, setIsScrapsBoss] = useState(false);
+  const [scrapsItems, setScrapsItems] = useState<ScrapsItem[]>([]);
 
   const availableBosses = useMemo(() => {
     return raid.bosses || [];
@@ -74,6 +99,10 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      // 锁定背景滚动，避免弹窗时页面可上下滚动
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+
       if (initialData) {
         setGoldIncome(initialData.goldIncome || 0);
         setGoldExpense(initialData.goldExpense || 0);
@@ -88,6 +117,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setNotes(initialData.notes || '');
         setSelectedBossIds(initialData.bossIds || (initialData.bossId ? [initialData.bossId] : []));
         setRecordDate(formatDateForInput(initialData.date || new Date()));
+        setIsScrapsBoss(initialData.isScrapsBoss ?? false);
+        setScrapsItems((initialData.scrapsItems ?? []).map(item => ({ ...item })));
       } else {
         setGoldIncome(0);
         setGoldExpense(0);
@@ -109,14 +140,45 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
             : availableBosses.map(b => b.id)
         );
         setRecordDate(formatDateForInput(new Date()));
+        setIsScrapsBoss(false);
+        setScrapsItems([]);
       }
       setIsSubmitting(false);
       setErrorMessage(null);
+
+      // 恢复背景滚动
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
     }
   }, [isOpen, initialData]);
 
   const constructRaidName = (): string => {
     return `${raid.playerCount}人${raid.difficulty}${raid.name}`;
+  };
+
+  /** 将 item.key 映射到对应的 setter，避免在 JSX 中写一长串条件分支 */
+  const specialDropSetters: Record<typeof SPECIAL_DROP_ITEMS[number]['key'], (v: boolean) => void> = {
+    hasXuanjing: setHasXuanjing,
+    hasMaJu: setHasMaJu,
+    hasPet: setHasPet,
+    hasPendant: setHasPendant,
+    hasMount: setHasMount,
+    hasAppearance: setHasAppearance,
+    hasTitle: setHasTitle,
+    hasSecretBook: setHasSecretBook,
+  };
+
+  /** 将 item.key 映射到当前勾选状态 */
+  const specialDropValues: Record<typeof SPECIAL_DROP_ITEMS[number]['key'], boolean> = {
+    hasXuanjing,
+    hasMaJu,
+    hasPet,
+    hasPendant,
+    hasMount,
+    hasAppearance,
+    hasTitle,
+    hasSecretBook,
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,6 +218,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         transactionType: 'combined',
         bossIds: selectedBossIds.length > 0 ? selectedBossIds : undefined,
         bossNames: selectedBossIds.map(id => availableBosses.find(b => b.id === id)?.name).filter(Boolean) as string[] || undefined,
+        isScrapsBoss,
+        scrapsItems: scrapsItems.length > 0 ? scrapsItems : undefined,
+        scrapsValue: scrapsItems.length > 0 ? computeScrapsValue(scrapsItems) : undefined,
       };
 
       onSubmit(record);
@@ -178,291 +243,299 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
     }
   };
 
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
   if (!isOpen) return null;
 
+  const hasBosses = availableBosses.length > 0;
+
   return createPortal(
-    <>
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden animate-in fade-in duration-200"
+      onClick={handleBackdropClick}
+      data-od-id="add-record-modal-backdrop"
+    >
       <div
-        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100]"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            onClose();
-          }
-        }}
-      />
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none">
-        <div className={`bg-surface rounded-xl shadow-2xl w-full max-w-md overflow-hidden pointer-events-auto transition-all duration-300`}>
-          <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm">
-            <div>
-              <h2 className="text-lg font-bold text-main">{initialData ? '修改副本记录' : '添加副本记录'}</h2>
-              <p className="text-muted text-xs mt-0.5">
+        className="bg-surface w-full max-w-2xl rounded-xl shadow-2xl border border-base overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+        data-od-id="add-record-modal"
+      >
+        {/* 标题区 */}
+        <div
+          className="flex items-center justify-between gap-3 px-6 py-4 border-b border-base bg-base/50 backdrop-blur-sm flex-shrink-0"
+          data-od-id="add-record-modal-header"
+        >
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg border border-emerald-200/50 dark:border-emerald-800/50 flex-shrink-0">
+              <ScrollText className="w-4 h-4 text-emerald-600/80" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-main truncate">
+                {initialData ? '修改副本记录' : '添加副本记录'}
+              </h2>
+              <p className="text-xs text-muted mt-0.5 truncate">
                 <span className="font-medium text-main">{role.name}·{getBaseServerName(role.server)}</span>
                 <span className="mx-1.5 text-muted/40">·</span>
-                {constructRaidName()}
+                <span>{role.accountName}</span>
+                <span className="mx-1.5 text-muted/40">·</span>
+                <span>{constructRaidName()}</span>
               </p>
             </div>
-            <button
-              onClick={onClose}
-              className="text-muted hover:text-main transition-colors p-2 rounded-lg hover:bg-base/50"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-base text-muted hover:text-main transition-colors flex-shrink-0"
+            title="关闭"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        {/* 表单主体 */}
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-            <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                <Calendar className="w-4 h-4 text-primary" />
-                记录日期
-              </label>
-              <DateTimePicker
-                value={recordDate}
-                onChange={setRecordDate}
-              />
+            {/* 记录日期与击败 BOSS */}
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+              data-od-id="add-record-modal-top-fields"
+            >
+              <div>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-2">
+                  <Calendar className="w-3.5 h-3.5 text-primary" />
+                  记录日期
+                </label>
+                <DateTimePicker
+                  value={recordDate}
+                  onChange={setRecordDate}
+                />
+              </div>
+
+              {hasBosses && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="flex items-center gap-1.5 text-xs font-medium text-muted">
+                      <Swords className="w-3.5 h-3.5 text-primary" />
+                      击败 BOSS
+                      <span className="text-[10px] font-normal text-muted/70">（可多选）</span>
+                    </label>
+                    {selectedBossIds.length > 0 && (
+                      <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800/60">
+                        已选 {selectedBossIds.length} 个
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 p-2 bg-base/60 rounded-lg border border-base max-h-24 overflow-y-auto">
+                    {availableBosses.map((boss) => {
+                      const isSelected = selectedBossIds.includes(boss.id);
+                      return (
+                        <button
+                          key={boss.id}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedBossIds(selectedBossIds.filter(id => id !== boss.id));
+                            } else {
+                              setSelectedBossIds([...selectedBossIds, boss.id]);
+                            }
+                          }}
+                          className={`px-2 py-1 rounded-md text-xs font-medium border transition-all ${
+                            isSelected
+                              ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
+                              : 'bg-surface text-muted border-base hover:border-emerald-300 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-emerald-50/50'
+                          }`}
+                        >
+                          {boss.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {availableBosses.length > 0 && (
-              <div>
-                <label className="block text-sm font-medium text-main mb-1.5">
-                  击败BOSS（可多选）
-                </label>
-                <div className="flex flex-wrap gap-2 p-3 bg-base rounded-lg border border-base">
-                  {availableBosses.map((boss) => {
-                    const isSelected = selectedBossIds.includes(boss.id);
-                    return (
-                      <button
-                        key={boss.id}
-                        type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            setSelectedBossIds(selectedBossIds.filter(id => id !== boss.id));
-                          } else {
-                            setSelectedBossIds([...selectedBossIds, boss.id]);
-                          }
-                        }}
-                        className={`px-2.5 py-1 rounded-lg text-sm font-medium border transition-colors ${
-                          isSelected
-                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
-                            : 'bg-surface text-muted border-base hover:border-emerald-200 dark:hover:border-emerald-800 hover:text-main'
-                        }`}
-                      >
-                        {boss.name}
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedBossIds.length > 0 && (
-                  <p className="text-xs text-muted mt-1">已选择 {selectedBossIds.length} 个BOSS</p>
-                )}
-              </div>
-            )}
-
+            {/* 错误提示 */}
             {errorMessage && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-700 dark:text-red-400 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  {errorMessage}
-                </p>
+              <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                <p className="text-sm text-red-700 dark:text-red-400">{errorMessage}</p>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                  <TrendingUp className="w-4 h-4 text-emerald-600" />
-                  金币收入
-                </label>
-                <div className="relative">
-                  <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />
-                  <input
-                    type="number"
-                    min="0"
-                    value={goldIncome || ''}
-                    onChange={e => setGoldIncome(Number(e.target.value))}
-                    placeholder="收入金额"
-                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all font-mono text-[1rem]"
-                  />
+            {/* 收支情况 */}
+            <section data-od-id="add-record-modal-income-section">
+              <header className="flex items-center gap-2 mb-3">
+                <div className="w-1 h-4 bg-primary rounded"></div>
+                <h3 className="text-sm font-semibold text-main">收支情况</h3>
+              </header>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-1.5">
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                    金币收入
+                  </label>
+                  <div className="relative">
+                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">+</span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={goldIncome || ''}
+                      onChange={e => setGoldIncome(Number(e.target.value))}
+                      placeholder="0"
+                      className="w-full pl-11 pr-9 py-2 bg-emerald-50/40 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all font-mono text-[1rem]"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">金</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-1.5">
+                    <TrendingDown className="w-3.5 h-3.5 text-amber-600" />
+                    金币支出
+                  </label>
+                  <div className="relative">
+                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center">
+                      <span className="text-xs font-bold text-amber-600 dark:text-amber-400">−</span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={goldExpense || ''}
+                      onChange={e => setGoldExpense(Number(e.target.value))}
+                      placeholder="0"
+                      className="w-full pl-11 pr-9 py-2 bg-amber-50/40 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition-all font-mono text-[1rem]"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">金</span>
+                  </div>
                 </div>
               </div>
+            </section>
 
-              <div>
-                <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                  <TrendingDown className="w-4 h-4 text-amber-600" />
-                  金币支出
-                </label>
-                <div className="relative">
-                  <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500" />
+            {/* 特殊掉落 */}
+            <section data-od-id="add-record-modal-drops-section">
+              <header className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-1 h-4 bg-primary rounded"></div>
+                  <h3 className="text-sm font-semibold text-main">特殊掉落</h3>
+                </div>
+                <span className="text-[10px] text-muted">勾选对应稀有掉落</span>
+              </header>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {SPECIAL_DROP_ITEMS.map(item => {
+                  const Icon = item.icon;
+                  const checked = specialDropValues[item.key];
+                  const setter = specialDropSetters[item.key];
+                  return (
+                    <label
+                      key={item.id}
+                      htmlFor={item.id}
+                      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-all select-none ${
+                        checked
+                          ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700'
+                          : 'bg-surface border-base hover:border-emerald-300 hover:bg-emerald-50/40 dark:hover:bg-emerald-900/10'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        id={item.id}
+                        checked={checked}
+                        onChange={e => setter(e.target.checked)}
+                        className="w-3.5 h-3.5 text-primary rounded border-base focus:ring-primary focus:ring-2 flex-shrink-0"
+                      />
+                      <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${checked ? 'text-emerald-600' : item.iconColor}`} />
+                      <span className={`text-sm ${checked ? 'text-main font-medium' : 'text-main'}`}>{item.label}</span>
+                      {checked && <Check className="w-3 h-3 text-emerald-600 ml-auto flex-shrink-0" />}
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* 散件老板 */}
+            <section data-od-id="add-record-modal-scraps-section">
+              <header className="flex items-center justify-between mb-3">
+                <label htmlFor="scraps-boss" className="flex items-center gap-2 cursor-pointer select-none">
+                  <div className="w-1 h-4 bg-primary rounded"></div>
                   <input
-                    type="number"
-                    min="0"
-                    value={goldExpense || ''}
-                    onChange={e => setGoldExpense(Number(e.target.value))}
-                    placeholder="支出金额"
-                    className="w-full pl-9 pr-3 py-2.5 bg-surface border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 transition-all font-mono text-[1rem]"
+                    type="checkbox"
+                    id="scraps-boss"
+                    checked={isScrapsBoss}
+                    onChange={e => setIsScrapsBoss(e.target.checked)}
+                    className="w-3.5 h-3.5 text-emerald-600 rounded border-base focus:ring-emerald-500"
+                  />
+                  <Boxes className={`w-3.5 h-3.5 ${isScrapsBoss ? 'text-emerald-600' : 'text-muted'}`} />
+                  <h3 className="text-sm font-semibold text-main">散件老板</h3>
+                </label>
+                <span className="text-[10px] text-muted">勾选后估价计入统计</span>
+              </header>
+
+              {isScrapsBoss && (
+                <div className="mt-2 p-3 bg-base/30 rounded-lg border border-base">
+                  <ScrapsItemsEditor
+                    items={scrapsItems}
+                    onChange={setScrapsItems}
+                    editable
+                    allowAddCustom
+                    isScrapsBoss={isScrapsBoss}
+                    listMaxHeightClass="none"
                   />
                 </div>
-              </div>
-            </div>
+              )}
+            </section>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-base rounded-lg border border-base">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasXuanjing}
-                  onChange={e => setHasXuanjing(e.target.checked)}
-                  id="xuanjing"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="xuanjing" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>玄晶</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasMaJu}
-                  onChange={e => setHasMaJu(e.target.checked)}
-                  id="maju"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="maju" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Anchor className="w-3.5 h-3.5 text-blue-500" />
-                  <span>马具</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasPet}
-                  onChange={e => setHasPet(e.target.checked)}
-                  id="pet"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="pet" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Ghost className="w-3.5 h-3.5 text-purple-500" />
-                  <span>宠物</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasPendant}
-                  onChange={e => setHasPendant(e.target.checked)}
-                  id="pendant"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="pendant" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Package className="w-3.5 h-3.5 text-orange-500" />
-                  <span>挂件</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasMount}
-                  onChange={e => setHasMount(e.target.checked)}
-                  id="mount"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="mount" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Flag className="w-3.5 h-3.5 text-green-500" />
-                  <span>坐骑</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasAppearance}
-                  onChange={e => setHasAppearance(e.target.checked)}
-                  id="appearance"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="appearance" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Shirt className="w-3.5 h-3.5 text-pink-500" />
-                  <span>外观</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasTitle}
-                  onChange={e => setHasTitle(e.target.checked)}
-                  id="title"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="title" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <Crown className="w-3.5 h-3.5 text-yellow-600" />
-                  <span>称号</span>
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={hasSecretBook}
-                  onChange={e => setHasSecretBook(e.target.checked)}
-                  id="secretbook"
-                  className="w-4 h-4 text-primary rounded border-base focus:ring-primary"
-                />
-                <label htmlFor="secretbook" className="flex items-center gap-1.5 cursor-pointer text-sm text-main select-none">
-                  <BookOpen className="w-3.5 h-3.5 text-cyan-600" />
-                  <span>秘籍</span>
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-main mb-1.5">
-                <FileText className="w-4 h-4 inline mr-1" />
+            {/* 备注 */}
+            <section data-od-id="add-record-modal-notes-section">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-2">
+                <FileText className="w-3.5 h-3.5 text-primary" />
                 备注
+                <span className="text-[10px] font-normal text-muted/70">（可选）</span>
               </label>
               <textarea
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
-                placeholder="可选"
+                placeholder="可补充特殊情况、分配方式等..."
                 rows={2}
-                className="w-full px-3 py-2.5 bg-surface border border-base rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-base transition-all resize-none text-sm"
+                className="w-full px-3 py-2 bg-surface border border-base rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all resize-none text-sm"
               />
-            </div>
+            </section>
+          </div>
 
-            <div className="flex gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-2.5 border border-base text-main rounded-lg font-medium hover:bg-base transition-colors text-sm"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || (goldIncome < 0 && goldExpense < 0)}
-                className="flex-1 px-4 py-2.5 bg-primary text-white rounded-lg font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                    <span>提交中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Coins className="w-4 h-4" />
-                    <span>确认</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
-        </div>
+          {/* 底部操作栏 */}
+          <div className="flex gap-3 px-6 py-4 border-t border-base bg-base/40 backdrop-blur-sm flex-shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 rounded-lg border border-base text-main font-medium hover:bg-base transition-colors text-sm"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting || (goldIncome < 0 && goldExpense < 0)}
+              className="flex-1 py-2 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
+            >
+              {isSubmitting ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>提交中...</span>
+                </>
+              ) : (
+                <>
+                  <Coins className="w-4 h-4" />
+                  <span>{initialData ? '保存修改' : '确认添加'}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
       </div>
-    </>,
+    </div>,
     document.body
   );
 };

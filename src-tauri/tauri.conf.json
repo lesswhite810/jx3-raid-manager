@@ -52,11 +52,14 @@
       {
         "fullscreen": false,
         "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
         "title": "剑网三副本管家",
         "width": 1200,
         "height": 800,
         "center": true,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
         "useHttpsScheme": true
       }

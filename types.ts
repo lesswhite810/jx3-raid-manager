@@ -173,6 +173,8 @@ export interface DashboardStats {
   equipCount: number;
   dropRate: number;
   clientIncome: number;
+  /** 散件估价合计（仅统计 isScrapsBoss=true 的记录，不并入 totalGold） */
+  totalScrapsValue?: number;
 }
 
 export interface Raid {

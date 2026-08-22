@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, Raid, RaidRecord, BossCooldownInfo, AccountType } from '../types';
-import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check, Ban, Power, Search, X, FileText } from 'lucide-react';
+import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check, Ban, Power, Search, X, FileText, Boxes } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
@@ -45,6 +45,8 @@ interface RoleWithStatus {
   lastRunGold?: number;
   lastRunIncome?: number;
   lastRunExpense?: number;
+  lastRunScrapsValue?: number;
+  lastRunIsScrapsBoss?: boolean;
   cooldownDays?: number;
   bossCooldowns?: BossCooldownInfo[];
   hasPendingRecord?: boolean;
@@ -319,12 +321,16 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       let lastRunGold = undefined;
       let lastRunIncome = undefined;
       let lastRunExpense = undefined;
+      let lastRunScrapsValue = undefined;
+      let lastRunIsScrapsBoss = undefined;
 
       if (lastRunRecord) {
         lastRunDate = lastRunRecord.date;
         lastRunIncome = lastRunRecord.goldIncome;
         lastRunExpense = lastRunRecord.goldExpense || 0;
         lastRunGold = lastRunIncome - lastRunExpense;
+        lastRunScrapsValue = lastRunRecord.scrapsValue || 0;
+        lastRunIsScrapsBoss = lastRunRecord.isScrapsBoss ?? false;
       }
 
       const cooldownDays = raid.playerCount === 25 ? 7 : raid.playerCount === 10 ? 3 : 7;
@@ -355,6 +361,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         lastRunGold,
         lastRunIncome,
         lastRunExpense,
+        lastRunScrapsValue,
+        lastRunIsScrapsBoss,
         cooldownDays,
         bossCooldowns: calculateBossCooldowns(raid, roleRecords.flatMap(r => {
           // 支持多选BOSS：为每个bossId创建一个记录
@@ -430,6 +438,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           lastRunGold: undefined,
           lastRunIncome: undefined,
           lastRunExpense: undefined,
+          lastRunScrapsValue: undefined,
+          lastRunIsScrapsBoss: undefined,
           cooldownDays,
           bossCooldowns: calculateBossCooldowns(raid, [], role.id, new Date(), true)
         });
@@ -759,6 +769,17 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                               <div className="flex items-center gap-1 text-amber-600 ml-1">
                                 <TrendingDown className="w-3 h-3 flex-shrink-0" />
                                 <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunExpense)}金</span>
+                              </div>
+                            )}
+                            {role.lastRunScrapsValue !== undefined && role.lastRunScrapsValue > 0 && (
+                              <div
+                                className="flex items-center gap-1 text-slate-500 ml-1"
+                                title={role.lastRunIsScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}
+                              >
+                                <Boxes className="w-3 h-3 flex-shrink-0" />
+                                <span className="text-[11px] font-medium whitespace-nowrap">
+                                  {formatGoldAmount(role.lastRunScrapsValue)}金{role.lastRunIsScrapsBoss && '*'}
+                                </span>
                               </div>
                             )}
                           </>

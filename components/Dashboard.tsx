@@ -175,6 +175,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
     });
 
+    // 散件估价合计：仅统计 isScrapsBoss=true 的记录（与 RoleRecordsModal 逻辑一致）
+    const totalScrapsValue = filteredRecords
+      .filter(r => r.isScrapsBoss)
+      .reduce((acc, r) => acc + (Number(r.scrapsValue) || 0), 0);
+
     return {
       totalGold,
       totalRaids: filteredRecords.length + filteredBaizhanRecords.length,
@@ -182,6 +187,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       equipCount,
       dropRate,
       clientIncome,
+      totalScrapsValue,
     };
   }, [filteredRecords, filteredBaizhanRecords, filteredTrialRecords, safeAccounts, findEquipmentById]);
 
@@ -404,7 +410,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
           {/* 总收入 */}
           <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 p-3 dark:border-emerald-800/30 dark:bg-emerald-900/10">
             <div className="text-xs font-medium text-emerald-700 dark:text-emerald-300">本期总收入</div>
@@ -434,6 +440,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="text-xs font-medium text-muted">百战异闻录</div>
             <div className="mt-1.5 text-lg font-bold text-main">{incomeBreakdown.baizhanGold.toLocaleString()}<span className="ml-1 text-xs font-normal text-muted">金</span></div>
             <div className="mt-1 text-xs text-muted">{incomeBreakdown.baizhanCount} 次通关</div>
+          </div>
+
+          {/* 散件估价 */}
+          <div
+            className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30"
+            title="散件老板记录的散件估价合计，不并入总收入"
+          >
+            <div className="text-xs font-medium text-muted">散件估价</div>
+            <div className="mt-1.5 text-lg font-bold text-main">
+              {(stats.totalScrapsValue ?? 0).toLocaleString()}
+              <span className="ml-1 text-xs font-normal text-muted">金</span>
+            </div>
+            <div className="mt-1 text-xs text-muted">散件老板</div>
           </div>
         </div>
       </div>

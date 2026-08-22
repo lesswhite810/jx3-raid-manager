@@ -17,6 +17,7 @@ import { ToastContainer } from './components/ToastContainer';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
 import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
+import { WindowControls } from './components/WindowControls';
 import { useDropScanner } from './hooks/useDropScanner';
 import {
   Account,
@@ -639,37 +640,40 @@ function App() {
       {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
       {/* Sidebar / Topbar */}
       {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
-      <nav className="bg-surface/80 backdrop-blur-md border-b border-border sticky top-0 z-50 px-4 md:px-8 h-16 flex items-center justify-between app-region-drag select-none transition-colors duration-200">
+      <nav className="bg-surface/80 backdrop-blur-md border-b border-border sticky top-0 z-50 pl-4 md:pl-8 pr-0 h-16 flex items-stretch justify-between app-region-drag select-none transition-colors duration-200">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-lg shadow-sm">
             剑
           </div>
           <h1 className="text-xl font-bold tracking-tight text-main">副本管家 <span className="text-xs font-normal text-muted bg-base px-2 py-0.5 rounded-full border border-border">JX3</span></h1>
         </div>
-        <div className="flex items-center gap-3 app-region-no-drag">
-          <div className="hidden md:flex gap-1">
-            <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18} />} label="概览" />
-            <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18} />} label="副本管理" />
-            <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
-            <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18} />} label="配置" />
-          </div>
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg text-muted hover:text-main hover:bg-base transition-colors app-region-no-drag"
-            title={theme === 'dark' ? '切换到亮色模式' : '切换到深色模式'}
-          >
-            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
-          {deferredPrompt && (
+        <div className="flex items-stretch app-region-no-drag">
+          <div className="flex items-center gap-3 pr-3">
+            <div className="hidden md:flex gap-1">
+              <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18} />} label="概览" />
+              <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18} />} label="副本管理" />
+              <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
+              <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18} />} label="配置" />
+            </div>
             <button
-              onClick={handleInstall}
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-text text-sm rounded-lg hover:bg-primary-hover transition-colors shadow-sm"
-              title="安装到 Windows"
+              onClick={toggleTheme}
+              className="p-2 rounded-lg text-muted hover:text-main hover:bg-base transition-colors app-region-no-drag"
+              title={theme === 'dark' ? '切换到亮色模式' : '切换到深色模式'}
             >
-              <Download size={16} />
-              <span className="font-medium">安装应用</span>
+              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-          )}
+            {deferredPrompt && (
+              <button
+                onClick={handleInstall}
+                className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-text text-sm rounded-lg hover:bg-primary-hover transition-colors shadow-sm"
+                title="安装到 Windows"
+              >
+                <Download size={16} />
+                <span className="font-medium">安装应用</span>
+              </button>
+            )}
+          </div>
+          <WindowControls />
         </div>
       </nav>
 
