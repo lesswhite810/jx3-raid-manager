@@ -82,6 +82,10 @@ MY_temp/
 .omc/
 .omo/
 .qoder/
+.jx3-fix/
+
+# 与项目无关的本地辅助目录
+.mems/
 
 # 一次性调试脚本（项目根目录）
 /probe*.js
