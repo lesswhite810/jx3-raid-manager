@@ -5,6 +5,7 @@ import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
 import { getLastMonday } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
+import { getRecordScrapsValue } from '../utils/scrapsUtils';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 import { getTrialRecordEquipmentEntries } from '../utils/trialRecordUtils';
 import { buildClientAccountIdSet, buildEquipmentLookup, EquipmentLike, getEquipmentById } from '../utils/recordLookupUtils';
@@ -178,7 +179,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     // 散件估价合计：仅统计 isScrapsBoss=true 的记录（与 RoleRecordsModal 逻辑一致）
     const totalScrapsValue = filteredRecords
       .filter(r => r.isScrapsBoss)
-      .reduce((acc, r) => acc + (Number(r.scrapsValue) || 0), 0);
+      .reduce((acc, r) => acc + getRecordScrapsValue(r), 0);
 
     return {
       totalGold,
@@ -297,8 +298,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   }, [filteredRecords, filteredBaizhanRecords, safeAccounts]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col h-full gap-5">
+      <div className="flex items-center justify-between flex-shrink-0">
         <h2 className="text-2xl font-bold text-main">数据概览</h2>
         <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base">
           <button
@@ -333,6 +334,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
       <div className="grid grid-cols-2 gap-4">
         {/* Lucky Role Card */}
         <div className="bg-surface rounded-xl p-5 border border-base shadow-sm">
@@ -354,7 +356,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center gap-6">
               <div className="text-right">
                 <p className="text-muted text-xs">金币收益</p>
-                <p className="text-2xl font-bold text-emerald-600 mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-ds-success mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
               </div>
             </div>
           </div>
@@ -385,7 +387,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="text-right">
               <p className="text-muted text-xs">总支出</p>
-              <p className="text-2xl font-bold text-amber-600 mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-ds-warning mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
@@ -400,7 +402,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* 第一行：收益概览（全宽） */}
       <div
         onClick={onShowIncomeDetail}
-        className="cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-emerald-300 dark:hover:border-emerald-700"
+        className="cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-ds-success dark:hover:border-ds-success"
       >
         <div className="flex items-center justify-between mb-3">
           <span className="text-sm font-bold text-main">收益概览</span>
@@ -412,11 +414,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
           {/* 总收入 */}
-          <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 p-3 dark:border-emerald-800/30 dark:bg-emerald-900/10">
-            <div className="text-xs font-medium text-emerald-700 dark:text-emerald-300">本期总收入</div>
-            <div className="mt-1.5 text-2xl font-bold text-emerald-700 dark:text-emerald-300">
+          <div className="rounded-lg border border-ds-success-soft/60 bg-ds-success-soft/60 p-3 dark:border-ds-success-soft/30 dark:bg-ds-success-soft/10">
+            <div className="text-xs font-medium text-ds-success-strong dark:text-ds-success-strong">本期总收入</div>
+            <div className="mt-1.5 text-2xl font-bold text-ds-success dark:text-ds-success">
               {stats.totalGold.toLocaleString()}
-              <span className="ml-1 text-xs font-normal text-emerald-600/70 dark:text-emerald-400/70">金</span>
+              <span className="ml-1 text-xs font-normal text-ds-success-strong/70 dark:text-ds-success-strong/70">金</span>
             </div>
           </div>
 
@@ -503,7 +505,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 key={item.label}
                 className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] border ${
                   item.count > 0
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30'
+                    ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft dark:bg-ds-success-soft/20 dark:text-ds-success-strong dark:border-ds-success-soft/30'
                     : 'bg-slate-50 text-muted border-base dark:bg-slate-800/30'
                 }`}
               >
@@ -517,7 +519,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* 试炼之地翻牌统计 */}
         <div
           onClick={onShowTrialFlipDetail}
-          className="flex flex-col justify-between cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-emerald-300 dark:hover:border-emerald-700"
+          className="flex flex-col justify-between cursor-pointer rounded-xl border border-base bg-surface p-4 shadow-sm transition-colors hover:border-ds-success dark:hover:border-ds-success"
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-bold text-main">试炼之地翻牌</span>
@@ -533,9 +535,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="text-[10px] text-muted">总记录数</div>
               <div className="mt-1.5 text-lg font-bold text-main">{totalTrialFlipStats.totalRecords}</div>
             </div>
-            <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 px-2.5 py-2.5 dark:border-emerald-800/30 dark:bg-emerald-900/10">
-              <div className="text-[10px] text-emerald-700 dark:text-emerald-300">可交易装备</div>
-              <div className="mt-1.5 text-lg font-bold text-emerald-700 dark:text-emerald-300">{totalTradableEquipCount}</div>
+            <div className="rounded-lg border border-ds-success-soft/60 bg-ds-success-soft/60 px-2.5 py-2.5 dark:border-ds-success-soft/30 dark:bg-ds-success-soft/10">
+              <div className="text-[10px] text-ds-success-strong dark:text-ds-success-strong">可交易装备</div>
+              <div className="mt-1.5 text-lg font-bold text-ds-success dark:text-ds-success">{totalTradableEquipCount}</div>
             </div>
           </div>
 
@@ -548,7 +550,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   ? `${totalTrialFlipStats.bestFlipPosition.position}号位`
                   : '-'}
               </div>
-              <div className="mt-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+              <div className="mt-0.5 text-[10px] text-ds-success-strong dark:text-ds-success-strong">
                 {totalTrialFlipStats.bestFlipPosition
                   ? `${(totalTrialFlipStats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
                   : '0%'}
@@ -569,6 +571,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

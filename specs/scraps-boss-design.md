@@ -110,11 +110,17 @@ const SCRAPS_MATERIAL_WHITELIST: [&str; 7] = [
 | 散件材料 | JX3Box 价格 API 当日单价 | API 不可用 → 用户手填 |
 | 散件装备 | `drop_items.Price`（NPC 卖价） | drop_items 无记录 → `unitPrice=null`，用户手填 |
 
-### 4.2 价格快照
+### 4.2 单位约定（v2.2.1 修正）
+
+- `drop_items.Price` 为 **NPC 卖价，单位铜**；存入 `unitPrice` 前必须换算为金：`(copper + 5000) / 10000`（四舍五入）
+- JX3Box / 手填价格本身已是金，直接存入
+- v2.1.53 曾把铜当金存入，导致装备估价虚高约一万倍；前端展示层已做旧数据兼容（仅对 npc 来源的旧格式记录重算）
+
+### 4.3 价格快照
 
 扫描时获取单价并存入 `scrapsItems[].unitPrice`，作为历史快照。后续查看记录时不再重新拉取价格。
 
-### 4.3 JX3Box 价格 API（已验证：不可用 → 走降级方案）
+### 4.4 JX3Box 价格 API（已验证：不可用 → 走降级方案）
 
 **P0 阶段验证结果**：3 个候选端点均返回 Not Found，公开搜索无 JX3Box 交易行价格 API 文档。
 

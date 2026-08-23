@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
 import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock, AlertTriangle, Boxes } from 'lucide-react';
 import { formatGoldAmount } from '../utils/recordUtils';
+import { getRecordScrapsValue } from '../utils/scrapsUtils';
 import { getLastMonday, getNextMonday, getTenPersonCycle } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
@@ -103,7 +104,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   // 散件估价合计：仅统计 isScrapsBoss=true 的记录（与设计文档 §7.2 一致）
   const totalScrapsValue = confirmedRoleRecords
     .filter(r => r.isScrapsBoss)
-    .reduce((sum, r) => sum + (Number(r.scrapsValue) || 0), 0);
+    .reduce((sum, r) => sum + getRecordScrapsValue(r), 0);
   const totalNet = totalIncome - totalExpense;
 
   const bossCooldowns = useMemo(() => {
@@ -283,7 +284,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
   return createPortal(
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
-      <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
+      <div className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
         <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
           <div>
             <h2 className="text-lg font-bold text-main">副本记录详情</h2>
@@ -306,19 +307,19 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-1.5" title="总收入">
-                <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-500 flex-shrink-0" />
-                <span className="text-[1rem] font-bold text-emerald-600 dark:text-emerald-500">{formatGoldAmount(totalIncome || 0)}</span>
+                <TrendingUp className="w-4 h-4 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
+                <span className="text-[1rem] font-bold text-ds-success dark:text-ds-success">{formatGoldAmount(totalIncome || 0)}</span>
               </div>
               <div className="flex items-center gap-1.5" title="总支出">
-                <TrendingDown className="w-4 h-4 text-amber-600 dark:text-amber-500 flex-shrink-0" />
-                <span className="text-[1rem] font-bold text-amber-600 dark:text-amber-500">{formatGoldAmount(totalExpense || 0)}</span>
+                <TrendingDown className="w-4 h-4 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
+                <span className="text-[1rem] font-bold text-ds-warning dark:text-ds-warning">{formatGoldAmount(totalExpense || 0)}</span>
               </div>
               <div className="flex items-center gap-1.5" title="净收入">
                 <Wallet className="w-4 h-4 text-muted flex-shrink-0" />
-                <span className={`text-[1rem] font-bold ${totalNet >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-amber-600 dark:text-amber-500'}`}>{formatGoldAmount(totalNet || 0)}</span>
+                <span className={`text-[1rem] font-bold ${totalNet >= 0 ? 'text-ds-success dark:text-ds-success' : 'text-ds-warning dark:text-ds-warning'}`}>{formatGoldAmount(totalNet || 0)}</span>
               </div>
               {xuanjingCount > 0 && (
-                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md font-medium flex items-center gap-1 shadow-sm">
+                <span className="text-xs bg-ds-warning-soft text-ds-warning-strong px-2 py-0.5 rounded-md font-medium flex items-center gap-1 shadow-sm">
                   <Sparkles className="w-3 h-3" />
                   {xuanjingCount}
                 </span>
@@ -364,7 +365,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                 return (
                 <div
                   key={record.id}
-                  className={`p-4 rounded-xl border-2 transition-all duration-200 hover:shadow-md ${
+                  className={`p-4 rounded-xl border-2 transition-all duration-200 hover:shadow-ds-stack ${
                     deletingRecordId === record.id || pendingActionId === record.id ? 'opacity-50' : ''
                   } ${
                     isRejected
@@ -372,9 +373,9 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                       : isScanning
                         ? 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/10'
                         : isPending
-                          ? 'border-amber-200 dark:border-amber-800 bg-gradient-to-br from-amber-50 to-white dark:from-amber-900/10 dark:to-surface'
+                          ? 'border-ds-warning-soft dark:border-ds-warning-soft bg-gradient-to-br from-ds-warning-soft to-white dark:from-ds-warning-soft/10 dark:to-surface'
                           : record.hasXuanjing
-                            ? 'border-amber-200 dark:border-amber-800 bg-gradient-to-br from-amber-50 to-white dark:from-amber-900/20 dark:to-surface'
+                            ? 'border-ds-warning-soft dark:border-ds-warning-soft bg-gradient-to-br from-ds-warning-soft to-white dark:from-ds-warning-soft/20 dark:to-surface'
                             : 'border-base bg-surface'
                   }`}
                 >
@@ -394,7 +395,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           </span>
                         )}
                         {isPending && (
-                          <span className="px-2 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs rounded font-medium flex items-center gap-1" title="自动扫描记录，等待确认">
+                          <span className="px-2 py-0.5 bg-ds-warning-soft text-ds-warning-strong dark:bg-ds-warning-soft/30 dark:text-ds-warning-strong text-xs rounded font-medium flex items-center gap-1" title="自动扫描记录，等待确认">
                             <Clock className="w-3 h-3" />待确认
                           </span>
                         )}
@@ -404,29 +405,29 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           </span>
                         )}
                         {isAutoRecord && record.status === 'confirmed' && (
-                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 text-xs rounded font-medium" title="自动扫描已确认">
+                          <span className="px-2 py-0.5 bg-ds-success-soft text-ds-success-strong dark:bg-ds-success-soft/30 dark:text-ds-success-strong text-xs rounded font-medium" title="自动扫描已确认">
                             自动
                           </span>
                         )}
 
                         {record.goldIncome > 0 && (
                           <div className="flex items-center gap-1" title="收入">
-                            <TrendingUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-500 flex-shrink-0" />
-                            <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-500">{formatGoldAmount(record.goldIncome)}</span>
+                            <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
+                            <span className="text-sm font-semibold text-ds-success-strong dark:text-ds-success-strong">{formatGoldAmount(record.goldIncome)}</span>
                           </div>
                         )}
                         {record.goldExpense && record.goldExpense > 0 ? (
                           <div className="flex items-center gap-1" title="支出">
-                            <TrendingDown className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 flex-shrink-0" />
-                            <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{formatGoldAmount(record.goldExpense)}</span>
+                            <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
+                            <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{formatGoldAmount(record.goldExpense)}</span>
                           </div>
                         ) : null}
                         {((record.scrapsItems && record.scrapsItems.length > 0) || (record.scrapsValue ?? 0) > 0) && (
                           <div className="flex items-center gap-1" title={record.isScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}>
                             <Boxes className="w-3.5 h-3.5 text-muted flex-shrink-0" />
-                            <span className="text-sm font-semibold text-main">{formatGoldAmount(record.scrapsValue || 0)}</span>
+                            <span className="text-sm font-semibold text-main">{formatGoldAmount(getRecordScrapsValue(record))}</span>
                             {record.isScrapsBoss && (
-                              <span className="text-[11px] text-emerald-600 dark:text-emerald-400">*</span>
+                              <span className="text-[11px] text-ds-success-strong dark:text-ds-success-strong">*</span>
                             )}
                           </div>
                         )}
@@ -436,7 +437,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                         {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook) && (
                           <div className="flex items-center gap-2 flex-wrap">
                             {record.hasXuanjing && (
-                              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded font-medium flex items-center gap-1">
+                              <span className="px-2 py-0.5 bg-ds-warning-soft text-ds-warning-strong text-xs rounded font-medium flex items-center gap-1">
                                 <Sparkles className="w-3 h-3" />玄晶
                               </span>
                             )}
@@ -494,7 +495,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                           <button
                             onClick={() => handleConfirmRecord(record)}
                             disabled={pendingActionId === record.id}
-                            className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1.5 rounded-lg text-ds-success-strong hover:text-ds-success-strong hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                             title="确认记录"
                             aria-label="确认记录"
                           >
@@ -521,7 +522,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                         <button
                           onClick={() => handleConfirmRecord(record)}
                           disabled={pendingActionId === record.id}
-                          className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="p-1.5 rounded-lg text-ds-success-strong hover:text-ds-success-strong hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                           title="接受此记录（恢复参与 CD 计算）"
                           aria-label="接受记录"
                         >
@@ -584,7 +585,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
 
       {showConfirmDialog && recordToDelete && (
         <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-[110] animate-in fade-in duration-200">
-          <div className="bg-surface p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 animate-in">
+          <div className="bg-surface p-6 rounded-2xl shadow-ds-modal max-w-sm w-full mx-4 animate-in">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center flex-shrink-0">
                 <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
@@ -615,14 +616,14 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       )}
 
       {showSuccess && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-ds-success text-white px-6 py-3 rounded-xl shadow-ds-stack flex items-center gap-2 text-sm font-medium animate-in">
           <CheckCircle className="w-5 h-5" />
           记录已删除
         </div>
       )}
 
       {showError && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-ds-stack flex items-center gap-2 text-sm font-medium animate-in">
           <AlertCircle className="w-5 h-5" />
           {errorMessage}
         </div>
@@ -635,12 +636,12 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
           onClick={() => setCdConflictRecord(null)}
         >
           <div
-            className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-in"
+            className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-sm p-6 animate-in"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              <div className="w-10 h-10 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-ds-warning dark:text-ds-warning" />
               </div>
               <h3 className="text-lg font-bold text-main">CD 冲突提醒</h3>
             </div>
@@ -660,7 +661,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
               </button>
               <button
                 onClick={continueAfterConflict}
-                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-1.5"
+                className="px-4 py-2 text-sm font-medium text-white bg-ds-warning hover:bg-ds-warning rounded-lg transition-colors flex items-center gap-1.5"
               >
                 <Check className="w-3.5 h-3.5" />
                 继续确认

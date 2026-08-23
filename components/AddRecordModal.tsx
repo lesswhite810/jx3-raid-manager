@@ -6,7 +6,7 @@ import { generateUUID } from '../utils/uuid';
 import { logOperation } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { DateTimePicker } from './DateTimePicker';
-import { computeScrapsValue } from '../utils/scrapsUtils';
+import { computeScrapsValue, normalizeScrapsItems } from '../utils/scrapsUtils';
 import { ScrapsItemsEditor } from './ScrapsItemsEditor';
 
 interface RoleWithStatus {
@@ -40,7 +40,7 @@ const SPECIAL_DROP_ITEMS: Array<{
   icon: React.ComponentType<{ className?: string }>;
   iconColor: string;
 }> = [
-  { id: 'xuanjing',    key: 'hasXuanjing',   label: '玄晶', icon: Sparkles,  iconColor: 'text-amber-500' },
+  { id: 'xuanjing',    key: 'hasXuanjing',   label: '玄晶', icon: Sparkles,  iconColor: 'text-ds-warning-strong' },
   { id: 'maju',        key: 'hasMaJu',       label: '马具', icon: Anchor,    iconColor: 'text-blue-500' },
   { id: 'pet',         key: 'hasPet',        label: '宠物', icon: Ghost,     iconColor: 'text-purple-500' },
   { id: 'pendant',     key: 'hasPendant',    label: '挂件', icon: Package,   iconColor: 'text-orange-500' },
@@ -118,7 +118,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         setSelectedBossIds(initialData.bossIds || (initialData.bossId ? [initialData.bossId] : []));
         setRecordDate(formatDateForInput(initialData.date || new Date()));
         setIsScrapsBoss(initialData.isScrapsBoss ?? false);
-        setScrapsItems((initialData.scrapsItems ?? []).map(item => ({ ...item })));
+        setScrapsItems(normalizeScrapsItems(initialData.scrapsItems));
       } else {
         setGoldIncome(0);
         setGoldExpense(0);
@@ -260,7 +260,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
       data-od-id="add-record-modal-backdrop"
     >
       <div
-        className="bg-surface w-full max-w-2xl rounded-xl shadow-2xl border border-base overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
+        className="bg-surface w-full max-w-2xl rounded-xl shadow-ds-modal border border-base overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
         onClick={e => e.stopPropagation()}
         data-od-id="add-record-modal"
       >
@@ -270,8 +270,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
           data-od-id="add-record-modal-header"
         >
           <div className="flex items-center gap-3 min-w-0 flex-1">
-            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg border border-emerald-200/50 dark:border-emerald-800/50 flex-shrink-0">
-              <ScrollText className="w-4 h-4 text-emerald-600/80" />
+            <div className="p-2 bg-ds-success-soft dark:bg-ds-success-soft/30 rounded-lg border border-ds-success-soft/50 dark:border-ds-success-soft/50 flex-shrink-0">
+              <ScrollText className="w-4 h-4 text-ds-success-strong/80" />
             </div>
             <div className="min-w-0">
               <h2 className="text-base font-bold text-main truncate">
@@ -324,7 +324,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                       <span className="text-[10px] font-normal text-muted/70">（可多选）</span>
                     </label>
                     {selectedBossIds.length > 0 && (
-                      <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800/60">
+                      <span className="text-[10px] font-medium text-ds-success-strong dark:text-ds-success-strong bg-ds-success-soft dark:bg-ds-success-soft/30 px-2 py-0.5 rounded-full border border-ds-success-soft/60 dark:border-ds-success-soft/60">
                         已选 {selectedBossIds.length} 个
                       </span>
                     )}
@@ -345,8 +345,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                           }}
                           className={`px-2 py-1 rounded-md text-xs font-medium border transition-all ${
                             isSelected
-                              ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
-                              : 'bg-surface text-muted border-base hover:border-emerald-300 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-emerald-50/50'
+                              ? 'bg-ds-success text-white border-ds-success hover:bg-ds-success'
+                              : 'bg-surface text-muted border-base hover:border-ds-success hover:text-ds-success-strong dark:hover:text-ds-success-strong hover:bg-ds-success-soft/50'
                           }`}
                         >
                           {boss.name}
@@ -375,12 +375,12 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-1.5">
-                    <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                    <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong" />
                     金币收入
                   </label>
                   <div className="relative">
-                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">+</span>
+                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-ds-success-soft dark:bg-ds-success-soft/40 flex items-center justify-center">
+                      <span className="text-xs font-bold text-ds-success-strong dark:text-ds-success-strong">+</span>
                     </div>
                     <input
                       type="number"
@@ -388,7 +388,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                       value={goldIncome || ''}
                       onChange={e => setGoldIncome(Number(e.target.value))}
                       placeholder="0"
-                      className="w-full pl-11 pr-9 py-2 bg-emerald-50/40 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all font-mono text-[1rem]"
+                      className="w-full pl-11 pr-9 py-2 bg-ds-success-soft/40 dark:bg-ds-success-soft/10 border border-ds-success-soft dark:border-ds-success-soft rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ds-success focus:border-ds-success transition-all font-mono text-[1rem]"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">金</span>
                   </div>
@@ -396,12 +396,12 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
 
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-1.5">
-                    <TrendingDown className="w-3.5 h-3.5 text-amber-600" />
+                    <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong" />
                     金币支出
                   </label>
                   <div className="relative">
-                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center">
-                      <span className="text-xs font-bold text-amber-600 dark:text-amber-400">−</span>
+                    <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-ds-warning-soft dark:bg-ds-warning-soft/40 flex items-center justify-center">
+                      <span className="text-xs font-bold text-ds-warning-strong dark:text-ds-warning-strong">−</span>
                     </div>
                     <input
                       type="number"
@@ -409,7 +409,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                       value={goldExpense || ''}
                       onChange={e => setGoldExpense(Number(e.target.value))}
                       placeholder="0"
-                      className="w-full pl-11 pr-9 py-2 bg-amber-50/40 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition-all font-mono text-[1rem]"
+                      className="w-full pl-11 pr-9 py-2 bg-ds-warning-soft/40 dark:bg-ds-warning-soft/10 border border-ds-warning-soft dark:border-ds-warning-soft rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ds-warning focus:border-ds-warning transition-all font-mono text-[1rem]"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">金</span>
                   </div>
@@ -437,8 +437,8 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                       htmlFor={item.id}
                       className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-all select-none ${
                         checked
-                          ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700'
-                          : 'bg-surface border-base hover:border-emerald-300 hover:bg-emerald-50/40 dark:hover:bg-emerald-900/10'
+                          ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 border-ds-success dark:border-ds-success'
+                          : 'bg-surface border-base hover:border-ds-success hover:bg-ds-success-soft/40 dark:hover:bg-ds-success-soft/10'
                       }`}
                     >
                       <input
@@ -448,9 +448,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                         onChange={e => setter(e.target.checked)}
                         className="w-3.5 h-3.5 text-primary rounded border-base focus:ring-primary focus:ring-2 flex-shrink-0"
                       />
-                      <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${checked ? 'text-emerald-600' : item.iconColor}`} />
+                      <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${checked ? 'text-ds-success-strong' : item.iconColor}`} />
                       <span className={`text-sm ${checked ? 'text-main font-medium' : 'text-main'}`}>{item.label}</span>
-                      {checked && <Check className="w-3 h-3 text-emerald-600 ml-auto flex-shrink-0" />}
+                      {checked && <Check className="w-3 h-3 text-ds-success-strong ml-auto flex-shrink-0" />}
                     </label>
                   );
                 })}
@@ -467,9 +467,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                     id="scraps-boss"
                     checked={isScrapsBoss}
                     onChange={e => setIsScrapsBoss(e.target.checked)}
-                    className="w-3.5 h-3.5 text-emerald-600 rounded border-base focus:ring-emerald-500"
+                    className="w-3.5 h-3.5 text-ds-success-strong rounded border-base focus:ring-ds-success"
                   />
-                  <Boxes className={`w-3.5 h-3.5 ${isScrapsBoss ? 'text-emerald-600' : 'text-muted'}`} />
+                  <Boxes className={`w-3.5 h-3.5 ${isScrapsBoss ? 'text-ds-success-strong' : 'text-muted'}`} />
                   <h3 className="text-sm font-semibold text-main">散件老板</h3>
                 </label>
                 <span className="text-[10px] text-muted">勾选后估价计入统计</span>

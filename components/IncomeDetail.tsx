@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend, LabelList } from 'recharts';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen, Boxes } from 'lucide-react';
 import { RaidRecord, Account, BaizhanRecord, Season } from '../types';
 import { toast } from '../utils/toastManager';
 import { getLastMonday } from '../utils/cooldownManager';
 import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey, getVisibleRecordRange } from '../utils/recordLookupUtils';
+import { getRecordScrapsValue } from '../utils/scrapsUtils';
 import { db } from '../services/db';
 
 interface IncomeDetailProps {
@@ -60,6 +61,29 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
   const [seasonLoaded, setSeasonLoaded] = useState(false);
   const [chartView, setChartView] = useState<'raid' | 'role'>('role');
+
+  /**
+   * 收益记录列表容器高度（动态测量）
+   *
+   * 由收益记录卡片内的滚动容器（flex-1 min-h-0 overflow-y-auto）的 clientHeight
+   * 通过 ResizeObserver 实时测量。用于虚拟滚动的 viewportHeight 计算，
+   * 替代原本写死的 500px。
+   */
+  const recordListRef = useRef<HTMLDivElement>(null);
+  const [recordListHeight, setRecordListHeight] = useState(500);
+
+  useEffect(() => {
+    const el = recordListRef.current;
+    if (!el) return;
+    setRecordListHeight(el.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setRecordListHeight(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     setPeriod(initialPeriod);
@@ -236,7 +260,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const virtualRange = useMemo(() => getVisibleRecordRange({
     totalCount: tabFilteredRecords.length,
     scrollTop: recordListScrollTop,
-    viewportHeight: 500,
+    viewportHeight: recordListHeight,
     rowHeight: 88,
     overscan: 6
   }), [tabFilteredRecords.length, recordListScrollTop]);
@@ -284,8 +308,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
+    <div className="flex flex-col h-full gap-5">
+      <div className="flex items-start justify-between gap-4 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
@@ -334,7 +358,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-hidden pr-1">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-shrink-0">
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-base rounded-lg">
@@ -364,7 +389,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             </div>
             <span className="text-muted font-medium">净收入</span>
           </div>
-          <p className={`text-3xl font-bold ${stats.netIncome >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+          <p className={`text-3xl font-bold ${stats.netIncome >= 0 ? 'text-ds-success' : 'text-ds-warning'}`}>
             {stats.netIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.netIncome))}
           </p>
           <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
@@ -372,7 +397,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       </div>
 
       {/* 收益分布图表 */}
-      <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
+      <div className="bg-surface rounded-xl shadow-sm border border-base p-5 flex-shrink-0">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-semibold text-main">收益分布</h3>
@@ -507,8 +532,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       </div>
 
 
-      <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden">
-        <div className="p-4 border-b border-base">
+      <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="p-4 border-b border-base flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-base rounded-lg">
@@ -545,7 +570,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             <button
               onClick={() => setActiveTab('income')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'income'
-                ? 'bg-surface text-emerald-700 dark:text-emerald-400 shadow-sm'
+                ? 'bg-surface text-ds-success dark:text-ds-success shadow-sm'
                 : 'text-muted hover:text-main'
                 }`}
             >
@@ -554,7 +579,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             <button
               onClick={() => setActiveTab('expense')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'expense'
-                ? 'bg-surface text-amber-700 dark:text-amber-400 shadow-sm'
+                ? 'bg-surface text-ds-warning dark:text-ds-warning shadow-sm'
                 : 'text-muted hover:text-main'
                 }`}
             >
@@ -564,7 +589,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
         </div>
 
         <div
-          className="max-h-[500px] overflow-y-auto"
+          ref={recordListRef}
+          className="flex-1 min-h-0 overflow-y-auto"
           onScroll={event => setRecordListScrollTop(event.currentTarget.scrollTop)}
         >
           {tabFilteredRecords.length === 0 ? (
@@ -590,13 +616,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                     ? '支出'
                     : '净收入';
                 const summaryColorClass = activeTab === 'income'
-                  ? 'text-emerald-600 dark:text-emerald-400'
+                  ? 'text-ds-success-strong dark:text-ds-success-strong'
                   : activeTab === 'expense'
-                    ? 'text-amber-600 dark:text-amber-400'
+                    ? 'text-ds-warning-strong dark:text-ds-warning-strong'
                     : netIncome > 0
-                      ? 'text-emerald-600 dark:text-emerald-400'
+                      ? 'text-ds-success-strong dark:text-ds-success-strong'
                       : netIncome < 0
-                        ? 'text-amber-600 dark:text-amber-400'
+                        ? 'text-ds-warning-strong dark:text-ds-warning-strong'
                         : 'text-muted';
                 const summaryPrefix = activeTab === 'income' || (activeTab === 'all' && summaryAmount > 0)
                   ? '+'
@@ -648,7 +674,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                         {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook) && (
                           <>
                             {record.hasXuanjing && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-xs font-medium rounded border border-amber-100 dark:border-amber-800 flex-shrink-0">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-ds-warning-soft dark:bg-ds-warning-soft/20 text-ds-warning-strong dark:text-ds-warning-strong text-xs font-medium rounded border border-ds-warning-soft dark:border-ds-warning-soft flex-shrink-0">
                                 <Sparkles className="w-3 h-3" /> 玄晶
                               </span>
                             )}
@@ -668,7 +694,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                               </span>
                             )}
                             {record.hasMount && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 text-xs font-medium rounded border border-emerald-100 dark:border-emerald-800 flex-shrink-0">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong text-xs font-medium rounded border border-ds-success-soft dark:border-ds-success-soft flex-shrink-0">
                                 <Flag className="w-3 h-3" /> 坐骑
                               </span>
                             )}
@@ -757,12 +783,12 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
                           {/* Income & Expense Breakdown */}
                           <div className="flex gap-6 text-sm flex-wrap">
-                            <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 px-2 py-1 rounded">
+                            <div className="flex items-center gap-2 text-ds-success-strong dark:text-ds-success-strong bg-ds-success-soft dark:bg-ds-success-soft/10 px-2 py-1 rounded">
                               <TrendingUp className="w-3.5 h-3.5" />
                               <span className="font-medium">收入: {formatGold(record.goldIncome)}</span>
                             </div>
                             {(record.goldExpense || 0) > 0 && (
-                              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/10 px-2 py-1 rounded">
+                              <div className="flex items-center gap-2 text-ds-warning-strong dark:text-ds-warning-strong bg-ds-warning-soft dark:bg-ds-warning-soft/10 px-2 py-1 rounded">
                                 <TrendingDown className="w-3.5 h-3.5" />
                                 <span className="font-medium">支出: {formatGold(record.goldExpense || 0)}</span>
                               </div>
@@ -774,8 +800,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                               >
                                 <Boxes className="w-3.5 h-3.5" />
                                 <span className="font-medium">
-                                  散件估价: {formatGold(record.scrapsValue || 0)}
-                                  {record.isScrapsBoss && <span className="text-emerald-600 ml-1">*</span>}
+                                  散件估价: {formatGold(getRecordScrapsValue(record))}
+                                  {record.isScrapsBoss && <span className="text-ds-success ml-1">*</span>}
                                 </span>
                               </div>
                             )}
@@ -810,7 +836,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       {/* Delete Confirmation Dialog */}
       {deleteConfirmRecordId && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+          <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
             <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
             <p className="text-slate-600 mb-6">确认删除这条收支记录吗？此操作不可撤销。</p>
             <div className="flex justify-end gap-3">
@@ -830,6 +856,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

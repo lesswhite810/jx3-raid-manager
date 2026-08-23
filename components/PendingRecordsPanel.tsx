@@ -12,7 +12,7 @@ import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { formatGoldAmount } from '../utils/recordUtils';
-import { computeScrapsValue } from '../utils/scrapsUtils';
+import { computeScrapsValue, normalizeScrapsItems, getRecordScrapsValue } from '../utils/scrapsUtils';
 import { toast } from '../utils/toastManager';
 import { getDefaultBosses } from '../data/raidBosses';
 import { useDebug } from '../contexts/DebugContext';
@@ -159,6 +159,8 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     setEditingRecord(record);
     // 掉落物中包含"玄晶"时默认勾选玄晶
     const dropsHasXuanjing = record.drops?.some(d => d.includes('玄晶')) ?? false;
+    // 散件清单归一化：兼容 v2.1.53 旧数据的 snake_case 键与 npc 单价铜→金问题
+    const normalizedScraps = normalizeScrapsItems(record.scrapsItems ?? []);
     setEditForm({
       goldIncome: record.goldIncome || 0,
       goldExpense: record.goldExpense || 0,
@@ -172,9 +174,10 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       hasSecretBook: record.hasSecretBook || false,
       notes: record.notes || '',
       bossNames: record.bossNames ?? [],
-      isScrapsBoss: record.isScrapsBoss ?? false,
-      // 深拷贝散件清单（避免直接修改 record 引用导致 React state 异常）
-      scrapsItems: (record.scrapsItems ?? []).map(item => ({ ...item })),
+      // 扫描已识别出散件清单时默认勾选散件老板（用户可手动取消）
+      isScrapsBoss: record.isScrapsBoss || normalizedScraps.length > 0,
+      // 归一化后的新数组，避免直接修改 record 引用导致 React state 异常
+      scrapsItems: normalizedScraps,
     });
   }, []);
 
@@ -351,7 +354,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       <button
         onClick={() => setIsScanMenuOpen(!isScanMenuOpen)}
         disabled={isScanningThisWeek}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-ds-success-soft dark:border-ds-success-soft bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         title="选择扫描时间范围"
       >
         {isScanningThisWeek ? (
@@ -363,26 +366,26 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         {!isScanningThisWeek && <ChevronDown className="w-3.5 h-3.5" />}
       </button>
       {isScanMenuOpen && (
-        <div className="absolute top-full left-0 mt-1 w-40 bg-surface border border-base rounded-lg shadow-md z-50 py-1">
+        <div className="absolute top-full left-0 mt-1 w-40 bg-surface border border-base rounded-lg shadow-ds-stack z-50 py-1">
           <button
             onClick={handleScanThisWeek}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/20 transition-colors"
           >
-            <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <Calendar className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong" />
             <span>扫描本周</span>
           </button>
           <button
             onClick={handleScanThisMonth}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/20 transition-colors"
           >
-            <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <Calendar className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong" />
             <span>扫描本月</span>
           </button>
           <button
             onClick={handleScanThisSeason}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-main hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/20 transition-colors"
           >
-            <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <Calendar className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong" />
             <span>扫描本赛季</span>
           </button>
         </div>
@@ -393,7 +396,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     <button
       onClick={handleScanThisWeek}
       disabled={isScanningThisWeek}
-      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-ds-success-soft dark:border-ds-success-soft bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
       title="扫描本周副本记录"
     >
       {isScanningThisWeek ? (
@@ -414,12 +417,12 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         {pendingRecords.length > 0 && (
           <button
             onClick={() => setIsModalOpen(true)}
-            className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors text-sm font-medium"
+            className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg border border-ds-warning-soft dark:border-ds-warning-soft bg-ds-warning-soft dark:bg-ds-warning-soft/20 text-ds-warning-strong dark:text-ds-warning-strong hover:bg-ds-warning-soft dark:hover:bg-ds-warning-soft/30 transition-colors text-sm font-medium"
             title="查看自动扫描的待确认记录"
           >
             <Clock className="w-4 h-4" />
             <span>待确认</span>
-            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-xs font-bold">
+            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-ds-warning text-white text-xs font-bold">
               {pendingRecords.length}
             </span>
           </button>
@@ -433,16 +436,16 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
           onClick={() => setIsModalOpen(false)}
         >
           <div
-            className="bg-surface rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col animate-in"
+            className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col animate-in"
             onClick={e => e.stopPropagation()}
           >
             {/* 标题栏 */}
             <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
               <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                <Clock className="w-5 h-5 text-ds-warning dark:text-ds-warning" />
                 <h2 className="text-lg font-bold text-main">
                   待确认记录
-                  <span className="ml-2 text-amber-600 dark:text-amber-400">({pendingRecords.length})</span>
+                  <span className="ml-2 text-ds-warning dark:text-ds-warning">({pendingRecords.length})</span>
                 </h2>
               </div>
               <button
@@ -461,6 +464,8 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 const roleName = roleInfo?.name ?? record.roleName ?? '未知角色';
                 const server = roleInfo?.server ?? record.server ?? '';
                 const income = record.goldIncome || 0;
+                // 待确认列表估价：优先按清单重算（兼容旧数据的铜→金换算），避免显示虚高金额
+                const scrapsTotal = getRecordScrapsValue(record);
                 const bosses = record.bossNames?.filter(n => n) ?? [];
                 const isScanning = record.status === 'scanning';
 
@@ -470,7 +475,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                     className={`p-3 rounded-lg border transition-opacity ${
                       isScanning
                         ? 'border-slate-200 dark:border-slate-700 bg-slate-50/30 dark:bg-slate-800/5'
-                        : 'border-amber-200 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-900/5'
+                        : 'border-ds-warning-soft dark:border-ds-warning-soft/50 bg-ds-warning-soft/30 dark:bg-ds-warning-soft/5'
                     } ${pendingActionId === record.id ? 'opacity-50' : ''}`}
                   >
                     {/* 第一行：角色 · 副本 · 时间 · 状态标签 */}
@@ -492,16 +497,16 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                     {/* 第二行：收支 */}
                     <div className="flex items-center gap-4 mb-2 text-sm">
                       <span className="flex items-center gap-1">
-                        <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                        <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong" />
                         <span className="text-muted text-xs">收入</span>
-                        <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                        <span className="font-mono font-semibold text-ds-success dark:text-ds-success">
                           {formatGoldAmount(income)}
                         </span>
                       </span>
                       <span className="flex items-center gap-1">
-                        <TrendingDown className="w-3.5 h-3.5 text-amber-600" />
+                        <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong" />
                         <span className="text-muted text-xs">支出</span>
-                        <span className="font-mono font-semibold text-amber-700 dark:text-amber-400">
+                        <span className="font-mono font-semibold text-ds-warning dark:text-ds-warning">
                           {formatGoldAmount(record.goldExpense || 0)}
                         </span>
                       </span>
@@ -510,16 +515,16 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                           <Boxes className="w-3.5 h-3.5 text-muted" />
                           <span className="text-muted text-xs">散件</span>
                           <span className="font-mono font-semibold text-main">{record.scrapsItems.length}</span>
-                          {(record.scrapsValue ?? 0) > 0 && (
+                          {scrapsTotal > 0 && (
                             <span className="text-muted text-xs ml-1">
-                              ≈ {formatGoldAmount(record.scrapsValue ?? 0)}金
+                              ≈ {formatGoldAmount(scrapsTotal)}金
                             </span>
                           )}
                         </span>
                       )}
                       {record.drops && record.drops.length > 0 && (
                         <span className="flex items-center gap-1 ml-auto">
-                          <Package className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                          <Package className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong" />
                           <span className="text-muted text-xs">掉落</span>
                           <span className="font-mono font-semibold text-main">{record.drops.length}</span>
                         </span>
@@ -552,7 +557,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                         <button
                           onClick={() => handleDirectConfirm(record)}
                           disabled={pendingActionId === record.id}
-                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-white bg-ds-success hover:bg-ds-success transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {pendingActionId === record.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -564,7 +569,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                         <button
                           onClick={() => openEditModal(record)}
                           disabled={pendingActionId === record.id}
-                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-ds-success-strong dark:text-ds-success-strong border border-ds-success-soft dark:border-ds-success-soft hover:bg-ds-success-soft dark:hover:bg-ds-success-soft/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                           编辑
@@ -595,7 +600,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
           onClick={closeEditModal}
         >
           <div
-            className="bg-surface rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in"
+            className="bg-surface rounded-xl shadow-ds-modal w-full max-w-lg overflow-hidden animate-in"
             onClick={e => e.stopPropagation()}
           >
             {/* 标题栏 */}
@@ -624,35 +629,35 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
+                    <TrendingUp className="w-4 h-4 text-ds-success-strong" />
                     金币收入
                   </label>
                   <div className="relative">
-                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />
+                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ds-success-strong" />
                     <input
                       type="number"
                       min="0"
                       value={editForm.goldIncome || ''}
                       onChange={e => setEditForm({ ...editForm, goldIncome: Number(e.target.value) })}
                       placeholder="收入金额"
-                      className="w-full pl-9 pr-3 py-2.5 bg-surface border border-emerald-200 dark:border-emerald-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all font-mono text-[1rem]"
+                      className="w-full pl-9 pr-3 py-2.5 bg-surface border border-ds-success-soft dark:border-ds-success-soft rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ds-success transition-all font-mono text-[1rem]"
                     />
                   </div>
                 </div>
                 <div>
                   <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
-                    <TrendingDown className="w-4 h-4 text-amber-600" />
+                    <TrendingDown className="w-4 h-4 text-ds-warning-strong" />
                     金币支出
                   </label>
                   <div className="relative">
-                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500" />
+                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ds-warning-strong" />
                     <input
                       type="number"
                       min="0"
                       value={editForm.goldExpense || ''}
                       onChange={e => setEditForm({ ...editForm, goldExpense: Number(e.target.value) })}
                       placeholder="支出金额"
-                      className="w-full pl-9 pr-3 py-2.5 bg-surface border border-amber-200 dark:border-amber-800 rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-amber-400 transition-all font-mono text-[1rem]"
+                      className="w-full pl-9 pr-3 py-2.5 bg-surface border border-ds-warning-soft dark:border-ds-warning-soft rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ds-warning transition-all font-mono text-[1rem]"
                     />
                   </div>
                 </div>
@@ -686,8 +691,8 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                             }}
                             className={`px-2.5 py-1 rounded-lg text-sm font-medium border transition-colors ${
                               selected
-                                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
-                                : 'bg-surface text-muted border-base hover:border-emerald-200 dark:hover:border-emerald-800 hover:text-main'
+                                ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
+                                : 'bg-surface text-muted border-base hover:border-ds-success-soft dark:hover:border-ds-success-soft hover:text-main'
                             }`}
                           >
                             {boss.name}
@@ -702,7 +707,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
               {/* 标记位 */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-base rounded-lg border border-base">
                 {[
-                  { key: 'hasXuanjing' as const, label: '玄晶', icon: Sparkles, color: 'text-amber-500' },
+                  { key: 'hasXuanjing' as const, label: '玄晶', icon: Sparkles, color: 'text-ds-warning-strong' },
                   { key: 'hasMaJu' as const, label: '马具', icon: Anchor, color: 'text-blue-500' },
                   { key: 'hasPet' as const, label: '宠物', icon: Ghost, color: 'text-purple-500' },
                   { key: 'hasPendant' as const, label: '挂件', icon: PackageIcon, color: 'text-orange-500' },
@@ -737,9 +742,9 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                       checked={editForm.isScrapsBoss}
                       onChange={e => setEditForm({ ...editForm, isScrapsBoss: e.target.checked })}
                       id="edit-isScrapsBoss"
-                      className="w-4 h-4 text-emerald-600 rounded border-base focus:ring-emerald-500"
+                      className="w-4 h-4 text-ds-success-strong rounded border-base focus:ring-ds-success"
                     />
-                    <Boxes className={`w-3.5 h-3.5 ${editForm.isScrapsBoss ? 'text-emerald-600' : 'text-muted'}`} />
+                    <Boxes className={`w-3.5 h-3.5 ${editForm.isScrapsBoss ? 'text-ds-success-strong' : 'text-muted'}`} />
                     <h3 className="text-sm font-semibold text-main">散件老板</h3>
                   </label>
                   <span className="text-[10px] text-muted">勾选后估价计入统计</span>
@@ -750,6 +755,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                   editable={false}
                   showSourceLabel
                   isScrapsBoss={editForm.isScrapsBoss}
+                  listMaxHeightClass="none"
                 />
               </div>
 
@@ -807,12 +813,12 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
           onClick={() => setCdConflictRecord(null)}
         >
           <div
-            className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-in"
+            className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-sm p-6 animate-in"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              <div className="w-10 h-10 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-ds-warning dark:text-ds-warning" />
               </div>
               <h3 className="text-lg font-bold text-main">CD 冲突提醒</h3>
             </div>
@@ -835,7 +841,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
               </button>
               <button
                 onClick={continueAfterConflict}
-                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-1.5"
+                className="px-4 py-2 text-sm font-medium text-white bg-ds-warning hover:bg-ds-warning rounded-lg transition-colors flex items-center gap-1.5"
               >
                 {cdConflictAction === 'edit' ? (
                   <>

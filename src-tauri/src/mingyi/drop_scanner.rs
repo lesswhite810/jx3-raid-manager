@@ -54,7 +54,11 @@ struct PurchaseInfo {
 }
 
 /// 散件清单项（写入 RaidRecord JSON 的 scrapsItems）
+///
+/// 序列化为 camelCase（unitPrice / priceSource），与前端 types.ts 的 ScrapsItem 对齐。
+/// v2.1.53 曾因缺少 rename_all 输出 snake_case 键，导致前端读不到单价与来源（已修复）。
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ScrapsItem {
     name: String,
     count: u32,
@@ -64,6 +68,11 @@ struct ScrapsItem {
     category: String,
     /// "jx3box" | "npc" | "manual"
     price_source: String,
+}
+
+/// 铜 → 金换算（四舍五入），与 drop_table::median_price_gold 口径一致
+fn copper_to_gold(copper: i64) -> i64 {
+    (copper + 5000) / 10000
 }
 
 /// 查询 drop_items 表中已缓存物品的单价（装备估价用）
@@ -97,7 +106,9 @@ fn query_prices_by_names(conn: &Connection, names: &[String]) -> HashMap<String,
 ///
 /// 估价：
 /// - 散件材料：调用 JX3Box 交易行价格接口获取最新成交价，失败时降级为手填
-/// - 散件装备：从 drop_items.Price 读取（NPC 卖价），未命中时 unit_price = None
+/// - 散件装备：从 drop_items.Price 读取（NPC 卖价），未命中时 unit_price = None。
+///   注意 drop_items.Price 来自 JX3 接口，单位为铜，需换算为金（v2.1.53 曾直接当金使用，
+///   导致散件估价虚高上万倍，如 尽幽冠 1,118,787 铜 ≈ 112 金被显示为 1,118,787 金）
 ///
 /// 返回：散件清单（已按名称排序）和 scrapsValue（仅含已获取单价的物品）
 fn compute_scraps_items(
@@ -145,9 +156,9 @@ fn compute_scraps_items(
                 None => (None, "manual".to_string()),
             }
         } else {
-            // 散件装备：从 drop_items.Price 取 NPC 卖价
+            // 散件装备：从 drop_items.Price 取 NPC 卖价（接口单位为铜，换算为金）
             match price_map.get(name).copied() {
-                Some(p) => (Some(p), "npc".to_string()),
+                Some(p) => (Some(copper_to_gold(p)), "npc".to_string()),
                 None => (None, "manual".to_string()),
             }
         };
@@ -5504,11 +5515,12 @@ mod tests {
         assert_eq!(items[0].category, "material");
     }
 
-    /// 测试：0 金装备（drop_items 有 Price）→ npc 卖价
+    /// 测试：0 金装备（drop_items 有 Price）→ npc 卖价（铜→金换算）
     #[test]
     fn test_compute_scraps_items_zero_price_equipment_npc() {
         let (conn, _temp_dir) = create_scan_test_db();
-        insert_test_drop_item(&conn, "流漓腰带", Some(25000), "equipment");
+        // drop_items.Price 单位为铜（JX3 接口原始单位），1,704,984 铜 ≈ 170 金
+        insert_test_drop_item(&conn, "流漓腰带", Some(1704984), "equipment");
         let mut purchased = HashMap::new();
         purchased.insert("流漓腰带".to_string(), make_purchase(1, 0));
         let mut categories = HashMap::new();
@@ -5517,9 +5529,9 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "流漓腰带");
         assert_eq!(items[0].category, "equipment");
-        assert_eq!(items[0].unit_price, Some(25000));
+        assert_eq!(items[0].unit_price, Some(170), "NPC 卖价应从铜换算为金");
         assert_eq!(items[0].price_source, "npc");
-        assert_eq!(value, 25000);
+        assert_eq!(value, 170);
     }
 
     /// 测试：0 金装备（drop_items 无 Price）→ manual 手填
@@ -5612,14 +5624,14 @@ mod tests {
     #[test]
     fn test_compute_scraps_items_mixed() {
         let (conn, _temp_dir) = create_scan_test_db();
-        // drop_items 记录
-        insert_test_drop_item(&conn, "流漓腰带", Some(25000), "equipment");
+        // drop_items 记录（Price 单位为铜）
+        insert_test_drop_item(&conn, "流漓腰带", Some(1704984), "equipment");
         insert_test_drop_item(&conn, "无价装备", None, "equipment");
         // 购买记录
         let mut purchased = HashMap::new();
         purchased.insert("维峰丹".to_string(), make_purchase(2, 0));     // 白名单材料 ×2
         purchased.insert("玛瑙".to_string(), make_purchase(1, 500));     // 白名单材料（非 0 金也计入）
-        purchased.insert("流漓腰带".to_string(), make_purchase(1, 0));   // 0 金装备（NPC 估价 25000）
+        purchased.insert("流漓腰带".to_string(), make_purchase(1, 0));   // 0 金装备（NPC 估价 1704984 铜 ≈ 170 金）
         purchased.insert("无价装备".to_string(), make_purchase(1, 0));   // 0 金装备（无价 → manual）
         purchased.insert("竞拍装备".to_string(), make_purchase(1, 50000)); // 非 0 金装备（不计入）
         purchased.insert("杂物材料".to_string(), make_purchase(1, 0));   // 非白名单材料（不计入）
@@ -5635,8 +5647,28 @@ mod tests {
         // 按名称排序：无价装备、流漓腰带、玛瑙、维峰丹
         let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(names, vec!["无价装备", "流漓腰带", "玛瑙", "维峰丹"], "应按名称排序");
-        // 估价：流漓腰带 1×25000 + 玛瑙 1×0 + 维峰丹 2×0 + 无价装备 1×0 = 25000
-        assert_eq!(value, 25000, "scrapsValue 应为 25000（仅含已获取单价的物品）");
+        // 估价：流漓腰带 1×170 + 玛瑙 1×0 + 维峰丹 2×0 + 无价装备 1×0 = 170
+        assert_eq!(value, 170, "scrapsValue 应为 170（仅含已获取单价的物品）");
+    }
+
+    /// 测试：ScrapsItem 序列化为 camelCase（与前端 types.ts 的 ScrapsItem 对齐）
+    ///
+    /// v2.1.53 曾因缺少 rename_all 输出 snake_case（unit_price / price_source），
+    /// 导致前端读不到单价与来源、散件估价合计恒为 0。
+    #[test]
+    fn test_scraps_item_serializes_camel_case() {
+        let item = ScrapsItem {
+            name: "流漓腰带".to_string(),
+            count: 2,
+            unit_price: Some(170),
+            category: "equipment".to_string(),
+            price_source: "npc".to_string(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&item).expect("序列化失败");
+        assert_eq!(json["unitPrice"], 170, "应输出 camelCase 键 unitPrice");
+        assert_eq!(json["priceSource"], "npc", "应输出 camelCase 键 priceSource");
+        assert!(json.get("unit_price").is_none(), "不应残留 snake_case 键 unit_price");
+        assert!(json.get("price_source").is_none(), "不应残留 snake_case 键 price_source");
     }
 
     /// 测试：输出按名称排序（UTF-8 字节序）

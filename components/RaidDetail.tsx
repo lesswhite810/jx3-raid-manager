@@ -12,6 +12,7 @@ import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
 import { getBaseServerName } from '../utils/serverUtils';
+import { getRecordScrapsValue } from '../utils/scrapsUtils';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -104,8 +105,8 @@ const RaidRefreshCountdown: React.FC<RaidRefreshCountdownProps> = ({ raid }) => 
 
   return (
     <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium font-mono ${countdown.isExpired
-      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+      ? 'bg-ds-success-soft text-ds-success-strong dark:bg-ds-success-soft/30 dark:text-ds-success-strong'
+      : 'bg-ds-warning-soft text-ds-warning-strong dark:bg-ds-warning-soft/30 dark:text-ds-warning-strong'
       }`}>
       <RefreshCw className={`w-3.5 h-3.5 ${countdown.isExpired ? '' : 'animate-spin'}`} />
       <span>{countdown.formatted}</span>
@@ -329,7 +330,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         lastRunIncome = lastRunRecord.goldIncome;
         lastRunExpense = lastRunRecord.goldExpense || 0;
         lastRunGold = lastRunIncome - lastRunExpense;
-        lastRunScrapsValue = lastRunRecord.scrapsValue || 0;
+        // 按散件清单重算（兼容旧数据 npc 单价铜→金），无清单时回退存量 scrapsValue
+        lastRunScrapsValue = getRecordScrapsValue(lastRunRecord);
         lastRunIsScrapsBoss = lastRunRecord.isScrapsBoss ?? false;
       }
 
@@ -555,7 +557,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 onClick={() => setShowDisabled(false)}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 ${
                   !showDisabled
-                    ? 'bg-emerald-50 text-emerald-700 shadow-sm'
+                    ? 'bg-ds-success-soft text-ds-success-strong shadow-sm'
                     : 'text-muted hover:text-main'
                 }`}
               >
@@ -568,7 +570,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 onClick={() => setShowDisabled(true)}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 ${
                   showDisabled
-                    ? 'bg-amber-50 text-amber-700 shadow-sm'
+                    ? 'bg-ds-warning-soft text-ds-warning-strong shadow-sm'
                     : 'text-muted hover:text-main'
                 }`}
               >
@@ -582,16 +584,16 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             <div className="h-4 w-px bg-base" />
 
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-bold text-emerald-600">{noneClearedCount}</span>
+              <span className="font-bold text-ds-success">{noneClearedCount}</span>
               <span className="text-muted text-xs">未清</span>
             </div>
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-bold text-amber-600">{partialClearedCount}</span>
+              <span className="font-bold text-ds-warning">{partialClearedCount}</span>
               <span className="text-muted text-xs">部分清</span>
             </div>
             {pendingClearedCount > 0 && (
               <div className="flex items-center gap-1.5 text-sm">
-                <span className="font-bold text-amber-500">{pendingClearedCount}</span>
+                <span className="font-bold text-ds-warning">{pendingClearedCount}</span>
                 <span className="text-muted text-xs">待确认</span>
               </div>
             )}
@@ -659,13 +661,13 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               // 根据状态设置样式（仅用颜色区分：未清=emerald, 部分清=amber, 待确认=sky, 完全清=slate）
               const getCardStyle = () => {
                 if (bossStatus === 'complete') {
-                  return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-md';
+                  return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-ds-stack';
                 } else if (bossStatus === 'pending') {
-                  return 'bg-gradient-to-br from-sky-50 to-white dark:from-sky-900/10 dark:to-surface border-sky-300 dark:border-sky-700 hover:shadow-md';
+                  return 'bg-gradient-to-br from-sky-50 to-white dark:from-sky-900/10 dark:to-surface border-sky-300 dark:border-sky-700 hover:shadow-ds-stack';
                 } else if (bossStatus === 'partial') {
-                  return 'bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border-amber-200 dark:border-amber-700 hover:shadow-lg hover:border-amber-300';
+                  return 'bg-gradient-to-br from-ds-warning-soft to-orange-50 dark:from-ds-warning-soft/10 dark:to-orange-900/10 border-ds-warning-soft dark:border-ds-warning hover:shadow-ds-stack hover:border-ds-warning';
                 } else {
-                  return 'bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/10 dark:to-teal-900/10 border-emerald-200 dark:border-emerald-800 hover:shadow-lg hover:border-emerald-300';
+                  return 'bg-gradient-to-br from-ds-success-soft to-teal-50 dark:from-ds-success-soft/10 dark:to-teal-900/10 border-ds-success-soft dark:border-ds-success-soft hover:shadow-ds-stack hover:border-ds-success';
                 }
               };
 
@@ -684,14 +686,14 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                   );
                 } else if (bossStatus === 'partial') {
                   return (
-                    <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                      <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <div className="w-6 h-6 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
+                      <div className="w-2.5 h-2.5 rounded-full bg-ds-warning" />
                     </div>
                   );
                 } else {
                   return (
-                    <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <div className="w-6 h-6 rounded-full bg-ds-success-soft dark:bg-ds-success-soft/30 flex items-center justify-center flex-shrink-0">
+                      <div className="w-2.5 h-2.5 rounded-full bg-ds-success animate-pulse" />
                     </div>
                   );
                 }
@@ -702,13 +704,13 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                   return 'bg-base text-muted cursor-not-allowed border border-base';
                 }
                 if (bossStatus === 'complete') {
-                  return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
+                  return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
                 } else if (bossStatus === 'pending') {
-                  return 'bg-sky-500 text-white hover:bg-sky-600 hover:shadow-md transform hover:-translate-y-0.5';
+                  return 'bg-sky-500 text-white hover:bg-sky-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
                 } else if (bossStatus === 'partial') {
-                  return 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5';
+                  return 'bg-ds-warning text-white hover:bg-ds-warning hover:shadow-ds-stack transform hover:-translate-y-0.5';
                 } else {
-                  return 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5';
+                  return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
                 }
               };
 
@@ -718,9 +720,9 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 } else if (bossStatus === 'pending') {
                   return 'bg-white text-sky-700 border border-sky-300 hover:bg-sky-50 hover:border-sky-400';
                 } else if (bossStatus === 'partial') {
-                  return 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300';
+                  return 'bg-white text-ds-warning-strong border border-ds-warning-soft hover:bg-ds-warning-soft hover:border-ds-warning';
                 } else {
-                  return 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300';
+                  return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
                 }
               };
 
@@ -756,17 +758,17 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         {role.lastRunDate ? (
                           <>
                             <div className="flex items-center gap-1.5 text-muted overflow-hidden">
-                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-sky-500' : bossStatus === 'partial' ? 'text-amber-500' : 'text-emerald-500'}`} />
+                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-sky-500' : bossStatus === 'partial' ? 'text-ds-warning-strong' : 'text-ds-success-strong'}`} />
                               <span className="text-[11px] whitespace-nowrap">{formatDate(role.lastRunDate)}</span>
                             </div>
                             {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
-                              <div className="flex items-center gap-1 text-emerald-600 ml-1">
+                              <div className="flex items-center gap-1 text-ds-success ml-1">
                                 <TrendingUp className="w-3 h-3 flex-shrink-0" />
                                 <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunIncome)}金</span>
                               </div>
                             )}
                             {role.lastRunExpense !== undefined && role.lastRunExpense > 0 && (
-                              <div className="flex items-center gap-1 text-amber-600 ml-1">
+                              <div className="flex items-center gap-1 text-ds-warning ml-1">
                                 <TrendingDown className="w-3 h-3 flex-shrink-0" />
                                 <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunExpense)}金</span>
                               </div>
@@ -785,7 +787,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                           </>
                         ) : (
                           <div className="flex items-center gap-1.5 text-muted">
-                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-sky-400' : bossStatus === 'partial' ? 'text-amber-400' : 'text-emerald-400'}`} />
+                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-sky-400' : bossStatus === 'partial' ? 'text-ds-warning-strong' : 'text-ds-success-strong'}`} />
                             <span className="text-[11px] whitespace-nowrap">暂无记录</span>
                           </div>
                         )}
@@ -810,7 +812,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                             copyToClipboard(role.accountName, `account-${role.id}`);
                           }}
                           className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `account-${role.id}`
-                            ? 'text-emerald-600'
+                            ? 'text-ds-success'
                             : 'text-muted hover:text-main hover:bg-surface'
                             }`}
                           title={copiedField === `account-${role.id}` ? '已复制!' : '复制账号'}
@@ -823,9 +825,9 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                     {role.accountNote && (
                       <div className="flex items-start gap-2">
                         <div className="text-xs text-muted flex-shrink-0 pt-1">备注</div>
-                        <div className="flex items-start gap-1.5 flex-1 min-w-0 bg-emerald-50 border border-emerald-100 rounded px-2 py-1.5">
-                          <FileText className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0 mt-0.5" />
-                          <span className="text-xs text-emerald-800 break-all">{role.accountNote}</span>
+                        <div className="flex items-start gap-1.5 flex-1 min-w-0 bg-ds-success-soft border border-ds-success-soft rounded px-2 py-1.5">
+                          <FileText className="w-3.5 h-3.5 text-ds-success-strong flex-shrink-0 mt-0.5" />
+                          <span className="text-xs text-ds-success-strong-soft break-all">{role.accountNote}</span>
                         </div>
                       </div>
                     )}
@@ -843,7 +845,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                               copyToClipboard(role.password!, `password-${role.id}`);
                             }}
                             className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
-                              ? 'text-emerald-600'
+                              ? 'text-ds-success'
                               : 'text-muted hover:text-main hover:bg-surface'
                               }`}
                             title="复制密码"
@@ -887,7 +889,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                       }}
                       className={`px-2 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
                         roleVisibilityMap[role.id] === false
-                          ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400'
+                          ? 'bg-ds-success-soft text-ds-success-strong hover:bg-ds-success-soft dark:bg-ds-success-soft/30 dark:text-ds-success-strong'
                           : 'bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400'
                       }`}
                       title={roleVisibilityMap[role.id] === false ? '点击启用该角色' : '点击禁用该角色'}
@@ -923,7 +925,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       )}
 
       {successToast.visible && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in z-[9999]">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-ds-success text-white px-6 py-3 rounded-xl shadow-ds-stack flex items-center gap-2 text-sm font-medium animate-in z-[9999]">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
           </svg>
