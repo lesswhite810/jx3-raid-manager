@@ -36,6 +36,10 @@ static PURCHASED_ITEM_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex
 /// "记录给了"格式：[分配者]将[物品名]以[金额]记录给了[接收者]
 /// 当团长手动分配物品时使用此格式，有时不生成"花费购买了"消息
 static ALLOCATE_TO_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[([^\]]+)\]将\[([^\]]+)\]以\[([^\]]+)\]记录给了\[([^\]]+)\]").unwrap());
+/// 本地角色入包日志：`你获得：[物品名]。` / `你获得：[物品名] × 17。`
+/// 仅匹配 MSG_ITEM 中以"你获得："开头的行（本地视角），其他玩家的"XX获得："不匹配。
+/// ×N 后缀为真实数量，缺失时视为 1。
+static GAIN_QTY_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^你获得：\[([^\]]+)\](?:\s*×\s*(\d+))?").unwrap());
 
 /// 散件材料白名单（硬编码 7 种副本材料）
 /// 这些材料无人竞拍时通常由散件老板统一接收
@@ -47,7 +51,8 @@ const SCRAPS_MATERIAL_WHITELIST: [&str; 7] = [
 /// 当前角色购买物品的信息（同物品多次购买累加）
 #[derive(Debug, Clone, Default)]
 struct PurchaseInfo {
-    /// 购买次数（同物品多次购买累加）
+    /// 购买数量：由购买消息前后 2 秒内的"你获得：[物品] × N。"到账事件配对求和；
+    /// 无到账事件时按 1 笔计。可堆叠材料一次交易可到账多个，故为数量而非次数。
     count: u32,
     /// 累计购买价（用于判断 0 金购买=散件）
     total_price: i64,
@@ -2071,6 +2076,10 @@ fn normalize_role_name(name: &str) -> String {
 ///    支出消息可能出现在房间频道(MSG_ROOM)或密语频道(MSG_WHISPER)，均需查询。
 ///    注意：仅"花费了...购买了"格式计为支出；"记录给了"格式仅提取物品名加入 drops，不计入支出
 ///    （团长分配记录不代表角色实际购买了该物品）。
+/// 5. **购买数量补充**：每条"购买了"消息以前后 2 秒内的本地入包日志
+///    `你获得：[物品名] × N。`（MSG_ITEM）配对真实数量，多条到账累加且每条只消费一次；
+///    找不到到账事件时数量回退为 1。无独立到账且与已接受交易同物品+同金额+间隔 ≤3 秒的
+///    消息视为双频道回显并丢弃。
 ///
 /// 返回 (drops, base_salary, other_income_gold, expense_gold, boss_kill_count, income_records, boss_kill_times, purchased_items)。
 /// income_records 为非 BOSS 10金的收入记录列表 (time_sec, gold)，用于精确收入匹配。
@@ -2262,13 +2271,29 @@ fn extract_drops_from_records(
 
     let target_name = normalize_role_name(role_name);
 
-    // 去重：记录已通过"花费购买了"格式检测到的支出 (物品名, 金额, 时间窗口)
-    // 用于避免同一笔交易在 MSG_ROOM 和 MSG_WHISPER 两个频道中重复计算
-    // 时间窗口：30秒内的相同物品+金额视为同一笔交易
-    let mut expense_dedup: HashSet<(String, i64, i64)> = HashSet::new();
+    // 到账事件预收集：本地角色 MSG_ITEM 入包日志（你获得：[物品] × N。）
+    // 用于给"花费购买了"消息补充真实数量（每条到账事件只被配对消费一次）。
+    // (物品名, 数量, 时间秒, 是否已消费)
+    let mut gain_events: Vec<(String, u32, i64, bool)> = Vec::new();
+    for r in relevant.iter() {
+        if r.msg_type == "MSG_ITEM" {
+            if let Some(caps) = GAIN_QTY_RE.captures(&r.text) {
+                let qty: u32 = caps
+                    .get(2)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .filter(|&q| q > 0)
+                    .unwrap_or(1);
+                gain_events.push((caps[1].to_string(), qty, r.time_sec, false));
+            }
+        }
+    }
 
     // 当前角色花钱购买的物品映射（物品名 → PurchaseInfo，用于散件老板功能）
     let mut purchased_items_map: HashMap<String, PurchaseInfo> = HashMap::new();
+    // 已接受的购买交易：(物品名, 金额, 时间秒)，用于回显抑制：
+    // 同一交易可能在 MSG_ROOM 和 MSG_WHISPER 双频道近乎同时播报，
+    // 无独立到账事件且与已接受交易同物品+同金额+间隔 ≤3 秒的消息视为回显并丢弃。
+    let mut accepted_purchases: Vec<(String, i64, i64)> = Vec::new();
 
     for record in relevant {
         let msg_type = &record.msg_type;
@@ -2316,23 +2341,41 @@ fn extract_drops_from_records(
                 {
                     let amount = parse_expense_amount(&caps[2]);
                     let item_name = caps[3].to_string();
-                    // 去重：同一笔交易可能在 MSG_ROOM 和 MSG_WHISPER 两个频道都出现
-                    let time_bucket = time_sec / 30;
-                    let dedup_key = (item_name.clone(), amount, time_bucket);
-                    if !expense_dedup.contains(&dedup_key) {
-                        // 还需检查 ±1 个时间窗口（两条频道消息可能有几秒偏差）
-                        let prev_bucket = (item_name.clone(), amount, time_bucket - 1);
-                        let next_bucket = (item_name.clone(), amount, time_bucket + 1);
-                        if !expense_dedup.contains(&prev_bucket) && !expense_dedup.contains(&next_bucket) {
-                            expense_gold += amount;
-                            expense_dedup.insert(dedup_key);
-                            // 记录购买的物品（累加 count 和 total_price，用于散件老板功能）
-                            let info = purchased_items_map.entry(item_name.clone()).or_default();
-                            info.count += 1;
-                            info.total_price += amount;
-                            // 当前角色购买的物品也加入 drops（属于副本掉落物分配）
-                            drops_set.insert(item_name);
+
+                    // 数量补充：优先取购买消息前后 2 秒内同物品的未消费到账事件
+                    // （你获得：[物品] × N。，可多条累加，每条只消费一次）。
+                    // 找不到到账事件时回退数量 1。
+                    const GAIN_PAIR_WINDOW_SECS: i64 = 2;
+                    let mut qty: u32 = 0;
+                    for g in gain_events.iter_mut() {
+                        if g.3 || g.0 != item_name {
+                            continue;
                         }
+                        if (g.2 - time_sec).abs() <= GAIN_PAIR_WINDOW_SECS {
+                            g.3 = true;
+                            qty += g.1;
+                        }
+                    }
+
+                    // 回显抑制：无独立到账事件、且与已接受交易同物品+同金额+间隔 ≤3 秒，
+                    // 视为 MSG_ROOM/MSG_WHISPER 双频道对同一笔交易的重复播报，跳过。
+                    const ECHO_WINDOW_SECS: i64 = 3;
+                    let is_echo = qty == 0
+                        && accepted_purchases.iter().any(|(name, amt, t)| {
+                            *name == item_name && *amt == amount && (*t - time_sec).abs() <= ECHO_WINDOW_SECS
+                        });
+                    if !is_echo {
+                        if qty == 0 {
+                            qty = 1; // 到账日志缺失时回退为 1 笔
+                        }
+                        expense_gold += amount;
+                        accepted_purchases.push((item_name.clone(), amount, time_sec));
+                        // 记录购买的物品（count=真实数量，total_price 累加金额，用于散件老板功能）
+                        let info = purchased_items_map.entry(item_name.clone()).or_default();
+                        info.count += qty;
+                        info.total_price += amount;
+                        // 当前角色购买的物品也加入 drops（属于副本掉落物分配）
+                        drops_set.insert(item_name);
                     }
                 }
             }
@@ -5429,6 +5472,124 @@ mod tests {
         assert_eq!(parse_expense_amount("1金砖6000金"), 16000, "1金砖6000金=16000金");
         assert_eq!(parse_expense_amount("9金砖9000金"), 99000, "9金砖9000金=99000金");
         assert_eq!(parse_expense_amount("2金砖9000金"), 29000, "2金砖9000金=29000金");
+    }
+
+    // ============== extract_drops_from_records 购买数量配对单元测试 ==============
+
+    /// 测试辅助：构造一条 chatlog 记录
+    fn chat_rec(msg_type: &str, text: &str, time_sec: i64) -> ChatlogRecord {
+        ChatlogRecord {
+            msg_type: msg_type.to_string(),
+            text: text.to_string(),
+            msg: String::new(),
+            time_sec,
+        }
+    }
+
+    /// 测试辅助：调用 extract_drops_from_records 并返回 purchased_items
+    /// （时间范围按记录本身的最小/最大时间各放宽 60 秒）
+    fn extract_purchased(records: Vec<ChatlogRecord>) -> HashMap<String, PurchaseInfo> {
+        let lo = records.iter().map(|r| r.time_sec).min().unwrap_or(0);
+        let hi = records.iter().map(|r| r.time_sec).max().unwrap_or(0);
+        let (_, _, _, _, _, _, _, purchased) = extract_drops_from_records(
+            &records,
+            (lo - 60) * 1000,
+            (hi + 60) * 1000,
+            "少年白了发",
+        );
+        purchased
+    }
+
+    /// 购买消息前后 2 秒内的"你获得 ×N"应补充真实数量（含多条累加）
+    #[test]
+    fn test_purchase_qty_paired_from_gain_events() {
+        let t = 1787587544i64;
+        let records = vec![
+            chat_rec("MSG_ITEM", "你获得：[玛瑙] × 17。", t),
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[玛瑙]", t + 1),
+            // 同秒两条独立到账，被同一笔购买消息吸收
+            chat_rec("MSG_ITEM", "你获得：[肆级五彩石]。", t + 5),
+            chat_rec("MSG_ITEM", "你获得：[肆级五彩石]。", t + 5),
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[肆级五彩石]", t + 6),
+            // 带后缀 ×2 的单条到账
+            chat_rec("MSG_ITEM", "你获得：[上品茶饼·兑] × 2。", t + 10),
+            chat_rec("MSG_WHISPER", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[上品茶饼·兑]", t + 11),
+        ];
+        let p = extract_purchased(records);
+        assert_eq!(p["玛瑙"].count, 17, "×17 到账应计入数量");
+        assert_eq!(p["玛瑙"].total_price, 0);
+        assert_eq!(p["肆级五彩石"].count, 2, "同秒两条 ×1 到账应累加");
+        assert_eq!(p["上品茶饼·兑"].count, 2, "×2 后缀应解析为 2");
+    }
+
+    /// ±2 秒窗口边界：恰好 2 秒内可配对，3 秒外不可
+    #[test]
+    fn test_purchase_qty_pair_window_boundary() {
+        let t = 1700000000i64;
+        let records = vec![
+            chat_rec("MSG_ITEM", "你获得：[猫眼石] × 6。", t - 2), // 恰好 2 秒前 → 配对
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[猫眼石]", t),
+        ];
+        let p = extract_purchased(records);
+        assert_eq!(p["猫眼石"].count, 6, "|Δt|=2 应在窗口内");
+
+        let records2 = vec![
+            chat_rec("MSG_ITEM", "你获得：[猫眼石] × 6。", t - 3), // 3 秒前 → 窗口外
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[猫眼石]", t),
+        ];
+        let p2 = extract_purchased(records2);
+        assert_eq!(p2["猫眼石"].count, 1, "|Δt|=3 应超出窗口，回退数量 1");
+    }
+
+    /// 双频道回显：无独立到账事件、同物品+同金额+间隔 ≤3 秒的第二条消息应丢弃
+    #[test]
+    fn test_echo_duplicate_suppressed_without_grant() {
+        let t = 1700000100i64;
+        let records = vec![
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[5000金]购买了[雨夜禅]", t),
+            chat_rec("MSG_WHISPER", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[5000金]购买了[雨夜禅]", t + 1),
+        ];
+        let p = extract_purchased(records);
+        assert_eq!(p["雨夜禅"].count, 1, "回显消息不应重复计数");
+        assert_eq!(p["雨夜禅"].total_price, 5000, "回显消息不应重复累计金额");
+    }
+
+    /// 有独立到账事件时，间隔很近的两笔真实交易都应保留
+    #[test]
+    fn test_two_real_deals_with_own_grants_both_counted() {
+        let t = 1700000200i64;
+        let records = vec![
+            chat_rec("MSG_ITEM", "你获得：[玄阙帽·五毒]。", t),
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[玄阙帽·五毒]", t),
+            chat_rec("MSG_ITEM", "你获得：[玄阙帽·五毒]。", t + 1),
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[玄阙帽·五毒]", t + 1),
+        ];
+        let p = extract_purchased(records);
+        assert_eq!(p["玄阙帽·五毒"].count, 2, "两笔交易各有到账，均应计数");
+    }
+
+    /// 无到账日志的孤立购买回退数量 1；他人购买不统计
+    #[test]
+    fn test_fallback_and_other_buyer_filtered() {
+        let t = 1700000300i64;
+        let records = vec![
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[神藏链]", t),
+            chat_rec("MSG_ROOM", "[房间][糯闪·梦江南]：[糯闪·梦江南]花费[0金]购买了[神藏链]", t + 1),
+        ];
+        let p = extract_purchased(records);
+        assert_eq!(p["神藏链"].count, 1, "仅统计目标角色，且回退数量 1");
+    }
+
+    /// 其他玩家的"XX获得："不是本地视角，不参与数量配对
+    #[test]
+    fn test_other_player_gain_not_paired() {
+        let t = 1700000400i64;
+        let records = vec![
+            chat_rec("MSG_ITEM", "宴鸢·梦江南获得：[玛瑙] × 17。", t),
+            chat_rec("MSG_ROOM", "[房间][少年白了发·梦江南]：[少年白了发·梦江南]花费[0金]购买了[玛瑙]", t + 1),
+        ];
+        let p = extract_purchased(records);
+        assert_eq!(p["玛瑙"].count, 1, "他人到账不应配对，回退数量 1");
     }
 
     // ============== compute_scraps_items 单元测试 ==============
