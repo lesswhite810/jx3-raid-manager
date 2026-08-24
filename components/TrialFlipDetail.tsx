@@ -60,8 +60,8 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
   }, [safeTrialRecords, equipments]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
+    <div className="flex flex-col h-full gap-5">
+      <div className="flex items-start justify-between gap-4 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
@@ -81,6 +81,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
         </div>
       </div>
 
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
           <div className="text-sm font-medium text-muted">总记录数</div>
@@ -95,7 +96,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           <div className="mt-2 text-xl font-bold text-main">
             {stats.bestFlipPosition ? `${stats.bestFlipPosition.position}号位` : '-'}
           </div>
-          <div className="mt-1 text-sm text-emerald-600">
+          <div className="mt-1 text-sm text-ds-success-strong">
             {stats.bestFlipPosition
               ? `${(stats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
               : '0%'}
@@ -143,7 +144,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
                   <div className="px-4 py-3 font-medium">{position.position}号位</div>
                   <div className="px-4 py-3">{position.flipCount}</div>
                   <div className="px-4 py-3">{position.flippedEquipmentCount}</div>
-                  <div className="px-4 py-3 font-medium text-emerald-600">{(position.flipEquipmentRate * 100).toFixed(1)}%</div>
+                  <div className="px-4 py-3 font-medium text-ds-success">{(position.flipEquipmentRate * 100).toFixed(1)}%</div>
                   <div className="px-4 py-3">{position.appearanceCount}</div>
                   <div className="px-4 py-3">{(position.appearanceRate * 100).toFixed(1)}%</div>
                 </div>
@@ -155,7 +156,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
                 <div key={`trial-flip-detail-mobile-${position.position}`} className="rounded-xl border border-base p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="font-medium text-main">{position.position}号位</div>
-                    <div className="text-xs font-semibold text-emerald-600">
+                    <div className="text-xs font-semibold text-ds-success-strong">
                       翻牌装备率 {(position.flipEquipmentRate * 100).toFixed(1)}%
                     </div>
                   </div>
@@ -185,6 +186,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
       </div>
 
       <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
+      </div>
     </div>
   );
 };

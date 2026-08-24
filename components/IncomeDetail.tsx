@@ -1,12 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend, LabelList } from 'recharts';
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen, Boxes } from 'lucide-react';
 import { RaidRecord, Account, BaizhanRecord, Season } from '../types';
 import { toast } from '../utils/toastManager';
 import { getLastMonday } from '../utils/cooldownManager';
-import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey, getVisibleRecordRange } from '../utils/recordLookupUtils';
+import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey } from '../utils/recordLookupUtils';
 import { getRecordScrapsValue } from '../utils/scrapsUtils';
 import { db } from '../services/db';
+
+/** 收益记录单次渲染条数上限，超出部分通过底部按钮分页加载，避免超长列表一次性渲染造成卡顿 */
+const PAGE_SIZE = 100;
 
 interface IncomeDetailProps {
   records: RaidRecord[];
@@ -57,37 +60,20 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const [activeTab, setActiveTab] = useState<'all' | 'income' | 'expense'>('all');
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
-  const [recordListScrollTop, setRecordListScrollTop] = useState(0);
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
   const [seasonLoaded, setSeasonLoaded] = useState(false);
   const [chartView, setChartView] = useState<'raid' | 'role'>('role');
+  const [renderLimit, setRenderLimit] = useState(PAGE_SIZE);
 
-  /**
-   * 收益记录列表容器高度（动态测量）
-   *
-   * 由收益记录卡片内的滚动容器（flex-1 min-h-0 overflow-y-auto）的 clientHeight
-   * 通过 ResizeObserver 实时测量。用于虚拟滚动的 viewportHeight 计算，
-   * 替代原本写死的 500px。
-   */
-  const recordListRef = useRef<HTMLDivElement>(null);
-  const [recordListHeight, setRecordListHeight] = useState(500);
-
-  useEffect(() => {
-    const el = recordListRef.current;
-    if (!el) return;
-    setRecordListHeight(el.clientHeight);
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setRecordListHeight(entry.contentRect.height);
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     setPeriod(initialPeriod);
   }, [initialPeriod]);
+
+  // 切换周期/搜索词/tab 时重置分页，从第一页重新展示
+  useEffect(() => {
+    setRenderLimit(PAGE_SIZE);
+  }, [period, searchTerm, activeTab]);
 
   useEffect(() => {
     db.getCurrentSeason().then((s) => {
@@ -197,6 +183,11 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     return searchedRecords;
   }, [searchedRecords, activeTab]);
 
+  /** 当前实际渲染的记录（分页截断） */
+  const shownRecords = useMemo(() => {
+    return tabFilteredRecords.slice(0, renderLimit);
+  }, [tabFilteredRecords, renderLimit]);
+
   const stats = useMemo(() => {
     const clientAccountIds = buildClientAccountIdSet(safeAccounts);
     const totalIncome = confirmedRecords.reduce((acc, r) => acc + r.goldIncome, 0);
@@ -253,21 +244,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       .sort((a, b) => b.收入 - a.收入);
   }, [confirmedRecords]);
 
-  useEffect(() => {
-    setRecordListScrollTop(0);
-  }, [period, searchTerm, activeTab]);
 
-  const virtualRange = useMemo(() => getVisibleRecordRange({
-    totalCount: tabFilteredRecords.length,
-    scrollTop: recordListScrollTop,
-    viewportHeight: recordListHeight,
-    rowHeight: 88,
-    overscan: 6
-  }), [tabFilteredRecords.length, recordListScrollTop]);
-
-  const visibleRecords = useMemo(() => {
-    return tabFilteredRecords.slice(virtualRange.startIndex, virtualRange.endIndex);
-  }, [tabFilteredRecords, virtualRange.startIndex, virtualRange.endIndex]);
 
   const formatDate = (dateString: string | number) => {
     const date = new Date(dateString);
@@ -358,8 +335,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-hidden pr-1">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-shrink-0">
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-base rounded-lg">
@@ -397,7 +374,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       </div>
 
       {/* 收益分布图表 */}
-      <div className="bg-surface rounded-xl shadow-sm border border-base p-5 flex-shrink-0">
+      <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-semibold text-main">收益分布</h3>
@@ -532,8 +509,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       </div>
 
 
-      <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden flex-1 min-h-0 flex flex-col">
-        <div className="p-4 border-b border-base flex-shrink-0">
+      <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden">
+        <div className="p-4 border-b border-base">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-base rounded-lg">
@@ -588,11 +565,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           </div>
         </div>
 
-        <div
-          ref={recordListRef}
-          className="flex-1 min-h-0 overflow-y-auto"
-          onScroll={event => setRecordListScrollTop(event.currentTarget.scrollTop)}
-        >
+        <div>
           {tabFilteredRecords.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted">
               <Coins className="w-12 h-12 text-muted/30 mb-3" />
@@ -600,10 +573,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             </div>
           ) : (
             <div className="divide-y divide-base">
-              {virtualRange.topPadding > 0 && (
-                <div style={{ height: virtualRange.topPadding }} aria-hidden="true" />
-              )}
-              {visibleRecords.map((record) => {
+              {shownRecords.map((record) => {
                 const netIncome = record.goldIncome - (record.goldExpense || 0);
                 const summaryAmount = activeTab === 'income'
                   ? record.goldIncome
@@ -825,9 +795,17 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   </div>
                 );
               })}
-              {virtualRange.bottomPadding > 0 && (
-                <div style={{ height: virtualRange.bottomPadding }} aria-hidden="true" />
-              )}
+            </div>
+          )}
+
+          {tabFilteredRecords.length > shownRecords.length && (
+            <div className="flex justify-center py-4 border-t border-base">
+              <button
+                onClick={() => setRenderLimit(prev => prev + PAGE_SIZE)}
+                className="px-6 py-2 bg-base hover:bg-border rounded-lg text-sm text-muted hover:text-main transition-colors"
+              >
+                加载更多（已显示 {shownRecords.length} / {tabFilteredRecords.length} 条）
+              </button>
             </div>
           )}
         </div>

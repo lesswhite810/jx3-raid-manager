@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
-import { LayoutDashboard, Users, Download, Shield, Settings, Sun, Moon } from 'lucide-react';
-import { useTheme } from './contexts/ThemeContext';
+import { LayoutDashboard, Users, Download, Shield, Settings } from 'lucide-react';
 import { useAppConfig } from './contexts/AppConfigContext';
 import { Dashboard } from './components/Dashboard';
 import { IncomeDetail } from './components/IncomeDetail';
@@ -45,7 +44,7 @@ import { checkLocalStorageData, migrateLocalStorageData } from './services/migra
 import { updaterService } from './services/updater';
 import { toast } from './utils/toastManager';
 
-const ConfigManager = lazy(async () => import('./components/ConfigManager').then(module => ({ default: module.ConfigManager })));
+const ConfigManagerModal = lazy(async () => import('./components/ConfigManagerModal').then(module => ({ default: module.ConfigManagerModal })));
 
 // PWA beforeinstallprompt 事件类型（仅在非 Tauri 环境的浏览器中触发）
 interface BeforeInstallPromptEvent extends Event {
@@ -55,8 +54,9 @@ interface BeforeInstallPromptEvent extends Event {
 
 function App() {
   const [dashboardStatsPeriod, setDashboardStatsPeriod] = useState<'week' | 'season' | 'all'>('week');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager' | 'config'>('dashboard');
-  const [showIncomeDetail, setShowIncomeDetail] = useState(false);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'raidManager'>('dashboard');
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+    const [showIncomeDetail, setShowIncomeDetail] = useState(false);
   const [showCrystalDetail, setShowCrystalDetail] = useState(false);
   const [showTrialFlipDetail, setShowTrialFlipDetail] = useState(false);
 
@@ -77,7 +77,7 @@ function App() {
     config: true,
   });
 
-  const { theme, toggleTheme } = useTheme();
+  
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<RaidRecord[]>([]);
@@ -635,7 +635,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-base text-main pb-20 md:pb-0 transition-colors duration-200">
+    <div className="h-screen flex flex-col bg-base text-main pb-20 md:pb-0 transition-colors duration-200">
       {/* Sidebar / Topbar */}
       {/* added app-region-drag to allow moving the window, but we must exclude buttons */}
       {/* Sidebar / Topbar */}
@@ -653,14 +653,14 @@ function App() {
               <NavButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18} />} label="概览" />
               <NavButton active={activeTab === 'raidManager'} onClick={() => handleTabChange('raidManager')} icon={<Shield size={18} />} label="副本管理" />
               <NavButton active={activeTab === 'accounts'} onClick={() => handleTabChange('accounts')} icon={<Users size={18} />} label="账号管理" />
-              <NavButton active={activeTab === 'config'} onClick={() => handleTabChange('config')} icon={<Settings size={18} />} label="配置" />
             </div>
             <button
-              onClick={toggleTheme}
+              onClick={() => setIsConfigModalOpen(true)}
               className="p-2 rounded-lg text-muted hover:text-main hover:bg-base transition-colors app-region-no-drag"
-              title={theme === 'dark' ? '切换到亮色模式' : '切换到深色模式'}
+              title="打开系统配置"
+              aria-label="打开系统配置"
             >
-              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+              <Settings size={20} />
             </button>
             {deferredPrompt && (
               <button
@@ -678,7 +678,7 @@ function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="w-full mx-auto p-4 md:p-8 select-text">
+      <main className="flex-1 min-h-0 w-full mx-auto p-4 md:p-8 select-text flex flex-col overflow-hidden">
         <>
             {activeTab === 'dashboard' && (
               showIncomeDetail ? (
@@ -741,16 +741,6 @@ function App() {
                 onRefreshTrialRecords={reloadTrialRecords}
                 onRefreshBaizhanRecords={reloadBaizhanRecords}
               />
-            )}
-            {activeTab === 'config' && (
-              <Suspense fallback={<LoadingSpinner size="lg" text="正在加载配置模块..." />}>
-                <ConfigManager
-                  updateRuntimeInfo={updateRuntimeInfo}
-                  updateStatus={updateStatus}
-                  updateCheckResult={updateCheckResult}
-                  onCheckForUpdates={() => handleCheckForUpdates(false)}
-                />
-              </Suspense>
             )}
         </>
       </main>
@@ -863,6 +853,17 @@ function App() {
         }}
         onConfirm={handleStartUpdate}
       />
+
+      <Suspense fallback={null}>
+        <ConfigManagerModal
+          isOpen={isConfigModalOpen}
+          onClose={() => setIsConfigModalOpen(false)}
+          updateRuntimeInfo={updateRuntimeInfo}
+          updateStatus={updateStatus}
+          updateCheckResult={updateCheckResult}
+          onCheckForUpdates={() => handleCheckForUpdates(false)}
+        />
+      </Suspense>
 
       {/* Toast Container */}
       <ToastContainer />

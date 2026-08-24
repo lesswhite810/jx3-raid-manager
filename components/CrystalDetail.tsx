@@ -178,7 +178,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
     }
 
     if (type === '马具' || type === '宠物' || type === '挂件' || type === '坐骑') {
-      return 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/30';
+      return 'bg-ds-warning-soft text-ds-warning-strong border-ds-warning-soft dark:bg-ds-warning-soft/20 dark:text-ds-warning-strong dark:border-ds-warning-soft/30';
     }
 
     return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700';
@@ -219,8 +219,8 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
   }, [safeRecords, seasonRange, xuanjingTotal]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
+    <div className="flex flex-col h-full gap-5">
+      <div className="flex items-start justify-between gap-4 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
@@ -271,6 +271,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
         </div>
       </div>
 
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
           <div className="flex items-center gap-3 mb-3">
@@ -320,7 +321,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                 disabled={disabled}
                 className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
                   active
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30'
+                    ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft hover:border-ds-success dark:bg-ds-success-soft/20 dark:text-ds-success-strong dark:border-ds-success-soft/30'
                     : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700/50'
                 } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
                 title={disabled ? `${type}：暂无记录` : `${active ? '隐藏' : '显示'}${type}（共 ${count} 条）`}
@@ -331,7 +332,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
           })}
         </div>
         {noTypeSelected && (
-          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+          <p className="mt-3 text-xs text-ds-warning-strong dark:text-ds-warning-strong">
             未选择任何类型，列表已隐藏所有记录。点击上方标签或「全部选中」即可恢复。
           </p>
         )}
@@ -442,7 +443,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
           </div>
         )}
       </div>
-
+      </div>
     </div>
   );
 };
