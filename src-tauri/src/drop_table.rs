@@ -8,8 +8,18 @@ use std::time::{Duration, Instant};
 
 const JX3BOX_DROP_API_BASE: &str = "https://node.jx3box.com/fb/drop/v2";
 const JX3BOX_ITEM_MERGED_API_BASE: &str = "https://node.jx3box.com/item_merged/id";
-const JX3BOX_PRICE_API_BASE: &str = "https://next2.jx3box.com/api/item-price";
+/// 魔盒交易行成交聚合接口（物品页"价格走势/成交记录"图表同款数据源）。
+/// POST JSON: { item_id, server, aggregate_type: "hourly" | "daily" }，
+/// 返回按时段聚合的真实成交均价与成交量数组（非挂单快照）。
+const JX3BOX_AUCTION_API_BASE: &str = "https://next2.jx3box.com/api/auction/";
 const ITEM_MERGED_PER_PAGE: usize = 50;
+
+/// 一天的秒数
+const DAY_SECS: i64 = 86_400;
+/// 北京时间固定偏移（UTC+8），剑网 3 交易行数据以国内时区的自然日为准
+const BEIJING_TZ_OFFSET_SECS: i64 = 8 * 3600;
+/// 1 砖 = 10000 金 = 1 亿铜，价格接口中的封顶哨兵值，均价计算需剔除
+const BRICK_SENTINEL_COPPER: i64 = 100_000_000;
 
 /// 独立的 tokio runtime，供同步上下文（如 spawn_blocking 线程）调用 async HTTP 请求。
 /// 使用 multi_thread 模式：扫描器在 std::thread::scope 的 4 个线程中并发调用
@@ -285,7 +295,27 @@ pub async fn classify_drops(
     let mut conn = crate::db::init_db().map_err(|e| DropTableError::Database(e))?;
 
     // 1. 先按物品名称查 drop_items 缓存
-    let cached_categories = query_categories_by_names(&conn, actual_drop_names)?;
+    let mut cached_categories = query_categories_by_names(&conn, actual_drop_names)?;
+
+    // 1.5 赛季一致性检查：装备价格随游戏版本更新变化（新赛季应用版本会录入新赛季时间），
+    // 缓存行属于旧赛季或无赛季标记时，删除后走重新拉取流程，保证估价使用当前版本数据。
+    // 材料价格由交易行动态查询，不受赛季影响，无需失效。
+    let stale_equipment = find_stale_equipment_names(&conn, actual_drop_names);
+    if !stale_equipment.is_empty() {
+        for name in &stale_equipment {
+            cached_categories.remove(name);
+            conn.execute(
+                "DELETE FROM drop_items WHERE item_name = ?1",
+                params![name],
+            )
+            .map_err(|e| DropTableError::Database(e.to_string()))?;
+        }
+        info!(
+            "[DropTable] 检测到 {} 条旧赛季装备缓存已失效，删除并重新获取: {:?}",
+            stale_equipment.len(),
+            stale_equipment
+        );
+    }
 
     info!(
         "[DropTable] 实际掉落 {} 条，缓存命中 {} 条",
@@ -342,8 +372,16 @@ pub async fn classify_drops(
         merged_items.len()
     );
 
-    // 6. 分类并入库
-    save_items_to_db(&mut conn, map_id, raid_name, &uncached_items, &merged_items)?;
+    // 6. 分类并入库（记录入库时的当前赛季，供下个赛季的缓存失效检查比对）
+    let current_season_id = crate::db::query_current_season_id(&conn);
+    save_items_to_db(
+        &mut conn,
+        map_id,
+        raid_name,
+        &uncached_items,
+        &merged_items,
+        current_season_id,
+    )?;
 
     // 7. 查询新入库物品的分类
     let new_names: Vec<String> = uncached_items
@@ -522,6 +560,35 @@ fn query_categories_by_names(
     Ok(result)
 }
 
+/// 找出与当前赛季不一致、需要失效重建的装备名称。
+///
+/// 规则：
+/// - 仅检查 category='equipment' 的行（材料价格由交易行动态查询，不受赛季影响）；
+/// - 行的 season_id 与当前赛季不一致（含 NULL，即旧版本入库的无标记行）视为过期；
+/// - 当前未配置任何生效赛季时跳过失效检查，避免误清缓存。
+fn find_stale_equipment_names(conn: &Connection, names: &[String]) -> Vec<String> {
+    let Some(current_season_id) = crate::db::query_current_season_id(conn) else {
+        return Vec::new();
+    };
+
+    let mut stale = Vec::new();
+    for name in names {
+        let row: Option<(Option<String>, Option<i64>)> = conn
+            .query_row(
+                "SELECT category, season_id FROM drop_items WHERE item_name = ?1",
+                params![name],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        if let Some((category, season_id)) = row {
+            if category.as_deref() == Some("equipment") && season_id != Some(current_season_id) {
+                stale.push(name.clone());
+            }
+        }
+    }
+    stale
+}
+
 /// 将查询到的物品详情分类后入库
 fn save_items_to_db(
     conn: &mut Connection,
@@ -529,6 +596,7 @@ fn save_items_to_db(
     raid_name: Option<&str>,
     drop_items: &[&DropItem],
     merged_items: &[ItemMerged],
+    season_id: Option<i64>,
 ) -> Result<(), DropTableError> {
     let now = chrono::Local::now().to_rfc3339();
     let merged_map: std::collections::HashMap<&str, &ItemMerged> = merged_items
@@ -555,7 +623,7 @@ fn save_items_to_db(
                     is_quest, wu_cai_html, is_equip, equip_usage, image_url, id_key,
                     diamonds, requires, recommend, recommend_xfs, attribute_types, set_info,
                     get_source, attributes, furniture_attributes,
-                    category, class_source, created_at
+                    category, class_source, season_id, created_at
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6,
                     ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
@@ -569,7 +637,7 @@ fn save_items_to_db(
                     ?54, ?55, ?56, ?57, ?58, ?59,
                     ?60, ?61, ?62, ?63, ?64, ?65,
                     ?66, ?67, ?68,
-                    ?69, ?70, ?71, ?72
+                    ?69, ?70, ?71, ?72, ?73
                 )
                 "#,
             )
@@ -678,6 +746,7 @@ fn save_items_to_db(
                 // 管理字段
                 category,
                 class_source,
+                season_id,
                 now,
             ])
             .map_err(|e| DropTableError::Database(e.to_string()))?;
@@ -703,51 +772,160 @@ fn slash_join(base: &str, id: i64) -> String {
 
 // ============== JX3Box 交易行价格查询 ==============
 
-/// 价格接口单条成交记录
+/// 计算给定时刻所在北京自然日的零点 Unix 时间戳（秒）
+fn beijing_day_start(now_secs: i64) -> i64 {
+    ((now_secs + BEIJING_TZ_OFFSET_SECS) / DAY_SECS) * DAY_SECS - BEIJING_TZ_OFFSET_SECS
+}
+
+/// 铜 → 金，四舍五入到整数金
+fn copper_to_gold(copper: i64) -> i64 {
+    (copper + 5000) / 10000
+}
+
+/// 计算指定时间窗口 [start, end) 内的成交量加权平均单价（铜）。
+///
+/// 过滤规则：
+/// - created 不在窗口内的记录；
+/// - unit_price <= 0 或 n_count <= 0 的无效记录；
+/// - unit_price >= 1 亿铜（1 砖封顶哨兵值）与洗钱性质的异常高价。
+///
+/// 加权公式：Σ(单价 × 成交量) / Σ成交量，四舍五入。窗口内无有效成交时返回 None。
+fn window_weighted_avg_copper(prices: &[PriceRecord], start: i64, end: i64) -> Option<i64> {
+    let mut total_copper: i64 = 0;
+    let mut total_count: i64 = 0;
+    for p in prices {
+        if p.created < start || p.created >= end {
+            continue;
+        }
+        if p.unit_price <= 0 || p.unit_price >= BRICK_SENTINEL_COPPER || p.n_count <= 0 {
+            continue;
+        }
+        total_copper += p.unit_price * p.n_count;
+        total_count += p.n_count;
+    }
+    if total_count == 0 {
+        return None;
+    }
+    Some((total_copper + total_count / 2) / total_count)
+}
+
+/// 交易行成交聚合接口（POST /api/auction/）单条聚合点。
+///
+/// 接口字段 timestamp / price / sample 通过 serde rename 映射到内部命名；
+/// aggregate_type = "hourly" 时每个自然小时一个点：price 为该时段成交均价，
+/// sample 为该时段成交量，created 为时段起始时间戳。
 #[derive(Debug, Deserialize)]
 struct PriceRecord {
-    /// 成交时间戳（秒）
-    #[serde(default)]
-    #[allow(dead_code)]
+    /// 聚合点时间戳（秒），接口字段 timestamp
+    #[serde(default, rename = "timestamp")]
     created: i64,
-    /// 成交数量
-    #[serde(default)]
-    #[allow(dead_code)]
+    /// 该时段成交量，接口字段 sample
+    #[serde(default, rename = "sample")]
     n_count: i64,
     /// 服务器名
     #[serde(default)]
     #[allow(dead_code)]
     server: String,
-    /// 单价（铜，需 ÷10000 转金）
-    #[serde(default)]
+    /// 该时段成交均价（铜，需 ÷10000 转金），接口字段 price
+    #[serde(default, rename = "price")]
     unit_price: i64,
 }
 
-/// 价格接口响应
-#[derive(Debug, Deserialize)]
-struct PriceApiResponse {
-    #[serde(default)]
-    #[allow(dead_code)]
-    code: i64,
-    #[serde(default)]
-    #[allow(dead_code)]
-    msg: String,
-    data: Option<PriceApiData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PriceApiData {
-    #[serde(default)]
-    prices: Vec<PriceRecord>,
-}
-
-/// 计算成交价格的中位数（金），并四舍五入到整数金。
+/// 查询物品的交易行价格（前一天成交均价，铜 → 金）
 ///
-/// 接口返回的 prices 里常混有异常值：
-/// - unit_price = 1 亿（= 1 砖 = 10000 金）的封顶哨兵值；
-/// - 洗钱/恶意挂单产生的次级异常高价（实测玛瑙出现 100 金、800 金的成交）。
-/// 算术/加权平均都会被这些离群值严重拉高（实测绝代天骄玛瑙均价被拉到 45~5220 金，
-/// 而真实主流价仅约 3 金），中位数对离群值天然稳健，能反映市场主流成交价。
+/// 接口：POST https://next2.jx3box.com/api/auction/
+/// body: { "item_id": "{ItemType}_{ItemID}", "server": ..., "aggregate_type": "hourly" }
+///
+/// 这是魔盒物品页"成交记录/价格走势"图表的同款数据源——按时段聚合的**真实成交**
+/// （均价 + 成交量），而非交易行挂单快照。赛季消耗品（如上品茶饼·兑）价格随赛季
+/// 推进持续变化，全历史中位数会严重虚高（实测 555 金 vs 近期真实成交约 297 金），
+/// 因此采用分层取价，对齐"近期真实市场价"口径：
+///
+/// 1. 前一天（北京时间自然日）成交量加权均价；
+/// 2. 无前一天成交时，回退近 7 天（含今日）成交量加权均价；
+/// 3. 仍无数据时，回退全量成交中位数（对离群值稳健的兜底）。
+///
+/// 无有效成交数据时返回 None（调用方降级为用户手填）。
+async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, DropTableError> {
+    let body = serde_json::json!({
+        "item_id": item_key,
+        "server": server,
+        "aggregate_type": "hourly",
+    });
+
+    let resp = http_client()
+        .post(JX3BOX_AUCTION_API_BASE)
+        .json(&body)
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        warn!(
+            "[DropTable] 成交聚合接口返回非 2xx: {} (item_key={})",
+            resp.status(),
+            item_key
+        );
+        return Ok(None);
+    }
+
+    // 响应顶层直接是聚合点数组
+    let prices: Vec<PriceRecord> = resp.json().await?;
+
+    let now_secs = chrono::Utc::now().timestamp();
+    let today_start = beijing_day_start(now_secs);
+
+    // 层级 1：前一天（北京时间自然日）成交量加权均价
+    if let Some(avg) = window_weighted_avg_copper(&prices, today_start - DAY_SECS, today_start) {
+        let gold = copper_to_gold(avg);
+        info!(
+            "[DropTable] 物品 {} 前一天成交均价: {} 金 (server={}, {} 个聚合点)",
+            item_key, gold, server, prices.len()
+        );
+        return Ok(Some(gold));
+    }
+
+    // 层级 2：近 7 天（含今日）成交量加权均价。
+    // hourly 聚合覆盖近约 30 天，但低频物品前一天可能整日无成交，此时以近一周
+    // 成交量加权的均价更接近真实市场价；仍无成交则落入中位数兜底。
+    if let Some(avg) = window_weighted_avg_copper(
+        &prices,
+        today_start - 6 * DAY_SECS,
+        today_start + DAY_SECS,
+    ) {
+        let gold = copper_to_gold(avg);
+        info!(
+            "[DropTable] 物品 {} 前一天无成交，取近 7 天(含今日)成交均价: {} 金 (server={}, {} 个聚合点)",
+            item_key, gold, server, prices.len()
+        );
+        return Ok(Some(gold));
+    }
+
+    // 层级 3：全量中位数兜底（长周期无成交的物品，中位数对离群值稳健）
+    match median_price_gold(&prices) {
+        Some(gold) => {
+            info!(
+                "[DropTable] 物品 {} 近期无成交，回退全量中位价: {} 金 (server={}, {} 个聚合点)",
+                item_key, gold, server, prices.len()
+            );
+            Ok(Some(gold))
+        }
+        None => {
+            info!(
+                "[DropTable] 物品 {} 无有效成交数据 (server={})",
+                item_key, server
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// 计算成交聚合点的中位单价（金），并四舍五入到整数金。
+///
+/// 聚合点里可能混有异常高价（如封顶哨兵 1 亿铜、恶意抬价产生的孤立高点）。
+/// 算术/加权平均会被这些离群值严重拉高，中位数对离群值天然稳健，
+/// 能反映市场主流成交价，适合作为长周期无成交物品的最后兜底。
 ///
 /// 仅 unit_price > 0 且 n_count > 0 的记录参与；无有效数据时返回 None。
 fn median_price_gold(prices: &[PriceRecord]) -> Option<i64> {
@@ -771,52 +949,6 @@ fn median_price_gold(prices: &[PriceRecord]) -> Option<i64> {
 
     // 铜 → 金，四舍五入
     Some((median + 5000) / 10000)
-}
-
-/// 查询物品的交易行价格（成交价中位数，铜 → 金）
-///
-/// 接口：GET https://next2.jx3box.com/api/item-price/{ItemType_ItemID}/detail?server={server}
-///
-/// 返回成交价中位数（金）。无有效成交数据时返回 None。
-async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, DropTableError> {
-    let url = format!("{}/{}/detail?server={}", JX3BOX_PRICE_API_BASE, item_key, server);
-
-    let resp = http_client()
-        .get(&url)
-        .header("Accept", "application/json")
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        warn!(
-            "[DropTable] 价格接口返回非 2xx: {} (item_key={})",
-            resp.status(),
-            item_key
-        );
-        return Ok(None);
-    }
-
-    let body: PriceApiResponse = resp.json().await?;
-
-    let prices = body.data.map(|d| d.prices).unwrap_or_default();
-
-    match median_price_gold(&prices) {
-        Some(gold) => {
-            info!(
-                "[DropTable] 物品 {} 中位价: {} 金 (server={}, {} 条成交)",
-                item_key, gold, server, prices.len()
-            );
-            Ok(Some(gold))
-        }
-        None => {
-            info!(
-                "[DropTable] 物品 {} 无有效成交数据 (server={})",
-                item_key, server
-            );
-            Ok(None)
-        }
-    }
 }
 
 /// 同步版本：批量查询材料交易行价格
@@ -1019,7 +1151,6 @@ fn classify_other(item: &ItemMerged) -> String {
     if auc_genre == 15 {
         return "material".to_string();
     }
-
     // AucGenre=13 → 材料
     if auc_genre == 13 {
         return "material".to_string();
@@ -1138,6 +1269,173 @@ mod tests {
             price_record(100_000_000, 85),
         ];
         assert_eq!(median_price_gold(&prices), Some(3));
+    }
+
+    /// 构造一条带成交时间戳的价格记录（用于窗口均价单测）
+    fn price_record_at(created: i64, unit_price: i64, n_count: i64) -> PriceRecord {
+        PriceRecord {
+            created,
+            n_count,
+            server: "test".to_string(),
+            unit_price,
+        }
+    }
+
+    #[test]
+    fn test_beijing_day_start() {
+        // 2024-01-01 00:00 UTC = 北京时间 08:00，当天零点应为 2024-01-01 00:00 +08
+        assert_eq!(beijing_day_start(1704067200), 1704038400);
+        // 2024-01-01 15:30 UTC = 北京时间 23:30，仍在同一天
+        assert_eq!(beijing_day_start(1704123000), 1704038400);
+        // 2024-01-01 16:00 UTC = 北京时间次日 00:00，进入下一天
+        assert_eq!(beijing_day_start(1704124800), 1704124800);
+    }
+
+    #[test]
+    fn test_window_weighted_avg_copper_weighted() {
+        // 成交量加权：10 金 ×1 件、20 金 ×3 件 → (10 + 60) / 4 = 17.5 金 ≈ 175000 铜，
+        // 四舍五入为 175000 铜（17.5 金）
+        let prices = [
+            price_record_at(1000, 100_000, 1),
+            price_record_at(1000, 200_000, 3),
+        ];
+        assert_eq!(window_weighted_avg_copper(&prices, 0, 2000), Some(175_000));
+    }
+
+    #[test]
+    fn test_window_weighted_avg_copper_window_boundary() {
+        // 窗口 [start, end)：created == start 参与统计，created == end 不参与
+        let prices = [
+            price_record_at(1000, 100_000, 1),
+            price_record_at(2000, 900_000, 1),
+        ];
+        assert_eq!(
+            window_weighted_avg_copper(&prices, 1000, 2000),
+            Some(100_000)
+        );
+    }
+
+    #[test]
+    fn test_window_weighted_avg_copper_filters_invalid_and_sentinel() {
+        // 剔除：窗口外、零值无效记录、1 砖封顶哨兵（1 亿铜）
+        let prices = [
+            price_record_at(500, 100_000, 10),      // 窗口外
+            price_record_at(1000, 0, 10),           // 单价非法
+            price_record_at(1000, 100_000, 0),      // 数量非法
+            price_record_at(1500, BRICK_SENTINEL_COPPER, 85), // 哨兵值
+            price_record_at(1800, 50_000, 2),
+            price_record_at(1900, 70_000, 2),
+        ];
+        // 仅后两条参与：(50_000×2 + 70_000×2) / 4 = 60000 铜
+        assert_eq!(window_weighted_avg_copper(&prices, 1000, 2000), Some(60_000));
+    }
+
+    #[test]
+    fn test_window_weighted_avg_copper_empty() {
+        assert_eq!(window_weighted_avg_copper(&[], 0, 1000), None);
+        let prices = [price_record_at(5000, 100_000, 1)];
+        assert_eq!(window_weighted_avg_copper(&prices, 0, 1000), None);
+    }
+
+    #[test]
+    fn test_window_weighted_avg_copper_tier2_includes_today() {
+        // 层级 2 窗口为"近 7 天（含今日）"：[today-6天, today+1天)，
+        // 今日成交必须参与统计，7 天前的记录不参与
+        let now = 1_787_580_180;
+        let today_start = beijing_day_start(now);
+        let prices = [
+            price_record_at(today_start + 100, 300_000, 2), // 今日成交
+            price_record_at(today_start - 6 * DAY_SECS, 100_000, 1), // 窗口起点，含
+            price_record_at(today_start - 7 * DAY_SECS, 900_000, 1), // 窗口外
+        ];
+        // (300000×2 + 100000×1) / 3 = 233333 铜
+        assert_eq!(
+            window_weighted_avg_copper(
+                &prices,
+                today_start - 6 * DAY_SECS,
+                today_start + DAY_SECS,
+            ),
+            Some(233_333)
+        );
+    }
+
+    /// 构建含 seasons / drop_items 最小表结构的内存库（赛季失效单测用）
+    fn setup_season_test_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("打开内存库失败");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE seasons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                version_id INTEGER NOT NULL,
+                start_date INTEGER NOT NULL,
+                end_date INTEGER,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE drop_items (
+                item_name TEXT PRIMARY KEY,
+                category TEXT,
+                season_id INTEGER
+            );
+            "#,
+        )
+        .expect("创建测试表失败");
+        conn
+    }
+
+    #[test]
+    fn test_find_stale_equipment_names() {
+        let conn = setup_season_test_db();
+        // 配置一个覆盖当前时间的赛季（start=0, end=NULL）
+        conn.execute(
+            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at) VALUES ('当前赛季', 1, 0, NULL, 0, '')",
+            [],
+        )
+        .expect("插入赛季失败");
+        let current_id: i64 = crate::db::query_current_season_id(&conn).expect("应有生效赛季");
+
+        let insert = |name: &str, category: &str, season_id: Option<i64>| {
+            conn.execute(
+                "INSERT INTO drop_items (item_name, category, season_id) VALUES (?1, ?2, ?3)",
+                params![name, category, season_id],
+            )
+            .expect("插入物品失败");
+        };
+        insert("旧赛季装备", "equipment", Some(current_id - 1));
+        insert("无标记装备", "equipment", None);
+        insert("新赛季装备", "equipment", Some(current_id));
+        insert("上赛季材料", "material", Some(current_id - 1));
+        insert("无分类装备", "", Some(current_id - 1));
+
+        let names = vec![
+            "旧赛季装备".to_string(),
+            "无标记装备".to_string(),
+            "新赛季装备".to_string(),
+            "上赛季材料".to_string(),
+            "未入库装备".to_string(),
+            "无分类装备".to_string(),
+        ];
+        assert_eq!(
+            find_stale_equipment_names(&conn, &names),
+            vec!["旧赛季装备".to_string(), "无标记装备".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_find_stale_equipment_names_no_season_configured() {
+        let conn = setup_season_test_db();
+        // 未配置任何赛季时跳过失效检查，避免误清缓存
+        assert_eq!(crate::db::query_current_season_id(&conn), None);
+        conn.execute(
+            "INSERT INTO drop_items (item_name, category, season_id) VALUES ('旧装备', 'equipment', 42)",
+            [],
+        )
+        .expect("插入物品失败");
+        assert_eq!(
+            find_stale_equipment_names(&conn, &["旧装备".to_string()]),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

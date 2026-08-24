@@ -1445,6 +1445,7 @@ fn ensure_drop_items_table(conn: &Connection) -> Result<(), String> {
             furniture_attributes TEXT,
             category          TEXT NOT NULL DEFAULT 'unknown',
             class_source      TEXT NOT NULL DEFAULT 'api',
+            season_id         INTEGER,
             created_at        TEXT NOT NULL
         );
 
@@ -1701,6 +1702,7 @@ fn ensure_critical_columns(conn: &Connection) -> Result<(), String> {
         ("roles", "equipment_score", "INTEGER"),
         ("roles", "disabled", "INTEGER DEFAULT 0"),
         ("raids", "season_id", "INTEGER"),
+        ("drop_items", "season_id", "INTEGER"),
         ("records", "raid_name", "TEXT"),
         ("records", "account_id", "TEXT"),
         ("records", "role_id", "TEXT"),
@@ -3696,6 +3698,21 @@ pub fn db_get_season_for_date(timestamp: i64) -> Result<Option<Season>, String> 
         .ok();
 
     Ok(result)
+}
+
+/// 查询当前生效赛季的 ID（start_date <= 当前时间 < end_date）。
+///
+/// 供 drop_items 赛季缓存失效检查使用：装备价格随游戏版本更新变化，
+/// 缓存行的 season_id 与当前赛季不一致时需重新拉取。
+/// 未配置任何赛季（或时间未覆盖当前日期）时返回 None。
+pub fn query_current_season_id(conn: &Connection) -> Option<i64> {
+    let now = chrono::Utc::now().timestamp();
+    conn.query_row(
+        "SELECT id FROM seasons WHERE start_date <= ?1 AND (end_date IS NULL OR end_date = 0 OR end_date > ?2) ORDER BY sort_order DESC LIMIT 1",
+        params![now, now],
+        |row| row.get(0),
+    )
+    .ok()
 }
 
 #[allow(dead_code)]

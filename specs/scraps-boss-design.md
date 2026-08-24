@@ -107,8 +107,8 @@ const SCRAPS_MATERIAL_WHITELIST: [&str; 7] = [
 
 | 物品类型 | 估价来源 | 降级方案 |
 |---|---|---|
-| 散件材料 | JX3Box 价格 API 当日单价 | API 不可用 → 用户手填 |
-| 散件装备 | `drop_items.Price`（NPC 卖价） | drop_items 无记录 → `unitPrice=null`，用户手填 |
+| 散件材料 | JX3Box 价格 API 前一天成交均价（分层回退，见 §4.5） | API 不可用 → 用户手填 |
+| 散件装备 | `drop_items.Price`（NPC 卖价，按赛季缓存失效刷新，见 §4.6） | drop_items 无记录 → `unitPrice=null`，用户手填 |
 
 ### 4.2 单位约定（v2.2.1 修正）
 
@@ -151,7 +151,47 @@ static MATERIAL_PRICE_CACHE: OnceLock<Mutex<HashMap<String, (i64, Instant)>>> = 
 
 不持久化到数据库（材料价格每日变动，长期存储无意义）。
 
-### 4.5 scrapsValue 计算
+### 4.5 材料分层取价策略（v2.2.1 修正）
+
+**问题背景**：早期实现走 `next2.jx3box.com/api/item-price/{key}/detail?server={server}`，实测该接口返回的是交易行**挂单快照**——仅当前在售的最低约 15 档要价（升序截断、众包上传存在分钟~小时滞后），并非成交数据。在其上做中位数/均价都会系统性偏高：实测上品茶饼·兑先后得出 555 金 / 344 金 / 308 金，而同期真实成交稳定在 294~305 金（游戏内成交流水逐条核对证实）。
+
+**数据源（已更换）**：魔盒物品页"成交记录/价格走势"图表同款接口
+
+```
+POST https://next2.jx3box.com/api/auction/
+body: { "item_id": "{ItemType}_{ItemID}", "server": "{server}", "aggregate_type": "hourly" }
+响应: [ { item_id, server, price, sample, timestamp }, ... ]   // 顶层即数组
+```
+
+- `price` = 该时段成交均价（铜），`sample` = 该时段成交量，`timestamp` = 时段起始秒级时间戳
+- `aggregate_type: "daily"` 为按日聚合（每天一个点）；hourly 粒度更细，覆盖近约 30 天
+- 这是**真实成交**的聚合统计，与挂单快照口径本质不同；玩家插件上传的是挂单，成交聚合由魔盒侧另行维护
+
+**现行策略**（`drop_table.rs::fetch_item_price`，按成交量加权平均 `Σ(单价×数量)/Σ数量`）：
+
+| 层级 | 窗口 | 说明 |
+|---|---|---|
+| 1 | 前一天（北京时间自然日） | 主口径。实测茶饼输出 297 金，与游戏内成交流水的当日加权均价一致 |
+| 2 | 近 7 天（含今日） | 前一天整日无成交时回退（低频材料常见），含今日可吸收当天最新行情 |
+| 3 | 中位数兜底 | 全窗口无有效成交的最后兜底，中位数对离群值稳健 |
+
+过滤规则：`price <= 0`、`sample <= 0` 无效点；`price >= 1 亿铜`（1 砖封顶哨兵值）不参与均价。
+
+> 注：hourly 聚合点随成交持续追加，估价存在天然的小幅日内漂移（属真实市场波动，非算法噪声）；对"待确认"记录而言，重新扫描会覆盖重算，确认后快照冻结。
+
+### 4.6 装备赛季缓存失效机制
+
+**问题背景**：装备估价取 `drop_items.Price`（NPC 卖价），该值随游戏版本更新可能变化，而物品库此前为按名称的永久缓存，首次入库后永不刷新，跨赛季后价格失真。
+
+**机制设计**（利用既有 `seasons` 表：新赛季随应用版本更新录入起止时间）：
+
+- `drop_items` 新增 `season_id INTEGER` 列，`save_items_to_db` 入库时标记当时的当前生效赛季（`db::query_current_season_id`）
+- 扫描时 `classify_drops` 检查缓存行：`category='equipment'` 且 `season_id` 与当前赛季不一致（含 NULL 的历史无标记行）→ 删除该行并走重新拉取流程，获取当前版本的最新价格
+- 仅装备参与失效检查；材料价格由交易行动态查询，不受赛季影响
+- 未配置任何生效赛季（`query_current_season_id` 返回 None）时跳过失效检查，避免误清缓存
+- 失效只发生一次：重拉后行已带新赛季标记，后续扫描正常命中缓存
+
+### 4.7 scrapsValue 计算
 
 ```
 scrapsValue = Σ(scrapsItems[].count × unitPrice)
