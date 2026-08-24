@@ -1,16 +1,21 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { loadThemeConfig, saveThemeConfig, ThemeType } from '../services/themeStorage';
+import { loadThemeConfig, saveThemeConfig, ThemeType, DEFAULT_THEME } from '../services/themeStorage';
 
 interface ThemeContextType {
     theme: ThemeType;
-    toggleTheme: () => void;
     setTheme: (theme: ThemeType) => void;
+    /**
+     * 兼容旧版 toggle 调用：dark <-> original
+     * 注：jianghu 是新增的第三种主题，toggle 不会进入 jianghu。
+     * 后续重构（Header 改造完成后）会移除该方法，调用方迁移到 setTheme + 显式选择。
+     */
+    toggleTheme: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [theme, setThemeState] = useState<ThemeType>('minimal');
+    const [theme, setThemeState] = useState<ThemeType>(DEFAULT_THEME);
     const [isInitialized, setIsInitialized] = useState(false);
 
     useEffect(() => {
@@ -25,12 +30,11 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const applyTheme = (newTheme: ThemeType) => {
         const root = window.document.documentElement;
+        root.setAttribute('data-theme', newTheme);
         if (newTheme === 'dark') {
             root.classList.add('dark');
-            root.setAttribute('data-theme', 'dark');
         } else {
             root.classList.remove('dark');
-            root.setAttribute('data-theme', 'minimal');
         }
     };
 
@@ -41,7 +45,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     const toggleTheme = () => {
-        setTheme(theme === 'minimal' ? 'dark' : 'minimal');
+        const next: ThemeType = theme === 'dark' ? DEFAULT_THEME : 'dark';
+        setTheme(next);
     };
 
     if (!isInitialized) {
@@ -49,7 +54,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     return (
-        <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
+        <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
             {children}
         </ThemeContext.Provider>
     );

@@ -112,7 +112,7 @@ export const SectSelect: React.FC<SectSelectProps> = ({
             {/* 下拉菜单 - 使用 fixed 定位 */}
             {isOpen && dropdownStyle && (
                 <div
-                    className="fixed bg-surface border border-base rounded-lg shadow-xl max-h-72 overflow-y-auto"
+                    className="fixed bg-surface border border-base rounded-lg shadow-ds-modal max-h-72 overflow-y-auto"
                     style={dropdownStyle}
                 >
                     <div className="py-1">

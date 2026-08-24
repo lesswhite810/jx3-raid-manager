@@ -39,7 +39,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     <>
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]" onClick={isBusy ? undefined : onClose} />
       <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
-        <div className="w-full max-w-xl bg-surface border border-base rounded-xl shadow-2xl overflow-hidden pointer-events-auto">
+        <div className="w-full max-w-xl bg-surface border border-base rounded-xl shadow-ds-modal overflow-hidden pointer-events-auto">
           <div className="px-6 py-4 border-b border-base flex items-center justify-between">
             <div>
               <h2 className="text-lg font-bold text-main">发现新版本</h2>
@@ -90,7 +90,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
                 </div>
                 <div className="w-full h-2 rounded-full bg-base overflow-hidden">
                   <div
-                    className="h-full bg-emerald-500 transition-all duration-300"
+                    className="h-full bg-ds-success transition-all duration-300"
                     style={{ width: `${percent ?? 8}%` }}
                   />
                 </div>

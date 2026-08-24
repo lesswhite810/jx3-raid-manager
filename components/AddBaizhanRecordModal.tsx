@@ -158,7 +158,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
 
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden">
-            <div className="bg-surface w-full max-w-md rounded-xl shadow-2xl border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
+            <div className="bg-surface w-full max-w-md rounded-xl shadow-ds-modal border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-base bg-base/50">
                     <div className="flex items-center gap-6">
@@ -240,11 +240,11 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                             {/* Income */}
                             <div>
                                 <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                                    <TrendingUp className="w-4 h-4 text-emerald-500/80" />
+                                    <TrendingUp className="w-4 h-4 text-ds-success-strong/80" />
                                     金币收入
                                 </label>
                                 <div className="relative">
-                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500/60" />
+                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ds-success-strong/60" />
                                     <input
                                         type="number"
                                         min="0"
@@ -252,7 +252,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                         value={goldIncome || ''}
                                         onChange={e => setGoldIncome(parseInt(e.target.value) || 0)}
                                         placeholder="收入金额"
-                                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-main placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 transition-all font-mono text-[1rem]"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-main placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-ds-success/30 transition-all font-mono text-[1rem]"
                                     />
                                 </div>
                             </div>
@@ -260,11 +260,11 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                             {/* Expense */}
                             <div>
                                 <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                                    <TrendingDown className="w-4 h-4 text-amber-500/80" />
+                                    <TrendingDown className="w-4 h-4 text-ds-warning-strong/80" />
                                     金币支出
                                 </label>
                                 <div className="relative">
-                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500/60" />
+                                    <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ds-warning-strong/60" />
                                     <input
                                         type="number"
                                         min="0"
@@ -272,7 +272,7 @@ export const AddBaizhanRecordModal: React.FC<AddBaizhanRecordModalProps> = ({
                                         value={goldExpense || ''}
                                         onChange={e => setGoldExpense(parseInt(e.target.value) || 0)}
                                         placeholder="支出金额"
-                                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-main placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all font-mono text-[1rem]"
+                                        className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-main placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-ds-warning/30 transition-all font-mono text-[1rem]"
                                     />
                                 </div>
                             </div>

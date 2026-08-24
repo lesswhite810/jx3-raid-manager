@@ -77,7 +77,7 @@ export const AddRoleModal: React.FC<AddRoleModalProps> = ({
             onClick={onClose}
         >
             <div
-                className="bg-surface border border-base rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                className="bg-surface border border-base rounded-xl shadow-ds-modal w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200"
                 onClick={e => e.stopPropagation()}
             >
                 <div className="px-6 py-4 flex items-center justify-between border-b border-base">

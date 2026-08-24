@@ -125,7 +125,7 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
 
     return createPortal(
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
-            <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
                 {/* Header - 对齐团本风格 */}
                 <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
                     <div>
@@ -155,16 +155,16 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                         <div className="flex flex-col gap-2">
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-1.5" title="总收入">
-                                    <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-500 flex-shrink-0" />
-                                    <span className="text-[1rem] font-bold text-emerald-600 dark:text-emerald-500">{formatGoldAmount(stats.totalIncome)}</span>
+                                    <TrendingUp className="w-4 h-4 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
+                                    <span className="text-[1rem] font-bold text-ds-success dark:text-ds-success">{formatGoldAmount(stats.totalIncome)}</span>
                                 </div>
                                 <div className="flex items-center gap-1.5" title="总支出">
-                                    <TrendingDown className="w-4 h-4 text-amber-600 dark:text-amber-500 flex-shrink-0" />
-                                    <span className="text-[1rem] font-bold text-amber-600 dark:text-amber-500">{formatGoldAmount(stats.totalExpense)}</span>
+                                    <TrendingDown className="w-4 h-4 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
+                                    <span className="text-[1rem] font-bold text-ds-warning dark:text-ds-warning">{formatGoldAmount(stats.totalExpense)}</span>
                                 </div>
                                 <div className="flex items-center gap-1.5" title="净收入">
                                     <Wallet className="w-4 h-4 text-muted flex-shrink-0" />
-                                    <span className={`text-[1rem] font-bold ${stats.netGold >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-amber-600 dark:text-amber-500'}`}>
+                                    <span className={`text-[1rem] font-bold ${stats.netGold >= 0 ? 'text-ds-success dark:text-ds-success' : 'text-ds-warning dark:text-ds-warning'}`}>
                                         {formatGoldAmount(stats.netGold)}
                                     </span>
                                 </div>
@@ -197,7 +197,7 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                                 return (
                                     <div
                                         key={record.id}
-                                        className={`p-4 rounded-xl border-2 border-base bg-surface transition-all duration-200 hover:shadow-md ${deletingRecordId === record.id ? 'opacity-50' : ''}`}
+                                        className={`p-4 rounded-xl border-2 border-base bg-surface transition-all duration-200 hover:shadow-ds-stack ${deletingRecordId === record.id ? 'opacity-50' : ''}`}
                                     >
                                         <div className="flex items-start justify-between gap-4">
                                             <div className="flex-1 min-w-0">
@@ -211,14 +211,14 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
 
                                                     {income > 0 && (
                                                         <div className="flex items-center gap-1" title="收入">
-                                                            <TrendingUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-500 flex-shrink-0" />
-                                                            <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-500">{formatGoldAmount(income)}</span>
+                                                            <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
+                                                            <span className="text-sm font-semibold text-ds-success-strong dark:text-ds-success-strong">{formatGoldAmount(income)}</span>
                                                         </div>
                                                     )}
                                                     {expense > 0 && (
                                                         <div className="flex items-center gap-1" title="支出">
-                                                            <TrendingDown className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 flex-shrink-0" />
-                                                            <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{formatGoldAmount(expense)}</span>
+                                                            <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
+                                                            <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{formatGoldAmount(expense)}</span>
                                                         </div>
                                                     )}
                                                 </div>
@@ -282,7 +282,7 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
             {/* 删除确认弹窗 - 对齐团本风格 */}
             {showConfirmDialog && recordToDelete && (
                 <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-[110] animate-in fade-in duration-200">
-                    <div className="bg-surface p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 animate-in zoom-in-95 duration-200">
+                    <div className="bg-surface p-6 rounded-2xl shadow-ds-modal max-w-sm w-full mx-4 animate-in zoom-in-95 duration-200">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center flex-shrink-0">
                                 <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />

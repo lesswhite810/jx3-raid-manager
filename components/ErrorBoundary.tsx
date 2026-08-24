@@ -40,7 +40,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-base flex items-center justify-center p-4">
-          <div className="bg-surface rounded-xl shadow-lg p-6 max-w-2xl w-full">
+          <div className="bg-surface rounded-xl shadow-ds-stack p-6 max-w-2xl w-full">
             <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">应用出错了</h2>
             <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 mb-4">
               <p className="text-red-700 dark:text-red-300 font-medium mb-2">错误信息:</p>

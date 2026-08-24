@@ -475,7 +475,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover shadow-md shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-2.5 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover shadow-ds-stack shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isSubmitting || !goldIncome || goldIncome <= 0}
             >
               {isSubmitting ? '提交中...' : '提交记录'}
@@ -535,7 +535,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
                 setRecordToDelete(record.id);
               };
               return (
-                <div key={record.id} className={`bg-surface p-4 rounded-xl shadow-sm border-l-4 flex items-start justify-between ${record.hasXuanjing ? 'border-l-amber-500 bg-amber-50/30 dark:bg-amber-900/10' : 'border-l-emerald-500'}`}>
+                <div key={record.id} className={`bg-surface p-4 rounded-xl shadow-sm border-l-4 flex items-start justify-between ${record.hasXuanjing ? 'border-l-amber-500 bg-ds-warning-soft/30 dark:bg-ds-warning-soft/10' : 'border-l-emerald-500'}`}>
                   <div className="flex gap-3">
                     <input
                       type="checkbox"
@@ -550,7 +550,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
                           {new Date(record.date).toLocaleDateString()}
                         </span>
                         {record.hasXuanjing && (
-                          <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[10px] font-bold rounded-full border border-amber-200 dark:border-amber-700">
+                          <span className="px-2 py-0.5 bg-ds-warning-soft dark:bg-ds-warning-soft/40 text-ds-warning-strong dark:text-ds-warning-strong text-[10px] font-bold rounded-full border border-ds-warning-soft dark:border-ds-warning">
                             玄晶
                           </span>
                         )}
@@ -562,14 +562,14 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                      <div className="text-lg font-bold text-ds-success dark:text-ds-success font-mono">
                         +{record.goldIncome.toLocaleString()}
                       </div>
                       <div className="text-xs text-muted">金币</div>
                     </div>
                     <button
                       onClick={handleDeleteClick}
-                      className="text-muted hover:text-amber-500 transition-colors p-1.5 rounded-full hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                      className="text-muted hover:text-ds-warning-strong transition-colors p-1.5 rounded-full hover:bg-ds-warning-soft dark:hover:bg-ds-warning-soft/20"
                       title="删除记录"
                     >
                       <Trash2 size={16} />
@@ -585,7 +585,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
       {/* Batch Delete Confirmation Dialog */}
       {showBatchDeleteConfirm && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50">
-          <div className="bg-surface p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
+          <div className="bg-surface p-6 rounded-xl shadow-ds-stack max-w-sm w-full mx-4">
             <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
             <p className="text-muted mb-6">确定要删除选中的 {selectedRecords.size} 条记录吗？</p>
             <div className="flex justify-end gap-3">
@@ -609,7 +609,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
       {/* Single Delete Confirmation Dialog */}
       {recordToDelete && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50">
-          <div className="bg-surface p-6 rounded-xl shadow-lg max-w-sm w-full mx-4">
+          <div className="bg-surface p-6 rounded-xl shadow-ds-stack max-w-sm w-full mx-4">
             <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
             <p className="text-muted mb-6">确定要删除这条记录吗？</p>
             <div className="flex justify-end gap-3">

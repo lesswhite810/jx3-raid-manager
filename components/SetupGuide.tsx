@@ -227,13 +227,13 @@ export const SetupGuide: React.FC = () => {
                 </div>
               )}
               {pathValidation === 'valid' && (
-                <div className="text-xs text-emerald-600 flex items-center gap-1">
+                <div className="text-xs text-ds-success-strong flex items-center gap-1">
                   <Check size={12} />
                   游戏目录有效
                 </div>
               )}
               {pathValidation === 'invalid' && (
-                <div className="text-xs text-amber-600">目录无效，请确认路径包含 SeasunGame\Game\JX3\bin\zhcn_hd</div>
+                <div className="text-xs text-ds-warning-strong">目录无效，请确认路径包含 SeasunGame\Game\JX3\bin\zhcn_hd</div>
               )}
 
               {/* 多客户端结果 */}
@@ -264,7 +264,7 @@ export const SetupGuide: React.FC = () => {
                 </button>
               )}
               {directorySaved && (
-                <div className="text-xs text-emerald-600 flex items-center gap-1">
+                <div className="text-xs text-ds-success-strong flex items-center gap-1">
                   <Check size={12} />
                   游戏目录已保存
                 </div>
@@ -289,13 +289,13 @@ export const SetupGuide: React.FC = () => {
               </button>
 
               {scanStatus.state === 'success' && scanResult && (
-                <div className="text-xs text-emerald-600 flex items-center gap-1">
+                <div className="text-xs text-ds-success-strong flex items-center gap-1">
                   <Check size={12} />
                   导入完成：当前共 {scanResult.accounts} 个账号、{scanResult.roles} 个角色
                 </div>
               )}
               {scanStatus.state === 'error' && (
-                <div className="text-xs text-amber-600">{scanStatus.message ?? '导入失败'}</div>
+                <div className="text-xs text-ds-warning-strong">{scanStatus.message ?? '导入失败'}</div>
               )}
               <p className="text-xs text-muted">
                 将读取茗伊插件目录下的角色信息供你选择导入，不会修改游戏文件。
@@ -347,7 +347,7 @@ export const SetupGuide: React.FC = () => {
 const StepBadge: React.FC<{ number: number; active: boolean; done: boolean }> = ({ number, active, done }) => {
   if (done) {
     return (
-      <span className="w-6 h-6 rounded-full bg-emerald-500 text-white text-xs font-bold flex items-center justify-center">
+      <span className="w-6 h-6 rounded-full bg-ds-success text-white text-xs font-bold flex items-center justify-center">
         <Check size={12} />
       </span>
     );

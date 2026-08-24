@@ -214,7 +214,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-auto">
+      <div className="bg-surface rounded-lg shadow-ds-modal w-full max-w-2xl max-h-[80vh] overflow-auto">
         <div className="flex items-center justify-between p-4 border-b border-base">
           <h2 className="text-lg font-semibold flex items-center gap-2 text-main">
             <Database className="w-5 h-5" />
@@ -307,12 +307,12 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
               {/* 迁移结果 */}
               {migrateResult && (
                 <div className={`p-3 rounded-lg mb-4 ${migrateResult.success
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'
+                  ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 border border-ds-success-soft dark:border-ds-success-soft'
                   : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
                   }`}>
                   <div className="flex items-center gap-2">
                     {migrateResult.success ? (
-                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                      <CheckCircle className="w-5 h-5 text-ds-success dark:text-ds-success" />
                     ) : (
                       <XCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
                     )}
@@ -327,19 +327,19 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                     <div className="mt-2 text-sm space-y-1">
                       <p className="flex justify-between">
                         <span className="text-muted">新增账号:</span>
-                        <span className={migrateResult.migrated.accounts > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                        <span className={migrateResult.migrated.accounts > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                           {migrateResult.migrated.accounts} 个
                         </span>
                       </p>
                       <p className="flex justify-between">
                         <span className="text-muted">新增记录:</span>
-                        <span className={migrateResult.migrated.records > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                        <span className={migrateResult.migrated.records > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                           {migrateResult.migrated.records} 条
                         </span>
                       </p>
                       <p className="flex justify-between">
                         <span className="text-muted">新增副本:</span>
-                        <span className={migrateResult.migrated.raids > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                        <span className={migrateResult.migrated.raids > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                           {migrateResult.migrated.raids} 个
                         </span>
                       </p>
@@ -349,7 +349,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                     <div className="mt-2 text-xs text-muted border-t border-base pt-2">
                       <p>数据库: {migrateResult.details.dbBefore.accounts} → {migrateResult.details.dbAfter.accounts} 账号</p>
                       {migrateResult.details.skipped.accounts > 0 && (
-                        <p className="text-amber-600 dark:text-amber-400">跳过 {migrateResult.details.skipped.accounts} 个重复账号</p>
+                        <p className="text-ds-warning dark:text-ds-warning">跳过 {migrateResult.details.skipped.accounts} 个重复账号</p>
                       )}
                     </div>
                   )}
@@ -405,12 +405,12 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
               {/* 去重结果 */}
               {deduplicateResult && (
                 <div className={`p-3 rounded-lg mb-4 ${deduplicateResult.success
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'
+                  ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 border border-ds-success-soft dark:border-ds-success-soft'
                   : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
                   }`}>
                   <div className="flex items-center gap-2">
                     {deduplicateResult.success ? (
-                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                      <CheckCircle className="w-5 h-5 text-ds-success dark:text-ds-success" />
                     ) : (
                       <XCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
                     )}
@@ -426,7 +426,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                       <p className="text-red-600 dark:text-red-400 font-medium">
                         已删除 {deduplicateResult.removed} 个重复账号
                       </p>
-                      <p className="text-emerald-600 dark:text-emerald-400">
+                      <p className="text-ds-success dark:text-ds-success">
                         剩余 {deduplicateResult.remaining} 个唯一账号
                       </p>
                     </div>
@@ -437,14 +437,14 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
               {/* 约束结果 */}
               {constraintResult && (
                 <div className={`p-3 rounded-lg mb-4 ${constraintResult.includes('✓')
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'
-                  : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800'
+                  ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 border border-ds-success-soft dark:border-ds-success-soft'
+                  : 'bg-ds-warning-soft dark:bg-ds-warning-soft/20 border border-ds-warning-soft dark:border-ds-warning-soft'
                   }`}>
                   <div className="flex items-center gap-2">
                     {constraintResult.includes('✓') ? (
-                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                      <CheckCircle className="w-5 h-5 text-ds-success dark:text-ds-success" />
                     ) : (
-                      <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                      <AlertTriangle className="w-5 h-5 text-ds-warning dark:text-ds-warning" />
                     )}
                     <span className="font-medium text-main">
                       唯一性约束
@@ -541,25 +541,25 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                 <>
                   <div className="flex justify-between items-center">
                     <span className="text-muted">账号</span>
-                    <span className={localData.accountsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={localData.accountsCount > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {localData.accountsCount} 个
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-muted">记录</span>
-                    <span className={localData.recordsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={localData.recordsCount > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {localData.recordsCount} 条
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-muted">副本</span>
-                    <span className={localData.raidsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={localData.raidsCount > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {localData.raidsCount} 个
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-muted">配置</span>
-                    <span className={localData.hasConfig ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={localData.hasConfig ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {localData.hasConfig ? '有' : '无'}
                     </span>
                   </div>
@@ -589,7 +589,7 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
                 <p className="text-gray-500">正在检查...</p>
               ) : diagnostic?.database ? (
                 <>
-                  <div className={`flex items-center gap-2 ${diagnostic.database.connectionOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                  <div className={`flex items-center gap-2 ${diagnostic.database.connectionOk ? 'text-ds-success dark:text-ds-success' : 'text-red-600 dark:text-red-400'
                     }`}>
                     {diagnostic.database.connectionOk ? (
                       <CheckCircle className="w-4 h-4" />
@@ -603,28 +603,28 @@ export function MigrationStatus({ onClose }: MigrationStatusProps) {
 
                   <div className="flex justify-between items-center p-2 bg-base rounded">
                     <span className="text-muted">账号</span>
-                    <span className={diagnostic.database.accountsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={diagnostic.database.accountsCount > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {diagnostic.database.accountsCount} 个
                     </span>
                   </div>
 
                   <div className="flex justify-between items-center p-2 bg-base rounded">
                     <span className="text-muted">记录</span>
-                    <span className={diagnostic.database.recordsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={diagnostic.database.recordsCount > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {diagnostic.database.recordsCount} 条
                     </span>
                   </div>
 
                   <div className="flex justify-between items-center p-2 bg-base rounded">
                     <span className="text-muted">副本</span>
-                    <span className={diagnostic.database.raidsCount > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={diagnostic.database.raidsCount > 0 ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {diagnostic.database.raidsCount} 个
                     </span>
                   </div>
 
                   <div className="flex justify-between items-center p-2 bg-base rounded">
                     <span className="text-muted">配置</span>
-                    <span className={diagnostic.database.hasConfig ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted'}>
+                    <span className={diagnostic.database.hasConfig ? 'text-ds-success dark:text-ds-success font-medium' : 'text-muted'}>
                       {diagnostic.database.hasConfig ? '有' : '无'}
                     </span>
                   </div>

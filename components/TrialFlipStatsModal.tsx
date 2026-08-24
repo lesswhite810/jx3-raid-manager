@@ -29,7 +29,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl overflow-hidden rounded-2xl border border-base bg-surface shadow-xl animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-4xl overflow-hidden rounded-2xl border border-base bg-surface shadow-ds-modal animate-in fade-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-base px-6 py-5">
@@ -60,7 +60,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
               <div className="mt-1 text-base font-semibold text-main">
                 {stats.bestFlipPosition ? `${stats.bestFlipPosition.position}号位` : '-'}
               </div>
-              <div className="mt-1 text-sm text-emerald-600">
+              <div className="mt-1 text-sm text-ds-success-strong">
                 {stats.bestFlipPosition
                   ? `${(stats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
                   : '0%'}
@@ -103,7 +103,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                     <div className="px-4 py-3 font-medium">{position.position}号位</div>
                     <div className="px-4 py-3">{position.flipCount}</div>
                     <div className="px-4 py-3">{position.flippedEquipmentCount}</div>
-                    <div className="px-4 py-3 font-medium text-emerald-600">
+                    <div className="px-4 py-3 font-medium text-ds-success">
                       {(position.flipEquipmentRate * 100).toFixed(1)}%
                     </div>
                     <div className="px-4 py-3">{position.appearanceCount}</div>
@@ -117,7 +117,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                   <div key={`trial-flip-modal-mobile-${position.position}`} className="rounded-xl border border-base p-4">
                     <div className="flex items-center justify-between">
                       <div className="font-medium text-main">{position.position}号位</div>
-                      <div className="text-xs font-semibold text-emerald-600">
+                      <div className="text-xs font-semibold text-ds-success-strong">
                         翻牌装备率 {(position.flipEquipmentRate * 100).toFixed(1)}%
                       </div>
                     </div>

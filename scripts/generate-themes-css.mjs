@@ -1,0 +1,349 @@
+/**
+ * 生成 index.css 的三主题版本
+ *
+ * 主题：
+ * - original: v2.1.53 之前的靛蓝 + 锌灰风格（默认）
+ * - jianghu:  v2.2.0 江湖纸笜（沉香褐基调，可选）
+ * - dark:     暗色模式
+ *
+ * 用法：node scripts/generate-themes-css.mjs
+ */
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUT = path.join(__dirname, '..', 'index.css');
+
+const COMMON_TOKENS = `
+        --r-sm: 2px;
+        --r-md: 4px;
+        --s-1: 4px;
+        --s-2: 8px;
+        --s-3: 12px;
+        --s-4: 16px;
+        --s-5: 24px;
+        --s-6: 32px;
+        --s-7: 48px;
+        --s-8: 64px;
+        --fs-xs: 12px;
+        --fs-sm: 13px;
+        --fs-md: 14px;
+        --fs-lg: 16px;
+        --fs-xl: 20px;
+        --fs-2xl: 24px;
+        --fs-3xl: 30px;
+        --fs-4xl: 36px;
+        --lh-tight: 1.25;
+        --lh-base: 1.5;
+        --lh-loose: 1.7;
+        --font-display: "Source Han Serif SC", "Noto Serif SC", "宋体", "Songti SC", serif;
+        --font-body: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", system-ui, sans-serif;
+        --font-mono: "SF Mono", "JetBrains Mono", "Menlo", Consolas, monospace;
+        --dur-fast: 120ms;
+        --dur-base: 180ms;
+        --dur-slow: 280ms;
+        --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+`;
+
+const DEFAULT_FALLBACK_TOKENS = `
+        --bg-base: 250 250 250;
+        --bg-surface: 255 255 255;
+        --text-main: 24 24 27;
+        --text-muted: 113 113 122;
+        --border-base: 228 228 231;
+        --primary-base: 79 70 229;
+        --primary-hover: 67 56 202;
+        --text-on-primary: 255 255 255;
+        --chart-income: 5 150 105;
+        --chart-expense: 217 119 6;
+        --radius: 0.5rem;
+`;
+
+// 主题 1：原方案（v2.1.53 之前的靛蓝 + 锌灰风格）
+const ORIGINAL_TOKENS = `
+        --bg-base: 250 250 250;
+        --bg-surface: 255 255 255;
+        --text-main: 24 24 27;
+        --text-muted: 113 113 122;
+        --border-base: 228 228 231;
+        --primary-base: 79 70 229;
+        --primary-hover: 67 56 202;
+        --text-on-primary: 255 255 255;
+        --chart-income: 5 150 105;
+        --chart-expense: 217 119 6;
+        --radius: 0.5rem;
+        --bg: #fafafa;
+        --surface-ds: #ffffff;
+        --surface-2: #f4f4f5;
+        --surface-3: #e4e4e7;
+        --border-ds: #e4e4e7;
+        --border-strong: #d4d4d8;
+        --fg: #18181b;
+        --fg-soft: #3f3f46;
+        --fg-mute: #71717a;
+        --fg-inverse: #ffffff;
+        --accent: #4f46e5;
+        --accent-soft: #eef2ff;
+        --accent-strong: #4338ca;
+        --success: #059669;
+        --success-soft: #ecfdf5;
+        --success-strong: #047857;
+        --warning: #d97706;
+        --warning-soft: #fffbeb;
+        --warning-strong: #b45309;
+        --danger-ds: #b91c1c;
+        --danger-soft: #fef2f2;
+        --info: #2563eb;
+        --info-soft: #eff6ff;
+        --info-strong: #1d4ed8;
+        --neutral: #52525b;
+        --neutral-soft: #f4f4f5;
+`;
+
+// 主题 2：江湖纸笜（v2.2.0 沉香褐基调）
+const JIANGHU_TOKENS = `
+        --bg-base: 250 247 242;
+        --bg-surface: 255 255 255;
+        --text-main: 31 26 20;
+        --text-muted: 138 127 112;
+        --border-base: 227 220 204;
+        --primary-base: 168 99 63;
+        --primary-hover: 138 79 48;
+        --text-on-primary: 255 255 255;
+        --chart-income: 93 135 112;
+        --chart-expense: 163 130 70;
+        --radius: 0.25rem;
+        --bg: #faf7f2;
+        --surface-ds: #ffffff;
+        --surface-2: #f3efe8;
+        --surface-3: #ede7dc;
+        --border-ds: #e3dccc;
+        --border-strong: #d4c8b3;
+        --fg: #1f1a14;
+        --fg-soft: #4a4339;
+        --fg-mute: #8a7f70;
+        --fg-inverse: #ffffff;
+        --accent: #a8633f;
+        --accent-soft: #f3e8df;
+        --accent-strong: #8a4f30;
+        --success: #5d8770;
+        --success-soft: #e3ebe5;
+        --success-strong: #3d5e4a;
+        --warning: #a38246;
+        --warning-soft: #f0e8d8;
+        --warning-strong: #6e5a30;
+        --danger-ds: #a55a52;
+        --danger-soft: #ecdfdc;
+        --info: #5e7e94;
+        --info-soft: #dfe5ea;
+        --info-strong: #3e546a;
+        --neutral: #6a6258;
+        --neutral-soft: #ebe6db;
+        --shadow-flat: 0 1px 2px rgba(31, 26, 20, 0.04);
+        --shadow-stack: 0 2px 6px rgba(31, 26, 20, 0.06);
+        --shadow-modal: 0 6px 16px rgba(31, 26, 20, 0.08);
+`;
+
+// 主题 3：暗色模式（基于原方案的锌灰暗色）
+const DARK_TOKENS = `
+        --bg-base: 9 9 11;
+        --bg-surface: 24 24 27;
+        --text-main: 250 250 250;
+        --text-muted: 161 161 170;
+        --border-base: 39 39 42;
+        --primary-base: 99 102 241;
+        --primary-hover: 129 140 248;
+        --text-on-primary: 255 255 255;
+        --chart-income: 52 211 153;
+        --chart-expense: 251 191 36;
+        --radius: 0.5rem;
+        --bg: #18181b;
+        --surface-ds: #27272a;
+        --surface-2: #3f3f46;
+        --surface-3: #52525b;
+        --border-ds: #3f3f46;
+        --border-strong: #52525b;
+        --fg: #fafafa;
+        --fg-soft: #d4d4d8;
+        --fg-mute: #a1a1aa;
+        --fg-inverse: #18181b;
+        --accent: #818cf8;
+        --accent-soft: #312e81;
+        --accent-strong: #a5b4fc;
+        --success: #34d399;
+        --success-soft: #064e3b;
+        --success-strong: #6ee7b7;
+        --warning: #fbbf24;
+        --warning-soft: #78350f;
+        --warning-strong: #fcd34d;
+        --danger-ds: #f87171;
+        --danger-soft: #7f1d1d;
+        --info: #60a5fa;
+        --info-soft: #1e3a8a;
+        --info-strong: #93c5fd;
+        --neutral: #a1a1aa;
+        --neutral-soft: #27272a;
+        --shadow-flat: 0 1px 2px rgba(0, 0, 0, 0.20);
+        --shadow-stack: 0 2px 6px rgba(0, 0, 0, 0.28);
+        --shadow-modal: 0 6px 16px rgba(0, 0, 0, 0.36);
+`;
+
+const SUFFIX = `
+
+    body {
+        @apply bg-base text-main transition-colors duration-200 antialiased;
+        font-feature-settings: "rlig" 1, "calt" 1;
+    }
+
+    *,
+    *::before,
+    *::after {
+        cursor: default;
+    }
+
+    input,
+    textarea,
+    [contenteditable="true"] {
+        cursor: text;
+    }
+
+    button,
+    a,
+    select,
+    label,
+    [role="button"],
+    [role="checkbox"],
+    [role="radio"],
+    [role="tab"],
+    [role="switch"],
+    summary {
+        cursor: pointer;
+    }
+
+    button:disabled,
+    [role="button"][aria-disabled="true"] {
+        cursor: not-allowed;
+    }
+}
+
+@layer components {
+    .btn {
+        @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base;
+    }
+
+    .btn-primary {
+        @apply bg-primary hover:bg-primary-hover text-white shadow-sm hover:shadow-md;
+    }
+
+    .btn-secondary {
+        @apply bg-surface text-main border border-base hover:bg-base hover:text-primary shadow-sm;
+    }
+
+    .btn-ghost {
+        @apply text-muted hover:text-main hover:bg-base/50;
+    }
+
+    .btn-danger {
+        @apply bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30;
+    }
+
+    .input {
+        @apply w-full px-3 py-2 bg-surface border border-base rounded-lg text-main transition-all duration-200 placeholder:text-muted/50 focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:opacity-50 disabled:bg-base;
+    }
+
+    .card {
+        @apply bg-surface border border-base rounded-xl shadow-sm p-6;
+    }
+}
+
+:focus-visible {
+    outline: none;
+}
+
+input::-ms-reveal,
+input::-ms-clear {
+    display: none;
+}
+
+.react-datepicker-wrapper {
+    width: 100%;
+}
+
+.custom-datepicker-popper {
+    z-index: 50;
+}
+
+.react-datepicker {
+    @apply bg-surface border-base text-main font-sans shadow-lg rounded-xl !important;
+}
+
+.react-datepicker__header {
+    @apply bg-surface border-b border-base rounded-t-xl pt-3 !important;
+}
+
+.react-datepicker__current-month,
+.react-datepicker-time__header,
+.react-datepicker-year-header {
+    @apply text-main font-semibold !important;
+}
+
+.react-datepicker__day-name,
+.react-datepicker__day,
+.react-datepicker__time-name {
+    @apply text-muted hover:bg-base hover:text-main rounded-lg transition-colors !important;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected,
+.react-datepicker__time-list-item--selected {
+    @apply bg-primary text-white hover:bg-primary-hover hover:text-white !important;
+}
+
+.react-datepicker__time-container {
+    @apply border-l border-base bg-surface !important;
+}
+
+.react-datepicker__time-list-item {
+    @apply text-muted hover:bg-base transition-colors rounded-lg mx-1 !important;
+}
+
+.react-datepicker__triangle {
+    display: none !important;
+}
+`;
+
+const header = `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        /* 主题共享 token */
+${COMMON_TOKENS}
+        /* 默认（未匹配 data-theme 时兜底，与 original 一致） */
+${DEFAULT_FALLBACK_TOKENS}
+    }
+
+    /* 主题 1：原方案（v2.1.53 之前的靛蓝 + 锌灰风格，默认） */
+    [data-theme="original"] {
+${ORIGINAL_TOKENS}
+    }
+
+    /* 主题 2：江湖纸笜（v2.2.0 沉香褐基调，可选） */
+    [data-theme="jianghu"] {
+${JIANGHU_TOKENS}
+    }
+
+    /* 主题 3：暗色模式 */
+    [data-theme="dark"] {
+${DARK_TOKENS}
+    }
+`;
+
+const css = header + SUFFIX;
+
+fs.writeFileSync(OUT, css, { encoding: 'utf8' });
+console.log('Written:', OUT);
+console.log('Size:', fs.statSync(OUT).size, 'bytes');
+console.log('Lines:', css.split('\n').length);

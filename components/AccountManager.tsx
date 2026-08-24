@@ -1021,8 +1021,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4">
+    <div className="flex flex-col h-full gap-4">
+      <div className="flex flex-col gap-4 flex-shrink-0">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <h2 className="text-xl font-bold text-main">账号管理</h2>
           <div className="flex items-center gap-2">
@@ -1031,7 +1031,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
               appConfig?.gameDirectory && (
                 <button
                   onClick={handleOpenImportRolesModal}
-                  className="bg-surface border border-base text-emerald-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
+                  className="bg-surface border border-base text-ds-success-strong hover:border-ds-success hover:text-ds-success-strong hover:bg-ds-success-soft active:scale-[0.98] px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm"
                 >
                   <Download className="w-4 h-4" />
                   <span>导入本地角色</span>
@@ -1199,7 +1199,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         )
       }
 
-      <div className="space-y-6">
+      <div className="space-y-6 flex-1 min-h-0 overflow-y-auto pr-1">
         {filteredAccounts.map(account => {
           const isExpanded = expandedAccountIds.has(account.id);
           const isDragging = isAccountDragActive && draggedAccountId === account.id;
@@ -1226,7 +1226,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 }
               }}
               style={cardStyle}
-              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-md' : 'border-base'} ${isDragTarget ? '' : ''}`}
+              className={`relative bg-surface rounded-lg border transition-[background-color,border-color,box-shadow,opacity,backdrop-filter] duration-200 ease-out ${isExpanded ? 'ring-1 ring-primary/20 shadow-sm' : 'hover:border-primary/30'} ${account.disabled ? 'opacity-60' : ''} ${isDragging ? 'z-30 border-primary/40 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-ds-stack' : 'border-base'} ${isDragTarget ? '' : ''}`}
             >
               {/* 可点击的头部区域 */}
               <div
@@ -1251,7 +1251,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   </div>
 
                   {/* 账号类型图标 */}
-                  <span className={`p-2 rounded-xl shrink-0 border ${account.type === AccountType.OWN ? 'bg-primary/5 text-primary border-primary/10' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
+                  <span className={`p-2 rounded-xl shrink-0 border ${account.type === AccountType.OWN ? 'bg-primary/5 text-primary border-primary/10' : 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft'}`}>
                     {account.type === AccountType.OWN ? <User size={16} /> : <UserCheck size={16} />}
                   </span>
 
@@ -1260,10 +1260,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     <div className="flex items-center gap-2 min-w-0">
                       <h3 className={`text-[1rem] font-semibold text-main truncate ${account.disabled ? 'line-through text-muted' : ''}`}>{account.accountName}</h3>
                       {account.type === AccountType.CLIENT && (
-                        <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 shrink-0">代清</span>
+                        <span className="text-[10px] font-medium text-ds-success-strong bg-ds-success-soft px-1.5 py-0.5 rounded-full border border-ds-success-soft shrink-0">代清</span>
                       )}
                       {account.disabled && (
-                        <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-100 shrink-0">已禁用</span>
+                        <span className="text-[10px] font-medium text-ds-warning-strong bg-ds-warning-soft px-1.5 py-0.5 rounded-full border border-ds-warning-soft shrink-0">已禁用</span>
                       )}
                       <button
                         onClick={(e) => {
@@ -1271,7 +1271,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                           copyUsername(account.username || account.accountName, account.id);
                         }}
                         data-no-account-drag="true"
-                        className={`p-1.5 rounded-lg transition-colors shrink-0 ${copyUsernameSuccess === account.id ? 'text-emerald-600 bg-emerald-50' : 'text-muted/60 hover:text-primary hover:bg-base'}`}
+                        className={`p-1.5 rounded-lg transition-colors shrink-0 ${copyUsernameSuccess === account.id ? 'text-ds-success-strong bg-ds-success-soft' : 'text-muted/60 hover:text-primary hover:bg-base'}`}
                         title="复制账号"
                       >
                         {copyUsernameSuccess === account.id ? <Check size={14} /> : <Clipboard size={14} />}
@@ -1283,7 +1283,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                             copyPassword(account.password!, account.id);
                           }}
                           data-no-account-drag="true"
-                          className={`p-1.5 rounded-lg transition-colors shrink-0 ${copySuccess === account.id ? 'text-emerald-600 bg-emerald-50' : 'text-muted/60 hover:text-primary hover:bg-base'}`}
+                          className={`p-1.5 rounded-lg transition-colors shrink-0 ${copySuccess === account.id ? 'text-ds-success-strong bg-ds-success-soft' : 'text-muted/60 hover:text-primary hover:bg-base'}`}
                           title="复制密码"
                         >
                           {copySuccess === account.id ? <Check size={14} /> : <Key size={14} />}
@@ -1295,7 +1295,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                       {account.notes?.trim() && (
                         <>
                           <span className="text-muted/50 shrink-0">·</span>
-                          <span className="truncate text-emerald-700">备注：{account.notes.trim()}</span>
+                          <span className="truncate text-ds-success-strong">备注：{account.notes.trim()}</span>
                         </>
                       )}
                     </div>
@@ -1323,7 +1323,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         return a;
                       }));
                     }}
-                    className={`p-2 rounded-xl transition-all active:scale-95 duration-200 ${account.type === AccountType.CLIENT ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-muted hover:text-primary hover:bg-base/80'}`}
+                    className={`p-2 rounded-xl transition-all active:scale-95 duration-200 ${account.type === AccountType.CLIENT ? 'text-ds-success-strong bg-ds-success-soft hover:bg-ds-success-soft' : 'text-muted hover:text-primary hover:bg-base/80'}`}
                     title={account.type === AccountType.CLIENT ? '取消代清' : '标记代清'}
                   >
                     {account.type === AccountType.CLIENT ? <UserCheck size={16} /> : <User size={16} />}
@@ -1337,7 +1337,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                         return a;
                       }));
                     }}
-                    className={`p-2 rounded-xl transition-all active:scale-95 duration-200 ${account.disabled ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
+                    className={`p-2 rounded-xl transition-all active:scale-95 duration-200 ${account.disabled ? 'text-ds-warning-strong bg-ds-warning-soft hover:bg-ds-warning-soft' : 'text-ds-success-strong bg-ds-success-soft hover:bg-ds-success-soft'}`}
                     title={account.disabled ? '启用账号' : '禁用账号'}
                   >
                     {account.disabled ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
@@ -1436,7 +1436,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                         return a;
                                       }));
                                     }}
-                                    className={`p-1.5 rounded-lg transition-all active:scale-95 duration-200 ${role.disabled ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100'}`}
+                                    className={`p-1.5 rounded-lg transition-all active:scale-95 duration-200 ${role.disabled ? 'text-ds-warning-strong bg-ds-warning-soft hover:bg-ds-warning-soft' : 'text-ds-success-strong bg-ds-success-soft hover:bg-ds-success-soft'}`}
                                     title={role.disabled ? '启用角色' : '禁用角色'}
                                   >
                                     {role.disabled ? <XCircle size={15} /> : <CheckCircle2 size={15} />}
@@ -1467,7 +1467,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                         className={`px-2.5 py-1 text-[11px] font-medium rounded-md border cursor-pointer transition-all min-w-[58px] text-center ${role.disabled
                                           ? 'bg-base text-muted border-base opacity-40 cursor-not-allowed'
                                           : isVisible
-                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800'
+                                            ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft dark:bg-ds-success-soft/30 dark:text-ds-success-strong dark:border-ds-success-soft'
                                             : 'bg-base/60 text-muted border-base hover:bg-base/80'
                                           }`}
                                         title={isVisible ? `在${type.name}中显示 (点击隐藏)` : `在${type.name}中隐藏 (点击显示)`}
@@ -1496,7 +1496,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {
         showBatchDeleteConfirm && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+            <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
               <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u9009\u4e2d\u7684 '}{selectedAccounts.size}{' \u4e2a\u8d26\u53f7\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
               <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
@@ -1535,7 +1535,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {
         pendingDeleteAccount && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+            <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
               <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u8d26\u53f7\u201c'}{pendingDeleteAccount.accountName}{'\u201d\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
               <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
@@ -1574,7 +1574,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {
         pendingDeleteRole && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-surface p-6 rounded-lg shadow-xl border border-base max-w-sm w-full mx-4">
+            <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
               <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u89d2\u8272\u201c'}{pendingDeleteRole.role.name}{'\u201d\uff1f\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u526f\u672c\u8bb0\u5f55\u3002'}</p>
               <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
@@ -1616,7 +1616,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           onClick={handleCloseEditRoleModal}
         >
           <div
-            className="bg-surface p-6 rounded-xl shadow-xl border border-base max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200"
+            className="bg-surface p-6 rounded-xl shadow-ds-modal border border-base max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200"
             onClick={e => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-main mb-4">修改角色信息</h3>
@@ -1688,7 +1688,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           onClick={handleCloseEditAccountModal}
         >
           <div
-            className="bg-surface rounded-xl shadow-xl border border-base max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
+            className="bg-surface rounded-xl shadow-ds-modal border border-base max-w-md w-full mx-4 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             <div className="px-6 py-4 flex items-center justify-between border-b border-base">
@@ -1712,7 +1712,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     <User className="w-4 h-4 text-primary shrink-0" />
                     <span className="truncate">{editingAccount.accountName}</span>
                     {editingAccount.type === AccountType.CLIENT && (
-                      <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 shrink-0">代清</span>
+                      <span className="text-[10px] font-medium text-ds-success-strong bg-ds-success-soft px-1.5 py-0.5 rounded-full border border-ds-success-soft shrink-0">代清</span>
                     )}
                   </div>
                 ) : null;

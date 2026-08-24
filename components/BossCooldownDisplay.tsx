@@ -26,12 +26,12 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
             onClick={() => onBossClick?.(boss.bossId, boss.bossName)}
             className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-all ${boss.hasRecord
                 ? 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-                : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 hover:bg-emerald-100'
+                : 'bg-ds-success-soft text-ds-success-strong dark:bg-ds-success-soft/30 dark:text-ds-success-strong hover:bg-ds-success-soft'
               } ${onBossClick ? 'cursor-pointer' : 'cursor-default'}`}
             title={boss.hasRecord ? `${boss.bossName} - 已完成` : `${boss.bossName} - 可打`}
           >
             <span
-              className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-emerald-500 animate-pulse'
+              className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-ds-success animate-pulse'
                 }`}
             />
             <span>{boss.bossName}</span>
@@ -56,7 +56,7 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
             onClick={() => onBossClick?.(boss.bossId, boss.bossName)}
             className={`relative p-2 rounded-lg border transition-all text-center ${boss.hasRecord
                 ? 'bg-gray-50 border-gray-200 dark:bg-gray-800/50 dark:border-gray-700'
-                : 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800 hover:border-emerald-300 hover:shadow-sm'
+                : 'bg-ds-success-soft border-ds-success-soft dark:bg-ds-success-soft/20 dark:border-ds-success-soft hover:border-ds-success hover:shadow-sm'
               } ${onBossClick ? 'cursor-pointer' : 'cursor-default'}`}
             title={boss.hasRecord
               ? `${boss.bossName} - 已完成 (${boss.lastRecordDate ? new Date(boss.lastRecordDate).toLocaleDateString('zh-CN') : ''})`
@@ -67,7 +67,7 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
               <div
                 className={`w-3 h-3 rounded-full flex items-center justify-center ${boss.hasRecord
                     ? 'bg-gray-400'
-                    : 'bg-emerald-500 animate-pulse'
+                    : 'bg-ds-success animate-pulse'
                   }`}
               >
                 {boss.hasRecord && (
@@ -77,7 +77,7 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
               <span
                 className={`text-xs font-medium truncate max-w-full ${boss.hasRecord
                     ? 'text-gray-500 dark:text-gray-400'
-                    : 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-ds-success dark:text-ds-success'
                   }`}
               >
                 {boss.bossName}
@@ -121,14 +121,14 @@ export const BossCooldownSummary: React.FC<BossCooldownSummaryProps> = ({
         ? 'bg-transparent text-main'
         : `px-2 py-1 rounded-lg ${allComplete
           ? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
-          : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
+          : 'bg-ds-success-soft text-ds-success-strong dark:bg-ds-success-soft/30 dark:text-ds-success-strong'
         }`
       }`}>
       <div className="flex items-center gap-1">
         {bossCooldowns.map((boss) => (
           <span
             key={boss.bossId}
-            className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-emerald-500'
+            className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-ds-success'
               }`}
             title={boss.bossName}
           />

@@ -626,13 +626,13 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden">
-            <div className="bg-surface w-full max-w-3xl rounded-xl shadow-2xl border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
+            <div className="bg-surface w-full max-w-3xl rounded-xl shadow-ds-modal border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-base bg-base/50">
                     <div className="flex items-center gap-6">
                         <div className="flex items-center gap-2">
                             <div className="p-2 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
-                                <Trophy className="w-5 h-5 text-amber-500/80" />
+                                <Trophy className="w-5 h-5 text-ds-warning-strong/80" />
                             </div>
                             <div>
                                 <h2 className="text-lg font-bold text-main">记录试炼</h2>
@@ -787,15 +787,15 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 relative w-full aspect-[3/4] rounded-xl border-2 p-0 flex flex-col items-center justify-start overflow-hidden
                                                 transition-colors duration-200
                                                 ${isSuggestedEquipmentPosition
-                                                    ? 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-400 dark:border-emerald-600 border-solid'
+                                                    ? 'bg-ds-success-soft/80 dark:bg-ds-success-soft/20 border-ds-success dark:border-ds-success border-solid'
                                                     : isSuggestedEquipmentPositionForRole
                                                         ? 'bg-sky-50/80 dark:bg-sky-900/20 border-sky-400 dark:border-sky-600 border-solid'
                                                         : hasItem
                                                             ? 'bg-surface border-slate-200 dark:border-slate-700'
-                                                            : 'bg-surface border-dashed border-base/60 hover:border-emerald-300 dark:hover:border-emerald-700 hover:bg-base/30'
+                                                            : 'bg-surface border-dashed border-base/60 hover:border-ds-success dark:hover:border-ds-success hover:bg-base/30'
                                                 }
                                                 ${isFlipped
-                                                    ? 'ring-2 ring-emerald-400 dark:ring-emerald-600 ring-offset-2 ring-offset-surface'
+                                                    ? 'ring-2 ring-ds-success dark:ring-ds-success ring-offset-2 ring-offset-surface'
                                                     : ''
                                                 }
                                             `}
@@ -806,7 +806,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             </div>
 
                                             {isSuggestedEquipmentPosition && (
-                                                <div className="absolute left-1.5 top-1.5 z-30 rounded border border-emerald-200 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/70 dark:text-emerald-300">
+                                                <div className="absolute left-1.5 top-1.5 z-30 rounded border border-ds-success-soft bg-ds-success-soft px-1.5 py-0.5 text-[10px] font-bold text-ds-success-strong dark:border-ds-success dark:bg-ds-success-soft/70 dark:text-ds-success-strong">
                                                     高发
                                                 </div>
                                             )}
@@ -835,8 +835,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             </div>
 
                                             {/* Hover Overlay */}
-                                            <div className="absolute inset-0 bg-emerald-500/10 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[1px] z-20">
-                                                <div className="bg-surface/90 text-emerald-600 dark:text-emerald-400 text-xs font-medium px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                            <div className="absolute inset-0 bg-ds-success/10 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[1px] z-20">
+                                                <div className="bg-surface/90 text-ds-success-strong dark:text-ds-success-strong text-xs font-medium px-3 py-1.5 rounded-full border border-ds-success-soft dark:border-ds-success-soft">
                                                     {hasItem ? '更换装备' : '选择装备'}
                                                 </div>
                                             </div>
@@ -854,7 +854,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             <div className={`
                                                 flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[10px] font-medium tracking-wide transition-colors border
                                                 ${isFlipped
-                                                    ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                                                    ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
                                                     : 'bg-base/50 text-muted border-transparent hover:bg-base hover:text-main'
                                                 }
                                             `}>
@@ -872,7 +872,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                     <div className="grid grid-cols-1 gap-6">
                         <div>
                             <label className="block text-xs font-medium text-muted mb-1.5 flex items-center gap-1.5">
-                                <Trophy className={`w-3.5 h-3.5 ${isTradable ? 'text-emerald-500/80' : 'text-slate-400'}`} />
+                                <Trophy className={`w-3.5 h-3.5 ${isTradable ? 'text-ds-success-strong/80' : 'text-slate-400'}`} />
                                 {isTradable ? '开出可交易物品！(可添加备注)' : '当前翻开物品绑定'}
                             </label>
                             <textarea
@@ -920,7 +920,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                     }}
                 >
                     <div
-                        className="w-full max-w-5xl h-[80vh] bg-surface rounded-xl shadow-2xl border border-base flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+                        className="w-full max-w-5xl h-[80vh] bg-surface rounded-xl shadow-ds-modal border border-base flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
                         onClick={e => e.stopPropagation()}
                     >
                         {/* Header Area */}
@@ -974,8 +974,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 className={`
                                                 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border
                                                 ${selectedType === type
-                                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
-                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-emerald-200 dark:hover:border-emerald-800'
+                                                        ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
+                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-ds-success-soft dark:hover:border-ds-success-soft'
                                                     }
                                             `}
                                             >
@@ -998,8 +998,8 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 className={`
                                                 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border
                                                 ${selectedBindType === opt.value
-                                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
-                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-emerald-200 dark:hover:border-emerald-800'
+                                                        ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
+                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-ds-success-soft dark:hover:border-ds-success-soft'
                                                     }
                                             `}
                                             >
@@ -1066,7 +1066,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             key={`${equip.ID}-${idx}`}
                                             type="button"
                                             onClick={() => handleSelectEquipment(equip.ID.toString())}
-                                            className="relative group bg-surface border border-base rounded-xl p-2 hover:border-emerald-300 dark:hover:border-emerald-700 transition-colors duration-200 text-left overflow-hidden flex flex-col"
+                                            className="relative group bg-surface border border-base rounded-xl p-2 hover:border-ds-success dark:hover:border-ds-success transition-colors duration-200 text-left overflow-hidden flex flex-col"
                                         >
                                             <EquipDisplay item={equip} />
                                             {/* Hover Effect Highlight */}

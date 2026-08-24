@@ -43,7 +43,7 @@ const DIFFICULTY_LABELS: Record<string, string> = {
 };
 
 const DIFFICULTY_COLORS: Record<string, string> = {
-  '普通': 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800',
+  '普通': 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft dark:bg-ds-success-soft/30 dark:text-ds-success-strong dark:border-ds-success-soft',
   '英雄': 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800',
   '挑战': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
 };
@@ -433,9 +433,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col h-full gap-4">
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-base pb-1">
+      <div className="flex gap-2 border-b border-base pb-1 flex-shrink-0">
         <button
           onClick={() => { setActiveTab('raid'); setSelectedRaid(null); }}
           className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'raid'
@@ -469,6 +469,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         )}
       </div>
 
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-6">
       {activeTab === 'baizhan' ? (
         <BaizhanManager
           records={baizhanRecords}
@@ -532,12 +533,12 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           {selectedVersion === FAVORITE_VIEW && favoriteMergedRaids.length > 0 ? (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <div className="h-px bg-amber-200 flex-1"></div>
-                <h3 className="text-sm font-bold text-amber-600 uppercase tracking-wider bg-amber-50 px-3 py-1 rounded-full border border-amber-200 flex items-center gap-1.5">
+                <div className="h-px bg-ds-warning-soft flex-1"></div>
+                <h3 className="text-sm font-bold text-ds-warning-strong uppercase tracking-wider bg-ds-warning-soft px-3 py-1 rounded-full border border-ds-warning-soft flex items-center gap-1.5">
                   <Star size={14} fill="currentColor" />
                   收藏
                 </h3>
-                <div className="h-px bg-amber-200 flex-1"></div>
+                <div className="h-px bg-ds-warning-soft flex-1"></div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                 {favoriteMergedRaids.map(mergedRaid => {
@@ -545,11 +546,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                   return (
                     <div
                       key={`favorite-${mergedRaid.name}`}
-                      className="p-4 rounded-xl border transition-all duration-200 relative group bg-amber-50/30 border-amber-200 hover:border-amber-400 hover:shadow-sm"
+                      className="p-4 rounded-xl border transition-all duration-200 relative group bg-ds-warning-soft/30 border-ds-warning-soft hover:border-ds-warning hover:shadow-sm"
                     >
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
-                          <span className="p-1.5 rounded-lg bg-amber-100 text-amber-600">
+                          <span className="p-1.5 rounded-lg bg-ds-warning-soft text-ds-warning-strong">
                             <Shield size={16} />
                           </span>
                           <div>
@@ -562,7 +563,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                               e.stopPropagation();
                               toggleFavorite(mergedRaid.name);
                             }}
-                            className="transition-all p-1 rounded-md text-amber-500 hover:text-amber-600 hover:bg-amber-100"
+                            className="transition-all p-1 rounded-md text-ds-warning-strong hover:text-ds-warning-strong hover:bg-ds-warning-soft"
                             title="取消收藏"
                           >
                             <Star size={16} fill="currentColor" />
@@ -572,7 +573,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                               e.stopPropagation();
                               toggleRaidStatus(mergedRaid.name);
                             }}
-                            className="transition-all p-1 rounded-md text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50"
+                            className="transition-all p-1 rounded-md text-ds-success-strong hover:text-ds-success-strong hover:bg-ds-success-soft"
                             title="禁用此副本（所有难度）"
                           >
                             <Power size={16} />
@@ -672,8 +673,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                 }}
                                 className={`transition-all p-1 rounded-md ${
                                   favoriteRaids.has(mergedRaid.name)
-                                    ? 'text-amber-500 hover:text-amber-600 hover:bg-amber-50'
-                                    : 'text-muted hover:text-amber-500 hover:bg-amber-50/50'
+                                    ? 'text-ds-warning-strong hover:text-ds-warning-strong hover:bg-ds-warning-soft'
+                                    : 'text-muted hover:text-ds-warning-strong hover:bg-ds-warning-soft/50'
                                 }`}
                                 title={favoriteRaids.has(mergedRaid.name) ? '取消收藏' : '收藏此副本'}
                               >
@@ -687,7 +688,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                 className={`transition-all p-1 rounded-md ${isDisabled
                                   ? 'text-muted hover:text-main hover:bg-base'
                                   : isRaidActive
-                                    ? 'text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50'
+                                    ? 'text-ds-success-strong hover:text-ds-success-strong hover:bg-ds-success-soft'
                                     : 'text-muted hover:text-main hover:bg-base'
                                   }`}
                                 title={isDisabled ? '启用此副本' : '禁用此副本（所有难度）'}
@@ -758,6 +759,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           )}
         </>
       )}
+      </div>
     </div>
   );
 };

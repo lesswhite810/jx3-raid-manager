@@ -19,6 +19,7 @@ const KEY_SETUP_COMPLETED: &str = "setup_completed";
 const KEY_LAST_SCAN_MINGYI_AT: &str = "last_scan_mingyi_at";
 const KEY_AUTO_SCAN_ENABLED: &str = "auto_scan_enabled";
 const KEY_AUTO_REFRESH_EQUIP_SCORE: &str = "auto_refresh_equip_score";
+const KEY_THEME: &str = "theme";
 
 /// 从 app_config 表读取指定 key 的值
 fn read_value(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
@@ -126,7 +127,33 @@ pub fn set_auto_scan_enabled(enabled: bool) -> Result<(), String> {
 pub fn set_auto_refresh_equip_score_enabled(enabled: bool) -> Result<(), String> {
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_AUTO_REFRESH_EQUIP_SCORE, if enabled { "true" } else { "false" })?;
+
     log::info!("[AppConfig] 启动刷新装分已{}", if enabled { "开启" } else { "关闭" });
+    Ok(())
+}
+
+/// 获取主题设置（Tauri 命令）
+///
+/// 返回当前存储的主题值（original / jianghu / dark），未设置时返回 None。
+#[tauri::command]
+pub fn get_theme() -> Result<Option<String>, String> {
+    let conn = db::init_db()?;
+    read_value(&conn, KEY_THEME)
+}
+
+/// 设置主题（Tauri 命令）
+///
+/// 仅接受 original / jianghu / dark 三个合法值；非法值会被拒绝。
+#[tauri::command]
+pub fn set_theme(theme: String) -> Result<(), String> {
+    if theme != "original" && theme != "jianghu" && theme != "dark" {
+        let msg = format!("[AppConfig] invalid theme value: {}", theme);
+        log::warn!("{}", msg);
+        return Err(msg);
+    }
+    let conn = db::init_db()?;
+    upsert_value(&conn, KEY_THEME, &theme)?;
+    log::info!("[AppConfig] theme switched to: {}", theme);
     Ok(())
 }
 

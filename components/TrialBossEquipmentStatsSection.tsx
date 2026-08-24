@@ -53,7 +53,7 @@ export const TrialBossEquipmentStatsSection: React.FC<TrialBossEquipmentStatsSec
                 <div className="px-4 py-3 font-medium break-words">{formatBossSequence(stat.bosses)}</div>
                 <div className="px-4 py-3">{stat.totalRecords}</div>
                 <div className="px-4 py-3">{stat.equipmentCount}</div>
-                <div className="px-4 py-3 font-medium text-emerald-600">
+                <div className="px-4 py-3 font-medium text-ds-success">
                   {stat.bestEquipmentPosition ? `${stat.bestEquipmentPosition.position}号位` : '-'}
                 </div>
                 <div className="px-4 py-3 text-muted break-words">{formatPositionSummary(stat)}</div>
@@ -76,7 +76,7 @@ export const TrialBossEquipmentStatsSection: React.FC<TrialBossEquipmentStatsSec
                   </div>
                   <div className="rounded-lg bg-base/40 px-3 py-2">
                     <div className="text-[11px] text-muted">高发位置</div>
-                    <div className="mt-1 font-semibold text-emerald-600">
+                    <div className="mt-1 font-semibold text-ds-success">
                       {stat.bestEquipmentPosition ? `${stat.bestEquipmentPosition.position}号` : '-'}
                     </div>
                   </div>

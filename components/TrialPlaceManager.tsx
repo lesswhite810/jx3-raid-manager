@@ -293,9 +293,9 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                 if (trialStatus === 'complete') {
                                     return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700 hover:border-amber-300';
+                                    return 'bg-ds-warning-soft dark:bg-ds-warning-soft/10 border-ds-warning-soft dark:border-ds-warning hover:border-ds-warning';
                                 } else {
-                                    return 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800 hover:border-emerald-300';
+                                    return 'bg-ds-success-soft dark:bg-ds-success-soft/10 border-ds-success-soft dark:border-ds-success-soft hover:border-ds-success';
                                 }
                             };
 
@@ -308,14 +308,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                     );
                                 } else if (trialStatus === 'partial') {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-warning" />
                                         </div>
                                     );
                                 } else {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-success-soft dark:bg-ds-success-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-success animate-pulse" />
                                         </div>
                                     );
                                 }
@@ -323,11 +323,11 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
                             const getButtonAddStyle = () => {
                                 if (trialStatus === 'complete') {
-                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-amber-500 text-white hover:bg-amber-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                    return 'bg-ds-warning text-white hover:bg-ds-warning hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 } else {
-                                    return 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                    return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 }
                             };
 
@@ -335,9 +335,9 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                 if (trialStatus === 'complete') {
                                     return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 hover:border-amber-300';
+                                    return 'bg-white text-ds-warning-strong border border-ds-warning-soft hover:bg-ds-warning-soft hover:border-ds-warning';
                                 } else {
-                                    return 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300';
+                                    return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
                                 }
                             };
 
@@ -370,7 +370,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
                                     <div className="flex items-center justify-between text-sm mb-3">
                                         <div className="flex items-center gap-2">
-                                            <Trophy className={`w-3.5 h-3.5 flex-shrink-0 ${stats.maxLayer > 0 ? 'text-amber-500' : 'text-muted'}`} />
+                                            <Trophy className={`w-3.5 h-3.5 flex-shrink-0 ${stats.maxLayer > 0 ? 'text-ds-warning-strong' : 'text-muted'}`} />
                                             <span className="text-xs text-muted">
                                                 本赛季最高: <span className="font-medium text-main">{stats.maxLayer > 0 ? `${stats.maxLayer}层` : '-'}</span>
                                             </span>
@@ -378,7 +378,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
                                         <div className="flex items-baseline gap-1">
                                             <span className="text-xs text-muted">本周进度:</span>
-                                            <span className={`font-bold ${trialStatus === 'complete' ? 'text-slate-500' : trialStatus === 'partial' ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                            <span className={`font-bold ${trialStatus === 'complete' ? 'text-slate-500' : trialStatus === 'partial' ? 'text-ds-warning' : 'text-ds-success'}`}>
                                                 {stats.weeklyCount}<span className="text-xs text-muted font-normal">/3</span>
                                             </span>
                                         </div>
@@ -396,7 +396,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                                         copyToClipboard(role.accountName, `account-${role.id}`);
                                                     }}
                                                     className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `account-${role.id}`
-                                                        ? 'text-emerald-600'
+                                                        ? 'text-ds-success'
                                                         : 'text-muted hover:text-main hover:bg-surface'
                                                         }`}
                                                     title={copiedField === `account-${role.id}` ? '已复制!' : '复制账号'}
@@ -419,7 +419,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                                             copyToClipboard(role.password ?? '', `password-${role.id}`);
                                                         }}
                                                         className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
-                                                            ? 'text-emerald-600'
+                                                            ? 'text-ds-success'
                                                             : 'text-muted hover:text-main hover:bg-surface'
                                                             }`}
                                                         title="复制密码"

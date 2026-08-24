@@ -63,7 +63,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
             onClick={onClose}
         >
             <div
-                className="bg-surface border border-base rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                className="bg-surface border border-base rounded-xl shadow-ds-modal w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200"
                 onClick={e => e.stopPropagation()}
             >
                 <div className="px-6 py-4 flex items-center justify-between border-b border-base">
@@ -127,7 +127,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                                 type="button"
                                 onClick={() => setType(AccountType.CLIENT)}
                                 className={`relative flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border transition-all duration-200 text-sm font-medium ${type === AccountType.CLIENT
-                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-500/30'
+                                    ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft dark:bg-ds-success-soft/20 dark:border-ds-success/30'
                                     : 'bg-base border-base text-muted hover:bg-base/80'
                                     }`}
                             >

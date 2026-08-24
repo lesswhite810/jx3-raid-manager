@@ -267,7 +267,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="bg-surface border border-base rounded-xl shadow-xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className="bg-surface border border-base rounded-xl shadow-ds-modal w-full max-w-2xl mx-4 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
         style={{ maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
@@ -292,7 +292,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
             <div className="flex items-center gap-3 text-sm text-muted">
               <span>共 <span className="font-medium text-main">{stats.totalRoles}</span> 个角色</span>
               <span className="text-muted/50">·</span>
-              <span>已导入 <span className="font-medium text-emerald-600">{stats.importedCount}</span></span>
+              <span>已导入 <span className="font-medium text-ds-success">{stats.importedCount}</span></span>
               <span className="text-muted/50">·</span>
               <span>可导入 <span className="font-medium text-primary">{stats.importableCount}</span></span>
             </div>
@@ -405,7 +405,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
                         <span className="text-xs text-muted shrink-0">
                           {accountSelectedCount}/{account.roles.length} 选中
                           {allImported ? (
-                            <span className="text-emerald-600 ml-1">· 全部已导入</span>
+                            <span className="text-ds-success ml-1">· 全部已导入</span>
                           ) : accountImportableCount > 0 && accountImportableCount < account.roles.length ? (
                             <span className="text-muted/60 ml-1">({accountImportableCount} 个可导入)</span>
                           ) : null}
@@ -458,7 +458,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
                                   </span>
                                 )}
                                 {role.alreadyImported && (
-                                  <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 shrink-0 flex items-center gap-0.5">
+                                  <span className="text-[10px] font-medium text-ds-success-strong bg-ds-success-soft px-1.5 py-0.5 rounded-full border border-ds-success-soft shrink-0 flex items-center gap-0.5">
                                     <Check size={10} />
                                     已导入
                                   </span>

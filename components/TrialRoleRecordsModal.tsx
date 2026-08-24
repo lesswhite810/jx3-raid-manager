@@ -256,7 +256,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
 
     return createPortal(
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
-            <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
                 {/* Header - 对齐团本风格 */}
                 <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
                     <div className="min-w-0">
@@ -335,8 +335,8 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                     <span className="font-medium">{formatDate(record.date)}</span>
                                                 </div>
                                                 <div className="flex items-center gap-1" title="层数">
-                                                    <Trophy className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 flex-shrink-0" />
-                                                    <span className="text-sm font-semibold text-amber-600 dark:text-amber-500">{record.layer} 层面</span>
+                                                    <Trophy className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
+                                                    <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{record.layer} 层面</span>
                                                 </div>
                                                 <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
                                                     <span>翻牌</span>
@@ -386,7 +386,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                                     <div key={`${record.id}-${equip.ID || index}`} className="w-full flex items-center gap-3 px-3 py-2 bg-base/50 rounded-lg border border-base/50">
                                                                         <div className="flex flex-col items-center gap-1 flex-shrink-0">
                                                                             {isFlipped ? (
-                                                                                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                                                                                <CheckCircle className="w-4 h-4 text-ds-success-strong" />
                                                                             ) : (
                                                                                 <Circle className="w-4 h-4 text-slate-400" />
                                                                             )}
@@ -400,20 +400,20 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                                         <div className="flex flex-col min-w-0 flex-1">
                                                                             <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                                                                                 <span className={`font-medium truncate text-sm ${isFlipped
-                                                                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                                                                    ? 'text-ds-success dark:text-ds-success'
                                                                                     : 'text-main'
                                                                                     }`}>
                                                                                     {equip.Name}
                                                                                 </span>
                                                                                 <span className={`px-1.5 py-0.5 rounded text-[10px] border ${isFlipped
-                                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800'
+                                                                                    ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft dark:bg-ds-success-soft/20 dark:text-ds-success-strong dark:border-ds-success-soft'
                                                                                     : 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-700'
                                                                                     }`}>
                                                                                     {isFlipped ? '已翻到' : '未翻到'}
                                                                                 </span>
                                                                             </div>
                                                                             <div className="flex items-center gap-1.5 text-xs text-muted mb-0.5 flex-wrap">
-                                                                                {bindLabel && <span className="text-amber-600">{bindLabel}</span>}
+                                                                                {bindLabel && <span className="text-ds-warning">{bindLabel}</span>}
                                                                                 <span>品级 {equip.Level}</span>
                                                                             </div>
                                                                             {attrs.length > 0 && (
@@ -491,7 +491,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                     }}
                 >
                     <div
-                        className="bg-surface rounded-2xl shadow-2xl max-w-sm w-full mx-4 border border-base animate-in zoom-in-95 duration-200"
+                        className="bg-surface rounded-2xl shadow-ds-modal max-w-sm w-full mx-4 border border-base animate-in zoom-in-95 duration-200"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Header */}
@@ -525,7 +525,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
 
                         {/* Warning */}
                         <div className="px-5 pb-4">
-                            <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                            <p className="text-xs text-ds-warning-strong dark:text-ds-warning-strong flex items-center gap-1.5">
                                 <AlertCircle className="w-3.5 h-3.5" />
                                 此操作不可恢复
                             </p>

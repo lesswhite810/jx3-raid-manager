@@ -212,7 +212,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                 if (baizhanStatus === 'complete') {
                                     return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
                                 } else {
-                                    return 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800 hover:border-emerald-300';
+                                    return 'bg-ds-success-soft dark:bg-ds-success-soft/10 border-ds-success-soft dark:border-ds-success-soft hover:border-ds-success';
                                 }
                             };
 
@@ -225,8 +225,8 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                     );
                                 } else {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-success-soft dark:bg-ds-success-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-success animate-pulse" />
                                         </div>
                                     );
                                 }
@@ -234,9 +234,9 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
 
                             const getButtonAddStyle = () => {
                                 if (baizhanStatus === 'complete') {
-                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 } else {
-                                    return 'bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-md transform hover:-translate-y-0.5';
+                                    return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 }
                             };
 
@@ -244,7 +244,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                 if (baizhanStatus === 'complete') {
                                     return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
                                 } else {
-                                    return 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:border-emerald-300';
+                                    return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
                                 }
                             };
 
@@ -277,7 +277,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                     <div className="flex justify-start text-sm mb-3">
                                         <div className="flex items-baseline gap-1">
                                             <span className="text-xs text-muted">本周收入:</span>
-                                            <span className={`font-bold font-mono ${stats.weeklyIncome > 0 ? 'text-emerald-600' : 'text-main'}`}>
+                                            <span className={`font-bold font-mono ${stats.weeklyIncome > 0 ? 'text-ds-success' : 'text-main'}`}>
                                                 {stats.weeklyIncome > 0 ? `+${stats.weeklyIncome.toLocaleString()}` : '-'}
                                                 {stats.weeklyIncome > 0 && <span className="text-xs text-muted font-normal">金</span>}
                                             </span>
@@ -296,7 +296,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                         copyToClipboard(role.accountName, `baizhan-account-${role.id}`);
                                                     }}
                                                     className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `baizhan-account-${role.id}`
-                                                        ? 'text-emerald-600'
+                                                        ? 'text-ds-success'
                                                         : 'text-muted hover:text-main hover:bg-surface'
                                                         }`}
                                                     title={copiedField === `baizhan-account-${role.id}` ? '已复制!' : '复制账号'}
@@ -319,7 +319,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                             copyToClipboard(role.password ?? '', `baizhan-password-${role.id}`);
                                                         }}
                                                         className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `baizhan-password-${role.id}`
-                                                            ? 'text-emerald-600'
+                                                            ? 'text-ds-success'
                                                             : 'text-muted hover:text-main hover:bg-surface'
                                                             }`}
                                                         title="复制密码"

@@ -6,7 +6,7 @@ import { toast, TOAST_EVENT, TOAST_DISMISS_EVENT } from '../utils/toastManager';
 // Toast 配置映射
 const TOAST_CONFIG = {
   success: {
-    bgColor: 'bg-emerald-600 dark:bg-emerald-700',
+    bgColor: 'bg-ds-success dark:bg-ds-success',
     textColor: 'text-white',
     icon: CheckCircle2
   },
@@ -16,7 +16,7 @@ const TOAST_CONFIG = {
     icon: XCircle
   },
   warning: {
-    bgColor: 'bg-amber-600 dark:bg-amber-700',
+    bgColor: 'bg-ds-warning dark:bg-ds-warning',
     textColor: 'text-white',
     icon: AlertCircle
   },
@@ -93,7 +93,7 @@ export const ToastContainer: React.FC = () => {
         return (
           <div
             key={toastItem.id}
-            className={`${config.bgColor} ${config.textColor} px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in pointer-events-auto`}
+            className={`${config.bgColor} ${config.textColor} px-6 py-3 rounded-xl shadow-ds-stack flex items-center gap-2 text-sm font-medium animate-in pointer-events-auto`}
             style={{
               animation: 'fadeInUp 0.3s ease-out'
             }}
