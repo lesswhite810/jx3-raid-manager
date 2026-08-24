@@ -25,18 +25,18 @@ export const FORCES_DATA: Force[] = [
         "id": 10002,
         "name": "洗髓经",
         "iconId": 10002,
-        "color": "bg-amber-100 dark:bg-amber-900/30",
-        "textColor": "text-amber-700 dark:text-amber-400",
-        "borderColor": "border-amber-200 dark:border-amber-800",
+        "color": "bg-ds-warning-soft dark:bg-ds-warning-soft/30",
+        "textColor": "text-ds-warning dark:text-ds-warning",
+        "borderColor": "border-ds-warning-soft dark:border-ds-warning-soft",
         "shortName": "和尚T"
       },
       {
         "id": 10003,
         "name": "易筋经",
         "iconId": 10003,
-        "color": "bg-amber-100 dark:bg-amber-900/30",
-        "textColor": "text-amber-700 dark:text-amber-400",
-        "borderColor": "border-amber-200 dark:border-amber-800",
+        "color": "bg-ds-warning-soft dark:bg-ds-warning-soft/30",
+        "textColor": "text-ds-warning dark:text-ds-warning",
+        "borderColor": "border-ds-warning-soft dark:border-ds-warning-soft",
         "shortName": "和尚"
       }
     ]
@@ -169,9 +169,9 @@ export const FORCES_DATA: Force[] = [
         "id": 10224,
         "name": "惊羽诀",
         "iconId": 10224,
-        "color": "bg-emerald-100 dark:bg-emerald-900/30",
-        "textColor": "text-emerald-700 dark:text-emerald-400",
-        "borderColor": "border-emerald-200 dark:border-emerald-800",
+        "color": "bg-ds-success-soft dark:bg-ds-success-soft/30",
+        "textColor": "text-ds-success dark:text-ds-success",
+        "borderColor": "border-ds-success-soft dark:border-ds-success-soft",
         "shortName": "鲸鱼"
       },
       {
@@ -208,9 +208,9 @@ export const FORCES_DATA: Force[] = [
         "id": 10268,
         "name": "笑尘诀",
         "iconId": 10268,
-        "color": "bg-amber-600 dark:bg-amber-900/50",
-        "textColor": "text-amber-50",
-        "borderColor": "border-amber-500 dark:border-amber-700",
+        "color": "bg-ds-warning dark:bg-ds-warning-soft/50",
+        "textColor": "text-ds-warning-soft",
+        "borderColor": "border-ds-warning dark:border-ds-warning",
         "shortName": "丐帮"
       }
     ]
@@ -461,15 +461,15 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     "shortName": "无相楼"
   },
   "洗髓经": {
-    "color": "bg-amber-100 dark:bg-amber-900/30",
-    "textColor": "text-amber-700 dark:text-amber-400",
-    "borderColor": "border-amber-200 dark:border-amber-800",
+    "color": "bg-ds-warning-soft dark:bg-ds-warning-soft/30",
+    "textColor": "text-ds-warning dark:text-ds-warning",
+    "borderColor": "border-ds-warning-soft dark:border-ds-warning-soft",
     "shortName": "和尚T"
   },
   "易筋经": {
-    "color": "bg-amber-100 dark:bg-amber-900/30",
-    "textColor": "text-amber-700 dark:text-amber-400",
-    "borderColor": "border-amber-200 dark:border-amber-800",
+    "color": "bg-ds-warning-soft dark:bg-ds-warning-soft/30",
+    "textColor": "text-ds-warning dark:text-ds-warning",
+    "borderColor": "border-ds-warning-soft dark:border-ds-warning-soft",
     "shortName": "和尚"
   },
   "花间游": {
@@ -533,9 +533,9 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     "shortName": "毒奶"
   },
   "惊羽诀": {
-    "color": "bg-emerald-100 dark:bg-emerald-900/30",
-    "textColor": "text-emerald-700 dark:text-emerald-400",
-    "borderColor": "border-emerald-200 dark:border-emerald-800",
+    "color": "bg-ds-success-soft dark:bg-ds-success-soft/30",
+    "textColor": "text-ds-success dark:text-ds-success",
+    "borderColor": "border-ds-success-soft dark:border-ds-success-soft",
     "shortName": "鲸鱼"
   },
   "天罗诡道": {
@@ -551,9 +551,9 @@ export const SECT_CONFIG: Record<string, SectConfig> = {
     "shortName": "藏剑"
   },
   "笑尘诀": {
-    "color": "bg-amber-600 dark:bg-amber-900/50",
-    "textColor": "text-amber-50",
-    "borderColor": "border-amber-500 dark:border-amber-700",
+    "color": "bg-ds-warning dark:bg-ds-warning-soft/50",
+    "textColor": "text-ds-warning-soft",
+    "borderColor": "border-ds-warning dark:border-ds-warning",
     "shortName": "丐帮"
   },
   "焚影圣诀": {
