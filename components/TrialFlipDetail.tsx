@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { TrialPlaceRecord } from '../types';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
@@ -23,6 +23,9 @@ const getTrialCardId = (record: TrialPlaceRecord, index: number): string => {
 };
 
 export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, equipments, onBack }) => {
+  // 内容分区：位置明细 / Boss 出装备统计
+  const [contentTab, setContentTab] = useState<'positions' | 'bossEquip'>('positions');
+
   const findEquipmentById = (id: string | undefined) => {
     if (!id || !id.trim()) return null;
 
@@ -115,6 +118,26 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
         </div>
       </div>
 
+      {/* 内容分区 Tab：位置明细 / Boss 出装备统计 */}
+      <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base w-fit">
+        {([
+          { key: 'positions', label: '位置明细' },
+          { key: 'bossEquip', label: 'Boss出装备统计' },
+        ] as const).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setContentTab(tab.key)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${contentTab === tab.key
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
+              }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {contentTab === 'positions' && (
       <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
         <div className="mb-4">
           <h3 className="text-lg font-semibold text-main">位置明细</h3>
@@ -184,8 +207,11 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           </>
         )}
       </div>
+      )}
 
-      <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
+      {contentTab === 'bossEquip' && (
+        <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
+      )}
       </div>
     </div>
   );

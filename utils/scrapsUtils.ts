@@ -91,7 +91,10 @@ export function normalizeScrapsItem(raw: RawScrapsItem): ScrapsItem {
   const category: ScrapsItem['category'] =
     source.category === 'equipment' ? 'equipment' : 'material';
 
-  return { name, count, unitPrice, category, priceSource };
+  // 实际购买价：仅新版记录携带；缺失时不臆造（undefined 表示未知）
+  const totalPrice = readFiniteNumber(source.totalPrice) ?? readFiniteNumber(source.total_price);
+  const item: ScrapsItem = { name, count, unitPrice, category, priceSource };
+  return totalPrice != null ? { ...item, totalPrice } : item;
 }
 
 /** 批量归一化散件清单 */
@@ -113,4 +116,104 @@ export function getRecordScrapsValue(
     return computeScrapsValue(normalizeScrapsItems(record.scrapsItems));
   }
   return Number(record.scrapsValue) || 0;
+}
+
+/**
+ * 记录的散件支出展示值（仅 isScrapsBoss=true 的记录非零）
+ *
+ * 口径：白名单物品的**实际购买花费**合计（来自扫描时"花费[..]购买了"消息的金额），
+ * 而非副本整体支出。
+ *
+ * 兼容规则：
+ * - 新版记录：物品携带 totalPrice，直接求和（免费获取的装备 totalPrice=0）
+ * - 旧版记录：无购买价数据，回退为副本总支出 goldExpense（历史口径，重新扫描后精确化）
+ */
+export function getRecordScrapsExpense(
+  record: Pick<RaidRecord, 'isScrapsBoss' | 'scrapsItems' | 'goldExpense'>,
+): number {
+  if (!record.isScrapsBoss) return 0;
+  const items = normalizeScrapsItems(record.scrapsItems);
+  const hasPurchaseData = items.some((item) => typeof item.totalPrice === 'number');
+  if (!hasPurchaseData) {
+    return Number(record.goldExpense) || 0;
+  }
+  return items.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0);
+}
+
+/** 散件白名单汇总条目（按物品名直接聚合，不分组） */
+export interface ScrapsSummaryRow {
+  name: string;
+  category: 'material' | 'equipment';
+  totalCount: number;
+  raidCount: number;
+  avgPerRaid: number;
+}
+
+/**
+ * 按物品名聚合散件清单
+ *
+ * 聚合范围：仅 isScrapsBoss=true 的记录。
+ * 数据流：
+ *   1. 过滤散件老板记录
+ *   2. 遍历每条记录的 scrapsItems（兼容 snake_case 旧数据）
+ *   3. 按 name 累加 count，同时按 record.id 维护 raidCount（去重）
+ *   4. 输出按 [totalCount 降序, name 升序] 排序
+ *
+ * 入参使用 Pick<Record> 而非 RaidRecord，以便 EnhancedRecord 等子类型也能复用
+ */
+export function summarizeScrapsByName(
+  records: readonly Pick<
+    RaidRecord,
+    'id' | 'isScrapsBoss' | 'scrapsItems' | 'scrapsValue'
+  >[],
+): ScrapsSummaryRow[] {
+  type Accumulator = {
+    name: string;
+    category: ScrapsItem['category'];
+    totalCount: number;
+    raidSet: Set<string>;
+  };
+
+  const map = new Map<string, Accumulator>();
+
+  records.forEach((record) => {
+    if (!record.isScrapsBoss) return;
+    const items = normalizeScrapsItems(record.scrapsItems);
+    if (items.length === 0) return;
+
+    items.forEach((item) => {
+      const key = item.name;
+      const existing = map.get(key);
+      if (existing) {
+        existing.totalCount += item.count;
+        existing.raidSet.add(record.id);
+      } else {
+        map.set(key, {
+          name: item.name,
+          category: item.category,
+          totalCount: item.count,
+          raidSet: new Set([record.id]),
+        });
+      }
+    });
+  });
+
+  const rows: ScrapsSummaryRow[] = [];
+  map.forEach((acc) => {
+    const raidCount = acc.raidSet.size;
+    rows.push({
+      name: acc.name,
+      category: acc.category,
+      totalCount: acc.totalCount,
+      raidCount,
+      avgPerRaid: raidCount > 0 ? acc.totalCount / raidCount : 0,
+    });
+  });
+
+  rows.sort((a, b) => {
+    if (a.totalCount !== b.totalCount) return b.totalCount - a.totalCount;
+    return a.name.localeCompare(b.name, 'zh-Hans-CN');
+  });
+
+  return rows;
 }

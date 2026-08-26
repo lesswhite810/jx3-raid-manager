@@ -3,9 +3,9 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { ArrowLeft, Coins, TrendingUp, TrendingDown, Search, Calendar, Trash2, Pencil, Sparkles, Ghost, Package, Flag, Shirt, Crown, Anchor, ChevronDown, BookOpen, Boxes } from 'lucide-react';
 import { RaidRecord, Account, BaizhanRecord, Season } from '../types';
 import { toast } from '../utils/toastManager';
-import { getLastMonday } from '../utils/cooldownManager';
+import { getLastMonday, getSeasonStartTimeMs } from '../utils/cooldownManager';
 import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey } from '../utils/recordLookupUtils';
-import { getRecordScrapsValue } from '../utils/scrapsUtils';
+import { getRecordScrapsExpense, getRecordScrapsValue, summarizeScrapsByName } from '../utils/scrapsUtils';
 import { db } from '../services/db';
 
 /** 收益记录单次渲染条数上限，超出部分通过底部按钮分页加载，避免超长列表一次性渲染造成卡顿 */
@@ -61,8 +61,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   const [deleteConfirmRecordId, setDeleteConfirmRecordId] = useState<string | null>(null);
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
-  const [seasonLoaded, setSeasonLoaded] = useState(false);
   const [chartView, setChartView] = useState<'raid' | 'role'>('role');
+  // 内容分区：收益汇总图表 / 散件白名单汇总 / 收益记录列表
+  const [contentTab, setContentTab] = useState<'summary' | 'scraps' | 'records'>('summary');
   const [renderLimit, setRenderLimit] = useState(PAGE_SIZE);
 
 
@@ -76,19 +77,10 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
   }, [period, searchTerm, activeTab]);
 
   useEffect(() => {
-    db.getCurrentSeason().then((s) => {
-      setCurrentSeason(s);
-      setSeasonLoaded(true);
-    }).catch(() => {
-      setSeasonLoaded(true);
+    db.getCurrentSeason().then(setCurrentSeason).catch(() => {
+      setCurrentSeason(null);
     });
   }, []);
-
-  useEffect(() => {
-    if (seasonLoaded && !currentSeason && period === 'season') {
-      handlePeriodChange('week');
-    }
-  }, [seasonLoaded, currentSeason, period]);
 
   const handlePeriodChange = (nextPeriod: 'week' | 'season' | 'all') => {
     setPeriod(nextPeriod);
@@ -142,12 +134,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
     if (period === 'week') {
       startOfPeriod = getLastMonday(now);
     } else if (period === 'season') {
-      if (currentSeason?.startDate) {
-        const sd = currentSeason.startDate;
-        startOfPeriod = new Date(sd > 1e12 ? sd : sd * 1000);
-      } else {
-        startOfPeriod = new Date(0);
-      }
+      // 赛季未配置时回退为不过滤（展示全部），避免出现"本赛季与本周相同"的假象
+      const seasonStartMs = currentSeason ? getSeasonStartTimeMs(currentSeason.startDate) : null;
+      startOfPeriod = new Date(seasonStartMs ?? 0);
     } else {
       startOfPeriod = new Date(now.getFullYear() - 10, 0, 1);
     }
@@ -205,6 +194,18 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       .filter(r => clientAccountIds.has(r.accountId))
       .reduce((acc, r) => acc + (r.goldExpense || 0), 0);
 
+    // 散件口径：仅统计 isScrapsBoss=true 的记录
+    // 支出 = 白名单物品的实际购买花费合计（旧版记录回退为副本总支出，见 getRecordScrapsExpense）
+    // 预估收益 = getRecordScrapsValue 之和
+    // 净收入 = 预估收益 − 支出
+    const scrapsRecords = confirmedRecords.filter(r => r.isScrapsBoss);
+    const scrapsExpense = scrapsRecords.reduce((acc, r) => acc + getRecordScrapsExpense(r), 0);
+    const scrapsEstimatedIncome = scrapsRecords.reduce(
+      (acc, r) => acc + getRecordScrapsValue(r),
+      0,
+    );
+    const scrapsNetIncome = scrapsEstimatedIncome - scrapsExpense;
+
     return {
       totalIncome,
       totalExpense,
@@ -212,9 +213,19 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       xuanjingCount,
       clientIncome,
       clientExpense,
-      clientNetIncome: clientIncome - clientExpense
+      clientNetIncome: clientIncome - clientExpense,
+      scrapsExpense,
+      scrapsEstimatedIncome,
+      scrapsNetIncome,
+      scrapsRecordCount: scrapsRecords.length,
     };
   }, [confirmedRecords, safeAccounts]);
+
+  // 散件白名单汇总（仅 isScrapsBoss=true 的记录）
+  const scrapsSummary = useMemo(
+    () => summarizeScrapsByName(confirmedRecords),
+    [confirmedRecords],
+  );
 
   // 副本收益分布图表数据
   const chartData = useMemo(() => {
@@ -346,6 +357,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           </div>
           <p className="text-3xl font-bold text-main">{formatGold(stats.totalIncome)}</p>
           <p className="text-muted text-sm mt-2">代清收入: {formatGold(stats.clientIncome)} 金</p>
+          {stats.scrapsRecordCount > 0 && (
+            <p className="text-muted text-sm mt-1">散件预估收益: {formatGold(stats.scrapsEstimatedIncome)} 金</p>
+          )}
         </div>
 
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
@@ -357,6 +371,11 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           </div>
           <p className="text-3xl font-bold text-main">{formatGold(stats.totalExpense)}</p>
           <p className="text-muted text-sm mt-2">代清支出: {formatGold(stats.clientExpense)} 金</p>
+          {stats.scrapsRecordCount > 0 && (
+            <p className="text-muted text-sm mt-1" title="白名单物品的实际购买花费合计；旧版记录按副本总支出近似">
+              散件支出: {formatGold(stats.scrapsExpense)} 金
+            </p>
+          )}
         </div>
 
         <div className="bg-surface rounded-xl p-5 shadow-sm border border-base">
@@ -370,10 +389,36 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             {stats.netIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.netIncome))}
           </p>
           <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
+          {stats.scrapsRecordCount > 0 && (
+            <p className={`text-sm mt-1 ${stats.scrapsNetIncome >= 0 ? 'text-ds-success' : 'text-ds-warning'}`}>
+              散件净收入: {stats.scrapsNetIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.scrapsNetIncome))} 金
+            </p>
+          )}
         </div>
       </div>
 
+      {/* 内容分区 Tab：汇总 / 散件白名单 / 收益记录 */}
+      <div className="flex items-center gap-1 bg-base rounded-lg p-1 border border-base w-fit">
+        {([
+          { key: 'summary', label: '收益汇总' },
+          { key: 'scraps', label: '散件白名单' },
+          { key: 'records', label: '收益记录' },
+        ] as const).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setContentTab(tab.key)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${contentTab === tab.key
+              ? 'bg-surface text-primary shadow-sm ring-1 ring-base'
+              : 'text-muted hover:text-main'
+              }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {/* 收益分布图表 */}
+      {contentTab === 'summary' && (
       <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -507,8 +552,67 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           )
         )}
       </div>
+      )}
 
+      {/* 散件白名单汇总（按物品统计） */}
+      {contentTab === 'scraps' && (
+      <div className="bg-surface rounded-xl shadow-sm border border-base p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-base rounded-lg">
+              <Boxes className="w-5 h-5 text-muted" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-main">散件白名单汇总</h3>
+              <p className="text-sm text-muted">
+                按物品统计获取总数、副本数与平均每个副本数量
+              </p>
+            </div>
+          </div>
+          <span className="text-sm text-muted">
+            {period === 'week' ? '本周' : period === 'season' ? '本赛季' : '全部'}数据
+          </span>
+        </div>
 
+        {scrapsSummary.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] text-muted border-b border-base">
+                  <th className="text-left font-medium py-2 pr-3">物品</th>
+                  <th className="text-left font-medium py-2 pr-3 w-16">分类</th>
+                  <th className="text-right font-medium py-2 pr-3 w-20">获取总数</th>
+                  <th className="text-right font-medium py-2 pr-3 w-20">副本数</th>
+                  <th className="text-right font-medium py-2 pl-3 w-24">平均/副本</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scrapsSummary.map((row) => (
+                  <tr key={row.name} className="border-b border-base/50 last:border-b-0">
+                    <td className="py-2 pr-3 text-main">{row.name}</td>
+                    <td className="py-2 pr-3 text-muted">
+                      {row.category === 'equipment' ? '装备' : '材料'}
+                    </td>
+                    <td className="py-2 pr-3 text-right font-semibold text-main">{row.totalCount.toLocaleString()}</td>
+                    <td className="py-2 pr-3 text-right text-muted">{row.raidCount.toLocaleString()}</td>
+                    <td className="py-2 pl-3 text-right text-muted">{row.avgPerRaid.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-10 text-muted">
+            <Boxes className="w-10 h-10 text-muted/30 mb-2" />
+            <p className="text-sm">
+              {stats.scrapsRecordCount === 0 ? '暂无散件老板记录' : '暂无散件数据'}
+            </p>
+          </div>
+        )}
+      </div>
+      )}
+
+      {contentTab === 'records' && (
       <div className="bg-surface rounded-xl shadow-sm border border-base overflow-hidden">
         <div className="p-4 border-b border-base">
           <div className="flex items-center justify-between mb-4">
@@ -810,6 +914,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           )}
         </div>
       </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirmRecordId && (

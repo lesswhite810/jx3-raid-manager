@@ -95,6 +95,22 @@ export const getNextMonday = (date: Date): Date => {
 };
 
 /**
+ * 将赛季起始时间统一解析为毫秒级时间戳。
+ * 兼容三种历史数据：秒级数字 / 毫秒级数字 / ISO 字符串。
+ * 解析失败返回 null，由调用方决定回退策略。
+ */
+export const getSeasonStartTimeMs = (startDate: number | string | undefined): number | null => {
+  if (typeof startDate === 'number' && Number.isFinite(startDate)) {
+    return startDate > 1e12 ? startDate : startDate * 1000;
+  }
+  if (typeof startDate === 'string') {
+    const parsed = new Date(startDate).getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+/**
  * 获取当前月份的起始时间（本月1日 00:00）
  * 用于"扫描本月"等按自然月范围扫描的场景
  */

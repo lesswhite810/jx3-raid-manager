@@ -69,6 +69,8 @@ export interface ScrapsItem {
   count: number;
   /** 单价（金）。null 表示需用户在前端手填 */
   unitPrice: number | null;
+  /** 该物品的累计实际购买价（金）。旧版记录可能缺失（undefined） */
+  totalPrice?: number;
   category: 'material' | 'equipment';
   priceSource: 'jx3box' | 'npc' | 'manual';
 }

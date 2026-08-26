@@ -69,6 +69,8 @@ struct ScrapsItem {
     count: u32,
     /// 单价（金）。None 表示需用户在前端手填
     unit_price: Option<i64>,
+    /// 该物品的累计实际购买价（金），来自"花费[..]购买了"消息；0 金购买（免费散件）为 0
+    total_price: i64,
     /// "material" | "equipment"
     category: String,
     /// "jx3box" | "npc" | "manual"
@@ -176,6 +178,7 @@ fn compute_scraps_items(
             name: name.clone(),
             count: info.count,
             unit_price,
+            total_price: info.total_price,
             category: if is_material { "material".to_string() } else { "equipment".to_string() },
             price_source,
         });
@@ -5822,12 +5825,14 @@ mod tests {
             name: "流漓腰带".to_string(),
             count: 2,
             unit_price: Some(170),
+            total_price: 0,
             category: "equipment".to_string(),
             price_source: "npc".to_string(),
         };
         let json: serde_json::Value = serde_json::to_value(&item).expect("序列化失败");
         assert_eq!(json["unitPrice"], 170, "应输出 camelCase 键 unitPrice");
         assert_eq!(json["priceSource"], "npc", "应输出 camelCase 键 priceSource");
+        assert_eq!(json["totalPrice"], 0, "应输出 camelCase 键 totalPrice");
         assert!(json.get("unit_price").is_none(), "不应残留 snake_case 键 unit_price");
         assert!(json.get("price_source").is_none(), "不应残留 snake_case 键 price_source");
     }

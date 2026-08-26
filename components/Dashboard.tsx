@@ -3,7 +3,7 @@ import React, { useMemo, useState } from 'react';
 import { RaidRecord, Account, AccountType, DashboardStats, BaizhanRecord, TrialPlaceRecord, Season } from '../types';
 import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
-import { getLastMonday } from '../utils/cooldownManager';
+import { getLastMonday, getSeasonStartTimeMs } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { getRecordScrapsValue } from '../utils/scrapsUtils';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
@@ -44,22 +44,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
   const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
-  const [seasonLoaded, setSeasonLoaded] = useState(false);
 
   React.useEffect(() => {
-    db.getCurrentSeason().then((s) => {
-      setCurrentSeason(s);
-      setSeasonLoaded(true);
-    }).catch(() => {
-      setSeasonLoaded(true);
+    db.getCurrentSeason().then(setCurrentSeason).catch(() => {
+      setCurrentSeason(null);
     });
   }, []);
-
-  React.useEffect(() => {
-    if (seasonLoaded && !currentSeason && statsPeriod === 'season') {
-      onStatsPeriodChange('week');
-    }
-  }, [seasonLoaded, currentSeason, statsPeriod, onStatsPeriodChange]);
 
   const getPeriodStartTime = React.useCallback((period: 'week' | 'season' | 'all') => {
     if (period === 'all') return null;
@@ -69,12 +59,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return getLastMonday(now).getTime();
     }
 
-    if (currentSeason?.startDate) {
-      const startDate = currentSeason.startDate;
-      return startDate > 1e12 ? startDate : startDate * 1000;
-    }
-
-    return null;
+    // 赛季未加载/未配置时返回 null（视为不过滤），由界面提示当前无生效赛季
+    return currentSeason ? getSeasonStartTimeMs(currentSeason.startDate) : null;
   }, [currentSeason]);
 
   const periodStartTime = getPeriodStartTime(statsPeriod);
@@ -412,14 +398,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
-          {/* 总收入 */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {/* 本期总收入（含散件副标签） */}
           <div className="rounded-lg border border-ds-success-soft/60 bg-ds-success-soft/60 p-3 dark:border-ds-success-soft/30 dark:bg-ds-success-soft/10">
             <div className="text-xs font-medium text-ds-success-strong dark:text-ds-success-strong">本期总收入</div>
             <div className="mt-1.5 text-2xl font-bold text-ds-success dark:text-ds-success">
               {stats.totalGold.toLocaleString()}
               <span className="ml-1 text-xs font-normal text-ds-success-strong/70 dark:text-ds-success-strong/70">金</span>
             </div>
+            {(stats.totalScrapsValue ?? 0) > 0 && (
+              <div className="mt-1 text-xs text-muted">
+                散件估价 {(stats.totalScrapsValue ?? 0).toLocaleString()} 金
+              </div>
+            )}
           </div>
 
           {/* 通关次数 */}
@@ -442,19 +433,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="text-xs font-medium text-muted">百战异闻录</div>
             <div className="mt-1.5 text-lg font-bold text-main">{incomeBreakdown.baizhanGold.toLocaleString()}<span className="ml-1 text-xs font-normal text-muted">金</span></div>
             <div className="mt-1 text-xs text-muted">{incomeBreakdown.baizhanCount} 次通关</div>
-          </div>
-
-          {/* 散件估价 */}
-          <div
-            className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30"
-            title="散件老板记录的散件估价合计，不并入总收入"
-          >
-            <div className="text-xs font-medium text-muted">散件估价</div>
-            <div className="mt-1.5 text-lg font-bold text-main">
-              {(stats.totalScrapsValue ?? 0).toLocaleString()}
-              <span className="ml-1 text-xs font-normal text-muted">金</span>
-            </div>
-            <div className="mt-1 text-xs text-muted">散件老板</div>
           </div>
         </div>
       </div>
