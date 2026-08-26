@@ -87,6 +87,33 @@ export const dropScannerService = {
   },
 
   /**
+   * 回填历史散件记录的实际购买价（totalPrice）。
+   *
+   * 适用对象：isScrapsBoss=true 且 scrapsItems 中没有任何物品携带 totalPrice 的旧版记录。
+   * 后端会从聊天记录数据库（chatlog）中按副本时间窗口重新提取购买消息，
+   * 将每个白名单物品的实际购买花费持久化到 scrapsItems[*].totalPrice。
+   *
+   * - 首次安装或升级到 v2.2.1 后调用一次即可，之后对旧记录为 no-op
+   * - 若游戏目录/chatlog 已不可用，会安全跳过（不破坏现有数据）
+   * - 返回的 updated > 0 时建议重新拉取记录列表以刷新前端显示
+   */
+  async backfillScrapsPurchasePrices(): Promise<{
+    scanned: number;
+    updated: number;
+    skipped: number;
+    failedIds: string[];
+    message: string;
+  }> {
+    return invoke<{
+      scanned: number;
+      updated: number;
+      skipped: number;
+      failedIds: string[];
+      message: string;
+    }>('backfill_scraps_purchase_prices');
+  },
+
+  /**
    * 清空 JCL 解析缓存表（jcl_cache）。
    *
    * 当 analyze_jcl 逻辑修复后，旧版缓存可能残留错误的 is_kill 判定，

@@ -39,6 +39,7 @@ import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts, preserveRoleOrder } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
+import { dropScannerService } from './services/dropScanner';
 import { analyzeRoles } from './services/gameDirectoryScanner';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { updaterService } from './services/updater';
@@ -148,6 +149,27 @@ function App() {
       console.error('重新加载账号失败:', error);
     }
   }, [instanceTypes]);
+
+  // 散件记录购买价一次性回填（升级到支持 totalPrice 后触发一次）
+  // 旧版记录无 totalPrice 字段，回填后再次刷新以反映新口径的散件支出
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await dropScannerService.backfillScrapsPurchasePrices();
+        if (cancelled) return;
+        if (result.updated > 0) {
+          console.log('[Backfill] 散件购买价回填:', result.message);
+          toast.success(result.message);
+          await reloadRecords();
+        }
+      } catch (error) {
+        // 回填失败不应阻塞应用启动（例如未配置游戏目录）
+        console.warn('[Backfill] 散件购买价回填失败:', error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [reloadRecords]);
 
   // 副本掉落自动扫描（B 阶段）：JX3 在线时全局自动扫描 pending 记录
   // 扫描到新记录后自动重新加载 records

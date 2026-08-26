@@ -256,6 +256,8 @@ fn main() {
             mingyi::drop_scanner::scan_raid_drops,
             mingyi::drop_scanner::scan_all_active_raid_drops,
             mingyi::drop_scanner::scan_raids_in_range,
+            // 散件记录购买价回填
+            mingyi::drop_scanner::backfill_scraps_purchase_prices,
             mingyi::drop_scanner::confirm_record,
             mingyi::drop_scanner::reject_record,
             mingyi::drop_scanner::clear_jcl_cache,
