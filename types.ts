@@ -110,6 +110,8 @@ export interface RaidRecord {
   scrapsItems?: ScrapsItem[];
   /** 散件估价总和（扫描时快照；unitPrice 未填齐时为部分和） */
   scrapsValue?: number;
+  /** 散件支出（白名单材料的实际购买花费合计；其他装备/小铁等购买计入 goldExpense 不计入此字段） */
+  scrapsExpense?: number;
   /** 是否为散件老板（用户在确认弹窗勾选，默认 false） */
   isScrapsBoss?: boolean;
 }
@@ -177,6 +179,8 @@ export interface DashboardStats {
   clientIncome: number;
   /** 散件估价合计（仅统计 isScrapsBoss=true 的记录，不并入 totalGold） */
   totalScrapsValue?: number;
+  /** 散件支出合计（白名单材料的实际购买花费；装备/小铁等其他购买不计入） */
+  totalScrapsExpense?: number;
 }
 
 export interface Raid {

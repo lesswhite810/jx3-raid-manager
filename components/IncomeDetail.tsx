@@ -6,6 +6,7 @@ import { toast } from '../utils/toastManager';
 import { getLastMonday, getSeasonStartTimeMs } from '../utils/cooldownManager';
 import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey } from '../utils/recordLookupUtils';
 import { getRecordScrapsExpense, getRecordScrapsValue, summarizeScrapsByName } from '../utils/scrapsUtils';
+import { formatGold } from '../utils/goldFormat';
 import { db } from '../services/db';
 
 /** 收益记录单次渲染条数上限，超出部分通过底部按钮分页加载，避免超长列表一次性渲染造成卡顿 */
@@ -195,7 +196,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       .reduce((acc, r) => acc + (r.goldExpense || 0), 0);
 
     // 散件口径：仅统计 isScrapsBoss=true 的记录
-    // 支出 = 白名单物品的实际购买花费合计（旧版记录回退为副本总支出，见 getRecordScrapsExpense）
+    // 支出 = 白名单材料的实际购买花费合计（装备/小铁等其他购买属于非散件支出，不计入）
     // 预估收益 = getRecordScrapsValue 之和
     // 净收入 = 预估收益 − 支出
     const scrapsRecords = confirmedRecords.filter(r => r.isScrapsBoss);
@@ -272,10 +273,6 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
       hour: '2-digit',
       minute: '2-digit'
     });
-  };
-
-  const formatGold = (amount: number) => {
-    return amount.toLocaleString();
   };
 
   const handleDeleteClick = (recordId: string) => {
@@ -356,9 +353,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             <span className="text-muted font-medium">总收入</span>
           </div>
           <p className="text-3xl font-bold text-main">{formatGold(stats.totalIncome)}</p>
-          <p className="text-muted text-sm mt-2">代清收入: {formatGold(stats.clientIncome)} 金</p>
+          <p className="text-muted text-sm mt-2">代清收入: {formatGold(stats.clientIncome)}</p>
           {stats.scrapsRecordCount > 0 && (
-            <p className="text-muted text-sm mt-1">散件预估收益: {formatGold(stats.scrapsEstimatedIncome)} 金</p>
+            <p className="text-muted text-sm mt-1">散件预估收益: {formatGold(stats.scrapsEstimatedIncome)}</p>
           )}
         </div>
 
@@ -370,10 +367,10 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             <span className="text-muted font-medium">总支出</span>
           </div>
           <p className="text-3xl font-bold text-main">{formatGold(stats.totalExpense)}</p>
-          <p className="text-muted text-sm mt-2">代清支出: {formatGold(stats.clientExpense)} 金</p>
+          <p className="text-muted text-sm mt-2">代清支出: {formatGold(stats.clientExpense)}</p>
           {stats.scrapsRecordCount > 0 && (
-            <p className="text-muted text-sm mt-1" title="白名单物品的实际购买花费合计；旧版记录按副本总支出近似">
-              散件支出: {formatGold(stats.scrapsExpense)} 金
+            <p className="text-muted text-sm mt-1" title="白名单材料的实际购买花费合计；装备/小铁等其他购买不属于散件支出">
+              散件支出: {formatGold(stats.scrapsExpense)}
             </p>
           )}
         </div>
@@ -386,12 +383,12 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
             <span className="text-muted font-medium">净收入</span>
           </div>
           <p className={`text-3xl font-bold ${stats.netIncome >= 0 ? 'text-ds-success' : 'text-ds-warning'}`}>
-            {stats.netIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.netIncome))}
+            {formatGold(stats.netIncome)}
           </p>
-          <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)} 金</p>
+          <p className="text-muted text-sm mt-2">代清净入: {formatGold(stats.clientNetIncome)}</p>
           {stats.scrapsRecordCount > 0 && (
             <p className={`text-sm mt-1 ${stats.scrapsNetIncome >= 0 ? 'text-ds-success' : 'text-ds-warning'}`}>
-              散件净收入: {stats.scrapsNetIncome >= 0 ? '' : '-'}{formatGold(Math.abs(stats.scrapsNetIncome))} 金
+              散件净收入: {formatGold(stats.scrapsNetIncome)}
             </p>
           )}
         </div>
@@ -452,7 +449,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           chartData.length > 0 ? (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
+                <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
                   <XAxis
                     dataKey="name"
@@ -467,10 +464,11 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   />
                   <YAxis
                     fontSize={11}
+                    width={72}
                     tickLine={false}
                     axisLine={false}
                     tick={{ fill: 'rgb(var(--text-muted))' }}
-                    tickFormatter={(val) => Number(val).toLocaleString()}
+                    tickFormatter={formatGold}
                   />
                   <Tooltip
                     cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
@@ -482,7 +480,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                       color: 'rgb(var(--text-main))'
                     }}
                     itemStyle={{ color: 'rgb(var(--text-main))' }}
-                    formatter={(value: number) => [`${value.toLocaleString()} 金`, '']}
+                    formatter={(value: number) => [formatGold(value), '']}
                   />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
                     {chartData.map((_entry: any, index: number) => (
@@ -502,7 +500,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
           roleChartData.length > 0 ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={roleChartData} margin={{ top: 20, right: 20, left: -10, bottom: 10 }}>
+                <BarChart data={roleChartData} margin={{ top: 20, right: 20, left: 0, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(var(--border-base))" />
                   <XAxis
                     dataKey="name"
@@ -517,10 +515,11 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   />
                   <YAxis
                     fontSize={11}
+                    width={72}
                     tickLine={false}
                     axisLine={false}
                     tick={{ fill: 'rgb(var(--text-muted))' }}
-                    tickFormatter={(val) => Number(val).toLocaleString()}
+                    tickFormatter={formatGold}
                   />
                   <Tooltip
                     cursor={{ fill: 'rgb(var(--text-muted))', opacity: 0.1 }}
@@ -532,13 +531,13 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                       color: 'rgb(var(--text-main))'
                     }}
                     itemStyle={{ color: 'rgb(var(--text-main))' }}
-                    formatter={(value: number, name: string) => [`${value.toLocaleString()} 金`, name]}
+                    formatter={(value: number, name: string) => [formatGold(value), name]}
                   />
                   <Bar dataKey="收入" fill="rgb(var(--chart-income))" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                    <LabelList dataKey="收入" position="top" formatter={(val: number) => val.toLocaleString()} style={{ fill: 'rgb(var(--chart-income))', fontSize: 10 }} />
+                    <LabelList dataKey="收入" position="top" formatter={formatGold} style={{ fill: 'rgb(var(--chart-income))', fontSize: 10 }} />
                   </Bar>
                   <Bar dataKey="支出" fill="rgb(var(--chart-expense))" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                    <LabelList dataKey="支出" position="top" formatter={(val: number) => val.toLocaleString()} style={{ fill: 'rgb(var(--chart-expense))', fontSize: 10 }} />
+                    <LabelList dataKey="支出" position="top" formatter={formatGold} style={{ fill: 'rgb(var(--chart-expense))', fontSize: 10 }} />
                   </Bar>
                   <Legend />
                 </BarChart>
@@ -876,6 +875,17 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                                 <span className="font-medium">
                                   散件估价: {formatGold(getRecordScrapsValue(record))}
                                   {record.isScrapsBoss && <span className="text-ds-success ml-1">*</span>}
+                                </span>
+                              </div>
+                            )}
+                            {getRecordScrapsExpense(record) > 0 && (
+                              <div
+                                className="flex items-center gap-2 text-muted bg-base px-2 py-1 rounded"
+                                title="白名单材料的实际购买花费合计；装备/小铁等其他购买不属于散件支出"
+                              >
+                                <Coins className="w-3.5 h-3.5" />
+                                <span className="font-medium">
+                                  散件支出: {formatGold(getRecordScrapsExpense(record))}
                                 </span>
                               </div>
                             )}

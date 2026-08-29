@@ -4,6 +4,7 @@ import { Search, Filter, Trash2 } from 'lucide-react';
 import { generateUUID } from '../utils/uuid';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
+import { formatGoldNumber } from '../utils/goldFormat';
 import { db } from '../services/db';
 
 // 扩展RaidRecord，添加角色信息
@@ -563,7 +564,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
                   <div className="flex items-center gap-4">
                     <div className="text-right">
                       <div className="text-lg font-bold text-ds-success dark:text-ds-success font-mono">
-                        +{record.goldIncome.toLocaleString()}
+                        +{formatGoldNumber(record.goldIncome)}
                       </div>
                       <div className="text-xs text-muted">金币</div>
                     </div>

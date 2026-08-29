@@ -155,7 +155,3 @@ export const calculateRecordTotal = (record: RaidRecord): number => {
   const expense = record.goldExpense || 0;
   return income - expense;
 };
-
-export const formatGoldAmount = (amount: number): string => {
-  return amount.toLocaleString();
-};

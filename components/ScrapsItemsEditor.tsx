@@ -1,8 +1,8 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Coins, X } from 'lucide-react';
 import { ScrapsItem } from '../types';
-import { SCRAPS_MATERIAL_WHITELIST, computeScrapsValue, normalizeScrapsItems } from '../utils/scrapsUtils';
-import { formatGoldAmount } from '../utils/recordUtils';
+import { SCRAPS_MATERIAL_WHITELIST, computeScrapsExpense, computeScrapsValue, normalizeScrapsItems } from '../utils/scrapsUtils';
+import { formatGold } from '../utils/goldFormat';
 
 interface ScrapsItemsEditorProps {
   items: ScrapsItem[];
@@ -128,6 +128,8 @@ export const ScrapsItemsEditor: React.FC<ScrapsItemsEditorProps> = ({
   // 只统计 count>0 且未填单价的项
   const pendingCount = displayItems.filter(i => i.count > 0 && i.unitPrice == null).length;
   const totalValue = computeScrapsValue(displayItems);
+  // 散件支出：白名单材料的实际购买花费合计（装备/小铁等其他购买不计入）
+  const totalExpense = computeScrapsExpense(displayItems);
   const hasItems = displayItems.length > 0;
 
   const renderRow = (item: ScrapsItem, idx: number) => {
@@ -186,6 +188,16 @@ export const ScrapsItemsEditor: React.FC<ScrapsItemsEditorProps> = ({
         {showSourceLabel && (
           <span className="text-[10px] text-muted whitespace-nowrap px-1.5 py-0.5 rounded bg-base/60 flex-shrink-0">
             {categoryLabel}·{sourceLabel}
+          </span>
+        )}
+
+        {/* 实际购买价（来自扫描的"花费[..]购买了"消息；装备/小铁等其他购买不在此显示） */}
+        {item.totalPrice != null && item.totalPrice > 0 && (
+          <span
+            className="text-[10px] font-mono text-muted whitespace-nowrap flex-shrink-0"
+            title="实际购买花费合计"
+          >
+            购{formatGold(item.totalPrice)}
           </span>
         )}
 
@@ -291,7 +303,7 @@ export const ScrapsItemsEditor: React.FC<ScrapsItemsEditorProps> = ({
                       <span className="ml-1 text-muted/70">({group.rows.length})</span>
                     </span>
                     <span className="text-[11px] font-mono text-muted">
-                      小计 {formatGoldAmount(groupValue)}金
+                      小计 {formatGold(groupValue)}
                     </span>
                   </div>
                   {group.rows.map(({ item, idx }) => renderRow(item, idx))}
@@ -316,7 +328,7 @@ export const ScrapsItemsEditor: React.FC<ScrapsItemsEditorProps> = ({
           <span className={`font-mono font-semibold ${
             pendingCount > 0 ? 'text-ds-warning dark:text-ds-warning' : 'text-muted'
           }`}>
-            {formatGoldAmount(totalValue)}金
+            {formatGold(totalValue)}
           </span>
           <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
             isScrapsBoss
@@ -327,6 +339,22 @@ export const ScrapsItemsEditor: React.FC<ScrapsItemsEditorProps> = ({
           </span>
         </div>
       </div>
+
+      {/* 散件支出合计（仅存在购买数据时显示） */}
+      {totalExpense > 0 && (
+        <div
+          className="flex items-center justify-between pt-1.5 border-t border-base/60"
+          title="白名单材料的实际购买花费合计；装备/小铁等其他购买不属于散件支出"
+        >
+          <span className="text-xs text-muted">
+            散件支出合计
+            <span className="ml-1 text-muted/70">（白名单材料实际购买价）</span>
+          </span>
+          <span className="font-mono font-semibold text-ds-warning dark:text-ds-warning">
+            {formatGold(totalExpense)}
+          </span>
+        </div>
+      )}
     </div>
   );
 };

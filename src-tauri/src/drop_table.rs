@@ -951,10 +951,11 @@ fn median_price_gold(prices: &[PriceRecord]) -> Option<i64> {
     Some((median + 5000) / 10000)
 }
 
-/// 同步版本：批量查询材料交易行价格
+/// 同步版本：批量查询白名单材料交易行市场价
 ///
+/// 仅用于散件材料询价（装备直接使用 NPC 卖价，不调用本函数）。
 /// 返回 (item_name -> 单价金) 映射。查询失败的物品不会出现在返回值中。
-pub fn fetch_material_prices_sync(
+pub fn fetch_market_prices_sync(
     conn: &Connection,
     item_names: &[String],
     server: &str,
@@ -976,7 +977,7 @@ pub fn fetch_material_prices_sync(
     }
 
     if name_to_key.is_empty() {
-        info!("[DropTable] 散件材料均未在 drop_items 表中找到 item_key，跳过价格查询");
+        info!("[DropTable] 待询价物品均未在 drop_items 表中找到 item_key，跳过价格查询");
         return HashMap::new();
     }
 
@@ -1026,10 +1027,10 @@ pub fn fetch_material_prices_sync(
                     result.insert(name, gold);
                 }
                 Ok(None) => {
-                    info!("[DropTable] 材料 {} 无交易行数据，降级为手填", name);
+                    info!("[DropTable] 物品 {} 无交易行数据，降级为手填", name);
                 }
                 Err(e) => {
-                    warn!("[DropTable] 材料 {} 价格查询失败: {}，降级为手填", name, e);
+                    warn!("[DropTable] 物品 {} 价格查询失败: {}，降级为手填", name, e);
                 }
             }
         }

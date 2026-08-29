@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeScrapsExpense,
   computeScrapsValue,
   getRecordScrapsExpense,
   getRecordScrapsValue,
@@ -126,40 +127,54 @@ describe('getRecordScrapsValue', () => {
   });
 });
 
+describe('computeScrapsExpense', () => {
+  it('按清单各项实际购买价（totalPrice）求和，缺失按 0 计', () => {
+    const items: ScrapsItem[] = [
+      { name: '上品茶饼·兑', count: 6, unitPrice: 296, totalPrice: 1776, category: 'material', priceSource: 'jx3box' },
+      { name: '叁级五彩石', count: 6, unitPrice: 510, totalPrice: 3060, category: 'material', priceSource: 'jx3box' },
+      // 0 金装备 totalPrice=0，天然不计入散件支出
+      { name: '尽幽冠', count: 1, unitPrice: 112, totalPrice: 0, category: 'equipment', priceSource: 'npc' },
+      // 旧版数据无 totalPrice
+      { name: '玛瑙', count: 2, unitPrice: 5, category: 'material', priceSource: 'jx3box' },
+    ];
+    expect(computeScrapsExpense(items)).toBe(4836);
+  });
+});
+
 describe('getRecordScrapsExpense', () => {
-  it('非散件记录恒为 0', () => {
-    const record = { isScrapsBoss: false, goldExpense: 8000, scrapsItems: [] };
-    expect(getRecordScrapsExpense(record)).toBe(0);
+  it('优先使用记录的 scrapsExpense 字段', () => {
+    const record = {
+      scrapsExpense: 1234,
+      scrapsItems: [
+        { name: '玛瑙', count: 2, unitPrice: 5, totalPrice: 999, category: 'material', priceSource: 'jx3box' },
+      ] as ScrapsItem[],
+    };
+    expect(getRecordScrapsExpense(record)).toBe(1234);
   });
 
-  it('新版记录：按白名单物品实际购买价合计（而非副本总支出）', () => {
+  it('无 scrapsExpense 字段时按清单 totalPrice 求和', () => {
     const record = {
-      isScrapsBoss: true,
-      goldExpense: 8000, // 副本总支出含装备购买，不应计入
       scrapsItems: [
         { name: '上品茶饼·兑', count: 6, unitPrice: 296, totalPrice: 1776, category: 'material', priceSource: 'jx3box' },
-        { name: '叁级五彩石', count: 6, unitPrice: 510, totalPrice: 3060, category: 'material', priceSource: 'jx3box' },
         { name: '尽幽冠', count: 1, unitPrice: 112, totalPrice: 0, category: 'equipment', priceSource: 'npc' },
       ] as ScrapsItem[],
     };
-    // 1776 + 3060 + 0 = 4836
-    expect(getRecordScrapsExpense(record)).toBe(4836);
+    expect(getRecordScrapsExpense(record)).toBe(1776);
   });
 
-  it('旧版记录（无 totalPrice）：回退为副本总支出', () => {
+  it('旧版记录（无购买价数据）为 0，不回退为副本总支出', () => {
+    // 装备/小铁等其他购买属于非散件支出（计入 goldExpense），
+    // 无购买数据的旧记录不能把总支出当成散件支出
     const record = {
-      isScrapsBoss: true,
-      goldExpense: 8000,
       scrapsItems: [
         { name: '上品茶饼·兑', count: 6, unitPrice: 296, category: 'material', priceSource: 'jx3box' },
       ] as ScrapsItem[],
     };
-    expect(getRecordScrapsExpense(record)).toBe(8000);
+    expect(getRecordScrapsExpense(record)).toBe(0);
   });
 
-  it('无清单的散件记录：回退为副本总支出', () => {
-    expect(getRecordScrapsExpense({ isScrapsBoss: true, goldExpense: 3000 })).toBe(3000);
-    expect(getRecordScrapsExpense({ isScrapsBoss: true })).toBe(0);
+  it('无清单记录为 0', () => {
+    expect(getRecordScrapsExpense({})).toBe(0);
   });
 });
 

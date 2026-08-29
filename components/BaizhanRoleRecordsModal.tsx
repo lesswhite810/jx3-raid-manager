@@ -4,11 +4,7 @@ import { BaizhanRecord } from '../types';
 import { X, Calendar, Swords, Trash2, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Pencil } from 'lucide-react';
 import { SectIcon } from './SectIcon';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
-
-// 格式化金币显示（对齐 RoleRecordsModal 风格）
-const formatGoldAmount = (amount: number): string => {
-    return amount.toLocaleString();
-};
+import { formatGold } from '../utils/goldFormat';
 
 interface RoleDisplayData {
     id: string;
@@ -156,16 +152,16 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-1.5" title="总收入">
                                     <TrendingUp className="w-4 h-4 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
-                                    <span className="text-[1rem] font-bold text-ds-success dark:text-ds-success">{formatGoldAmount(stats.totalIncome)}</span>
+                                    <span className="text-[1rem] font-bold text-ds-success dark:text-ds-success">{formatGold(stats.totalIncome)}</span>
                                 </div>
                                 <div className="flex items-center gap-1.5" title="总支出">
                                     <TrendingDown className="w-4 h-4 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
-                                    <span className="text-[1rem] font-bold text-ds-warning dark:text-ds-warning">{formatGoldAmount(stats.totalExpense)}</span>
+                                    <span className="text-[1rem] font-bold text-ds-warning dark:text-ds-warning">{formatGold(stats.totalExpense)}</span>
                                 </div>
                                 <div className="flex items-center gap-1.5" title="净收入">
                                     <Wallet className="w-4 h-4 text-muted flex-shrink-0" />
                                     <span className={`text-[1rem] font-bold ${stats.netGold >= 0 ? 'text-ds-success dark:text-ds-success' : 'text-ds-warning dark:text-ds-warning'}`}>
-                                        {formatGoldAmount(stats.netGold)}
+                                        {formatGold(stats.netGold)}
                                     </span>
                                 </div>
                             </div>
@@ -212,13 +208,13 @@ export const BaizhanRoleRecordsModal: React.FC<BaizhanRoleRecordsModalProps> = (
                                                     {income > 0 && (
                                                         <div className="flex items-center gap-1" title="收入">
                                                             <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
-                                                            <span className="text-sm font-semibold text-ds-success-strong dark:text-ds-success-strong">{formatGoldAmount(income)}</span>
+                                                            <span className="text-sm font-semibold text-ds-success-strong dark:text-ds-success-strong">{formatGold(income)}</span>
                                                         </div>
                                                     )}
                                                     {expense > 0 && (
                                                         <div className="flex items-center gap-1" title="支出">
                                                             <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
-                                                            <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{formatGoldAmount(expense)}</span>
+                                                            <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{formatGold(expense)}</span>
                                                         </div>
                                                     )}
                                                 </div>

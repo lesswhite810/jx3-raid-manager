@@ -5,10 +5,11 @@ import { ArrowRight, Star, Zap } from 'lucide-react';
 import { db } from '../services/db';
 import { getLastMonday, getSeasonStartTimeMs } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
-import { getRecordScrapsValue } from '../utils/scrapsUtils';
+import { getRecordScrapsExpense, getRecordScrapsValue } from '../utils/scrapsUtils';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 import { getTrialRecordEquipmentEntries } from '../utils/trialRecordUtils';
 import { buildClientAccountIdSet, buildEquipmentLookup, EquipmentLike, getEquipmentById } from '../utils/recordLookupUtils';
+import { formatGold } from '../utils/goldFormat';
 
 interface DashboardProps {
   records: RaidRecord[];
@@ -163,9 +164,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
     });
 
     // 散件估价合计：仅统计 isScrapsBoss=true 的记录（与 RoleRecordsModal 逻辑一致）
-    const totalScrapsValue = filteredRecords
-      .filter(r => r.isScrapsBoss)
-      .reduce((acc, r) => acc + getRecordScrapsValue(r), 0);
+    const scrapsRecords = filteredRecords.filter(r => r.isScrapsBoss);
+    const totalScrapsValue = scrapsRecords.reduce((acc, r) => acc + getRecordScrapsValue(r), 0);
+    // 散件支出合计：白名单材料的实际购买花费（装备/小铁等其他购买不计入）
+    const totalScrapsExpense = scrapsRecords.reduce((acc, r) => acc + getRecordScrapsExpense(r), 0);
 
     return {
       totalGold,
@@ -175,6 +177,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       dropRate,
       clientIncome,
       totalScrapsValue,
+      totalScrapsExpense,
     };
   }, [filteredRecords, filteredBaizhanRecords, filteredTrialRecords, safeAccounts, findEquipmentById]);
 
@@ -342,7 +345,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center gap-6">
               <div className="text-right">
                 <p className="text-muted text-xs">金币收益</p>
-                <p className="text-2xl font-bold text-ds-success mt-0.5">{luckyRole.totalGold.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-ds-success mt-0.5">{formatGold(luckyRole.totalGold)}</p>
               </div>
             </div>
           </div>
@@ -373,7 +376,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="text-right">
               <p className="text-muted text-xs">总支出</p>
-              <p className="text-2xl font-bold text-ds-warning mt-0.5">{bigSpender.totalExpense.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-ds-warning mt-0.5">{formatGold(bigSpender.totalExpense)}</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 mt-3 pt-2.5 border-t border-base">
@@ -403,12 +406,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="rounded-lg border border-ds-success-soft/60 bg-ds-success-soft/60 p-3 dark:border-ds-success-soft/30 dark:bg-ds-success-soft/10">
             <div className="text-xs font-medium text-ds-success-strong dark:text-ds-success-strong">本期总收入</div>
             <div className="mt-1.5 text-2xl font-bold text-ds-success dark:text-ds-success">
-              {stats.totalGold.toLocaleString()}
-              <span className="ml-1 text-xs font-normal text-ds-success-strong/70 dark:text-ds-success-strong/70">金</span>
+              {formatGold(stats.totalGold)}
             </div>
             {(stats.totalScrapsValue ?? 0) > 0 && (
-              <div className="mt-1 text-xs text-muted">
-                散件估价 {(stats.totalScrapsValue ?? 0).toLocaleString()} 金
+              <div
+                className="mt-1 text-xs text-muted"
+                title="散件估价：白名单材料与 0 金装备的市场价估算；散件支出：白名单材料的实际购买花费（装备/小铁等其他购买不计入）"
+              >
+                散件估价 {formatGold(stats.totalScrapsValue ?? 0)}
+                {(stats.totalScrapsExpense ?? 0) > 0 && (
+                  <> · 散件支出 {formatGold(stats.totalScrapsExpense ?? 0)}</>
+                )}
               </div>
             )}
           </div>
@@ -425,13 +433,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {/* 团队副本 / 百战收益明细 */}
           <div className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30">
             <div className="text-xs font-medium text-muted">团队副本</div>
-            <div className="mt-1.5 text-lg font-bold text-main">{incomeBreakdown.raidGold.toLocaleString()}<span className="ml-1 text-xs font-normal text-muted">金</span></div>
+            <div className="mt-1.5 text-lg font-bold text-main">{formatGold(incomeBreakdown.raidGold)}</div>
             <div className="mt-1 text-xs text-muted">{incomeBreakdown.raidCount} 次通关</div>
           </div>
 
           <div className="rounded-lg border border-base bg-slate-50/80 p-3 dark:bg-slate-800/30">
             <div className="text-xs font-medium text-muted">百战异闻录</div>
-            <div className="mt-1.5 text-lg font-bold text-main">{incomeBreakdown.baizhanGold.toLocaleString()}<span className="ml-1 text-xs font-normal text-muted">金</span></div>
+            <div className="mt-1.5 text-lg font-bold text-main">{formatGold(incomeBreakdown.baizhanGold)}</div>
             <div className="mt-1 text-xs text-muted">{incomeBreakdown.baizhanCount} 次通关</div>
           </div>
         </div>

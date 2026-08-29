@@ -8,6 +8,7 @@ import { db } from '../services/db';
 import { toast } from '../utils/toastManager';
 import { SectIcon } from './SectIcon';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
+import { formatGold } from '../utils/goldFormat';
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
@@ -278,8 +279,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                         <div className="flex items-baseline gap-1">
                                             <span className="text-xs text-muted">本周收入:</span>
                                             <span className={`font-bold font-mono ${stats.weeklyIncome > 0 ? 'text-ds-success' : 'text-main'}`}>
-                                                {stats.weeklyIncome > 0 ? `+${stats.weeklyIncome.toLocaleString()}` : '-'}
-                                                {stats.weeklyIncome > 0 && <span className="text-xs text-muted font-normal">金</span>}
+                                                {stats.weeklyIncome > 0 ? `+${formatGold(stats.weeklyIncome)}` : '-'}
                                             </span>
                                         </div>
                                     </div>

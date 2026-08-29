@@ -4,7 +4,7 @@ import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Che
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
-import { formatGoldAmount } from '../utils/recordUtils';
+import { formatGold } from '../utils/goldFormat';
 import { calculateCooldown, formatCountdown, getRaidRefreshInfo, CooldownInfo, getLastMonday, getNextMonday } from '../utils/cooldownManager';
 import { db } from '../services/db';
 import { shouldShowClientRoleInRaid } from '../utils/raidVersionUtils';
@@ -764,13 +764,13 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                             {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
                               <div className="flex items-center gap-1 text-ds-success ml-1">
                                 <TrendingUp className="w-3 h-3 flex-shrink-0" />
-                                <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunIncome)}金</span>
+                                <span className="text-[11px] font-medium whitespace-nowrap">{formatGold(role.lastRunIncome)}</span>
                               </div>
                             )}
                             {role.lastRunExpense !== undefined && role.lastRunExpense > 0 && (
                               <div className="flex items-center gap-1 text-ds-warning ml-1">
                                 <TrendingDown className="w-3 h-3 flex-shrink-0" />
-                                <span className="text-[11px] font-medium whitespace-nowrap">{formatGoldAmount(role.lastRunExpense)}金</span>
+                                <span className="text-[11px] font-medium whitespace-nowrap">{formatGold(role.lastRunExpense)}</span>
                               </div>
                             )}
                             {role.lastRunScrapsValue !== undefined && role.lastRunScrapsValue > 0 && (
@@ -780,7 +780,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                               >
                                 <Boxes className="w-3 h-3 flex-shrink-0" />
                                 <span className="text-[11px] font-medium whitespace-nowrap">
-                                  {formatGoldAmount(role.lastRunScrapsValue)}金{role.lastRunIsScrapsBoss && '*'}
+                                  {formatGold(role.lastRunScrapsValue)}{role.lastRunIsScrapsBoss && '*'}
                                 </span>
                               </div>
                             )}

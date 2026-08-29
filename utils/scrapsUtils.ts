@@ -119,25 +119,35 @@ export function getRecordScrapsValue(
 }
 
 /**
- * 记录的散件支出展示值（仅 isScrapsBoss=true 的记录非零）
+ * 根据散件清单计算散件支出（白名单材料实际购买花费合计）
  *
- * 口径：白名单物品的**实际购买花费**合计（来自扫描时"花费[..]购买了"消息的金额），
- * 而非副本整体支出。
+ * 口径：清单各项 totalPrice（实际购买价）求和。
+ * 0 金装备 totalPrice=0 天然不计；其他装备/小铁等购买不在清单中，
+ * 属于非散件支出（计入 goldExpense），与本函数无关。
+ */
+export function computeScrapsExpense(items: readonly ScrapsItem[]): number {
+  return items.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0);
+}
+
+/**
+ * 记录的散件支出展示值
  *
- * 兼容规则：
- * - 新版记录：物品携带 totalPrice，直接求和（免费获取的装备 totalPrice=0）
- * - 旧版记录：无购买价数据，回退为副本总支出 goldExpense（历史口径，重新扫描后精确化）
+ * 口径：白名单材料的**实际购买花费**合计（来自扫描时"花费[..]购买了"消息的金额），
+ * 而非副本整体支出。装备/小铁等其他购买属于非散件支出，不计入。
+ *
+ * 取值优先级：
+ * 1. 记录的 scrapsExpense 字段（后端扫描时写入 / 确认时前端重算）
+ * 2. 清单各项 totalPrice 求和（兼容仅有 scrapsItems 的旧记录）
+ * 无购买数据的旧记录返回 0（不再回退为副本总支出，避免把装备/小铁
+ * 购买算成散件支出）。
  */
 export function getRecordScrapsExpense(
-  record: Pick<RaidRecord, 'isScrapsBoss' | 'scrapsItems' | 'goldExpense'>,
+  record: Pick<RaidRecord, 'scrapsItems' | 'scrapsExpense'>,
 ): number {
-  if (!record.isScrapsBoss) return 0;
-  const items = normalizeScrapsItems(record.scrapsItems);
-  const hasPurchaseData = items.some((item) => typeof item.totalPrice === 'number');
-  if (!hasPurchaseData) {
-    return Number(record.goldExpense) || 0;
+  if (typeof record.scrapsExpense === 'number' && Number.isFinite(record.scrapsExpense)) {
+    return record.scrapsExpense;
   }
-  return items.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0);
+  return computeScrapsExpense(normalizeScrapsItems(record.scrapsItems));
 }
 
 /** 散件白名单汇总条目（按物品名直接聚合，不分组） */

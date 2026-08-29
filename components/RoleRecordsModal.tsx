@@ -2,8 +2,8 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { RaidRecord, Raid } from '../types';
 import { X, Search, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Loader2, TrendingUp, TrendingDown, Wallet, Info, Anchor, Ghost, Package, Shirt, Crown, Flag, Pencil, BookOpen, Check, Clock, AlertTriangle, Boxes } from 'lucide-react';
-import { formatGoldAmount } from '../utils/recordUtils';
-import { getRecordScrapsValue } from '../utils/scrapsUtils';
+import { formatGold } from '../utils/goldFormat';
+import { getRecordScrapsExpense, getRecordScrapsValue } from '../utils/scrapsUtils';
 import { getLastMonday, getNextMonday, getTenPersonCycle } from '../utils/cooldownManager';
 import { calculateBossCooldowns } from '../utils/bossCooldownManager';
 import { BossCooldownSummary } from './BossCooldownDisplay';
@@ -308,15 +308,15 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
             <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-1.5" title="总收入">
                 <TrendingUp className="w-4 h-4 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
-                <span className="text-[1rem] font-bold text-ds-success dark:text-ds-success">{formatGoldAmount(totalIncome || 0)}</span>
+                <span className="text-[1rem] font-bold text-ds-success dark:text-ds-success">{formatGold(totalIncome || 0)}</span>
               </div>
               <div className="flex items-center gap-1.5" title="总支出">
                 <TrendingDown className="w-4 h-4 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
-                <span className="text-[1rem] font-bold text-ds-warning dark:text-ds-warning">{formatGoldAmount(totalExpense || 0)}</span>
+                <span className="text-[1rem] font-bold text-ds-warning dark:text-ds-warning">{formatGold(totalExpense || 0)}</span>
               </div>
               <div className="flex items-center gap-1.5" title="净收入">
                 <Wallet className="w-4 h-4 text-muted flex-shrink-0" />
-                <span className={`text-[1rem] font-bold ${totalNet >= 0 ? 'text-ds-success dark:text-ds-success' : 'text-ds-warning dark:text-ds-warning'}`}>{formatGoldAmount(totalNet || 0)}</span>
+                <span className={`text-[1rem] font-bold ${totalNet >= 0 ? 'text-ds-success dark:text-ds-success' : 'text-ds-warning dark:text-ds-warning'}`}>{formatGold(totalNet || 0)}</span>
               </div>
               {xuanjingCount > 0 && (
                 <span className="text-xs bg-ds-warning-soft text-ds-warning-strong px-2 py-0.5 rounded-md font-medium flex items-center gap-1 shadow-sm">
@@ -327,7 +327,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
               {totalScrapsValue > 0 && (
                 <div className="flex items-center gap-1 text-muted text-xs" title={`散件估价合计（仅含 isScrapsBoss=true 的记录）`}>
                   <Boxes className="w-3.5 h-3.5" />
-                  <span className="font-mono font-semibold text-main">{formatGoldAmount(totalScrapsValue)}</span>
+                  <span className="font-mono font-semibold text-main">{formatGold(totalScrapsValue)}</span>
                 </div>
               )}
             </div>
@@ -413,22 +413,32 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                         {record.goldIncome > 0 && (
                           <div className="flex items-center gap-1" title="收入">
                             <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong dark:text-ds-success-strong flex-shrink-0" />
-                            <span className="text-sm font-semibold text-ds-success-strong dark:text-ds-success-strong">{formatGoldAmount(record.goldIncome)}</span>
+                            <span className="text-sm font-semibold text-ds-success-strong dark:text-ds-success-strong">{formatGold(record.goldIncome)}</span>
                           </div>
                         )}
                         {record.goldExpense && record.goldExpense > 0 ? (
                           <div className="flex items-center gap-1" title="支出">
                             <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong flex-shrink-0" />
-                            <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{formatGoldAmount(record.goldExpense)}</span>
+                            <span className="text-sm font-semibold text-ds-warning-strong dark:text-ds-warning-strong">{formatGold(record.goldExpense)}</span>
                           </div>
                         ) : null}
                         {((record.scrapsItems && record.scrapsItems.length > 0) || (record.scrapsValue ?? 0) > 0) && (
                           <div className="flex items-center gap-1" title={record.isScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}>
                             <Boxes className="w-3.5 h-3.5 text-muted flex-shrink-0" />
-                            <span className="text-sm font-semibold text-main">{formatGoldAmount(getRecordScrapsValue(record))}</span>
+                            <span className="text-sm font-semibold text-main">{formatGold(getRecordScrapsValue(record))}</span>
                             {record.isScrapsBoss && (
                               <span className="text-[11px] text-ds-success-strong dark:text-ds-success-strong">*</span>
                             )}
+                          </div>
+                        )}
+                        {getRecordScrapsExpense(record) > 0 && (
+                          <div
+                            className="flex items-center gap-1"
+                            title="白名单材料的实际购买花费合计；装备/小铁等其他购买不属于散件支出"
+                          >
+                            <Boxes className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+                            <span className="text-xs text-muted">散件支出</span>
+                            <span className="text-sm font-semibold text-main">{formatGold(getRecordScrapsExpense(record))}</span>
                           </div>
                         )}
                       </div>

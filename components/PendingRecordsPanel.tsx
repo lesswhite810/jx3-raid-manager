@@ -11,8 +11,14 @@ import { dropScannerService } from '../services/dropScanner';
 import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
-import { formatGoldAmount } from '../utils/recordUtils';
-import { computeScrapsValue, normalizeScrapsItems, getRecordScrapsValue } from '../utils/scrapsUtils';
+import { formatGold } from '../utils/goldFormat';
+import {
+  computeScrapsExpense,
+  computeScrapsValue,
+  getRecordScrapsExpense,
+  getRecordScrapsValue,
+  normalizeScrapsItems,
+} from '../utils/scrapsUtils';
 import { toast } from '../utils/toastManager';
 import { getDefaultBosses } from '../data/raidBosses';
 import { useDebug } from '../contexts/DebugContext';
@@ -226,8 +232,10 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     if (!editingRecord || !editForm) return;
     setPendingActionId(editingRecord.id);
     try {
-      // 散件清单：按用户当前编辑的 unitPrice 重新计算 scrapsValue
+      // 散件清单：按用户当前编辑的 unitPrice 重新计算 scrapsValue，
+      // 散件支出按清单实际购买价（totalPrice）重算，保证确认后口径一致
       const scrapsValue = computeScrapsValue(editForm.scrapsItems);
+      const scrapsExpense = computeScrapsExpense(editForm.scrapsItems);
       await dropScannerService.confirmRecord(editingRecord.id, {
         goldIncome: editForm.goldIncome,
         goldExpense: editForm.goldExpense,
@@ -243,6 +251,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         bossNames: editForm.bossNames,
         scrapsItems: editForm.scrapsItems,
         scrapsValue,
+        scrapsExpense,
         isScrapsBoss: editForm.isScrapsBoss,
       });
       onRefreshRecords?.();
@@ -466,6 +475,8 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 const income = record.goldIncome || 0;
                 // 待确认列表估价：优先按清单重算（兼容旧数据的铜→金换算），避免显示虚高金额
                 const scrapsTotal = getRecordScrapsValue(record);
+                // 散件支出：白名单材料的实际购买花费（装备/小铁等其他购买不计入）
+                const scrapsExpense = getRecordScrapsExpense(record);
                 const bosses = record.bossNames?.filter(n => n) ?? [];
                 const isScanning = record.status === 'scanning';
 
@@ -500,14 +511,14 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                         <TrendingUp className="w-3.5 h-3.5 text-ds-success-strong" />
                         <span className="text-muted text-xs">收入</span>
                         <span className="font-mono font-semibold text-ds-success dark:text-ds-success">
-                          {formatGoldAmount(income)}
+                          {formatGold(income)}
                         </span>
                       </span>
                       <span className="flex items-center gap-1">
                         <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong" />
                         <span className="text-muted text-xs">支出</span>
                         <span className="font-mono font-semibold text-ds-warning dark:text-ds-warning">
-                          {formatGoldAmount(record.goldExpense || 0)}
+                          {formatGold(record.goldExpense || 0)}
                         </span>
                       </span>
                       {record.scrapsItems && record.scrapsItems.length > 0 && (
@@ -517,7 +528,15 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                           <span className="font-mono font-semibold text-main">{record.scrapsItems.length}</span>
                           {scrapsTotal > 0 && (
                             <span className="text-muted text-xs ml-1">
-                              ≈ {formatGoldAmount(scrapsTotal)}金
+                              ≈ {formatGold(scrapsTotal)}
+                            </span>
+                          )}
+                          {scrapsExpense > 0 && (
+                            <span
+                              className="text-muted text-xs ml-1"
+                              title="白名单材料的实际购买花费合计；装备/小铁等其他购买不属于散件支出"
+                            >
+                              支出 {formatGold(scrapsExpense)}
                             </span>
                           )}
                         </span>
@@ -749,6 +768,15 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                   </label>
                   <span className="text-[10px] text-muted">勾选后估价计入统计</span>
                 </div>
+                {computeScrapsExpense(editForm.scrapsItems) > 0 && (
+                  <p
+                    className="text-xs text-muted flex items-center gap-1"
+                    title="白名单材料的实际购买花费合计；装备/小铁等其他购买不属于散件支出"
+                  >
+                    <Coins className="w-3.5 h-3.5" />
+                    散件支出: {formatGold(computeScrapsExpense(editForm.scrapsItems))}
+                  </p>
+                )}
                 <ScrapsItemsEditor
                   items={editForm.scrapsItems}
                   onChange={items => setEditForm({ ...editForm, scrapsItems: items })}
