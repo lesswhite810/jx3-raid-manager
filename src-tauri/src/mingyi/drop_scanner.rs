@@ -3869,6 +3869,7 @@ pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize
         cutoff_ms,
         &game_dir_outer,
         preloaded_raids_outer.as_deref(),
+        &active_result_outer,
     );
     match &verify_result {
         Ok(stats) => {
@@ -4052,6 +4053,8 @@ struct StaleRecord {
 /// - `status='pending' AND drops='[]' AND goldIncome=0`：孤儿 pending 记录，需补充掉落/工资
 ///
 /// 通过 `record_date < cutoff_ms` 隔离本次 JX3 会话产生的记录（交给原轮询逻辑）。
+/// 通过 `record_date >= stale_floor_ms`（7 天前）排除过期记录——
+/// 超过 7 天的记录已在上游直接翻转 pending（扫描完成），无需重扫。
 ///
 /// 为什么用 record_date 而非 created_at：
 /// - `record_date` 为 INTEGER 毫秒，与 cutoff_ms 类型匹配，比较语义正确
@@ -4062,11 +4065,12 @@ struct StaleRecord {
 fn query_stale_records_for_verify(
     conn: &Connection,
     cutoff_ms: i64,
+    stale_floor_ms: i64,
 ) -> Result<Vec<StaleRecord>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, account_id, data, drops, record_date, status FROM records
-             WHERE record_date < ?1 AND (
+             WHERE record_date < ?1 AND record_date >= ?2 AND (
                status = 'scanning'
                OR (status = 'pending' AND drops = '[]' AND json_extract(data, '$.goldIncome') = 0)
              )",
@@ -4074,7 +4078,7 @@ fn query_stale_records_for_verify(
         .map_err(|e| format!("查询待复核记录失败: {}", e))?;
 
     let records = stmt
-        .query_map(params![cutoff_ms], |row| {
+        .query_map(params![cutoff_ms, stale_floor_ms], |row| {
             Ok(StaleRecord {
                 id: row.get(0)?,
                 account_id: row.get(1)?,
@@ -4116,6 +4120,23 @@ enum VerifyOutcome {
     Kept,
 }
 
+/// 超过 7 天的 scanning 记录直接翻转为 pending（扫描完成）
+///
+/// 副本"过期"阈值（RAID_STALE_THRESHOLD_MS）是 6 小时，超过 7 天几乎肯定是异常数据，
+/// 无需重扫（JCL/chatlog 大概率已不可用），保留原 data/drops 仅改状态。
+/// 返回翻转的记录数。
+fn flip_expired_scanning_records(conn: &Connection) -> Result<usize, String> {
+    let seven_days_ago_ms: i64 = chrono::Local::now().timestamp_millis() - 7 * 24 * 3600 * 1000;
+    let timestamp = db::get_local_timestamp();
+    conn.execute(
+        "UPDATE records SET status = 'pending', updated_at = ?1 \
+         WHERE status = 'scanning' AND record_date < ?2",
+        rusqlite::params![timestamp, seven_days_ago_ms],
+    )
+    .map(|n| n as usize)
+    .map_err(|e| format!("翻转过期 scanning 记录失败: {}", e))
+}
+
 /// 复核历史遗留记录的入口函数
 ///
 /// 在 `scan_all_active_raid_drops_internal` 的本次会话扫描之前调用。
@@ -4125,14 +4146,45 @@ enum VerifyOutcome {
 /// - `cutoff_ms`：本次 JX3 启动时间（毫秒），只复核 `record_date < cutoff_ms` 的记录
 /// - `game_dir`：游戏目录
 /// - `preloaded_raids`：预加载的副本配置（与本次会话扫描共用）
+/// - `active_result`：active_detector 扫描结果，复用以避免重复扫描游戏目录。
+///   仅用 `roles` 字段构建 `(role_name, server) -> uid` 的查找表。
+///
+/// 性能与兜底：
+/// - 7 天前的 scanning 记录直接翻转为 pending（扫描完成），进入用户确认流程
+/// - 单次复核成本 O(stale_records)，不再遍历全部 130+ 账号目录
 fn verify_stale_records(
     cutoff_ms: i64,
     game_dir: &str,
     preloaded_raids: Option<&[RaidEntry]>,
+    active_result: &crate::mingyi::active_detector::BatchActiveResult,
 ) -> Result<VerifyStats, String> {
     let conn = db::init_db()?;
-    let stale_records = query_stale_records_for_verify(&conn, cutoff_ms)?;
+
+    // 兜底：超过 7 天的 scanning 记录直接翻转 pending（扫描完成），交给用户确认
+    let expired = flip_expired_scanning_records(&conn)?;
+    let seven_days_ago_ms: i64 = chrono::Local::now().timestamp_millis() - 7 * 24 * 3600 * 1000;
+    if expired > 0 {
+        log::info!(
+            "[DropScanner] {} 条超过 7 天的 scanning 记录已直接标记为扫描完成（pending）",
+            expired
+        );
+    }
+
+    let stale_records = query_stale_records_for_verify(&conn, cutoff_ms, seven_days_ago_ms)?;
     drop(conn);
+
+    // 从 active_result 构建 (role_name, server) -> uid 查找表
+    // 避免对每条 scanning 记录都遍历游戏目录、读 info.jx3dat
+    let mut uid_map: HashMap<(String, String), String> = HashMap::new();
+    for role in &active_result.roles {
+        let key = (role.role_name.trim().to_string(), role.server.clone());
+        // 重复 (role_name, server) 时记录首个，避免歧义日志
+        uid_map.entry(key).or_insert_with(|| role.uid.clone());
+    }
+    log::debug!(
+        "[DropScanner] 复用 active_detector 结果构建 uid_map: {} 个账号",
+        uid_map.len()
+    );
 
     if stale_records.is_empty() {
         return Ok(VerifyStats {
@@ -4161,7 +4213,7 @@ fn verify_stale_records(
     };
 
     for record in &stale_records {
-        match verify_single_record(record, &accounts_base, preloaded_raids) {
+        match verify_single_record(record, &accounts_base, preloaded_raids, &uid_map) {
             Ok(VerifyOutcome::Flipped) => stats.flipped += 1,
             Ok(VerifyOutcome::PreservedOriginal) => stats.preserved += 1,
             Ok(VerifyOutcome::Kept) => stats.kept += 1,
@@ -4179,6 +4231,58 @@ fn verify_stale_records(
     Ok(stats)
 }
 
+/// 从内存 uid_map 查找茗伊 uid
+///
+/// 查找顺序：
+/// 1. 精确匹配 `(role_name, server)`
+/// 2. 回退：去除空格后比较（游戏名字不允许包含空格，解析侧可能引入空格）
+fn lookup_mingyi_uid(
+    uid_map: &HashMap<(String, String), String>,
+    role_name: &str,
+    server: &str,
+) -> Option<String> {
+    if let Some(uid) = uid_map.get(&(role_name.to_string(), server.to_string())) {
+        return Some(uid.clone());
+    }
+    // 回退：去除空格后比较（含全角空格）
+    let strip = |s: &str| s.replace(' ', "").replace('\u{3000}', "");
+    let target_name = strip(role_name);
+    let target_server = strip(server);
+    uid_map
+        .iter()
+        .find(|((n, s), _)| strip(n) == target_name && strip(s) == target_server)
+        .map(|(_, v)| v.clone())
+}
+
+/// 无法定位茗伊账号目录时的兜底：直接将记录标记为扫描完成（status='pending'）
+///
+/// 适用场景：uid_map 查不到映射（如角色已删、active_detector 未识别）、账号目录不存在。
+/// 保留原 data/drops 仅改状态，交给用户在 UI 确认或删除。
+fn mark_record_scan_complete(record: &StaleRecord, reason: &str) -> Result<VerifyOutcome, String> {
+    let conn = db::init_db()?;
+    mark_record_scan_complete_with_conn(&conn, record, reason)
+}
+
+/// [`mark_record_scan_complete`] 的连接参数化版本，便于测试注入临时数据库
+fn mark_record_scan_complete_with_conn(
+    conn: &Connection,
+    record: &StaleRecord,
+    reason: &str,
+) -> Result<VerifyOutcome, String> {
+    let now_ms = chrono::Local::now().timestamp_millis();
+    conn.execute(
+        "UPDATE records SET status = 'pending', updated_at = ?1 WHERE id = ?2",
+        params![now_ms, &record.id],
+    )
+    .map_err(|e| format!("标记扫描完成失败: {}", e))?;
+
+    log::info!(
+        "[DropScanner] 复核记录 [{}]: {}，直接标记为扫描完成（pending），保留原数据",
+        record.id, reason
+    );
+    Ok(VerifyOutcome::Flipped)
+}
+
 /// 复核单条历史记录
 ///
 /// 流程：
@@ -4188,10 +4292,15 @@ fn verify_stale_records(
 /// 4. 调用 scan_raid_drops_with_raids 重扫（process_start_ms=0 绕过 mtime 过滤）
 /// 5. 比较新旧数据，新扫描未识别到掉落/工资但原记录有 → 恢复原 data/drops，只改 status
 /// 6. 否则接受 upsert 的结果
+///
+/// `uid_map`：`(role_name, server) -> 茗伊 uid` 查找表（来自 active_detector 内存结果）。
+/// records 表的 account_id 是 UUID，不能直接用于拼接 `{uid}@zhcn_hd` 目录；
+/// uid 不存数据库，运行时通过记录 data JSON 中的 roleName/server 查回茗伊 uid。
 fn verify_single_record(
     record: &StaleRecord,
     accounts_base: &Path,
     preloaded_raids: Option<&[RaidEntry]>,
+    uid_map: &HashMap<(String, String), String>,
 ) -> Result<VerifyOutcome, String> {
     // 1. 保存原记录的 data 和 drops（用于按需保留）
     let original_data = record.data.clone();
@@ -4219,10 +4328,32 @@ fn verify_single_record(
         })
         .unwrap_or(scan_start_ms);
 
+    // 3.5 通过 data 中的 roleName/server 从内存 uid_map 查回茗伊 uid
+    //     records.account_id 是 UUID，无法直接定位茗伊账号目录；
+    //     uid 不存数据库，运行时由 active_detector 的内存结果提供映射
+    let role_name = data["roleName"].as_str().unwrap_or("").trim().to_string();
+    let server = data["server"].as_str().unwrap_or("").trim().to_string();
+    let mingyi_uid = match lookup_mingyi_uid(uid_map, &role_name, &server) {
+        Some(uid) => uid,
+        None => {
+            // 查不到映射：不再报错跳过，直接标记扫描完成，交给用户确认
+            return mark_record_scan_complete(
+                record,
+                &format!(
+                    "无法映射角色到茗伊账号（roleName={}, server={}）",
+                    role_name, server
+                ),
+            );
+        }
+    };
+
     // 4. 查找下一个 JCL 时间戳
-    let account_dir = accounts_base.join(format!("{}@zhcn_hd", record.account_id));
+    let account_dir = accounts_base.join(format!("{}@zhcn_hd", mingyi_uid));
     if !account_dir.exists() {
-        return Err(format!("账号目录不存在: {}", account_dir.display()));
+        return mark_record_scan_complete(
+            record,
+            &format!("茗伊账号目录不存在: {}", account_dir.display()),
+        );
     }
 
     let next_jcl_time = find_next_jcl_time_after(&account_dir, last_jcl_time)?;
@@ -4237,9 +4368,10 @@ fn verify_single_record(
     };
 
     log::info!(
-        "[DropScanner] 复核记录 [{}]: account={}, status={}, scan_range=[{},{}], next_jcl={:?}",
+        "[DropScanner] 复核记录 [{}]: account(uuid)={}, mingyi_uid={}, status={}, scan_range=[{},{}], next_jcl={:?}",
         record.id,
         record.account_id,
+        mingyi_uid,
         record.status,
         scan_start_ms,
         scan_end_ms,
@@ -4252,9 +4384,11 @@ fn verify_single_record(
     // - jx3_running=true：复核只在 JX3 运行时触发
     // - role_online：用 is_role_online 实际检测（基于 chatlog mtime）
     // - process_start_ms=0：绕过 mtime 过滤，必须扫到历史 JCL
+    // - account_id 传茗伊 uid（函数内部按 `{uid}@zhcn_hd` 定位账号目录，
+    //   并通过 roles 表将 uid 换回 UUID 写入 records）
     let role_online = is_role_online(&account_dir, true);
     let result = scan_raid_drops_with_raids(
-        &record.account_id,
+        &mingyi_uid,
         true, // jx3_running
         role_online,
         0, // process_start_ms=0，绕过 mtime 过滤
@@ -4749,6 +4883,191 @@ mod tests {
         .expect("should insert scan record");
 
         (record_id, record_date)
+    }
+
+    /// 插入一条指定状态的扫描记录，返回 (record_id, record_date)
+    /// data 中包含 roleName/server（复核 uid 映射依赖这两个字段）
+    fn insert_scan_record_with_status(
+        conn: &rusqlite::Connection,
+        account_id: &str,
+        role_id: &str,
+        status: &str,
+        record_date: i64,
+        drops: &str,
+    ) -> String {
+        let record_id = Uuid::new_v4().to_string();
+        let now = chrono::Local::now().to_rfc3339();
+        let data = serde_json::json!({
+            "id": record_id,
+            "accountId": account_id,
+            "roleId": role_id,
+            "roleName": "少年白了发",
+            "server": "梦江南",
+            "raidName": "25人英雄阆风悬城",
+            "date": record_date,
+            "type": "raid",
+            "source": "auto",
+            "status": status,
+            "goldIncome": 0,
+            "goldExpense": 0,
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type, source, status, drops, created_at, updated_at)
+             VALUES (?1, ?2, '阆风悬城', ?3, ?4, ?5, 'raid', 'auto_scan', ?6, ?7, ?8, ?9)",
+            sql_params![record_id, data, account_id, role_id, record_date, status, drops, now, now],
+        )
+        .expect("should insert scan record");
+        record_id
+    }
+
+    /// 验证 uid_map 查找：精确匹配、trim 匹配、去空格回退、未命中
+    #[test]
+    fn test_lookup_mingyi_uid() {
+        let mut uid_map: HashMap<(String, String), String> = HashMap::new();
+        uid_map.insert(
+            ("少年白了发".to_string(), "梦江南".to_string()),
+            "342273571708094124".to_string(),
+        );
+        uid_map.insert(
+            ("风 闪".to_string(), "梦江南".to_string()),
+            "999999999999999999".to_string(),
+        );
+
+        // 1. 精确匹配
+        assert_eq!(
+            lookup_mingyi_uid(&uid_map, "少年白了发", "梦江南"),
+            Some("342273571708094124".to_string())
+        );
+
+        // 2. 查询侧带空格 → 精确匹配失败，去空格回退命中（游戏名不允许空格）
+        assert_eq!(
+            lookup_mingyi_uid(&uid_map, " 少年白了发 ", "梦江南"),
+            Some("342273571708094124".to_string())
+        );
+
+        // 3. map 侧 key 带空格 → 去空格回退命中（含全角空格）
+        assert_eq!(
+            lookup_mingyi_uid(&uid_map, "风闪", "梦江南"),
+            Some("999999999999999999".to_string())
+        );
+
+        // 4. 未命中：服务器不同
+        assert_eq!(lookup_mingyi_uid(&uid_map, "少年白了发", "电信区"), None);
+
+        // 5. 未命中：角色名不同
+        assert_eq!(lookup_mingyi_uid(&uid_map, "糯闪", "梦江南"), None);
+
+        // 6. 空 map
+        let empty: HashMap<(String, String), String> = HashMap::new();
+        assert_eq!(lookup_mingyi_uid(&empty, "少年白了发", "梦江南"), None);
+    }
+
+    /// 验证超过 7 天的 scanning 记录直接翻转 pending（扫描完成）
+    #[test]
+    fn test_flip_expired_scanning_records() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let (account_id, role_id) = create_test_account_role(&conn);
+
+        let now_ms = chrono::Local::now().timestamp_millis();
+        let eight_days_ago = now_ms - 8 * 24 * 3600 * 1000;
+        let two_days_ago = now_ms - 2 * 24 * 3600 * 1000;
+
+        // 8 天前的 scanning（应翻转）、2 天前的 scanning（应保留）、8 天前的 pending（不受影响）
+        let expired_id =
+            insert_scan_record_with_status(&conn, &account_id, &role_id, "scanning", eight_days_ago, "[]");
+        let recent_id =
+            insert_scan_record_with_status(&conn, &account_id, &role_id, "scanning", two_days_ago, "[]");
+        let old_pending_id =
+            insert_scan_record_with_status(&conn, &account_id, &role_id, "pending", eight_days_ago, "[]");
+
+        let flipped = flip_expired_scanning_records(&conn).expect("翻转应成功");
+        assert_eq!(flipped, 1, "应只翻转 1 条超过 7 天的 scanning 记录");
+
+        let status_of = |id: &str| -> String {
+            conn.query_row(
+                "SELECT status FROM records WHERE id = ?1",
+                sql_params![id],
+                |row| row.get(0),
+            )
+            .expect("should query status")
+        };
+        assert_eq!(status_of(&expired_id), "pending", "8 天前的 scanning 应翻转 pending");
+        assert_eq!(status_of(&recent_id), "scanning", "2 天前的 scanning 应保留待复核");
+        assert_eq!(status_of(&old_pending_id), "pending", "8 天前的 pending 不应被重复处理");
+
+        // 幂等：再次执行不产生新的翻转
+        let flipped_again = flip_expired_scanning_records(&conn).expect("二次翻转应成功");
+        assert_eq!(flipped_again, 0, "二次执行应无翻转（幂等）");
+    }
+
+    /// 验证复核兜底：无法定位账号目录时直接标记扫描完成，保留原 data/drops
+    #[test]
+    fn test_mark_record_scan_complete() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let (account_id, role_id) = create_test_account_role(&conn);
+
+        let now_ms = chrono::Local::now().timestamp_millis();
+        let record_date = now_ms - 3 * 24 * 3600 * 1000;
+        let record_id =
+            insert_scan_record_with_status(&conn, &account_id, &role_id, "scanning", record_date, "[]");
+
+        // 用库中实际 data/drops 构造 StaleRecord，验证"保留原数据"语义
+        let (db_data, db_drops): (String, String) = conn
+            .query_row(
+                "SELECT data, drops FROM records WHERE id = ?1",
+                sql_params![record_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("should query record");
+        let record = StaleRecord {
+            id: record_id.clone(),
+            account_id: account_id.clone(),
+            data: db_data.clone(),
+            drops: db_drops.clone(),
+            record_date,
+            status: "scanning".to_string(),
+        };
+
+        let outcome =
+            mark_record_scan_complete_with_conn(&conn, &record, "测试：无法映射角色到茗伊账号")
+                .expect("标记扫描完成应成功");
+        assert!(matches!(outcome, VerifyOutcome::Flipped));
+
+        // 状态翻转为 pending，data/drops 保留原值
+        let (status, data, drops): (String, String, String) = conn
+            .query_row(
+                "SELECT status, data, drops FROM records WHERE id = ?1",
+                sql_params![record_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("should query record");
+        assert_eq!(status, "pending", "记录应被标记为扫描完成（pending）");
+        assert_eq!(data, db_data, "原 data 应保留");
+        assert_eq!(drops, db_drops, "原 drops 应保留");
+    }
+
+    /// 验证复核查询的 7 天下限：过期记录不再进入复核重扫范围
+    #[test]
+    fn test_query_stale_records_floor() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let (account_id, role_id) = create_test_account_role(&conn);
+
+        let now_ms = chrono::Local::now().timestamp_millis();
+        let cutoff_ms = now_ms; // 本次 JX3 启动时间
+        let seven_days_ago_ms = now_ms - 7 * 24 * 3600 * 1000;
+
+        // 3 天前的 scanning（在复核范围内）、8 天前的空 pending（超过下限，应排除）、
+        // 3 天前的有掉落 pending（有数据，不属于孤儿记录，应排除）
+        insert_scan_record_with_status(&conn, &account_id, &role_id, "scanning", now_ms - 3 * 24 * 3600 * 1000, "[]");
+        insert_scan_record_with_status(&conn, &account_id, &role_id, "pending", now_ms - 8 * 24 * 3600 * 1000, "[]");
+        insert_scan_record_with_status(&conn, &account_id, &role_id, "pending", now_ms - 3 * 24 * 3600 * 1000, r#"[{"name":"玄晶"}]"#);
+
+        let records =
+            query_stale_records_for_verify(&conn, cutoff_ms, seven_days_ago_ms).expect("查询应成功");
+        assert_eq!(records.len(), 1, "应只有 1 条记录进入复核（3 天前的 scanning）");
+        assert_eq!(records[0].status, "scanning");
     }
 
     /// 测试完整 confirm 流程：
