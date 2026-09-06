@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Account, AccountType, Role, InstanceType } from '../types';
-import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download } from 'lucide-react';
+import { Plus, Trash2, User, UserCheck, Eye, EyeOff, Clipboard, Check, Loader2, CheckCircle2, XCircle, Search, X, Settings, ChevronDown, ChevronRight, Key, FileText, Pencil, Download, ArrowLeftRight } from 'lucide-react';
 import {
   canStartAccountDrag,
   getAccountReorderAnimationDuration,
@@ -12,6 +12,7 @@ import { toast } from '../utils/toastManager';
 import { AddAccountModal } from './AddAccountModal';
 import { AddRoleModal } from './AddRoleModal';
 import { ImportRolesModal } from './ImportRolesModal';
+import { CharSyncModal } from './CharSyncModal';
 import { SectIcon } from './SectIcon';
 import { SectSelect } from './SectSelect';
 import { db } from '../services/db';
@@ -79,6 +80,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 搜索相关状态
   const [searchTerm, setSearchTerm] = useState('');
+  // 跨角色设置同步：作为源角色打开同步弹窗的角色
+  const [charSyncSourceRole, setCharSyncSourceRole] = useState<{ name: string; server: string } | null>(null);
   // 账号类型筛选状态：'all' | 'own' | 'client'
   const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'own' | 'client'>('all');
   // 防抖搜索词（用于实际的筛选逻辑）
@@ -1413,6 +1416,19 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                 </div>
                                 <div className="flex gap-1 shrink-0">
                                   <button
+                                    onClick={() => {
+                                      if (!appConfig?.gameDirectory) {
+                                        toast.error('请先在配置页面设置游戏目录');
+                                        return;
+                                      }
+                                      setCharSyncSourceRole({ name: role.name, server: role.server });
+                                    }}
+                                    className="p-1.5 rounded-lg text-muted hover:text-primary transition-all duration-200 active:scale-95 hover:bg-surface"
+                                    title="跨角色设置同步（以此角色为源）"
+                                  >
+                                    <ArrowLeftRight size={15} />
+                                  </button>
+                                  <button
                                     onClick={() => handleOpenEditRoleModal(account.id, role)}
                                     className="p-1.5 rounded-lg text-muted hover:text-primary transition-all duration-200 active:scale-95 hover:bg-surface"
                                     title="修改角色信息"
@@ -1818,6 +1834,17 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
             : false
         }
       />
+
+      {/* 跨角色设置同步弹窗（从角色卡片进入，该角色固定作为源角色） */}
+      {charSyncSourceRole && appConfig?.gameDirectory && (
+        <CharSyncModal
+          isOpen={!!charSyncSourceRole}
+          onClose={() => setCharSyncSourceRole(null)}
+          gameDirectory={appConfig.gameDirectory}
+          sourceRole={charSyncSourceRole}
+          appAccounts={accounts}
+        />
+      )}
     </div>
   );
 };

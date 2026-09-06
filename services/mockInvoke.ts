@@ -206,6 +206,33 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'set_auto_refresh_equip_score_enabled':
           result = null;
           break;
+        // 跨角色设置同步（浏览器环境仅返回空数据，避免 UI 崩溃）
+        case 'list_syncable_roles':
+          result = [];
+          break;
+        case 'list_char_sync_backups':
+          result = [];
+          break;
+        case 'sync_character_settings':
+          result = {
+            success: true,
+            copiedFiles: [],
+            skippedFiles: [],
+            backupDir: null,
+            error: null,
+          };
+          break;
+        case 'rollback_char_sync':
+          result = null;
+          break;
+        // 回滚标记 CRUD（V18+）
+        case 'list_char_sync_rollback_marks':
+          result = {};
+          break;
+        case 'set_char_sync_rollback_mark':
+        case 'clear_char_sync_rollback_marks':
+          result = null;
+          break;
         default:
           console.warn(`[Mock Invoke] Unhandled command: ${cmd}`);
           result = null;

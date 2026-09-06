@@ -8,7 +8,7 @@
 
 - 业务与架构上下文：`contexts/context.md`
 - UI 与设计规范：`specs/design-tokens.md`
-- 发版、Release Notes 、防乱码流程：`docs/release-process.md`
+- 发版、Release Notes 、防乱码流程：见本文件第 9、10 节（`docs/` 目录不入库，流程要点已内联）
 
 ### 1.2 工作原则
 
@@ -44,7 +44,7 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - 前端通过 Tauri `invoke` 与 Rust 后端通信。
 - 前端 `services/db.ts` 对外使用 camelCase，Rust 命令使用 snake_case。
 - 修改 `services/db.ts` 、目录扫描、数据删除等功能前，先确认 `src-tauri/` 中对应能力存在。
-- 如需 IPC 联调，可参考 `docs/TEST_CASES.md` 中的 MCP Bridge 调用方式。
+- 如需 IPC 联调，以 `services/db.ts` 的 invoke 封装为入口逐个验证命令。
 
 ## 4. 开发规范
 
@@ -121,6 +121,7 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - 用户可感知的失败要有中文提示。
 - 保存、删除、扫描、迁移等操作要同时覆盖成功、失败和跳过路径。
 - 目录扫描、账号删除、角色删除等功能更改时，要同步关注日志文案和路径兼容性。
+- 跨角色同步的回滚标记（V18+）存储于 SQLite `char_sync_rollback_marks` 表，由后端 CRUD 命令管理；前端不读写 localStorage。该功能随 v2.2.2 首次发布，不存在历史 localStorage 数据，因此不做迁移。
 
 ## 7. 目录结构
 
@@ -130,7 +131,6 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - `services/`：业务逻辑与数据访问
 - `utils/`：纯工具函数
 - `data/`：静态数据
-- `docs/`：项目文档
 - `release-notes/`：正式 Release Notes
 - `scripts/`：发布和维护脚本
 - `src-tauri/`：Rust 后端与 Tauri 配置
@@ -187,8 +187,8 @@ npm run version:prepare -- --next-patch-from 2.1.19
 1. 修改前先理解现有实现，不要臆造不存在的能力。
 2. 涉及用户可感知的变更，优先补充验证结果或验证方法。
 3. 发现乱码时，先区分"文件本体损坏"和"终端显示编码问题"。
-4. 涉及发布流程、Release Notes 、资产更新的操作，以 `docs/release-process.md` 为准。
-5. 如果修改了发布相关脚本或流程，同步更新 `AGENTS.md` 与 `docs/release-process.md`。
+4. 涉及发布流程、Release Notes 、资产更新的操作，以本文件第 9、10 节与 `.github/workflows/` 中的实际工作流为准。
+5. 如果修改了发布相关脚本或流程，同步更新 `AGENTS.md`。
 
 ## 12. Rust 编译告警处理
 

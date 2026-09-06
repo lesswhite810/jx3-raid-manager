@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_config;
+mod char_sync;
+mod char_sync_rollback_marks;
 mod db;
 mod drop_table;
 mod equip_sync;
@@ -267,6 +269,14 @@ fn main() {
             db::db_get_equipments,
             db::db_clear_equipments,
             equip_sync::equip_force_sync,
+            // 跨角色设置同步
+            char_sync::list_syncable_roles,
+            char_sync::sync_character_settings,
+            char_sync::list_char_sync_backups,
+            char_sync::rollback_char_sync,
+            char_sync_rollback_marks::list_char_sync_rollback_marks,
+            char_sync_rollback_marks::set_char_sync_rollback_mark,
+            char_sync_rollback_marks::clear_char_sync_rollback_marks,
             // 试炼记录
             db::db_add_trial_record,
             db::db_get_trial_records,

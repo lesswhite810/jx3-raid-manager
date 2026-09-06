@@ -5,6 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { db } from '../services/db';
 import { appConfigService } from '../services/appConfig';
 import { toast } from '../utils/toastManager';
+import { charSyncService } from '../services/charSync';
 import { ConfigThemePanel } from './config-panels/ConfigThemePanel';
 import { ConfigUpdatePanel } from './config-panels/ConfigUpdatePanel';
 import { ConfigGamePanel } from './config-panels/ConfigGamePanel';
@@ -98,6 +99,13 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
     const handleReset = useCallback(async () => {
         setResetting(true);
         try {
+            // 显式清空跨角色同步的回滚标记（数据库重建后表虽为空，
+            // 但本调用便于按角色/账号粒度重置时复用）
+            try {
+                await charSyncService.rollbackMarks.clear();
+            } catch (e) {
+                console.warn('[ConfigManager] 清空回滚标记失败（可忽略）:', e);
+            }
             await appConfigService.resetSetup();
             window.location.reload();
         } catch (error) {
