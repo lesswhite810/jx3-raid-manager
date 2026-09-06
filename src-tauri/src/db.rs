@@ -22,7 +22,7 @@ const LOG_FILE_NAME: &str = "jx3-raid-manager.log";
 const LEGACY_DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 17;
+pub const CURRENT_SCHEMA_VERSION: i32 = 18;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
