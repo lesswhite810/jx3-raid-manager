@@ -84,6 +84,7 @@ MY_temp/
 .omo/
 .qoder/
 .jx3-fix/
+.codegraph/
 
 # 与项目无关的本地辅助目录
 .mems/
@@ -95,3 +96,12 @@ MY_temp/
 
 # 与项目无关的本地文件
 /Project-As-Complete-Open-Design-Design.zip
+
+# docs 目录整体不提交（本地参考用）
+docs/
+
+# 临时截图目录（启动/调试截图，不入版本控制）
+.tmp-screenshots/
+
+# AI 会话与记忆数据（不入版本控制）
+.workbuddy/
