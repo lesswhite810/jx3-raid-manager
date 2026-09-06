@@ -36,7 +36,7 @@
   },
   "productName": "JX3RaidManager",
   "mainBinaryName": "JX3RaidManager",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "identifier": "com.jx3.raidmanager",
   "plugins": {
     "updater": {
