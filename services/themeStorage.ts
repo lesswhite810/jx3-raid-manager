@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 /**
  * 主题类型
- * - original: 原方案（v2.1.53 之前的靛蓝 + 锌灰风格）— 默认
+ * - original: 经典（v2.1.53 之前的靛蓝 + 锌灰风格）— 默认
  * - jianghu:  江湖纸笺（v2.2.0 沉香褐基调，可选）
  * - dark:     暗色模式
  */

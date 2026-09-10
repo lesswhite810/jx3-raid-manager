@@ -6,7 +6,7 @@ import { ThemeSelector } from '../ThemeSelector';
  * 系统配置 · 主题与外观
  *
  * 仅包含主题切换器（ThemeSelector）。
- * 主题是用户在三个内置主题之间的选择：原方案 / 江湖纸笺 / 暗色。
+ * 主题是用户在三个内置主题之间的选择：经典 / 江湖纸笺 / 暗色。
  */
 export const ConfigThemePanel: React.FC = () => {
     return (

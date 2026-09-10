@@ -64,7 +64,7 @@ JX3 Raid Manager (剑网三副本管家) 是一个专为《剑网三》玩家设
 
 9. **配置 (Configuration)** —— `components/ConfigManagerModal.tsx` + `components/config-panels/`（5 个分类面板）
    - 游戏路径设置（`ConfigGamePanel`）
-   - 主题切换：原版 / 江湖纸笺 / 暗色（`ConfigThemePanel`，主题名常量见 `services/themeStorage.ts`）
+   - 主题切换：经典 / 江湖纸笺 / 暗色（`ConfigThemePanel`，主题名常量见 `services/themeStorage.ts`）
    - 数据目录切换与迁移状态（`MigrationStatus.tsx`、`ConfigAdvancedPanel`）
    - 自动更新（`ConfigUpdatePanel` + `UpdateDialog.tsx`）
    - 意见反馈（`ConfigFeedbackPanel`）
