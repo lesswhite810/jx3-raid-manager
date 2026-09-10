@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 /**
  * 主题类型
  * - original: 原方案（v2.1.53 之前的靛蓝 + 锌灰风格）— 默认
- * - jianghu:  江湖纸笜（v2.2.0 沉香褐基调，可选）
+ * - jianghu:  江湖纸笺（v2.2.0 沉香褐基调，可选）
  * - dark:     暗色模式
  */
 export type ThemeType = 'original' | 'jianghu' | 'dark';
@@ -12,7 +12,7 @@ export const DEFAULT_THEME: ThemeType = 'original';
 
 export const THEME_LABELS: Record<ThemeType, string> = {
     original: '经典',
-    jianghu: '江湖纸笜',
+    jianghu: '江湖纸笺',
     dark: '暗色',
 };
 
