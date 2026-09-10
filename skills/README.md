@@ -24,7 +24,7 @@ skills/jx3-raid-manager-project/SKILL.md   ← 外部 AI 工具的 skill manifes
                               ↓ 引用
 contexts/context.md          ← 业务背景(给 AI 看)
 specs/design-tokens.md       ← 设计规范(给 AI 看)
-docs/release-process.md      ← 发版流程(给 AI 看)
+AGENTS.md §9/§10          ← 发版流程(给 AI 看，docs/ 已不入库)
                               ↑ 同时被
 CLAUDE.md                    ← Claude Code 路由指南(对话开始时读)
 AGENTS.md                    ← AI 编码代理红线(项目级硬约束)

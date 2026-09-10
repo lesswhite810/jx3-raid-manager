@@ -13,7 +13,7 @@ Repository-specific workflow for JX3 Raid Manager. Use it to stay aligned with t
 
 - Read `contexts/context.md` for product scope and module boundaries.
 - Read `specs/design-tokens.md` before touching UI, icon semantics, or income/expense colors.
-- Read `docs/release-process.md` before changing versions, release notes, updater assets, or GitHub release text.
+- Read `AGENTS.md` §9 and §10 before changing versions, release notes, updater assets, or GitHub release text. (`docs/` is git-ignored; the release process is inlined there.)
 - Check `src-tauri/` before assuming a new `invoke` command or filesystem capability exists.
 
 ## Core Rules
@@ -24,7 +24,7 @@ Repository-specific workflow for JX3 Raid Manager. Use it to stay aligned with t
 - Release-facing changes must update the matching file under `release-notes/`.
 - Release notes only use two sections: `新增需求` and `修复 bug`.
 - Keep the established flat, local-tool visual style. Avoid heavy shadows, strong gradients, and decorative icons.
-- Income uses `TrendingUp` with `emerald`; expense uses `TrendingDown` with `amber`. Reserve `red` for deletion and errors.
+- Income uses `TrendingUp` with `ds-success`; expense uses `TrendingDown` with `ds-warning`. Reserve `red` for deletion and errors. (Legacied `emerald`/`amber` only remain in a few untouched spots.)
 - Prefer semantic Tailwind classes such as `bg-surface`, `border-base`, and `text-muted`.
 - When 1rem text is needed, prefer `text-[1rem]` because this repo has a `text-base` naming collision risk.
 

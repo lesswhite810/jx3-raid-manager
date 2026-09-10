@@ -93,17 +93,18 @@ npm run version:prepare -- --next-patch-from 2.1.19
 
 ### 5.4 状态颜色与标签
 
-- 收入、正向结果、通用激活状态优先使用 `emerald` 系。
-- 支出、警示、已用状态优先使用 `amber` 系。
+- 收入、正向结果、通用激活状态优先使用 `ds-success` 系（`specs/design-tokens.md` §1.4）。
+- 支出、警示、已用状态优先使用 `ds-warning` 系。
 - `red` 系仅用于删除操作、错误提示和高风险警告。
-- 多选 Tag 、筛选项、状态切换组件的激活色优先统一到 `emerald` 系，不要在不同模块自由发散新颜色系统。
+- 多选 Tag 、筛选项、状态切换组件的激活色优先统一到 `ds-success` 系，不要在不同模块自由发散新颜色系统。
+- 旧文档中的 `emerald` / `amber` 是 v2.2.0 迁移前的历史写法（全仓仅剩少量未迁移处），**新写代码一律用 `ds-success` / `ds-warning`**。
 
 ### 5.5 收入 / 支出图标规则
 
 - 收入优先使用 `TrendingUp`。
 - 支出优先使用 `TrendingDown`。
 - 不要自行用其他箭头或圆形箭头图标替代这套语义。
-- 收入图标与文本颜色优先使用 `emerald`，支出优先使用 `amber`。
+- 收入图标与文本颜色优先使用 `ds-success`，支出优先使用 `ds-warning`。
 
 ### 5.6 图标克制
 
