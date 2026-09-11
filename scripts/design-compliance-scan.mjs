@@ -188,8 +188,12 @@ if (totalViolations > 0) {
   }
 }
 
-// === 报告保存到 docs/design-compliance.md ===
-const reportPath = 'docs/design-compliance.md';
+// === 报告保存到 tmp/design-compliance.md ===
+// tmp/ 已在 .gitignore；docs/ 目录自 2026-09-06 起整体不入库，故不能再作为输出目标
+// （新克隆的仓库没有 docs/，写入会 ENOENT）
+const reportDir = 'tmp';
+const reportPath = path.join(reportDir, 'design-compliance.md');
+fs.mkdirSync(reportDir, { recursive: true });
 let report = [
   '# 设计规范合规扫描报告',
   '',

@@ -1,4 +1,9 @@
 // 同步 design-tokens.md 状态(2026-08-23)
+//
+// ⚠️ 一次性补丁脚本，已于 2026-08-23 执行完毕，**不幂等**：
+//    重复运行会把 §4 顶部的「扫描工具」引用块重复插入（其匹配条件 `oldH4` 只锚定标题行，
+//    永远成立）。保留仅作留档，**勿直接重跑**；若确需执行，请先核对 design-tokens.md
+//    是否已包含目标内容。输出路径口径已于 2026-09-11 由 docs/ 改为 tmp/。
 import fs from 'node:fs';
 
 const p = 'specs/design-tokens.md';
@@ -11,7 +16,7 @@ const oldH4 = '### 4. 设计原则合规清单（新组件必过）' + EOL;
 const newH4 = [
   '### 4. 设计原则合规清单（新组件必过）',
   '',
-  '> 📋 **扫描工具**：`node scripts/design-compliance-scan.mjs` · 输出 `docs/design-compliance.md`',
+  '> 📋 **扫描工具**：`node scripts/design-compliance-scan.mjs` · 输出 `tmp/design-compliance.md`',
   '> 📅 **最近扫描**：2026-08-23 · 39 个文件 · **0 处 high severity 违规**（合规）',
   '> 📅 **最近批量修复**：2026-08-23 · 56 处 `shadow-md/lg/xl/2xl` → `shadow-ds-stack/modal`',
   '',

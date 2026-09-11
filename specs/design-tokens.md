@@ -287,7 +287,7 @@ className 字号判断
 
 ### 4. 设计原则合规清单（新组件必过）
 
-> 📋 **扫描工具**：`node scripts/design-compliance-scan.mjs` · 输出 `docs/design-compliance.md`（本地生成物；`docs/` 目录自 2026-09-06 起不入库，需本地已存在该目录）
+> 📋 **扫描工具**：`node scripts/design-compliance-scan.mjs` · 输出 `tmp/design-compliance.md`（本地生成物；`tmp/` 与 `docs/` 均不入库）
 > 📅 **最近扫描**：2026-08-23 · 39 个文件 · **0 处 high severity 违规**（合规）
 > 📅 **最近批量修复**：2026-08-23 · 56 处 `shadow-md/lg/xl/2xl` → `shadow-ds-stack/modal`
 
