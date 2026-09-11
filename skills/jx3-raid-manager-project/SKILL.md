@@ -24,7 +24,9 @@ Repository-specific workflow for JX3 Raid Manager. Use it to stay aligned with t
 - Release-facing changes must update the matching file under `release-notes/`.
 - Release notes only use two sections: `新增需求` and `修复 bug`.
 - Keep the established flat, local-tool visual style. Avoid heavy shadows, strong gradients, and decorative icons.
-- Income uses `TrendingUp` with `ds-success`; expense uses `TrendingDown` with `ds-warning`. Reserve `red` for deletion and errors. (Legacied `emerald`/`amber` only remain in a few untouched spots.)
+- Income uses `TrendingUp` with `ds-success`; expense uses `TrendingDown` with `ds-warning`. Reserve `red` for deletion and errors.
+- `ds-*` colors are theme-aware tokens: one class covers both light and dark, so do not add `dark:` variants for the same token. For small text and small icons use the `-strong` derivative instead of lowering opacity.
+- `ds-*` colors **do** support opacity modifiers (`bg-ds-success-soft/30`) since 2026-09-11, implemented via `color-mix()` in `tailwind.config.js`. Keep this in mind before "fixing" such classes as broken; they render as authored. Requires Chromium 111+ / WebView2.
 - Prefer semantic Tailwind classes such as `bg-surface`, `border-base`, and `text-muted`.
 - When 1rem text is needed, prefer `text-[1rem]` because this repo has a `text-base` naming collision risk.
 
@@ -40,6 +42,7 @@ Repository-specific workflow for JX3 Raid Manager. Use it to stay aligned with t
 - Frontend-only changes: run `npm test` and `npm run build`.
 - Rust or Tauri backend changes: also run `cargo check` inside `src-tauri`.
 - After editing Chinese docs, re-read them with UTF-8 tooling such as Node before claiming they are correct.
+- **ClassName / Tailwind token changes cannot be caught by the type system.** Verify by probe-compiling with the real config: create a probe config that does `import base from './tailwind.config.js'` and points `content` at an html file containing only the target classes, then run `node_modules/.bin/tailwindcss -c <probe> -i <in.css> -o <out.css>` and confirm each class appears in the output. Grepping `dist/assets/*.css` after `npm run build` is an equivalent shortcut — but match the **full class name including variant prefixes** (`dark:bg-ds-success-soft/20`); grepping the bare utility name gives false negatives.
 
 ## High-Value Files
 
