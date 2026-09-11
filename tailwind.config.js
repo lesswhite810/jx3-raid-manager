@@ -1,4 +1,18 @@
 /** @type {import('tailwindcss').Config} */
+
+// ds-* 语义色取自 CSS 变量（index.css 中为十六进制纯色值，不是通道三元组），
+// 原写法是裸 'var(--x)'，不含 <alpha-value> 占位符。Tailwind 遇到这种值时会
+// 直接丢掉透明度修饰符 —— 即 `bg-ds-success-soft/30` 整条规则不生成，
+// 既不报错也无样式，属于静默失效。
+//
+// 这里补上 alpha 支持：仅当显式传入数字浓度（bg-ds-success-soft/30）时用
+// color-mix 按比例混入 transparent；其余情况（含 Tailwind 传入的运行时
+// --tw-*-opacity 变量）一律原样输出 var(--x)，与改动前完全一致，避免影响存量用法。
+const dsColor = (cssVar) => ({ opacityValue }) =>
+  opacityValue !== undefined && /^[\d.]+$/.test(String(opacityValue))
+    ? `color-mix(in srgb, var(${cssVar}) calc(${opacityValue} * 100%), transparent)`
+    : `var(${cssVar})`;
+
 export default {
   content: [
     "./index.html",
@@ -36,69 +50,69 @@ export default {
         // 来源：tmp/design-zip/colors_and_type.css §3 + DESIGN.md §3
         // 用 ds- 前缀避免与 Tailwind 默认调色板（neutral / amber / sky 等）冲突
         // ============================================================
-        'ds-bg': 'var(--bg)',
-        'ds-surface': 'var(--surface-ds)',
-        'ds-surface-2': 'var(--surface-2)',
-        'ds-surface-3': 'var(--surface-3)',
-        'ds-fg': 'var(--fg)',
-        'ds-fg-soft': 'var(--fg-soft)',
-        'ds-fg-mute': 'var(--fg-mute)',
-        'ds-fg-inverse': 'var(--fg-inverse)',
+        'ds-bg': dsColor('--bg'),
+        'ds-surface': dsColor('--surface-ds'),
+        'ds-surface-2': dsColor('--surface-2'),
+        'ds-surface-3': dsColor('--surface-3'),
+        'ds-fg': dsColor('--fg'),
+        'ds-fg-soft': dsColor('--fg-soft'),
+        'ds-fg-mute': dsColor('--fg-mute'),
+        'ds-fg-inverse': dsColor('--fg-inverse'),
         'ds-accent': {
-          DEFAULT: 'var(--accent)',
-          soft: 'var(--accent-soft)',
-          strong: 'var(--accent-strong)',
+          DEFAULT: dsColor('--accent'),
+          soft: dsColor('--accent-soft'),
+          strong: dsColor('--accent-strong'),
         },
         'ds-success': {
-          DEFAULT: 'var(--success)',
-          soft: 'var(--success-soft)',
-          strong: 'var(--success-strong)',
+          DEFAULT: dsColor('--success'),
+          soft: dsColor('--success-soft'),
+          strong: dsColor('--success-strong'),
         },
         'ds-warning': {
-          DEFAULT: 'var(--warning)',
-          soft: 'var(--warning-soft)',
-          strong: 'var(--warning-strong)',
+          DEFAULT: dsColor('--warning'),
+          soft: dsColor('--warning-soft'),
+          strong: dsColor('--warning-strong'),
         },
         'ds-danger': {
-          DEFAULT: 'var(--danger-ds)',
-          soft: 'var(--danger-soft)',
+          DEFAULT: dsColor('--danger-ds'),
+          soft: dsColor('--danger-soft'),
         },
         'ds-info': {
-          DEFAULT: 'var(--info)',
-          soft: 'var(--info-soft)',
-          strong: 'var(--info-strong)',
+          DEFAULT: dsColor('--info'),
+          soft: dsColor('--info-soft'),
+          strong: dsColor('--info-strong'),
         },
         'ds-neutral': {
-          DEFAULT: 'var(--neutral)',
-          soft: 'var(--neutral-soft)',
+          DEFAULT: dsColor('--neutral'),
+          soft: dsColor('--neutral-soft'),
         },
       },
       textColor: {
         main: "rgb(var(--text-main) / <alpha-value>)",
         muted: "rgb(var(--text-muted) / <alpha-value>)",
         // 设计系统提案文本色 alias
-        'ds-fg': 'var(--fg)',
-        'ds-fg-soft': 'var(--fg-soft)',
-        'ds-fg-mute': 'var(--fg-mute)',
+        'ds-fg': dsColor('--fg'),
+        'ds-fg-soft': dsColor('--fg-soft'),
+        'ds-fg-mute': dsColor('--fg-mute'),
       },
       backgroundColor: {
         base: "rgb(var(--bg-base) / <alpha-value>)",
         surface: "rgb(var(--bg-surface) / <alpha-value>)",
         // 设计系统提案背景色 alias
-        'ds-bg': 'var(--bg)',
-        'ds-surface': 'var(--surface-ds)',
-        'ds-surface-2': 'var(--surface-2)',
-        'ds-surface-3': 'var(--surface-3)',
-        'ds-accent': 'var(--accent)',
-        'ds-accent-soft': 'var(--accent-soft)',
+        'ds-bg': dsColor('--bg'),
+        'ds-surface': dsColor('--surface-ds'),
+        'ds-surface-2': dsColor('--surface-2'),
+        'ds-surface-3': dsColor('--surface-3'),
+        'ds-accent': dsColor('--accent'),
+        'ds-accent-soft': dsColor('--accent-soft'),
       },
       borderColor: {
         base: "rgb(var(--border-base) / <alpha-value>)",
         // 设计系统提案描边 alias
-        'ds-border': 'var(--border-ds)',
-        'ds-border-strong': 'var(--border-strong)',
-        'ds-accent': 'var(--accent)',
-        'ds-accent-strong': 'var(--accent-strong)',
+        'ds-border': dsColor('--border-ds'),
+        'ds-border-strong': dsColor('--border-strong'),
+        'ds-accent': dsColor('--accent'),
+        'ds-accent-strong': dsColor('--accent-strong'),
       },
       borderRadius: {
         lg: "var(--radius)",                         // 既有 · 保留 = 8px（back-compat）

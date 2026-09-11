@@ -139,6 +139,12 @@
   - `amber-600 = #d97706` vs `--warning = #a38246`（更偏暖陶土，饱和度更低）
 - **迁移已完成**：v2.2.0（2026-08-23）起收入/支出场景不再使用 `emerald-600 / amber-600`，已全量替换为 `ds-success` / `ds-warning`（764 处，见 §6 待办第 2 项）。新代码一律使用 `ds-*`。
 
+**浓度修饰符（2026-09-11 起可用）**：
+
+- 全部 `ds-*` token 现支持 Tailwind 浓度修饰：`bg-ds-success-soft/30`、`border-ds-warning-soft/50`、`dark:bg-ds-success-soft/10` 等均可正常生成样式。
+- 实现见 `tailwind.config.js` 的 `dsColor()`：**显式传入数字浓度**时用 `color-mix()` 混入 `transparent`；不带修饰符时仍原样输出 `var(--x)`，与历史行为完全一致。因此该能力要求 Chromium 111+ / WebView2。
+- ⚠️ 背景/描边可用浓度调节深浅；**文本色仍按 §1.4.2 决策树改用 `-strong` 派生**，不要用降低浓度来调淡文字（会拉低对比度）。
+
 #### 1.4.1 派生 strong 系列（WCAG AA 4.5:1 小正文专用）
 
 > 🆕 **v2.2.0（2026-08-23）** 新增 · 决策点 1 方案 C 落地
