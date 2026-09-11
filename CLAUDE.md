@@ -25,7 +25,7 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
 2. **Type Safety**: The project runs in strict TypeScript mode. **NEVER** use `as any`, `@ts-ignore`, or `@ts-expect-error` to suppress type errors.
 3. **No Fabrication**: **NEVER** invent non-existent backend command names (`invoke('something_new')`) without writing the corresponding Rust function in `src-tauri/` first.
 4. **Git Commits**: Commit messages must be in Chinese and follow the format: `类型: 描述` (e.g., `feat: 新增记录分类`, `fix: 修复显示错误`).
-5. **Sync Logs**: When adding significant features, fixing bugs, or updating versions, always update the changelog in `README.md`.
+5. **Sync Logs**: When adding significant features, fixing bugs, or updating versions, always update the changelog in `README.md`. Keep only the **latest 5 versions** there — older entries belong in `release-notes/` and GitHub Releases.
 6. **Release Notes**: When creating GitHub releases, follow this user-friendly format (NO technical code details). **Only two section headings are allowed, exactly as written below — no emoji, no `性能优化` section** (SSOT: `AGENTS.md` §9.2 and the template in `scripts/prepare-next-version.mjs`):
 
    ```markdown
