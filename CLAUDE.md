@@ -14,7 +14,7 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
 |------|--------------------|-------------|
 | **Business & Context** | 👉 `contexts/context.md` | Core project introduction, what is JX3 Raid Manager, main features, file structure, and core logic components. |
 | **Code Style & Rules** | 👉 `AGENTS.md` | TypeScript/React best practices, testing commands, folder structures, and Tauri (Frontend-Backend) IPC conventions. |
-| **UI & Design Tokens** | 👉 `specs/design-tokens.md` | **CRITICAL for UI work.** Contains the comprehensive flat & minimalist design principles, semantic colors (`emerald/amber`), container specs, and interaction colors. |
+| **UI & Design Tokens** | 👉 `specs/design-tokens.md` | **CRITICAL for UI work.** Contains the comprehensive flat & minimalist design principles, semantic colors (`ds-success` / `ds-warning`), container specs, and interaction colors. |
 | **Release Process** | 👉 `AGENTS.md` §9、§10 | **CRITICAL before publishing.** Release checklist, notes format, GitHub Actions troubleshooting, Gitee mirror caveats, and Chinese UTF-8 rules. (`docs/` is git-ignored since 2026-09-06; the old `docs/release-process.md` is inlined here.) |
 
 ---

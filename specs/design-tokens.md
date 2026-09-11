@@ -1,17 +1,5 @@
 # 设计规范 - Design Tokens
 
-> ## ⚠️ 读前必看：本文档存在历史分层，别照抄旧表
->
-> 本文档由 v2.2.0 设计系统改造前后**两个时期的内容叠加**而成，语义色部分存在新旧两套写法：
->
-> | 时期 | 语义色写法 | 现状 |
-> |---|---|---|
-> | v2.2.0 之前 | `emerald-600` / `amber-600` | **历史遗留**，仅剩少量未迁移处（`emerald-*` 22 处、`amber-*` 12 处） |
-> | **v2.2.0 起（当前）** | **`ds-success` / `ds-warning`** | **现行标准**，代码中 482 / 282 处，见 §1.4 提案 token 与 §6 待办第 2 项「✅ 已落地」 |
->
-> **新写代码一律使用 `ds-success` / `ds-warning`**（收入/正向 → `ds-success`，支出/警示 → `ds-warning`）。
-> 下文 §收入与支出 的颜色表、以及 §1.4 末尾那条「建议继续沿用 emerald-600 / amber-600」的批注，都是 v2.2.0 迁移**之前**遗留的文字，仅作历史参考，**不代表当前规范**。
-
 ## 收入与支出
 
 全应用中收入/支出相关的图标和颜色**必须**遵循以下规范：
@@ -29,19 +17,22 @@
 
 | 语义 | 亮色模式 | 暗色模式 | CSS 类 |
 |------|---------|---------|--------|
-| 收入 | `emerald-600` | `emerald-400`/`emerald-500` | `text-emerald-600 dark:text-emerald-400` |
-| 支出 | `amber-600` | `amber-400`/`amber-500` | `text-amber-600 dark:text-amber-400` |
+| 收入 | `--success` `#5d8770` 苔绿 | `--success` `#87b29a` | `text-ds-success` |
+| 支出 | `--warning` `#a38246` 焦糖 | `--warning` `#c9a06b` | `text-ds-warning` |
 | 净收入（正） | 同收入 | 同收入 | 同收入 |
 | 净收入（负） | 同支出 | 同支出 | 同支出 |
 
+`ds-*` 是随主题自动切换的语义 token（值定义在 `index.css` 的 `:root` / `[data-theme="dark"]`），因此**单个 class 即可覆盖光暗两种主题**，无需 `dark:` 变体。
+
+> **小字号补充**：`text-xs` / `text-sm` / 小图标场景请用 `-strong` 派生（`text-ds-success-strong` / `text-ds-warning-strong`），以满足 WCAG AA 4.5:1（见 §1.4.1）。
 > **禁止使用**：`rose`、`red` 来表示支出或负净收入。`red` 系仅用于**删除操作**和**错误提示**。
 
 ### 背景色搭配
 
 | 语义 | 背景 | 边框 |
 |------|------|------|
-| 收入区域 | `bg-emerald-50 dark:bg-emerald-900/20` | `border-emerald-200 dark:border-emerald-800` |
-| 支出区域 | `bg-amber-50 dark:bg-amber-900/20` | `border-amber-200 dark:border-amber-800` |
+| 收入区域 | `bg-ds-success-soft` | `border-ds-success-soft` |
+| 支出区域 | `bg-ds-warning-soft` | `border-ds-warning-soft` |
 
 ### 适用组件
 
@@ -59,8 +50,8 @@
 
 随着应用的视觉优化全面走向扁平极简，请在开发与重构组件时严格遵守卡片、按钮的外观规范：
 
-- **卡片/容器**：使用单色无渐变的柔和背景色，例如默认区域使用 `bg-slate-50`，状态区域使用 `bg-emerald-50` 或 `bg-amber-50`。禁用任何悬浮带来的发光、强阴影(`shadow-lg`, `shadow-md` 等)效果，并舍弃线性渐变底色。
-- **状态筛选/多选 Tag**：多标签切换（比如团队副本、百战、试炼的复选框状态）或选择器中，其激活选中态颜色应用统一的 `emerald` 方案 (`bg-emerald-50 text-emerald-700`)，未选中为低对比度 `bg-base`。不在不同维度间创造花哨或跳跃的高对比颜色系统。
+- **卡片/容器**：使用单色无渐变的柔和背景色，例如默认区域使用 `bg-slate-50`，状态区域使用 `bg-ds-success-soft` 或 `bg-ds-warning-soft`。禁用任何悬浮带来的发光、强阴影(`shadow-lg`, `shadow-md` 等)效果，并舍弃线性渐变底色。
+- **状态筛选/多选 Tag**：多标签切换（比如团队副本、百战、试炼的复选框状态）或选择器中，其激活选中态颜色应用统一的 `ds-success` 方案 (`bg-ds-success-soft text-ds-success-strong`)，未选中为低对比度 `bg-base`。不在不同维度间创造花哨或跳跃的高对比颜色系统。
 - **图标克制**：不在信息已经非常明确的选择器文本之前附加不必要的装饰图标（比如“眼睛”图标），追求内容本体的直观和清爽。
 
 ---
@@ -69,20 +60,20 @@
 
 | 用途 | 色系 | 示例 |
 |------|------|------|
-| 收入/正值/可用/通用激活态 | `emerald` | 总收入、可打状态、通用 Tab 激活项 |
-| 支出/警示/已用 | `amber` | 总支出、已打状态、玄晶标签 |
+| 收入/正值/可用/通用激活态 | `ds-success` | 总收入、可打状态、通用 Tab 激活项 |
+| 支出/警示/已用 | `ds-warning` | 总支出、已打状态、玄晶标签 |
 | 错误/删除 | `red` | 删除按钮、错误提示 |
 | 主操作 | `primary` | 提交按钮 |
 | 信息 | `blue` | 装备分数、翻牌序号 |
-| 百战/独立模块辅助 | 尽量并入 `emerald` 或扁平主题 | 取消渐变，保持 `bg-slate-50` 或统一激活浅绿系 |
-| 试炼/独立模块辅助 | 尽量并入 `emerald` 或扁平主题 | 取消阴影，维持平淡边框样式以服从主干 |
+| 百战/独立模块辅助 | 尽量并入 `ds-success` 或扁平主题 | 取消渐变，保持 `bg-slate-50` 或统一激活浅绿系 |
+| 试炼/独立模块辅助 | 尽量并入 `ds-success` 或扁平主题 | 取消阴影，维持平淡边框样式以服从主干 |
 
 
 ---
 
 ## 设计系统提案 token 增量（2026-08-23 纳入）
 
-> 本节是**新增**附录，与上文的 `bg-emerald-600 / bg-amber-600 / text-red-600` 等**已有** Tailwind 调色板**共存**而非替换。
+> 本节是**新增**附录，与上文的 `bg-primary` / `text-red-600` / `bg-slate-50` 等**已有** Tailwind 调色板**共存**而非替换。
 > 引入动机：采用 Open Design 导出的设计系统快照（`tmp/design-zip/DESIGN.md · colors_and_type.css §3`），在不破坏既有 chrome 视觉的前提下暴露完整的设计 token。
 > 迁移策略：新建组件 / 重构时优先采用本节 token；存量组件保留不动。
 
@@ -142,17 +133,11 @@
 | `--neutral` | `#6a6258` | `#a89e8c` | `bg-ds-neutral` | 中性 Tag / 已读 |
 | `--neutral-soft` | `#ebe6db` | `#2a2520` | `bg-ds-neutral-soft` | Tag 底 |
 
-**与现有 emerald/amber/red 的关系**：
+**与旧 emerald/amber 调色板的关系**：
 - 颜色 **同色系**（success-绿 / warning-橙 / danger-红），**具体 hex 不同**：
-  - `emerald-600 = #059669` vs 提案 `--success = #5d8770`（更偏冷，更低饱和）
-  - `amber-600 = #d97706` vs 提案 `--warning = #a38246`（更偏暖陶土，饱和度更低）
-- 决策点（待团队评审）：
-  - 选项 A：保留 `emerald-600 / amber-600`（已有 chrome 不变，新组件可选用提案 `--success` / `--warning`）
-  - 选项 B：把 `--chart-income` 由 `5 150 105` 改为 `#5d8770` 的 RGB（破坏性变更，需同步修改 `chart-income` / `chart-expense` 引用方）
-
-> ~~**建议**：在收入/支出场景**继续沿用** `emerald-600 / amber-600`~~
->
-> 🚫 **本条建议已作废（2026-09-11 标注）**：这是「决策点 1」待评审时期的临时建议。v2.2.0 实际执行的是**选项 B 方向的全面迁移**——764 处 `emerald-*` / `amber-*` 已替换为 `ds-success` / `ds-warning`（见 §6 待办第 2 项），收入/支出场景同样完成迁移。**当前以 `ds-success` / `ds-warning` 为准**，本条仅保留作历史记录。
+  - `emerald-600 = #059669` vs `--success = #5d8770`（更偏冷，更低饱和）
+  - `amber-600 = #d97706` vs `--warning = #a38246`（更偏暖陶土，饱和度更低）
+- **迁移已完成**：v2.2.0（2026-08-23）起收入/支出场景不再使用 `emerald-600 / amber-600`，已全量替换为 `ds-success` / `ds-warning`（764 处，见 §6 待办第 2 项）。新代码一律使用 `ds-*`。
 
 #### 1.4.1 派生 strong 系列（WCAG AA 4.5:1 小正文专用）
 
@@ -337,4 +322,4 @@ className 字号判断
 
 ---
 
-**最后更新**：2026-08-23 · 与 `tmp/design-zip/DESIGN.md v2.1.52` 同步
+**最后更新**：2026-09-11 · 与 `tmp/design-zip/DESIGN.md v2.1.52` 同步
