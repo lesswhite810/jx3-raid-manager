@@ -26,20 +26,14 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
 3. **No Fabrication**: **NEVER** invent non-existent backend command names (`invoke('something_new')`) without writing the corresponding Rust function in `src-tauri/` first.
 4. **Git Commits**: Commit messages must be in Chinese and follow the format: `类型: 描述` (e.g., `feat: 新增记录分类`, `fix: 修复显示错误`).
 5. **Sync Logs**: When adding significant features, fixing bugs, or updating versions, always update the changelog in `README.md`.
-6. **Release Notes**: When creating GitHub releases, follow this user-friendly format (NO technical code details):
-7. **No Manual Tag Push**: Avoid manually pushing tags to GitHub. Let the workflow handle it to prevent sync conflicts with Gitee. If you must push a tag manually, ensure the workflow code is already updated with any necessary fixes.
-8. **Verify latest.json**: After updating release notes, always manually regenerate and upload `latest.json` to ensure auto-update shows correct notes.
+6. **Release Notes**: When creating GitHub releases, follow this user-friendly format (NO technical code details). **Only two section headings are allowed, exactly as written below — no emoji, no `性能优化` section** (SSOT: `AGENTS.md` §9.2 and the template in `scripts/prepare-next-version.mjs`):
 
    ```markdown
-   ## ✨ 新增功能
+   ## 新增需求
 
    - **功能名称** - 简短描述功能对用户的价值
 
-   ## ⚡ 性能优化
-
-   - **优化项** - 用户可感知的改进描述
-
-   ## 🐛 问题修复
+   ## 修复 bug
 
    - 修复问题描述（用户视角）
 
@@ -49,3 +43,5 @@ To avoid redundancy and maintain a Single Source of Truth (SSOT), detailed docum
    ```
 
    示例：`compare/v2.1.2...v2.1.3`
+7. **No Manual Tag Push**: Avoid manually pushing tags to GitHub. Let the workflow handle it to prevent sync conflicts with Gitee. If you must push a tag manually, ensure the workflow code is already updated with any necessary fixes.
+8. **Verify latest.json**: After updating release notes, always manually regenerate and upload `latest.json` to ensure auto-update shows correct notes.
