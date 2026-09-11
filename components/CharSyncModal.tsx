@@ -356,7 +356,7 @@ export const CharSyncModal: React.FC<CharSyncModalProps> = ({
           )}
 
           {activeTab === 'sync' && !loadingRoles && !sourceRole && !error && (
-            <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+            <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-ds-warning-soft border border-ds-warning-soft text-sm text-ds-warning-strong">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <span>
                 未在游戏目录中找到「{sourceRoleSpec.name}」的角色数据目录，
@@ -408,7 +408,7 @@ export const CharSyncModal: React.FC<CharSyncModalProps> = ({
             )}
             <button onClick={onClose} className="px-4 py-2 text-sm text-muted hover:text-main border border-base rounded-lg transition-colors" disabled={syncing || rolling}>{batchResults ? '关闭' : '取消'}</button>
             {!batchResults && (
-              <button onClick={handleBatchSync} disabled={!canSync} className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+              <button onClick={handleBatchSync} disabled={!canSync} className="px-4 py-2 text-sm font-medium text-white bg-ds-success rounded-lg hover:bg-ds-success transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
                 {syncing ? (
                   <><RefreshCw className="w-4 h-4 animate-spin" />同步中…</>
                 ) : (
@@ -475,8 +475,8 @@ const SyncTabContent: React.FC<SyncTabContentProps> = ({
     <div className="space-y-5">
       <div>
         <label className="block text-sm font-medium text-main mb-1.5">源角色（复制设置来源）</label>
-        <div className="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800 font-medium">
-          <UserIcon className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-ds-success-soft border border-ds-success-soft rounded-lg text-sm text-ds-success-strong font-medium">
+          <UserIcon className="w-4 h-4 flex-shrink-0 text-ds-success-strong" />
           {(() => {
             const martial = getMartialOf(sourceRole);
             return martial ? <SectIcon sectName={martial} size="xs" className="flex-shrink-0" /> : null;
@@ -500,7 +500,7 @@ const SyncTabContent: React.FC<SyncTabContentProps> = ({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
           <input type="text" placeholder="搜索账号 / 服务器 / 角色名" value={targetSearch}
             onChange={(e) => setTargetSearch(e.target.value)} disabled={syncing}
-            className="w-full pl-9 pr-3 py-2 bg-surface border border-base rounded-lg text-main text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+            className="w-full pl-9 pr-3 py-2 bg-surface border border-base rounded-lg text-main text-sm focus:outline-none focus:ring-2 focus:ring-ds-success" />
         </div>
         <div className="border border-base rounded-lg divide-y divide-base">
           {targetAccountGroups.length === 0 ? (
@@ -537,8 +537,8 @@ const SyncTabContent: React.FC<SyncTabContentProps> = ({
                         const martial = getMartialOf(r);
                         return (
                           <button key={r.roleDir} onClick={() => toggleTargetRole(r)} disabled={syncing}
-                            className={`w-full px-3 py-2 pl-9 text-left text-sm flex items-center gap-2 transition-colors ${selected ? 'bg-emerald-50 text-emerald-700 font-medium' : 'hover:bg-base text-main'}`}>
-                            {selected ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-emerald-600" /> : <Square className="w-4 h-4 flex-shrink-0 text-muted" />}
+                            className={`w-full px-3 py-2 pl-9 text-left text-sm flex items-center gap-2 transition-colors ${selected ? 'bg-ds-success-soft text-ds-success-strong font-medium' : 'hover:bg-base text-main'}`}>
+                            {selected ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-ds-success-strong" /> : <Square className="w-4 h-4 flex-shrink-0 text-muted" />}
                             {martial && <SectIcon sectName={martial} size="xs" className="flex-shrink-0" />}
                             <span className="truncate">{r.server} / {r.roleName}</span>
                           </button>
@@ -566,7 +566,7 @@ const SyncTabContent: React.FC<SyncTabContentProps> = ({
             onChange={(v) => setOptions({ ...options, syncUserprefs: v })} />
         </div>
         <label className="mt-2 flex items-center gap-2 text-sm text-main cursor-pointer">
-          <input type="checkbox" className="rounded border-base text-emerald-600 focus:ring-emerald-500/30"
+          <input type="checkbox" className="rounded border-base text-ds-success-strong focus:ring-ds-success"
             checked={options.overwrite} onChange={(e) => setOptions({ ...options, overwrite: e.target.checked })} disabled={syncing} />
           <span>覆盖目标已有文件</span>
         </label>
@@ -577,7 +577,7 @@ const SyncTabContent: React.FC<SyncTabContentProps> = ({
       </div>
 
       {sourceRole && targetRoles.length > 0 && !batchResults && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-ds-warning-soft border border-ds-warning-soft text-xs text-ds-warning-strong">
           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <div className="space-y-1">
             <div>将覆盖 {targetRoles.length} 个目标角色的现有设置，已自动备份可回滚。</div>
@@ -614,7 +614,7 @@ const BatchResultRow: React.FC<BatchResultRowProps> = ({ target, result, error, 
     <div className="p-3 rounded-lg border border-base bg-base/30 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm min-w-0">
-          {success ? <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+          {success ? <CheckCircle className="w-4 h-4 text-ds-success-strong flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 text-ds-warning-strong flex-shrink-0" />}
           <span className="font-medium text-main truncate">{roleLabel(target)}</span>
           {error && <span className="text-xs text-red-600 truncate">· {error}</span>}
         </div>
@@ -656,8 +656,8 @@ interface OptionCheckboxProps {
 }
 
 const OptionCheckbox: React.FC<OptionCheckboxProps> = ({ label, hint, checked, disabled, onChange }) => (
-  <label className="flex items-start gap-2 px-3 py-2 border border-base rounded-lg cursor-pointer hover:border-emerald-300 transition-colors">
-    <input type="checkbox" className="mt-0.5 rounded border-base text-emerald-600 focus:ring-emerald-500/30"
+  <label className="flex items-start gap-2 px-3 py-2 border border-base rounded-lg cursor-pointer hover:border-ds-success transition-colors">
+    <input type="checkbox" className="mt-0.5 rounded border-base text-ds-success-strong focus:ring-ds-success"
       checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
     <div className="min-w-0">
       <div className="text-sm text-main">{label}</div>
@@ -722,14 +722,14 @@ const HistoryTabContent: React.FC<HistoryTabContentProps> = ({
         return (
           <div key={b.backupDir}
             className={`p-3 rounded-lg border space-y-2 transition-colors ${
-              rollbackAt ? 'border-emerald-300 bg-emerald-50/40' : 'border-base bg-base/30'
+              rollbackAt ? 'border-ds-success-soft bg-ds-success-soft' : 'border-base bg-base/30'
             }`}>
             <div className="flex items-center gap-2 text-sm min-w-0 flex-wrap">
-              <History className={`w-4 h-4 flex-shrink-0 ${rollbackAt ? 'text-emerald-600' : 'text-muted'}`} />
+              <History className={`w-4 h-4 flex-shrink-0 ${rollbackAt ? 'text-ds-success-strong' : 'text-muted'}`} />
               <span className="font-medium text-main truncate">{b.targetRole}</span>
               <span className="text-xs text-muted">· {formatTimestamp(b.timestamp)} · {b.fileCount} 文件</span>
               {rollbackAt && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-white bg-emerald-600">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-white bg-ds-success">
                   <CheckCircle className="w-3 h-3" />
                   已回滚到此版本 · {new Date(rollbackAt).toLocaleString('zh-CN', { hour12: false })}
                 </span>
@@ -740,7 +740,7 @@ const HistoryTabContent: React.FC<HistoryTabContentProps> = ({
               {targetDir ? (
                 isConfirming ? (
                   <>
-                    <span className="text-xs text-amber-700">确认回滚到「{b.targetRole}」？会覆盖该角色当前设置</span>
+                    <span className="text-xs text-ds-warning-strong">确认回滚到「{b.targetRole}」？会覆盖该角色当前设置</span>
                     <button onClick={async () => { await onRollback(b, targetDir); setConfirming(null); }}
                       disabled={rolling}
                       className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700 transition-colors disabled:opacity-50">
@@ -756,7 +756,7 @@ const HistoryTabContent: React.FC<HistoryTabContentProps> = ({
                   </button>
                 )
               ) : (
-                <span className="text-xs text-amber-700">当前游戏目录中未找到同名角色「{b.targetRole}」，无法回滚</span>
+                <span className="text-xs text-ds-warning-strong">当前游戏目录中未找到同名角色「{b.targetRole}」，无法回滚</span>
               )}
             </div>
           </div>
