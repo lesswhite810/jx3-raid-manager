@@ -283,11 +283,11 @@ className 字号判断
 | `ease-ds-ease` | `cubic-bezier(.2,.6,.2,1)` | 全局缓动 |
 | `duration-ds-slow` | 280ms | 抽屉 / 弹窗进入 |
 
-**规则（`AGENTS.md §9`）**：禁止 > 400ms 过渡；禁止弹性 / 回弹。
+**规则**：禁止 > 400ms 过渡；禁止弹性 / 回弹。（本文件为设计规范真值源）
 
 ### 4. 设计原则合规清单（新组件必过）
 
-> 📋 **扫描工具**：`node scripts/design-compliance-scan.mjs` · 输出 `docs/design-compliance.md`
+> 📋 **扫描工具**：`node scripts/design-compliance-scan.mjs` · 输出 `docs/design-compliance.md`（本地生成物；`docs/` 目录自 2026-09-06 起不入库，需本地已存在该目录）
 > 📅 **最近扫描**：2026-08-23 · 39 个文件 · **0 处 high severity 违规**（合规）
 > 📅 **最近批量修复**：2026-08-23 · 56 处 `shadow-md/lg/xl/2xl` → `shadow-ds-stack/modal`
 

@@ -1,7 +1,7 @@
 # `release-notes/` 索引
 
 > JX3 Raid Manager 全部历史版本的 Release Notes 导航
-> 当前版本：**v2.1.54** · 整理：2026-08-23
+> 当前开发版本：**2.2.3**（未发布）· 最近发布：**v2.2.2**（2026-09-06）· 整理：2026-09-11
 
 ---
 
@@ -11,7 +11,7 @@
 
 ### 推荐查看方式
 
-- **GitHub Releases**：[https://github.com/lesswhite810/jx3-raid-manager/releases](https://github.com/lesswhite810/jx3-raid-manager/releases) · 用户向（按 CLAUDE.md §6 格式）
+- **GitHub Releases**：[https://github.com/lesswhite810/jx3-raid-manager/releases](https://github.com/lesswhite810/jx3-raid-manager/releases) · 用户向（按 `AGENTS.md` §9.2 格式）
 - **本目录文件**：每个版本 1 个 `.md`，内部开发记录，**包含** GitHub Release 的所有内容 + 内部迁移 / 重构说明
 
 ---
@@ -20,8 +20,11 @@
 
 | 版本 | 日期 | 类型 | 备注 |
 |---|---:|---|---|
-| **v2.2.0** | 2026-08-23 | 🎉 视觉统一 | 沉香褐基调 · 设计系统统一（见 `docs/design-system-meeting.md`） |
-| **v2.1.54** | 2026-08-23 | (当前 package.json) | 内部小修复 |
+| **v2.2.3** | - | 🚧 开发中 | 未发布 |
+| **v2.2.2** | 2026-09-06 | ✨ 新功能 | 跨角色设置同步；回滚标记存入数据库 |
+| **v2.2.1** | 2026-08-30 | ✨ 新功能 | 收益概览合并散件估价；散件支出按白名单购买价统计；大额金额按「砖」显示 |
+| **v2.2.0** | 2026-08-23 | 🎉 视觉统一 | 沉香褐基调 · 设计系统统一（见 `specs/design-tokens.md`） |
+| v2.1.54 | 2026-08-23 | 未发布 | 版本号推进后直接发布 v2.2.0，此版本未单独发布 |
 | v2.1.53 | 2026-08-23 | - | - |
 | v2.1.52 | 2026-08-09 | 🔧 重要修复 | 自动扫描历史遗留记录复核；修复无底薪副本收入虚高 |
 | v2.1.51 | 2026-08-04 | 🔧 重要修复 | 修复无底薪时副本收入虚高；切换数据目录覆盖保护 |
@@ -51,7 +54,7 @@
 | v2.1.27 | 2026-04-07 | 🔧 修复 | - |
 | v2.1.26 | 2026-04-07 | - | - |
 | v2.1.25 | 2026-04-07 | - | - |
-| v2.1.24 | 2026-04-XX | ⚠️ 问题版 | 详见 `docs/release-process.md §v2.1.24 问题总结` |
+| v2.1.24 | 2026-04-XX | ⚠️ 问题版 | 原始说明随 `docs/` 移除，此处仅保留版本标记 |
 | v2.1.23 | 2026-04-XX | - | - |
 | v2.1.22 | 2026-04-XX | - | - |
 | v2.1.21 | 2026-04-07 | 🔧 修复 | - |
@@ -88,14 +91,14 @@
 
 ---
 
-## 📝 Release Notes 写作规范（`docs/release-process.md`）
+## 📝 Release Notes 写作规范（`AGENTS.md` §9.2）
 
 - 每版本一个文件，命名 `vX.Y.Z.md`
-- 文件格式：H1 标题 `剑网三副本管家 vX.Y.Z`，章节按 `新增需求 / 修复 bug`（CLAUDE.md §6 格式可在 GitHub Release 用）
+- 文件格式：H1 标题 `剑网三副本管家 vX.Y.Z`，栏目固定 `## 新增需求` / `## 修复 bug`（以 `AGENTS.md` §9.2 与 `scripts/prepare-next-version.mjs` 模板为准，**不要用 emoji 标题**）
 - **简体中文、动词驱动、无 emoji 图标、`!!!`、英文标点**
 - `npm run release:notes -- vX.Y.Z release-notes/vX.Y.Z.md` 自动生成模板
 - 完成后必须同步更新：`README.md §📋 更新日志` + 本 README 索引
 
 ---
 
-**最后整理**：2026-08-23
+**最后整理**：2026-09-11
