@@ -536,7 +536,7 @@ export const RaidLogger: React.FC<RaidLoggerProps> = ({ accounts, records, setRe
                 setRecordToDelete(record.id);
               };
               return (
-                <div key={record.id} className={`bg-surface p-4 rounded-xl shadow-sm border-l-4 flex items-start justify-between ${record.hasXuanjing ? 'border-l-ds-warning bg-ds-warning-soft/30 dark:bg-ds-warning-soft/10' : 'border-l-ds-success'}`}>
+                <div key={record.id} className={`bg-surface p-4 rounded-xl shadow-sm border-l-4 flex items-start justify-between ${record.hasXuanjing ? 'border-l-ds-warning bg-gradient-to-b from-ds-warning-soft/30 to-ds-warning-soft/30 dark:from-ds-warning-soft/10 dark:to-ds-warning-soft/10' : 'border-l-ds-success'}`}>
                   <div className="flex gap-3">
                     <input
                       type="checkbox"
