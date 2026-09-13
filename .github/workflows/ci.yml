@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: 构建前端产物（generate_context 依赖 ../dist）
+        run: npm run build
+
       - name: Cargo 检查（编译告警与类型）
         shell: bash
         working-directory: src-tauri
