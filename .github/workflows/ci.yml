@@ -40,6 +40,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -49,7 +55,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ci-${{ runner.os }}
+          key: ci-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: Install dependencies
         run: npm ci
