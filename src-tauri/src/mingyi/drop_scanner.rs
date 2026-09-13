@@ -684,6 +684,33 @@ fn find_next_jcl_time_after(account_dir: &Path, after_ms: i64) -> Result<Option<
     Ok(next)
 }
 
+/// 解析副本实例的"下一条 JCL"时间戳（副本切换信号）
+///
+/// 取值优先级：
+/// 1. 本次扫描区间内的 JCL 时间戳（严格晚于 `last_jcl_time`）。批量路径的区间覆盖整个
+///    CD 窗口，可以完整观察到后续副本产生的 JCL，所以优先采用扫描结果；
+/// 2. 区间内找不到时，回退到调用方已知的 `known_next_jcl_time`。复核路径的扫描上界
+///    `scan_end_ms` 就是它，而 `scan_jcl_files` 的上界是开区间
+///    （`timestamp >= end_ms` 即跳过），该 JCL 必然不出现在扫描结果中，必须由调用方提供；
+///    否则"副本已切换"信号会在被消费前被自己截断（条件 6 恒不成立、副本一直停在 scanning，
+///    同时 chatlog 窗口回退到 now_ms 而吞掉后一副本的拍卖/结算事件）。
+///
+/// 两种来源都要求 `> last_jcl_time`，保证该信号只作用于时间上确实位于其之前的实例，
+/// 避免误判同一次扫描产出的其他实例。
+///
+/// `scanned_timestamps` 需按升序排列（调用处已排序），这样返回的是最小的可用切换点。
+fn resolve_next_jcl_time(
+    scanned_timestamps: &[i64],
+    last_jcl_time: i64,
+    known_next_jcl_time: Option<i64>,
+) -> Option<i64> {
+    scanned_timestamps
+        .iter()
+        .find(|&&t| t > last_jcl_time)
+        .copied()
+        .or_else(|| known_next_jcl_time.filter(|&t| t > last_jcl_time))
+}
+
 /// 将 JCL 文件列表聚类为副本实例
 ///
 /// 聚类规则（基于 JCL 内容分析的方案）：
@@ -3185,11 +3212,19 @@ pub fn scan_raid_drops_internal(
     start_ms: i64,
     end_ms: i64,
 ) -> Result<usize, String> {
-    scan_raid_drops_with_raids(account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms, None)
+    scan_raid_drops_with_raids(account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms, None, None)
 }
 
 /// scan_raid_drops_internal 的扩展版本，支持传入预加载的副本配置
+///
 /// `pre_loaded_raids`: 若 Some，则跳过 init_db + get_cached_raids，直接使用传入的配置
+///
+/// `known_next_jcl_time`: 调用方已知的"下一条 JCL"时间戳（复核路径传入）。
+/// 复核路径的 `end_ms` 就等于该值，而 `scan_jcl_files` 的上界是开区间
+/// （`timestamp >= end_ms` 即丢弃），因此这条 JCL 必然不在本次扫描的
+/// `all_jcl_timestamps` 中。若不显式传入，`has_next_jcl` 会恒为 false（条件 6 失效），
+/// 且 `chatlog_end` 会回退到 `now_ms` 而把后一副本的结算事件并入当前副本。
+/// 批量扫描路径的区间覆盖整个 CD 窗口，可自行观察到后续 JCL，传 None 即可。
 pub fn scan_raid_drops_with_raids(
     account_id: &str,
     jx3_running: bool,
@@ -3198,10 +3233,11 @@ pub fn scan_raid_drops_with_raids(
     start_ms: i64,
     end_ms: i64,
     pre_loaded_raids: Option<&[RaidEntry]>,
+    known_next_jcl_time: Option<i64>,
 ) -> Result<usize, String> {
     log::info!(
-        "[DropScanner] 开始扫描账号 {} 的掉落记录 (jx3_running={}, role_online={}, process_start_ms={}, start_ms={}, end_ms={})",
-        account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms
+        "[DropScanner] 开始扫描账号 {} 的掉落记录 (jx3_running={}, role_online={}, process_start_ms={}, start_ms={}, end_ms={}, known_next_jcl={:?})",
+        account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms, known_next_jcl_time
     );
 
     let game_dir = get_game_directory()?;
@@ -3479,11 +3515,19 @@ pub fn scan_raid_drops_with_raids(
         // 注意：用 JCL 时间戳而非实例 start_time，避免未通关副本（如白帝江关无 BOSS 配置）
         //       虽然不形成实例但其 JCL 仍能正确截断 chatlog 窗口
         let chatlog_start = instance.first_gold_time;
-        let next_jcl_time = all_jcl_timestamps
-            .iter()
-            .find(|&&t| t > instance.last_jcl_time)
-            .copied();
+        // 下一个 JCL 时间戳（副本切换信号，条件 6 与 chatlog 窗口截断都依赖它）
+        // 详见 resolve_next_jcl_time 的说明：复核路径必须回退到调用方已知的切换点
+        let next_jcl_time = resolve_next_jcl_time(
+            &all_jcl_timestamps,
+            instance.last_jcl_time,
+            known_next_jcl_time,
+        );
+
         let chatlog_end = if let Some(next_ts) = next_jcl_time {
+            // 有下一个 JCL → 以切换点为窗口上界（右开）。
+            // 这同时保证相邻两个副本实例的 chatlog 窗口不重叠：切换点之后的拍卖/底薪
+            // 只可能属于后一副本，不会被并入当前副本，避免同一份结算被写入两条记录
+            // （表现为两条记录 drops 完全相同、goldIncome 重复计入）。
             next_ts
         } else {
             // 没有后续 JCL：根据副本是否仍在进行中选择结束时间
@@ -4005,6 +4049,7 @@ fn scan_all_active_raid_drops_internal_impl(
             cd_start_ms,
             cd_end_ms,
             preloaded_raids,
+            None, // 批量路径：区间覆盖整个 CD 窗口，可自行观察到后续 JCL
         );
         results.push((uid.clone(), result));
 
@@ -4386,6 +4431,9 @@ fn verify_single_record(
     // - process_start_ms=0：绕过 mtime 过滤，必须扫到历史 JCL
     // - account_id 传茗伊 uid（函数内部按 `{uid}@zhcn_hd` 定位账号目录，
     //   并通过 roles 表将 uid 换回 UUID 写入 records）
+    // - known_next_jcl_time=next_jcl_time：scan_end_ms 恰好等于该值，而扫描区间上界是
+    //   开区间，该 JCL 不会进入扫描结果；必须显式传入才能让 has_next_jcl（条件 6）
+    //   与 chatlog 窗口截断拿到"副本已切换"信号
     let role_online = is_role_online(&account_dir, true);
     let result = scan_raid_drops_with_raids(
         &mingyi_uid,
@@ -4395,6 +4443,7 @@ fn verify_single_record(
         scan_start_ms,
         scan_end_ms,
         preloaded_raids,
+        next_jcl_time,
     );
 
     match result {
@@ -4622,6 +4671,7 @@ pub async fn scan_raids_in_range(
                                 start_ms,
                                 end_ms,
                                 Some(raids_ref),
+                                None, // 范围扫描路径：区间由调用方给定，不注入额外的切换点信号
                             );
                             match result {
                                 Ok(n) => {
@@ -9271,6 +9321,50 @@ mod tests {
         } else {
             println!("\n*** 所有 JCL 新旧逻辑完全一致 ***");
         }
+    }
+
+    /// 复核路径场景：扫描区间上界恰为下一条 JCL（开区间把它排除），
+    /// 必须依赖调用方传入的 known_next_jcl_time 才能识别"副本已切换"。
+    /// 时间戳取自 2026-09-13 实机记录：九老洞 20:07:44~20:19:05，下一条 JCL 为 20:25:29。
+    #[test]
+    fn test_resolve_next_jcl_time_falls_back_to_known_switch_point() {
+        let scanned = vec![
+            1789301264000, // 20:07:44 魏华
+            1789301378000, // 20:09:38 钟不归
+            1789301513000, // 20:11:53 新月卫
+            1789301544000, // 20:12:24 岑伤
+            1789301670000, // 20:14:30 鬼筹
+            1789301803000, // 20:16:43 麒麟
+            1789301945000, // 20:19:05 暗梦仙体（本实例最后一个 JCL）
+        ];
+        let last_jcl_time = 1789301945000;
+        let known = Some(1789302329000); // 20:25:29 勒齐那，等于 scan_end_ms，被开区间排除
+        assert_eq!(
+            resolve_next_jcl_time(&scanned, last_jcl_time, known),
+            Some(1789302329000)
+        );
+    }
+
+    /// 批量路径场景：区间内即可观察到后续副本的 JCL，优先采用扫描结果
+    #[test]
+    fn test_resolve_next_jcl_time_prefers_scanned_timestamp() {
+        let scanned = vec![1000, 2000, 3500];
+        assert_eq!(resolve_next_jcl_time(&scanned, 2000, Some(9999)), Some(3500));
+    }
+
+    /// known_next_jcl_time 不晚于 last_jcl_time 时不生效（守卫），避免误判其他实例
+    #[test]
+    fn test_resolve_next_jcl_time_ignores_stale_known() {
+        let scanned = vec![1000, 2000];
+        assert_eq!(resolve_next_jcl_time(&scanned, 2000, Some(2000)), None);
+        assert_eq!(resolve_next_jcl_time(&scanned, 2000, Some(1500)), None);
+    }
+
+    /// 无后续 JCL（最后一个实例）→ None，交由进程退出/角色离线/时间兜底等条件判定
+    #[test]
+    fn test_resolve_next_jcl_time_none_without_switch() {
+        let scanned = vec![1000, 2000];
+        assert_eq!(resolve_next_jcl_time(&scanned, 2000, None), None);
     }
 
     /// 构造"进行中"的测试副本实例：last_jcl_time 为 1 小时前，不会触发 6 小时时间兜底
