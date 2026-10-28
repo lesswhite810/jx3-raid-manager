@@ -11,6 +11,7 @@ import { db } from '../services/db';
 import { DateTimePicker } from './DateTimePicker';
 import { getBaseServerName } from '../utils/serverUtils';
 import { findTrialBossEquipmentStats } from '../utils/trialFlipStats';
+import { deriveTrialEquipmentLevelRange, getTrialEquipmentLevelRange } from '../utils/trialRecordUtils';
 
 interface RoleWithStatus {
     id: string;
@@ -276,6 +277,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [showEquipSelector, setShowEquipSelector] = useState(false);
     const [allEquipments, setAllEquipments] = useState<JX3Equip[]>([]);
     const [isLoadingEquipments, setIsLoadingEquipments] = useState(false);
+    const [equipmentRangeMessage, setEquipmentRangeMessage] = useState<string | null>(null);
 
     // Level Filter State
     const [levelBounds, setLevelBounds] = useState({ min: 10000, max: 40000 });
@@ -401,27 +403,29 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
     const loadAllEquipments = async () => {
         setIsLoadingEquipments(true);
+        setEquipmentRangeMessage(null);
+        setAllEquipments([]);
         try {
-            // 获取当前赛季的装分范围
-            let seasonMinLevel = 25500;
-            let seasonMaxLevel = 41400;
-            try {
-                const season = await db.getCurrentSeason();
-                console.log('[loadAllEquipments] 当前赛季:', season);
-                if (season?.trialEquipLevelMin && season?.trialEquipLevelMax) {
-                    seasonMinLevel = season.trialEquipLevelMin;
-                    seasonMaxLevel = season.trialEquipLevelMax;
-                }
-            } catch (e) {
-                console.error('[loadAllEquipments] 获取赛季范围失败:', e);
-            }
+            const season = await db.getCurrentSeason();
 
             const items = await getEquip('无修');
+            if (items.length === 0) {
+                setEquipmentRangeMessage('未获取到试炼装备数据，请检查网络后重试。');
+                return;
+            }
 
-            // 使用赛季装分范围设置筛选器
-            setLevelBounds({ min: seasonMinLevel, max: seasonMaxLevel });
-            setMinLevel(seasonMinLevel);
-            setMaxLevel(seasonMaxLevel);
+            // 优先使用赛季配置范围；新赛季尚未配置时，按实际装备品级推导。
+            const range = getTrialEquipmentLevelRange(season)
+                ?? deriveTrialEquipmentLevelRange(items.map(item => item.Level));
+            if (!range) {
+                setEquipmentRangeMessage('当前赛季尚未配置试炼装备品级范围，且装备数据缺少品级信息。');
+                return;
+            }
+
+            // 使用解析出的品级范围设置筛选器
+            setLevelBounds(range);
+            setMinLevel(range.min);
+            setMaxLevel(range.max);
 
             // Define Sort Order (Using TypeLabel as requested)
             const TYPE_ORDER: Record<string, number> = {
@@ -453,6 +457,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setAllEquipments(sorted);
         } catch (err) {
             console.error(err);
+            setEquipmentRangeMessage('加载装备数据失败，请关闭后重新打开记录窗口重试。');
             toast.error('加载装备数据失败');
         } finally {
             setIsLoadingEquipments(false);
@@ -941,13 +946,14 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             </div>
 
                             {/* Filters Container */}
+                            {!equipmentRangeMessage && !isLoadingEquipments && (
                             <div className="px-4 py-3 space-y-3">
                                 {/* Top Row: Level Range & Type Filters */}
                                 <div className="space-y-3">
                                     {/* Level Range Filter (Compact) */}
                                     <div className="flex items-center gap-3 bg-base/30 p-2 rounded-lg border border-base/50">
                                         <span className="text-xs font-bold text-muted whitespace-nowrap">装分</span>
-                                        <DualRangeSlider
+                                        {levelBounds.max > levelBounds.min && <DualRangeSlider
                                             min={levelBounds.min}
                                             max={levelBounds.max}
                                             value={{ min: minLevel, max: maxLevel }}
@@ -958,7 +964,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                                 setMaxLevel(clampedMax);
                                             }}
                                             className="flex-1 mx-2"
-                                        />
+                                        />}
                                         <div className="text-[10px] font-mono font-medium text-main bg-surface px-1.5 py-0.5 rounded border border-base min-w-[80px] text-center">
                                             {minLevel} - {maxLevel}
                                         </div>
@@ -1040,6 +1046,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                     ))}
                                 </div>
                             </div>
+                            )}
                         </div>
 
                         {/* Equipment List Grid */}
@@ -1048,6 +1055,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <div className="h-full flex flex-col items-center justify-center text-muted">
                                     <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin mb-3"></div>
                                     <span className="text-sm font-medium animate-pulse">正在从数据库加载装备...</span>
+                                </div>
+                            ) : equipmentRangeMessage ? (
+                                <div className="h-full flex items-center justify-center text-muted px-4 text-center">
+                                    <span className="text-sm">{equipmentRangeMessage}</span>
                                 </div>
                             ) : filteredEquipments.length > 0 ? (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

@@ -1,4 +1,40 @@
-import { TrialPlaceRecord } from '../types';
+import { Season, TrialPlaceRecord } from '../types';
+
+export interface TrialEquipmentLevelRange {
+  min: number;
+  max: number;
+}
+
+/** 赛季是否已配置合法的试炼装备品级范围。 */
+export const getTrialEquipmentLevelRange = (
+  season: Pick<Season, 'trialEquipLevelMin' | 'trialEquipLevelMax'> | null | undefined
+): TrialEquipmentLevelRange | null => {
+  const min = season?.trialEquipLevelMin;
+  const max = season?.trialEquipLevelMax;
+  if (typeof min !== 'number' || typeof max !== 'number'
+    || !Number.isInteger(min) || !Number.isInteger(max) || min <= 0 || max < min) {
+    return null;
+  }
+  return { min, max };
+};
+
+/**
+ * 从实际装备数据推导品级范围。
+ *
+ * 新赛季上线时尚未配置赛季品级范围，此时按同步到的装备自身品级推导，
+ * 避免回退到旧赛季范围或写死默认值。
+ */
+export const deriveTrialEquipmentLevelRange = (
+  levels: readonly (number | null | undefined)[]
+): TrialEquipmentLevelRange | null => {
+  const valid = levels.filter(
+    (level): level is number => typeof level === 'number' && Number.isFinite(level) && level > 0
+  );
+  if (valid.length === 0) {
+    return null;
+  }
+  return { min: Math.min(...valid), max: Math.max(...valid) };
+};
 
 const TRIAL_CARD_KEYS = ['card1', 'card2', 'card3', 'card4', 'card5'] as const;
 const LEGACY_TRIAL_CARD_KEYS = ['card_1', 'card_2', 'card_3', 'card_4', 'card_5'] as const;
