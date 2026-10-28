@@ -27,6 +27,9 @@ dist-release
 .agent/*
 # Rust/Tauri build files
 src-tauri/target
+
+# TypeScript 增量构建缓存
+*.tsbuildinfo
 .claude/*
 .sisyphus/*
 .trae/*

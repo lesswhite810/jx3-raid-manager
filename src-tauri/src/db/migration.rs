@@ -176,7 +176,8 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
         }
     }
 
-    if !version_names.is_empty() {
+    let inserted_new_version = !version_names.is_empty();
+    if inserted_new_version {
         let count = version_names.len();
         let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?)".to_string()).collect();
         let sql = format!(
@@ -205,6 +206,10 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
             version_id_map.insert(r.0, r.1);
         }
         log::info!("初始化：批量插入 {} 个版本", count);
+
+        // 前端会缓存版本列表一天；新预置版本写入后必须让它重新按 sort_order 读取。
+        conn.execute("DELETE FROM cache WHERE key = 'raid_versions_cache_v2'", [])
+            .map_err(error_to_string)?;
     }
 
     let seasons_json = include_str!("static_seasons.json");
@@ -274,5 +279,374 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
         log::info!("初始化：批量插入 {} 个赛季", count);
     }
 
+    // 静态同步通常只插入缺失行。新赛季上线时，仅为仍保持预置起始日期、
+    // 且结束日期为空或 0 的既有赛季补齐结束时间，不覆盖用户手工设置的日期。
+    for s in seasons.iter() {
+        let name = s["name"].as_str().unwrap_or_default();
+        let version_name = s["version_name"].as_str().unwrap_or_default();
+        let start_date = s["start_date"].as_i64().unwrap_or(0);
+        let end_date = s["end_date"].as_i64().unwrap_or(0);
+
+        if end_date == 0 || !season_id_map.contains_key(name) {
+            continue;
+        }
+
+        if let Some(&version_id) = version_id_map.get(version_name) {
+            conn.execute(
+                "UPDATE seasons
+                 SET end_date = ?
+                 WHERE name = ?
+                   AND version_id = ?
+                   AND start_date = ?
+                   AND (end_date IS NULL OR end_date = 0)",
+                params![end_date, name, version_id, start_date],
+            )
+            .map_err(error_to_string)?;
+        }
+    }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DARK_SHADOW_START: i64 = 1_776_898_800;
+    const SEASON_TRANSITION: i64 = 1_793_228_400;
+
+    fn setup_v18_database(conn: &Connection) {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE schema_versions (version INTEGER NOT NULL);
+            INSERT INTO schema_versions (version) VALUES (18);
+
+            CREATE TABLE game_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE seasons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                version_id INTEGER NOT NULL,
+                start_date INTEGER NOT NULL,
+                end_date INTEGER,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                trial_equip_level_min INTEGER DEFAULT 0,
+                trial_equip_level_max INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE raids (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                difficulty TEXT NOT NULL DEFAULT '普通',
+                player_count INTEGER NOT NULL DEFAULT 25,
+                version TEXT,
+                notes TEXT,
+                is_active INTEGER DEFAULT 1,
+                is_static INTEGER DEFAULT 0,
+                season_id INTEGER
+            );
+            CREATE TABLE raid_bosses (
+                raid_name TEXT NOT NULL,
+                boss_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                boss_order INTEGER NOT NULL,
+                PRIMARY KEY (raid_name, boss_id)
+            );
+            CREATE TABLE cache (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            );
+            CREATE TABLE records (
+                id TEXT PRIMARY KEY,
+                data TEXT,
+                raid_name TEXT
+            );
+            "#,
+        )
+        .expect("V18 数据库前置表应创建成功");
+    }
+
+    fn seed_existing_dark_shadow(
+        conn: &Connection,
+        start_date: i64,
+        end_date: Option<i64>,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO game_versions (name, sort_order, created_at) VALUES ('丝路风雨', 8, 'old')",
+            [],
+        )
+        .expect("应写入旧版本");
+        let version_id: i64 = conn
+            .query_row(
+                "SELECT id FROM game_versions WHERE name = '丝路风雨'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("应读取旧版本 ID");
+        conn.execute(
+            "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, created_at)
+             VALUES ('暗影千机', ?, ?, ?, 4, 'old')",
+            params![version_id, start_date, end_date],
+        )
+        .expect("应写入旧赛季");
+        version_id
+    }
+
+    fn season_name_for_timestamp(conn: &Connection, timestamp: i64) -> Option<String> {
+        conn.query_row(
+            "SELECT name FROM seasons
+             WHERE start_date <= ?
+               AND (end_date IS NULL OR end_date = 0 OR end_date > ?)
+             ORDER BY sort_order DESC
+             LIMIT 1",
+            params![timestamp, timestamp],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
+    #[test]
+    fn static_sync_initializes_cangsheng_seed_in_empty_v18_database() {
+        let conn = Connection::open_in_memory().expect("应创建内存数据库");
+        setup_v18_database(&conn);
+
+        init_static_raids(&conn).expect("空数据库静态同步应成功");
+
+        let seeded_counts: (i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM game_versions WHERE name = '苍生铸世'),
+                    (SELECT COUNT(*) FROM seasons WHERE name = '苍生铸世'),
+                    (SELECT COUNT(*) FROM raids WHERE name = '洛阳之战'),
+                    (SELECT COUNT(*) FROM raid_bosses WHERE raid_name = '洛阳之战')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("应统计空数据库预置结果");
+        assert_eq!(seeded_counts, (1, 1, 3, 5));
+    }
+
+    #[test]
+    fn static_sync_adds_cangsheng_seed_to_existing_v18_database_idempotently() {
+        let conn = Connection::open_in_memory().expect("应创建内存数据库");
+        setup_v18_database(&conn);
+        let silk_road_version_id = seed_existing_dark_shadow(&conn, DARK_SHADOW_START, Some(0));
+        conn.execute(
+            "INSERT INTO raids (id, name, difficulty, player_count, version, notes, is_active, is_static)
+             VALUES ('10人普通阆风悬城', '阆风悬城', '普通', 10, '丝路风雨', '', 0, 1)",
+            [],
+        )
+        .expect("应写入用户禁用的旧预置副本");
+        conn.execute(
+            "INSERT INTO records (id, data, raid_name)
+             VALUES ('legacy-record', '{\"amount\":100}', '阆风悬城')",
+            [],
+        )
+        .expect("应写入历史副本记录");
+        conn.execute(
+            "INSERT INTO cache (key, value, updated_at) VALUES ('raid_versions_cache_v2', 'stale', 'old')",
+            [],
+        )
+        .expect("应写入旧版本缓存");
+
+        init_static_raids(&conn).expect("首次静态同步应成功");
+
+        let version: (i64, i64) = conn
+            .query_row(
+                "SELECT id, sort_order FROM game_versions WHERE name = '苍生铸世'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("应插入苍生铸世版本");
+        assert_eq!(version.1, 9);
+
+        let season: (i64, i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT id, version_id, start_date, end_date, sort_order FROM seasons WHERE name = '苍生铸世'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("应插入苍生铸世赛季");
+        assert_eq!(
+            (season.1, season.2, season.3, season.4),
+            (version.0, SEASON_TRANSITION, 0, 5)
+        );
+
+        let dark_shadow_end: i64 = conn
+            .query_row(
+                "SELECT end_date FROM seasons WHERE name = '暗影千机' AND version_id = ?",
+                params![silk_road_version_id],
+                |row| row.get(0),
+            )
+            .expect("应保留旧赛季");
+        assert_eq!(dark_shadow_end, SEASON_TRANSITION);
+        assert_eq!(
+            season_name_for_timestamp(&conn, SEASON_TRANSITION - 1),
+            Some("暗影千机".to_string())
+        );
+        assert_eq!(
+            season_name_for_timestamp(&conn, SEASON_TRANSITION),
+            Some("苍生铸世".to_string())
+        );
+
+        let configurations: Vec<(i64, String, i64, String, i64)> = conn
+            .prepare(
+                "SELECT player_count, difficulty, is_active, version, season_id
+                 FROM raids
+                 WHERE name = '洛阳之战'
+                 ORDER BY player_count, CASE difficulty WHEN '普通' THEN 0 ELSE 1 END",
+            )
+            .expect("应准备洛阳之战配置查询")
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .expect("应查询洛阳之战配置")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("应读取洛阳之战配置");
+        assert_eq!(
+            configurations,
+            vec![
+                (10, "普通".to_string(), 1, "苍生铸世".to_string(), season.0),
+                (25, "普通".to_string(), 1, "苍生铸世".to_string(), season.0),
+                (25, "英雄".to_string(), 1, "苍生铸世".to_string(), season.0),
+            ]
+        );
+
+        let bosses: Vec<(String, String, i64)> = conn
+            .prepare(
+                "SELECT boss_id, name, boss_order FROM raid_bosses
+                 WHERE raid_name = '洛阳之战' ORDER BY boss_order",
+            )
+            .expect("应准备 BOSS 查询")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("应查询 BOSS")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("应读取 BOSS 列表");
+        assert_eq!(
+            bosses,
+            vec![
+                ("luoyangzhizhan_1".to_string(), "突利和顺".to_string(), 1),
+                ("luoyangzhizhan_2".to_string(), "田承嗣".to_string(), 2),
+                ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string(), 3),
+                ("luoyangzhizhan_4".to_string(), "阿史那承庆".to_string(), 4),
+                ("luoyangzhizhan_5".to_string(), "史朝义".to_string(), 5),
+            ]
+        );
+
+        let static_raid: serde_json::Value = serde_json::from_str(include_str!("static_raids.json"))
+            .expect("静态副本 JSON 应合法");
+        assert_eq!(
+            static_raid
+                .as_array()
+                .and_then(|raids| {
+                    raids
+                        .iter()
+                        .find(|raid| raid["name"].as_str() == Some("洛阳之战"))
+                })
+                .and_then(|raid| raid["level"].as_i64()),
+            Some(50)
+        );
+
+        let old_raid_active: i64 = conn
+            .query_row(
+                "SELECT is_active FROM raids WHERE id = '10人普通阆风悬城'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("旧预置副本应保留");
+        assert_eq!(old_raid_active, 0);
+        let historical_record_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM records WHERE id = 'legacy-record'", [], |row| {
+                row.get(0)
+            })
+            .expect("历史记录应保留");
+        assert_eq!(historical_record_count, 1);
+        let invalidated_cache_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cache WHERE key = 'raid_versions_cache_v2'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("应查询版本缓存");
+        assert_eq!(invalidated_cache_count, 0);
+
+        conn.execute(
+            "INSERT INTO cache (key, value, updated_at) VALUES ('raid_versions_cache_v2', 'fresh', 'new')",
+            [],
+        )
+        .expect("应写入刷新后的版本缓存");
+        init_static_raids(&conn).expect("重复静态同步应成功");
+
+        let duplicate_counts: (i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM game_versions WHERE name = '苍生铸世'),
+                    (SELECT COUNT(*) FROM seasons WHERE name = '苍生铸世'),
+                    (SELECT COUNT(*) FROM raids WHERE name = '洛阳之战'),
+                    (SELECT COUNT(*) FROM raid_bosses WHERE raid_name = '洛阳之战')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("应统计重复同步结果");
+        assert_eq!(duplicate_counts, (1, 1, 3, 5));
+        let refreshed_cache: String = conn
+            .query_row(
+                "SELECT value FROM cache WHERE key = 'raid_versions_cache_v2'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("重复同步不应清除未新增版本时的缓存");
+        assert_eq!(refreshed_cache, "fresh");
+    }
+
+    #[test]
+    fn static_sync_does_not_overwrite_user_modified_dark_shadow_dates() {
+        let explicit_end_conn = Connection::open_in_memory().expect("应创建内存数据库");
+        setup_v18_database(&explicit_end_conn);
+        let silk_road_version_id =
+            seed_existing_dark_shadow(&explicit_end_conn, DARK_SHADOW_START, Some(1_790_000_000));
+
+        init_static_raids(&explicit_end_conn).expect("静态同步应成功");
+        let explicit_end: i64 = explicit_end_conn
+            .query_row(
+                "SELECT end_date FROM seasons WHERE name = '暗影千机' AND version_id = ?",
+                params![silk_road_version_id],
+                |row| row.get(0),
+            )
+            .expect("应读取用户设置的结束日期");
+        assert_eq!(explicit_end, 1_790_000_000);
+
+        let custom_start_conn = Connection::open_in_memory().expect("应创建内存数据库");
+        setup_v18_database(&custom_start_conn);
+        let custom_version_id = seed_existing_dark_shadow(&custom_start_conn, 1_776_898_801, Some(0));
+
+        init_static_raids(&custom_start_conn).expect("静态同步应成功");
+        let custom_dates: (i64, i64) = custom_start_conn
+            .query_row(
+                "SELECT start_date, end_date FROM seasons WHERE name = '暗影千机' AND version_id = ?",
+                params![custom_version_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("应读取用户设置的起始日期");
+        assert_eq!(custom_dates, (1_776_898_801, 0));
+    }
 }

@@ -4879,6 +4879,23 @@ mod tests {
         (conn, temp_path)
     }
 
+    /// 写入一份仅用于 JCL 解析回归的 GBK 临时文件。
+    ///
+    /// 测试不能依赖玩家的真实战斗日志；调用方在断言后负责删除返回的目录。
+    fn write_gbk_jcl_fixture(file_name: &str, contents: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir_name = format!(
+            "jx3-raid-manager-jcl-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let temp_dir = std::env::temp_dir().join(dir_name);
+        fs::create_dir_all(&temp_dir).expect("JCL fixture temp dir should be created");
+        let path = temp_dir.join(file_name);
+        let (gbk_bytes, _, _) = encoding_rs::GBK.encode(contents);
+        fs::write(&path, gbk_bytes.as_ref()).expect("GBK JCL fixture should be written");
+        (temp_dir, path)
+    }
+
     /// 在测试数据库中创建测试账号和角色
     fn create_test_account_role(conn: &rusqlite::Connection) -> (String, String) {
         let account_id = Uuid::new_v4().to_string();
@@ -5688,6 +5705,195 @@ mod tests {
 
         let instances = cluster_raid_instances("test_account", jcl_files, &jcl_analyses, &[]);
         assert_eq!(instances.len(), 0, "全为拉托应跳过不创建实例");
+    }
+
+    /// 洛阳之战逐焰文件沿用历史的多 BOSS 判定：由 JCL 内容把逐焰解析为寂夜本体，
+    /// 无击杀信号时走既有的组级别兜底，不额外引入分身专属规则。
+    #[test]
+    fn test_analyze_jcl_luoyang_clone_uses_generic_boss_resolution() {
+        let raid_bosses = vec![
+            ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string()),
+        ];
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "luoyang-clone-only.jcl",
+            concat!(
+                "crc\t1\t1700000000\t0\t1\t{true,\"fight\",0}\n",
+                "crc\t2\t1700000001\t0\t8\t{101,\"伊曼·逐焰\",61001,0,0,0,0,0}\n",
+                "crc\t3\t1700000002\t0\t8\t{202,\"伊曼·寂夜\",61002,0,0,0,0,0}\n",
+                "crc\t4\t1700000003\t0\t9\t{101,true,100}\n",
+                "crc\t5\t1700000004\t0\t9\t{202,true,100}\n",
+                "crc\t6\t1700000005\t0\t28\t{101,999}\n",
+                "crc\t7\t1700000006\t0\t7\t{101}\n",
+            ),
+        );
+
+        let analysis = analyze_jcl(&jcl_path, "伊曼·逐焰", 61001, &raid_bosses)
+            .expect("临时 JCL 应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+
+        assert_eq!(analysis.boss_name.as_deref(), Some("伊曼·寂夜"));
+        assert!(
+            !analysis.is_kill,
+            "仅解析单份 JCL 时，逐焰的死亡/离场不产生寂夜的明确击杀信号"
+        );
+
+        // 无明确击杀信号时，沿用既有的组级别兜底：把该 BOSS 子组的最后一个 JCL 记为击杀。
+        // 覆盖静态配置中的 10人普通、25人普通、25人英雄三种副本显示名。
+        for raid_display_name in ["10人普通洛阳之战", "25人普通洛阳之战", "25人英雄洛阳之战"] {
+            let clone_file = format!("{}-逐焰.jcl", raid_display_name);
+            let next_boss_file = format!("{}-阿史那承庆.jcl", raid_display_name);
+            let clone_timestamp = 1_700_000_000_000;
+            let mut analyses = HashMap::new();
+            analyses.insert(clone_file.clone(), analysis.clone());
+            analyses.insert(
+                next_boss_file.clone(),
+                JclAnalysis {
+                    boss_name: Some("阿史那承庆".to_string()),
+                    fight_start_ms: clone_timestamp + 60_000,
+                    fight_end_ms: clone_timestamp + 90_000,
+                    is_kill: true,
+                },
+            );
+            let instances = cluster_raid_instances(
+                "test_account",
+                vec![
+                    JclFileInfo {
+                        file_name: clone_file,
+                        timestamp: clone_timestamp,
+                        raid_display_name: raid_display_name.to_string(),
+                        raid_id: 900,
+                        boss_name: "伊曼·逐焰".to_string(),
+                        boss_id: 61001,
+                    },
+                    JclFileInfo {
+                        file_name: next_boss_file,
+                        timestamp: clone_timestamp + 60_000,
+                        raid_display_name: raid_display_name.to_string(),
+                        raid_id: 900,
+                        boss_name: "阿史那承庆".to_string(),
+                        boss_id: 62001,
+                    },
+                ],
+                &analyses,
+                &[],
+            );
+
+            assert_eq!(instances.len(), 1, "{} 应产出后续 BOSS 的副本实例", raid_display_name);
+            assert_eq!(
+                instances[0].jcl_boss_names,
+                vec!["伊曼·寂夜", "阿史那承庆"],
+                "{} 中逐焰文件按历史多 BOSS 兜底解析为寂夜本体",
+                raid_display_name
+            );
+        }
+    }
+
+    /// 路径 B：仅出现寂夜 NPC_INFO（如出场对话）时，不能归属给寂夜。
+    #[test]
+    fn test_analyze_jcl_luoyang_dialogue_only_is_not_attributed_to_jiye() {
+        let raid_bosses = vec![
+            ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string()),
+        ];
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "luoyang-dialogue-only.jcl",
+            concat!(
+                "crc\t1\t1700000100\t0\t8\t{101,\"伊曼·逐焰\",61001,0,0,0,0,0}\n",
+                "crc\t2\t1700000101\t0\t8\t{202,\"伊曼·寂夜\",61002,0,0,0,0,0}\n",
+            ),
+        );
+
+        let analysis = analyze_jcl(&jcl_path, "伊曼·逐焰", 61001, &raid_bosses)
+            .expect("临时 JCL 应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+
+        assert_eq!(analysis.boss_name, None, "未实际进战的寂夜不能归属");
+        assert!(!analysis.is_kill, "出场对话不能记为击杀");
+    }
+
+    /// 两份逐焰文件都记录到同一个寂夜完成信号时，只计一次寂夜，且全通仍为 5 个正式 BOSS。
+    #[test]
+    fn test_luoyang_jcl_path_b_maps_jiye_and_deduplicates_full_clear() {
+        let raid_bosses = vec![
+            ("luoyangzhizhan_1".to_string(), "突利和顺".to_string()),
+            ("luoyangzhizhan_2".to_string(), "田承嗣".to_string()),
+            ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string()),
+            ("luoyangzhizhan_4".to_string(), "阿史那承庆".to_string()),
+            ("luoyangzhizhan_5".to_string(), "史朝义".to_string()),
+        ];
+        let clear_jcl = concat!(
+            "crc\t1\t1700000200\t0\t1\t{true,\"fight\",0}\n",
+            "crc\t2\t1700000201\t0\t8\t{101,\"伊曼·逐焰\",61001,0,0,0,0,0}\n",
+            "crc\t3\t1700000202\t0\t8\t{202,\"伊曼·寂夜\",61002,0,0,0,0,0}\n",
+            "crc\t4\t1700000203\t0\t9\t{101,true,100}\n",
+            "crc\t5\t1700000204\t0\t9\t{202,true,100}\n",
+            "crc\t6\t1700000205\t0\t28\t{101,999}\n",
+            "crc\t7\t1700000206\t0\t28\t{202,999}\n",
+            "crc\t8\t1700000207\t0\t1\t{false,\"fight\",7}\n",
+        );
+        let (first_dir, first_path) = write_gbk_jcl_fixture("luoyang-jiyen-first.jcl", clear_jcl);
+        let (second_dir, second_path) = write_gbk_jcl_fixture("luoyang-jiyen-second.jcl", clear_jcl);
+        let first_analysis = analyze_jcl(&first_path, "伊曼·逐焰", 61001, &raid_bosses)
+            .expect("首份逐焰 JCL 应可解析");
+        let second_analysis = analyze_jcl(&second_path, "伊曼·逐焰", 61001, &raid_bosses)
+            .expect("第二份逐焰 JCL 应可解析");
+        fs::remove_dir_all(first_dir).expect("首份临时 JCL 目录应可删除");
+        fs::remove_dir_all(second_dir).expect("第二份临时 JCL 目录应可删除");
+
+        assert!(first_analysis.is_kill && second_analysis.is_kill, "双实体完成应判定为击杀");
+        assert_eq!(first_analysis.boss_name.as_deref(), Some("伊曼·寂夜"));
+        assert_eq!(second_analysis.boss_name.as_deref(), Some("伊曼·寂夜"));
+
+        let timestamp = |offset_minutes: i64| 1_700_000_000_000 + offset_minutes * 60_000;
+        let names = ["突利和顺", "田承嗣", "阿史那承庆", "史朝义"];
+        let mut jcl_files = Vec::new();
+        let mut analyses = HashMap::new();
+        for (index, boss_name) in names.iter().enumerate().take(2) {
+            let file_name = format!("luoyang-{}-{}.jcl", index, boss_name);
+            jcl_files.push(JclFileInfo {
+                file_name: file_name.clone(), timestamp: timestamp(index as i64),
+                raid_display_name: "25人英雄洛阳之战".to_string(), raid_id: 900,
+                boss_name: (*boss_name).to_string(), boss_id: 62000 + index as i64,
+            });
+            analyses.insert(file_name, JclAnalysis {
+                boss_name: Some((*boss_name).to_string()), fight_start_ms: timestamp(index as i64),
+                fight_end_ms: timestamp(index as i64) + 30_000, is_kill: true,
+            });
+        }
+        for (index, analysis) in [first_analysis, second_analysis].into_iter().enumerate() {
+            let file_name = format!("luoyang-jiyen-{}.jcl", index);
+            jcl_files.push(JclFileInfo {
+                file_name: file_name.clone(), timestamp: timestamp(2 + index as i64),
+                raid_display_name: "25人英雄洛阳之战".to_string(), raid_id: 900,
+                boss_name: "伊曼·逐焰".to_string(), boss_id: 61001,
+            });
+            analyses.insert(file_name, analysis);
+        }
+        for (index, boss_name) in names.iter().enumerate().skip(2) {
+            let file_name = format!("luoyang-{}-{}.jcl", index + 2, boss_name);
+            jcl_files.push(JclFileInfo {
+                file_name: file_name.clone(), timestamp: timestamp(4 + index as i64),
+                raid_display_name: "25人英雄洛阳之战".to_string(), raid_id: 900,
+                boss_name: (*boss_name).to_string(), boss_id: 62000 + index as i64,
+            });
+            analyses.insert(file_name, JclAnalysis {
+                boss_name: Some((*boss_name).to_string()), fight_start_ms: timestamp(4 + index as i64),
+                fight_end_ms: timestamp(4 + index as i64) + 30_000, is_kill: true,
+            });
+        }
+
+        let instances = cluster_raid_instances("test_account", jcl_files, &analyses, &[]);
+        assert_eq!(instances.len(), 1, "同一次洛阳之战应只形成一个副本实例");
+        let instance = &instances[0];
+        assert_eq!(instance.boss_kill_count, 5, "同本体两份日志不能把全通多计为 6 杀");
+        assert_eq!(
+            instance.jcl_boss_names,
+            vec!["突利和顺", "田承嗣", "伊曼·寂夜", "阿史那承庆", "史朝义"],
+            "逐焰应映射为正式 BOSS 寂夜"
+        );
+        let (boss_ids, boss_names) = map_boss_names_to_ids(&instance.bosses_killed, &raid_bosses);
+        assert_eq!(boss_ids.len(), 5, "全通应映射为 5 个正式 BOSS ID");
+        assert_eq!(boss_ids[2], "luoyangzhizhan_3");
+        assert_eq!(boss_names[2], "伊曼·寂夜");
     }
 
     /// 测试按 JCL 顺序聚类：连续相同副本名归为一组，副本名变化开始新组。

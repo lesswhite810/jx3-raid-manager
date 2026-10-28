@@ -24,9 +24,16 @@
     "name": "暗影千机",
     "version_name": "丝路风雨",
     "start_date": 1776898800,
-    "end_date": 0,
+    "end_date": 1793228400,
     "sort_order": 4,
     "trial_equip_level_min": 25500,
     "trial_equip_level_max": 41400
+  },
+  {
+    "name": "苍生铸世",
+    "version_name": "苍生铸世",
+    "start_date": 1793228400,
+    "end_date": 0,
+    "sort_order": 5
   }
 ]

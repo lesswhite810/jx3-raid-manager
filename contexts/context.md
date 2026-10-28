@@ -304,6 +304,7 @@ jx3-raid-manager/
 - **自动解析**：扫描剑网三目录解析账号 / 角色（`services/gameDirectoryScanner.ts` + `src-tauri/src/game_directory.rs`）
 - **JX3Box API**：试炼之地翻牌装备数据 + 材料成交聚合估价（`services/jx3BoxApi.ts`）
 - **赛季系统**：版本 → 赛季 → 副本 三层层级，赛季起止时间连续衔接，详见 `specs/season_design.md`
+- **苍生铸世（v2.2.3）**：50 级新版本，预置「洛阳之战」10 人普通 / 25 人普通 / 25 人英雄；与「暗影千机」在 2026-10-29 07:00（Asia/Shanghai）衔接，版本顺序不按等级高低判断。
 - **散件老板**：副本中散件识别 + 估价，详见 `specs/scraps-boss-design.md`
 - **跨角色设置同步**：同步 / 备份 / 回滚，回滚标记存 SQLite，详见 `src-tauri/src/char_sync.rs`
 - **金额显示**：录入与存储一律以「金」为单位，展示时 ≥ 10000 金按「xx砖xx金」格式化（`utils/goldFormat.ts`）

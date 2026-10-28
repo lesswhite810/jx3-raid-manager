@@ -2,6 +2,14 @@ import { Boss, Raid } from '../types';
 
 // 默认 BOSS 配置（按副本名称索引，所有难度共享）
 const DEFAULT_BOSSES: Record<string, Boss[]> = {
+  '洛阳之战': [
+    { id: 'luoyangzhizhan_1', name: '突利和顺', order: 1 },
+    { id: 'luoyangzhizhan_2', name: '田承嗣', order: 2 },
+    // 伊曼·逐焰是伊曼·寂夜的分身，共用本体 CD，不单独配置。
+    { id: 'luoyangzhizhan_3', name: '伊曼·寂夜', order: 3 },
+    { id: 'luoyangzhizhan_4', name: '阿史那承庆', order: 4 },
+    { id: 'luoyangzhizhan_5', name: '史朝义', order: 5 },
+  ],
   '会战弓月城': [
     { id: 'gongyuecheng_1', name: '巴图仁钦', order: 1 },
     { id: 'gongyuecheng_2', name: '竭勒', order: 2 },

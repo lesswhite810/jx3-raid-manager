@@ -1074,5 +1074,55 @@
         "order": 2
       }
     ]
+  },
+  {
+    "name": "洛阳之战",
+    "level": 50,
+    "version": "苍生铸世",
+    "season": "苍生铸世",
+    "configurations": [
+      {
+        "playerCount": 10,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "普通",
+        "isActive": true
+      },
+      {
+        "playerCount": 25,
+        "difficulty": "英雄",
+        "isActive": true
+      }
+    ],
+    "bosses": [
+      {
+        "id": "luoyangzhizhan_1",
+        "name": "突利和顺",
+        "order": 1
+      },
+      {
+        "id": "luoyangzhizhan_2",
+        "name": "田承嗣",
+        "order": 2
+      },
+      {
+        "id": "luoyangzhizhan_3",
+        "name": "伊曼·寂夜",
+        "order": 3
+      },
+      {
+        "id": "luoyangzhizhan_4",
+        "name": "阿史那承庆",
+        "order": 4
+      },
+      {
+        "id": "luoyangzhizhan_5",
+        "name": "史朝义",
+        "order": 5
+      }
+    ]
   }
 ]
