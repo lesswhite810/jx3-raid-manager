@@ -1,10 +1,15 @@
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import kungfuDataPlugin from "./vite-plugin-kungfu-data";
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(() => ({
   plugins: [react(), kungfuDataPlugin()],
+  test: {
+    // tmp/ 为本地一次性排查脚本的临时目录（已被 .gitignore 忽略），
+    // 其中的 *.test.cjs 是历史残留且不含测试套件，需排除以免本地测试误红。
+    exclude: [...configDefaults.exclude, "tmp/**"],
+  },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   clearScreen: false,
   server: {
