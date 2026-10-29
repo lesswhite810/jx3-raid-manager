@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 dist-release
+# Vitest 覆盖率报告输出目录（npm run coverage 生成）
+coverage
 *.local
 
 # Editor directories and files
@@ -83,6 +85,7 @@ MY_temp/
 
 # AI 工具状态目录（不入版本控制）
 .agent-teams/
+.codex/
 .omc/
 .omo/
 .qoder/
