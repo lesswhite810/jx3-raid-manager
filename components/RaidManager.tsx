@@ -7,6 +7,7 @@ import { TrialPlaceManager } from './TrialPlaceManager';
 import { BaizhanManager } from './BaizhanManager';
 import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
+import { useCancellableEffect } from '../hooks/useCancellableEffect';
 import { RaidDetail } from './RaidDetail';
 import { PendingRecordsPanel } from './PendingRecordsPanel';
 
@@ -110,10 +111,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const favoritesLoadedRef = useRef(false);
 
   // 加载收藏列表
-  useEffect(() => {
+  useCancellableEffect((signal) => {
     const loadFavorites = async () => {
       try {
         const favorites = await db.getFavoriteRaids();
+        if (signal.cancelled) return;
         setFavoriteRaids(new Set(favorites));
       } catch (err) {
         console.error('Failed to load favorite raids:', err);
@@ -150,11 +152,12 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     }
   };
 
-  useEffect(() => {
+  useCancellableEffect((signal) => {
     const fetchVersions = async () => {
       try {
         const cacheKey = 'raid_versions_cache_v2';
         const cache = await db.getCache(cacheKey);
+        if (signal.cancelled) return;
 
         let shouldFetch = true;
 
@@ -181,6 +184,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
         if (shouldFetch) {
           const versions = await db.getRaidVersions();
+          if (signal.cancelled) return;
           const orderMap: Record<string, number> = {};
           versions.forEach((v: string, i: number) => {
             orderMap[v] = i;
@@ -188,10 +192,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           setVersionOrderMap(orderMap);
           await db.saveCache(cacheKey, versions);
         }
+        if (signal.cancelled) return;
         setIsOrderLoaded(true);
       } catch (err) {
         console.error('Failed to fetch raid versions order', err);
-        setIsOrderLoaded(true);
+        if (!signal.cancelled) setIsOrderLoaded(true);
       }
     };
 
