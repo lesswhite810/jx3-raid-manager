@@ -299,9 +299,9 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-            {/* 记录日期与击败 BOSS */}
+            {/* 记录日期与击败 BOSS：上下两行占满整行，避免日期单行输入框与可换行的 BOSS 标签区高度不一致 */}
             <div
-              className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+              className="space-y-4"
               data-od-id="add-record-modal-top-fields"
             >
               <div>
