@@ -25,6 +25,8 @@ interface RaidManagerProps {
   onRefreshRecords?: () => void;
   onRefreshTrialRecords?: () => void;
   onRefreshBaizhanRecords?: () => void;
+  /** 配置变更上抛给 App，避免子组件直连数据库形成双写 */
+  onConfigChange?: (updater: (prev: Config) => Config) => void;
 }
 
 interface MergedRaid {
@@ -67,7 +69,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   config,
   onRefreshRecords,
   onRefreshTrialRecords,
-  onRefreshBaizhanRecords
+  onRefreshBaizhanRecords,
+  onConfigChange
 }) => {
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
@@ -483,6 +486,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           accounts={accounts}
           config={config}
           onRefreshRecords={onRefreshTrialRecords}
+          onConfigChange={onConfigChange}
         />
       ) : selectedRaid ? (
         <RaidDetail

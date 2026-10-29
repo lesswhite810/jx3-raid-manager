@@ -16,13 +16,22 @@ interface TrialPlaceManagerProps {
     accounts: Account[];
     config?: Config;
     onRefreshRecords?: () => void;
+    /**
+     * 配置变更回调。
+     *
+     * 原本本组件直接 `db.getConfig()` + `db.saveConfig()` 读写数据库，
+     * 与 App 的自动保存形成双写：两边各自持有配置副本，谁后写谁覆盖。
+     * 现在统一上抛给 App，由 App 的单一自动保存路径落库。
+     */
+    onConfigChange?: (updater: (prev: Config) => Config) => void;
 }
 
 export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     records,
     accounts,
     config,
-    onRefreshRecords
+    onRefreshRecords,
+    onConfigChange
 }) => {
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
@@ -36,20 +45,21 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         }
     }, [config?.trial?.autoFillEnabled]);
 
-    const handleToggleAutoFill = useCallback(async (enabled: boolean) => {
+    const handleToggleAutoFill = useCallback((enabled: boolean) => {
         setAutoFillEnabled(enabled);
-        try {
-            const currentConfig = await db.getConfig();
-            const configData = typeof currentConfig === 'string' ? JSON.parse(currentConfig) : currentConfig || {};
-            configData.trial = {
-                ...configData.trial,
-                autoFillEnabled: enabled
-            };
-            await db.saveConfig(configData);
-        } catch (error) {
-            console.error('Failed to save autoFillEnabled config:', error);
+        // 走 App 的统一配置保存路径，避免与本组件直连数据库形成双写
+        if (onConfigChange) {
+            onConfigChange(prev => ({
+                ...prev,
+                trial: {
+                    ...prev.trial,
+                    autoFillEnabled: enabled,
+                },
+            }));
+        } else {
+            console.warn('[TrialPlaceManager] 缺少 onConfigChange，自动填充开关未持久化');
         }
-    }, []);
+    }, [onConfigChange]);
 
     const allRoles = useMemo(() => {
         return accounts

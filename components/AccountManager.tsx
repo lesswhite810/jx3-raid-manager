@@ -44,6 +44,26 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const ACCOUNT_DRAG_SURFACE_EASING = 'cubic-bezier(0.2, 0.85, 0.2, 1)';
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
+  // 账号去重改为纯渲染层派生，不再回写父组件状态。
+  //
+  // 原实现是在 effect 里 setAccounts(uniqueAccounts)，让本组件持有父级 accounts
+  // 的写权限，形成「双所有权」：父组件自动保存、子组件静默改数据，两边都可能
+  // 覆盖对方。现在改为 useMemo 派生，重复账号只在展示层剔除，不触发保存。
+  const dedupedAccounts = React.useMemo(() => {
+    if (safeAccounts.length === 0) return safeAccounts;
+    const uniqueAccountsMap = new Map<string, Account>();
+    for (const account of safeAccounts) {
+      if (!uniqueAccountsMap.has(account.id)) {
+        uniqueAccountsMap.set(account.id, account);
+      } else {
+        console.warn(
+          `账户去重：发现重复账号 ${account.accountName} (ID: ${account.id})，展示层保留第一个`
+        );
+      }
+    }
+    return Array.from(uniqueAccountsMap.values());
+  }, [safeAccounts]);
+
   // Modal State
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
   const [isImportRolesModalOpen, setIsImportRolesModalOpen] = useState(false);
@@ -112,13 +132,13 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   const pendingDragPointerRef = useRef<AccountDragPointerPosition | null>(null);
   const dragAnchorOffsetYRef = useRef(0);
   const suppressNextAccountClickRef = useRef(false);
-  const latestAccountsRef = useRef<Account[]>(safeAccounts);
+  const latestAccountsRef = useRef<Account[]>(dedupedAccounts);
   const latestSearchTermRef = useRef(searchTerm);
   const latestSetAccountsRef = useRef(setAccounts);
 
   useEffect(() => {
-    latestAccountsRef.current = safeAccounts;
-  }, [safeAccounts]);
+    latestAccountsRef.current = dedupedAccounts;
+  }, [dedupedAccounts]);
 
   useEffect(() => {
     latestSearchTermRef.current = searchTerm;
@@ -156,7 +176,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     };
   }, []);
 
-  const displayAccounts = dragPreviewAccounts ?? safeAccounts;
+  const displayAccounts = dragPreviewAccounts ?? dedupedAccounts;
 
   // 应用账号类型筛选
   const typeFilteredAccounts = useMemo(() => {
@@ -224,20 +244,20 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   const pendingDeleteAccount = useMemo(() => {
     if (!confirmDeleteAccountId) return null;
-    return safeAccounts.find(account => account.id === confirmDeleteAccountId) || null;
-  }, [confirmDeleteAccountId, safeAccounts]);
+    return dedupedAccounts.find(account => account.id === confirmDeleteAccountId) || null;
+  }, [confirmDeleteAccountId, dedupedAccounts]);
 
   const pendingDeleteRole = useMemo(() => {
     if (!confirmDeleteRole) return null;
 
-    const account = safeAccounts.find(item => item.id === confirmDeleteRole.accountId);
+    const account = dedupedAccounts.find(item => item.id === confirmDeleteRole.accountId);
     if (!account) return null;
 
     const role = account.roles.find(item => item.id === confirmDeleteRole.roleId);
     if (!role) return null;
 
     return { account, role };
-  }, [confirmDeleteRole, safeAccounts]);
+  }, [confirmDeleteRole, dedupedAccounts]);
 
   const getConfiguredGameDirectory = (): string | null => {
     const gameDirectory = appConfig?.gameDirectory?.trim();
@@ -275,33 +295,6 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     equipmentScore?: string;
   }>({});
 
-  React.useEffect(() => {
-    if (safeAccounts.length > 0) {
-      // 使用Map进行去重，保留第一个出现的账户
-      const uniqueAccountsMap = new Map<string, Account>();
-      const duplicateAccounts: string[] = [];
-
-      for (const account of safeAccounts) {
-        if (!uniqueAccountsMap.has(account.id)) {
-          uniqueAccountsMap.set(account.id, account);
-        } else {
-          duplicateAccounts.push(account.accountName);
-          console.log(`账户去重：发现重复账号 ${account.accountName} (ID: ${account.id})，保留第一个，删除后续重复项`);
-        }
-      }
-
-      const uniqueAccounts = Array.from(uniqueAccountsMap.values());
-
-      // 如果有重复账户被清理，更新账户列表
-      if (uniqueAccounts.length !== safeAccounts.length) {
-        const removedCount = safeAccounts.length - uniqueAccounts.length;
-        console.log(`账户去重：成功清理了 ${removedCount} 个重复账户，重复账号包括：${duplicateAccounts.join(', ')}`);
-        console.log(`账户去重：清理后剩余 ${uniqueAccounts.length} 个唯一账户`);
-        setAccounts(uniqueAccounts);
-      }
-    }
-  }, [safeAccounts, setAccounts]);
-
   // 全选/取消全选功能
   const handleSelectAll = () => {
     if (isAllSelected) {
@@ -310,7 +303,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       setIsAllSelected(false);
     } else {
       // 全选所有可见账户
-      const allIds = safeAccounts.map(account => account.id);
+      const allIds = dedupedAccounts.map(account => account.id);
       setSelectedAccounts(new Set(allIds));
       setIsAllSelected(true);
     }
@@ -326,7 +319,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         newSet.add(accountId);
       }
       // 更新全选状态
-      setIsAllSelected(newSet.size === safeAccounts.length && safeAccounts.length > 0);
+      setIsAllSelected(newSet.size === dedupedAccounts.length && dedupedAccounts.length > 0);
       return newSet;
     });
   };
@@ -345,7 +338,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
     if (batchDeleteDirectoryChecked && !gameDirectory) return;
 
     const selectedAccountIds = new Set(selectedAccounts);
-    const accountsToDelete = safeAccounts.filter(account => selectedAccountIds.has(account.id));
+    const accountsToDelete = dedupedAccounts.filter(account => selectedAccountIds.has(account.id));
     if (accountsToDelete.length === 0) {
       setShowBatchDeleteConfirm(false);
       return;
@@ -359,6 +352,12 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         }
       }
 
+      // 先落库再改 UI：自动保存默认不删行（allow_delete=false），
+      // 必须显式调用结构化删除命令，否则界面删了、库里还在。
+      for (const account of accountsToDelete) {
+        await db.deleteAccountStructured(account.id);
+      }
+
       setAccounts(prev => prev.filter(account => !selectedAccountIds.has(account.id)));
       setSelectedAccounts(new Set());
       setExpandedAccountIds(new Set());
@@ -370,8 +369,8 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           : `\u6210\u529f\u5220\u9664 ${accountsToDelete.length} \u4e2a\u8d26\u53f7`
       );
     } catch (error) {
-      console.error('Failed to delete account directory:', error);
-      toast.error(`\u76ee\u5f55\u5220\u9664\u5931\u8d25\uff0c\u672a\u5220\u9664\u8d26\u53f7: ${getErrorMessage(error)}`);
+      console.error('Failed to delete accounts:', error);
+      toast.error(`\u5220\u9664\u5931\u8d25\uff0c\u672a\u5220\u9664\u8d26\u53f7: ${getErrorMessage(error)}`);
     } finally {
       setIsDeleting(false);
     }
@@ -566,8 +565,19 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
   // 导入本地角色成功后的刷新回调
   const handleImportedRoles = async () => {
-    const accountsFromDb = await db.getAccounts();
-    setAccounts(accountsFromDb);
+    try {
+      const accountsFromDb = await db.getAccounts();
+      // 读到空列表时不覆盖现有状态：db.getAccounts() 失败时返回 []，
+      // 与「确实没有账号」无法区分，直接覆盖会让界面误显示账号全没了。
+      if (accountsFromDb.length === 0) {
+        console.warn('[AccountManager] 导入后读到空账号列表，保留当前状态');
+        return;
+      }
+      setAccounts(accountsFromDb);
+    } catch (error) {
+      console.error('[AccountManager] 导入后刷新账号失败:', error);
+      toast.error('导入成功，但刷新账号列表失败，请手动刷新');
+    }
   };
 
   // 打开导入本地角色弹窗
@@ -604,7 +614,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
   }) => {
     if (!addingRoleToAccountId) return;
 
-    const targetAccount = safeAccounts.find(a => a.id === addingRoleToAccountId);
+    const targetAccount = dedupedAccounts.find(a => a.id === addingRoleToAccountId);
     if (!targetAccount) return;
 
     const role: Role = {
@@ -647,6 +657,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       if (gameDirectory) {
         await deleteAccountDirectory(gameDirectory, pendingDeleteAccount.accountName);
       }
+
+      // 先落库再改 UI：自动保存默认不删行（allow_delete=false），
+      // 必须显式调用结构化删除命令，否则界面删了、库里还在。
+      await db.deleteAccountStructured(pendingDeleteAccount.id);
 
       setAccounts(prev => prev.filter(account => account.id !== pendingDeleteAccount.id));
       setSelectedAccounts(prev => {
@@ -722,6 +736,10 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       if (gameDirectory) {
         await deleteRoleDirectory(gameDirectory, pendingDeleteRole.account.accountName, pendingDeleteRole.role);
       }
+
+      // 先落库再改 UI：自动保存默认不删行（allow_delete=false），
+      // 必须显式调用结构化删除命令，否则界面删了、库里还在。
+      await db.deleteRoleStructured(pendingDeleteRole.role.id);
 
       setAccounts(prev => prev.map(account => {
         if (account.id === pendingDeleteRole.account.id) {
@@ -1046,7 +1064,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
         {/* 列表控制栏：全选与筛选、操作按钮 */}
         {
-          safeAccounts.length > 0 && (
+          dedupedAccounts.length > 0 && (
             <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-4">
                 {filteredAccounts.length > 0 ? (
@@ -1164,7 +1182,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
       {/* 无筛选结果提示 */}
       {
-        filteredAccounts.length === 0 && safeAccounts.length > 0 && (
+        filteredAccounts.length === 0 && dedupedAccounts.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
             <Search className="w-12 h-12 text-slate-200 mx-auto mb-3" />
             <p className="text-slate-500 mb-2">未找到匹配的结果</p>
@@ -1722,7 +1740,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
 
             <div className="p-6 space-y-5">
               {(() => {
-                const editingAccount = safeAccounts.find(a => a.id === editAccountModal.accountId);
+                const editingAccount = dedupedAccounts.find(a => a.id === editAccountModal.accountId);
                 return editingAccount ? (
                   <div className="text-sm text-muted bg-base/40 border border-base rounded-lg px-3 py-2 flex items-center gap-2 min-w-0">
                     <User className="w-4 h-4 text-primary shrink-0" />
@@ -1778,7 +1796,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                     className="w-full pl-10 pr-4 py-2.5 bg-base border border-base rounded-lg focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all resize-none placeholder:text-muted text-main"
                     rows={3}
                     placeholder={(() => {
-                      const acc = safeAccounts.find(a => a.id === editAccountModal.accountId);
+                      const acc = dedupedAccounts.find(a => a.id === editAccountModal.accountId);
                       return acc?.type === AccountType.CLIENT ? '可填写老板、代清要求等备注' : '可填写账号备注';
                     })()}
                   />
@@ -1812,7 +1830,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         isOpen={isAddAccountModalOpen}
         onClose={() => setIsAddAccountModalOpen(false)}
         onSubmit={handleAddAccountSubmit}
-        existingAccountNames={safeAccounts.map(a => a.accountName)}
+        existingAccountNames={dedupedAccounts.map(a => a.accountName)}
       />
 
       {/* Import Roles Modal */}
@@ -1830,7 +1848,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
         onSubmit={handleAddRoleSubmit}
         accountTypeIsClient={
           addingRoleToAccountId
-            ? safeAccounts.find(a => a.id === addingRoleToAccountId)?.type === AccountType.CLIENT
+            ? dedupedAccounts.find(a => a.id === addingRoleToAccountId)?.type === AccountType.CLIENT
             : false
         }
       />

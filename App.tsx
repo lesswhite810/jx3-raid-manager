@@ -113,6 +113,12 @@ function App() {
     }
   }, []);
 
+  // 配置的唯一写入口：子组件不再直连 db.saveConfig，
+  // 统一走这里改 state，再由下面的自动保存 effect 落库，避免双写互相覆盖。
+  const updateConfig = useCallback((updater: (prev: Config) => Config) => {
+    setConfig(prev => updater(prev));
+  }, []);
+
   // 重新从数据库加载账号（含可见性与排序），用于装分刷新后刷新 UI
   const reloadAccounts = useCallback(async () => {
     try {
@@ -744,6 +750,7 @@ function App() {
                 onRefreshRecords={reloadRecords}
                 onRefreshTrialRecords={reloadTrialRecords}
                 onRefreshBaizhanRecords={reloadBaizhanRecords}
+                onConfigChange={updateConfig}
               />
             )}
         </>
