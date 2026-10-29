@@ -217,6 +217,7 @@ fn main() {
             db::db_save_role_structured,
             db::db_delete_account_structured,
             db::db_delete_role_structured,
+            db::db_delete_raid_structured,
             // 记录相关
             db::db_get_records,
             db::db_get_pending_records,

@@ -586,9 +586,17 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                 return;
                               }
                               if (confirm('确认删除此副本？')) {
+                                // 先落库再改 UI：自动保存默认不删行，必须显式调用删除命令
                                 mergedRaid.raids.forEach(raid => {
                                   const key = getRaidKey(raid);
-                                  setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
+                                  db.deleteRaidStructured(key)
+                                    .then(() => {
+                                      setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
+                                    })
+                                    .catch(error => {
+                                      console.error('删除副本失败:', error);
+                                      alert('删除副本失败，请重试');
+                                    });
                                 });
                               }
                             }}
@@ -703,9 +711,17 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                     return;
                                   }
                                   if (confirm('确认删除此副本？')) {
+                                    // 先落库再改 UI：自动保存默认不删行，必须显式调用删除命令
                                     mergedRaid.raids.forEach(raid => {
                                       const key = getRaidKey(raid);
-                                      setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
+                                      db.deleteRaidStructured(key)
+                                        .then(() => {
+                                          setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
+                                        })
+                                        .catch(error => {
+                                          console.error('删除副本失败:', error);
+                                          alert('删除副本失败，请重试');
+                                        });
                                     });
                                   }
                                 }}

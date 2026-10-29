@@ -72,10 +72,18 @@ class DatabaseService {
     }
   }
 
-  async saveAccounts(accounts: Account[]): Promise<void> {
+  /**
+   * 保存账号列表（含角色）。
+   *
+   * 后端语义是「upsert + 可选删除不在列表中的账号/角色」。
+   * `allowDelete` 默认 false：自动保存只增改不删，避免读失败拿到空数组时清库。
+   * 用户显式删除账号/角色时必须传 true，或直接走 deleteAccountStructured /
+   * deleteRoleStructured。
+   */
+  async saveAccounts(accounts: Account[], allowDelete = false): Promise<void> {
     await this.init();
     try {
-      await invoke('db_save_accounts', { accounts: JSON.stringify(accounts) });
+      await invoke('db_save_accounts', { accounts: JSON.stringify(accounts), allowDelete });
     } catch (error) {
       console.error('Failed to save accounts:', error);
       throw error;
@@ -152,6 +160,22 @@ class DatabaseService {
       await invoke('db_delete_role_structured', { roleId });
     } catch (error) {
       console.error('Failed to delete structured role:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 显式删除单个副本。
+   *
+   * 副本自动保存默认不删除任何行（allow_delete=false），
+   * 用户在界面上删除副本时必须调用本方法，删除才会真正落库。
+   */
+  async deleteRaidStructured(raidId: string): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_delete_raid_structured', { raidId });
+    } catch (error) {
+      console.error('Failed to delete structured raid:', error);
       throw error;
     }
   }
@@ -312,10 +336,17 @@ class DatabaseService {
     }
   }
 
-  async saveRaids(raids: Raid[]): Promise<void> {
+  /**
+   * 保存副本列表。
+   *
+   * 后端语义是「upsert + 可选删除不在列表中的副本」。
+   * `allowDelete` 默认 false：自动保存只增改不删，避免读失败拿到空数组时清库。
+   * 用户显式删除副本时必须传 true，删除才会真正落库。
+   */
+  async saveRaids(raids: Raid[], allowDelete = false): Promise<void> {
     await this.init();
     try {
-      await invoke('db_save_raids', { raids: JSON.stringify(raids) });
+      await invoke('db_save_raids', { raids: JSON.stringify(raids), allowDelete });
     } catch (error) {
       console.error('Failed to save raids:', error);
       throw error;

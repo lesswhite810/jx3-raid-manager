@@ -2720,10 +2720,26 @@ pub fn db_init() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn db_save_accounts(accounts: String) -> Result<(), String> {
+pub fn db_save_accounts(accounts: String, allow_delete: Option<bool>) -> Result<(), String> {
     let mut conn = init_db().map_err(|e| e.to_string())?;
+    save_accounts_with_conn(&mut conn, &accounts, allow_delete)
+}
+
+/// `db_save_accounts` 的实际实现（连接可注入，便于单元测试）。
+///
+/// 删除护栏：默认「只增改不删」。
+/// 前端 App 的自动保存会把整个 accounts 数组全量回写，而读接口在失败时返回 []，
+/// 若不设护栏，一次读取失败就会把用户全部账号/角色删掉。
+/// 显式删除必须走 db_delete_account_structured / db_delete_role_structured。
+pub(crate) fn save_accounts_with_conn(
+    conn: &mut Connection,
+    accounts: &str,
+    allow_delete: Option<bool>,
+) -> Result<(), String> {
     let parsed: Vec<serde_json::Value> =
-        serde_json::from_str(&accounts).map_err(|e| e.to_string())?;
+        serde_json::from_str(accounts).map_err(|e| e.to_string())?;
+
+    let allow_delete = allow_delete.unwrap_or(false);
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -2771,37 +2787,40 @@ pub fn db_save_accounts(accounts: String) -> Result<(), String> {
     let incoming_role_set: HashSet<String> = incoming_role_ids.into_iter().collect();
 
     // 4. 删除不在传入数据中的账号及其关联数据（保留历史记录）
-    for account_id in &existing_account_ids {
-        if !incoming_account_set.contains(account_id) {
-            let roles_to_delete: Vec<String> = {
-                let mut stmt = tx
-                    .prepare("SELECT id FROM roles WHERE account_id = ?")
+    //    仅在显式 allow_delete 时执行，见函数开头的护栏说明。
+    if allow_delete {
+        for account_id in &existing_account_ids {
+            if !incoming_account_set.contains(account_id) {
+                let roles_to_delete: Vec<String> = {
+                    let mut stmt = tx
+                        .prepare("SELECT id FROM roles WHERE account_id = ?")
+                        .map_err(|e| e.to_string())?;
+                    let rows = stmt.query_map(params![account_id], |row| row.get(0)).map_err(|e| e.to_string())?;
+                    rows.filter_map(|r| r.ok()).collect()
+                };
+                for role_id in &roles_to_delete {
+                    tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
+                        .map_err(|e| e.to_string())?;
+                    tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
+                        .map_err(|e| e.to_string())?;
+                }
+                tx.execute("DELETE FROM roles WHERE account_id = ?", params![account_id])
                     .map_err(|e| e.to_string())?;
-                let rows = stmt.query_map(params![account_id], |row| row.get(0)).map_err(|e| e.to_string())?;
-                rows.filter_map(|r| r.ok()).collect()
-            };
-            for role_id in &roles_to_delete {
+                tx.execute("DELETE FROM accounts WHERE id = ?", params![account_id])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        // 5. 删除不在传入数据中的角色及其关联数据（保留历史记录）
+        for role_id in &existing_role_ids {
+            if !incoming_role_set.contains(role_id) {
                 tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
                     .map_err(|e| e.to_string())?;
                 tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
                     .map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM roles WHERE id = ?", params![role_id])
+                    .map_err(|e| e.to_string())?;
             }
-            tx.execute("DELETE FROM roles WHERE account_id = ?", params![account_id])
-                .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM accounts WHERE id = ?", params![account_id])
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    // 5. 删除不在传入数据中的角色及其关联数据（保留历史记录）
-    for role_id in &existing_role_ids {
-        if !incoming_role_set.contains(role_id) {
-            tx.execute("DELETE FROM role_instance_visibility WHERE role_id = ?", params![role_id])
-                .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM raid_role_visibility WHERE role_id = ?", params![role_id])
-                .map_err(|e| e.to_string())?;
-            tx.execute("DELETE FROM roles WHERE id = ?", params![role_id])
-                .map_err(|e| e.to_string())?;
         }
     }
 
@@ -3397,7 +3416,6 @@ fn create_default_visibility(conn: &Connection, role_id: &str) -> Result<(), Str
 pub fn db_delete_account_structured(account_id: String) -> Result<(), String> {
     let mut conn = init_db().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-
     let role_ids: Vec<String> = {
         let mut stmt = tx
             .prepare("SELECT id FROM roles WHERE account_id = ?")
@@ -3435,6 +3453,39 @@ pub fn db_delete_role_structured(role_id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 显式删除单个副本（按 getRaidKey 拼出的 id）。
+///
+/// 为什么需要独立命令：`db_save_raids` 默认 allow_delete=false（只增改不删），
+/// 用户主动删除副本时必须走本命令，否则界面删了、库里还在。
+/// 删除 raids 行会级联清理 raid_bosses。
+#[tauri::command]
+pub fn db_delete_raid_structured(raid_id: String) -> Result<(), String> {
+    let mut conn = init_db().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let is_static: bool = tx
+        .query_row(
+            "SELECT COALESCE(is_static, 0) FROM raids WHERE id = ?",
+            params![&raid_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|v| v != 0)
+        .unwrap_or(false);
+
+    if is_static {
+        return Err("预制副本不能删除，只能禁用".to_string());
+    }
+
+    tx.execute("DELETE FROM raid_bosses WHERE raid_name = (SELECT name FROM raids WHERE id = ?1)", params![&raid_id])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM raids WHERE id = ?", params![&raid_id])
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    log::info!("已删除副本: {}", raid_id);
     Ok(())
 }
 
@@ -3857,9 +3908,23 @@ pub fn db_get_current_season() -> Result<Option<Season>, String> {
 }
 
 #[tauri::command]
-pub fn db_save_raids(raids: String) -> Result<(), String> {
+pub fn db_save_raids(raids: String, allow_delete: Option<bool>) -> Result<(), String> {
     let mut conn = init_db().map_err(|e| e.to_string())?;
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(&raids).map_err(|e| e.to_string())?;
+    save_raids_with_conn(&mut conn, &raids, allow_delete)
+}
+
+/// `db_save_raids` 的实际实现（连接可注入，便于单元测试）。
+///
+/// 删除护栏：默认「只增改不删」，与 db_save_accounts 一致。
+/// 副本读取失败时前端会拿到空数组并全量回写，若无护栏会连带级联删掉 raid_bosses。
+pub(crate) fn save_raids_with_conn(
+    conn: &mut Connection,
+    raids: &str,
+    allow_delete: Option<bool>,
+) -> Result<(), String> {
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(raids).map_err(|e| e.to_string())?;
+
+    let allow_delete = allow_delete.unwrap_or(false);
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -3883,10 +3948,13 @@ pub fn db_save_raids(raids: String) -> Result<(), String> {
     }
 
     // 3. 删除不在传入数据中的 raids（会级联删除 raid_bosses）
-    for raid_id in &existing_raid_ids {
-        if !incoming_raid_ids.contains(raid_id) {
-            tx.execute("DELETE FROM raids WHERE id = ?", params![raid_id])
-                .map_err(|e| e.to_string())?;
+    //    仅在显式 allow_delete 时执行，见函数开头的护栏说明。
+    if allow_delete {
+        for raid_id in &existing_raid_ids {
+            if !incoming_raid_ids.contains(raid_id) {
+                tx.execute("DELETE FROM raids WHERE id = ?", params![raid_id])
+                    .map_err(|e| e.to_string())?;
+            }
         }
     }
 

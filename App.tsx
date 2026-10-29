@@ -142,7 +142,11 @@ function App() {
           });
         });
       } else {
-        setAccounts([]);
+        // 读到空列表时不覆盖现有状态：
+        // db.getAccounts() 在 IPC 失败时返回 []，无法与「真的没有账号」区分。
+        // 直接 setAccounts([]) 会让用户看到账号全没了，且后续自动保存会把这
+        // 个空状态当成真相（现在后端已有 allow_delete 护栏兜底，但界面仍会误导）。
+        console.warn('[reloadAccounts] 读到空账号列表，保留当前状态不做覆盖');
       }
     } catch (error) {
       console.error('重新加载账号失败:', error);
