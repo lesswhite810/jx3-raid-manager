@@ -6,6 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::app_config;
 use crate::kungfu_data::get_sect_by_martial;
 use crate::runtime_mode::{self, RuntimeMode};
 
@@ -685,6 +686,11 @@ pub fn db_delete_directory(
         return Err(error_message);
     }
 
+    // 安全校验：只允许删除 <游戏目录>/userdata 下的账号目录或角色目录。
+    // 之前这里直接对任意传入路径 remove_dir_all，前端一旦拼错路径（或参数被构造）
+    // 就会递归删除用户机器上的任意目录。校验范式与 char_sync.rs 的 starts_with 一致。
+    ensure_deletable_userdata_path(&target_path, &display_path)?;
+
     std::fs::remove_dir_all(&target_path).map_err(|error| {
         let error_message = format!("删除{target_type}目录失败: {display_path} ({error})");
         log::error!("{}", error_message);
@@ -700,6 +706,49 @@ pub fn db_delete_directory(
         deleted: true,
         path: display_path,
     })
+}
+
+/// 校验待删除目录位于 `<游戏目录>/userdata/` 之下，且不是 userdata 本身。
+///
+/// 规则：
+/// - 必须已配置游戏目录，否则拒绝（宁可不删，也不猜路径）
+/// - 目标目录 canonicalize 后必须 starts_with `<游戏目录>/userdata` 的 canonicalize 结果
+/// - 目标不得等于 userdata 目录本身（否则会一次性删掉所有账号）
+fn ensure_deletable_userdata_path(target_path: &Path, display_path: &str) -> Result<(), String> {
+    let config = app_config::get_app_config_internal()
+        .map_err(|e| format!("读取游戏目录配置失败，拒绝删除 {display_path}: {e}"))?;
+    let raw_game_dir = config
+        .game_directory
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("未配置游戏目录，拒绝删除目录: {display_path}"))?;
+
+    let runtime_game_dir =
+        PathBuf::from(crate::game_directory::resolve_game_runtime_directory(&raw_game_dir));
+    let userdata_dir = runtime_game_dir.join("userdata");
+
+    let canonical_userdata = userdata_dir.canonicalize().map_err(|e| {
+        format!("无法解析 userdata 目录 {userdata_dir:?}，拒绝删除 {display_path}: {e}")
+    })?;
+    let canonical_target = target_path.canonicalize().map_err(|e| {
+        format!("无法解析目标目录 {display_path}，拒绝删除: {e}")
+    })?;
+
+    if canonical_target == canonical_userdata {
+        let message = format!("拒绝删除 userdata 根目录: {display_path}");
+        log::error!("{}", message);
+        return Err(message);
+    }
+
+    if !canonical_target.starts_with(&canonical_userdata) {
+        let message = format!(
+            "目标目录不在游戏 userdata 目录下，拒绝删除: {display_path}（userdata: {}）",
+            canonical_userdata.display()
+        );
+        log::error!("{}", message);
+        return Err(message);
+    }
+
+    Ok(())
 }
 
 /// 应用持久化 PRAGMA（写入数据库文件头，只需在首次初始化时设置一次）
