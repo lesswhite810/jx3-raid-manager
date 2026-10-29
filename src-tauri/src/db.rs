@@ -861,6 +861,8 @@ pub fn init_db() -> Result<Connection, String> {
     migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
     ensure_app_config_table(&conn)?;
+    // V18 兜底：全新安装与「版本过高修复」路径都不走增量迁移，必须显式建表
+    ensure_char_sync_rollback_marks_table(&conn)?;
     // V14 新增引导功能：历史用户已配置游戏目录且有账号数据时，自动标记引导完成
     auto_complete_setup_for_legacy_users(&conn)?;
 
@@ -936,6 +938,7 @@ pub fn init_db_skip_migration() -> Result<Connection, String> {
     migration::init_static_raids(&conn)?;
     ensure_equipment_columns(&conn)?;
     ensure_app_config_table(&conn)?;
+    ensure_char_sync_rollback_marks_table(&conn)?;
     auto_complete_setup_for_legacy_users(&conn)?;
 
     *initialized = true;
@@ -1096,6 +1099,7 @@ fn validate_post_upgrade(conn: &Connection) -> Result<(), String> {
         "raid_role_visibility",
         "trial_records", "baizhan_records",
         "game_versions", "seasons",
+        "char_sync_rollback_marks",
     ];
 
     for table_name in &expected_tables {
@@ -1509,6 +1513,32 @@ fn ensure_drop_items_table(conn: &Connection) -> Result<(), String> {
 /// 确保 app_config 表存在（历史数据库兼容处理）
 ///
 /// 部分历史数据库版本号已升级到 V14 但 app_config 表缺失，
+/// 兜底创建 V18 的「跨角色设置同步已回滚标记」表。
+///
+/// 背景：该表最初只由 `db/migrations/v18.rs` 创建，而全新安装走的是
+/// `install_fresh_db` → `create_latest_schema`，完全不执行增量迁移；
+/// 「数据库版本高于应用版本」的表结构修复路径同样不会执行 V18 迁移。
+/// 结果：从 v2.2.2 起全新安装的用户，跨角色同步的回滚标记读写在 SQLite 层直接报错，
+/// 而前端只 `console.error`，表现为标记静默丢失。
+///
+/// 这里在 init_db 的补救区无条件兜底建表（幂等），覆盖三条路径：
+/// 全新安装、增量升级、版本过高修复。
+fn ensure_char_sync_rollback_marks_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS char_sync_rollback_marks (
+            backup_dir TEXT PRIMARY KEY,
+            rolled_back_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_char_sync_rollback_marks_rolled_back_at
+        ON char_sync_rollback_marks (rolled_back_at DESC);
+        "#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// 此函数在 init_db 末尾兜底创建表并插入默认值，避免 set_game_directory 等命令失败。
 fn ensure_app_config_table(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
@@ -2102,6 +2132,16 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             updated_at TEXT NOT NULL
         );
 
+        -- ===== V18: 跨角色设置同步「已回滚」标记表 =====
+        -- 与 db/migrations/v18.rs 保持一致。全新安装不走增量迁移，
+        -- 必须在此显式建表，否则该功能在全新安装用户机器上不可用。
+        CREATE TABLE IF NOT EXISTS char_sync_rollback_marks (
+            backup_dir TEXT PRIMARY KEY,
+            rolled_back_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_char_sync_rollback_marks_rolled_back_at
+        ON char_sync_rollback_marks (rolled_back_at DESC);
+
         -- ===== 初始数据 =====
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (1, 'raid', '团队副本');
         INSERT OR IGNORE INTO instance_types (id, type, name) VALUES (2, 'baizhan', '百战异闻录');
@@ -2128,6 +2168,31 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
 
     log::info!("[INSTALL] 数据库结构创建完成");
     Ok(())
+}
+
+/// 测试辅助：在指定路径上创建全新安装库并返回连接。
+///
+/// 生产路径是 `install_fresh_db`（内部创建 `create_latest_schema`），
+/// 但那条路径依赖全局单例与真实数据目录，不适合单元测试。
+/// 这里直接复刻 `install_fresh_db` 的语义（建表 + 写入 schema 版本 + 静态副本），
+/// 供 upgrade_tests 验证表结构完整性。
+#[cfg(test)]
+pub fn create_latest_schema_for_test(path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| e.to_string())?;
+    // 与 init_db 的真实顺序一致：先建版本表，再建业务表，最后写版本号。
+    ensure_version_tables(&conn)?;
+    create_latest_schema(&conn)?;
+    set_schema_version(&conn, CURRENT_SCHEMA_VERSION, "测试初始安装")?;
+    migration::init_static_raids(&conn)?;
+    ensure_char_sync_rollback_marks_table(&conn)?;
+    Ok(conn)
+}
+
+/// 测试辅助：对给定连接执行升级后校验，供 upgrade_tests 断言期望表清单。
+#[cfg(test)]
+pub fn validate_post_upgrade_for_test(conn: &Connection, from_version: i32) -> Result<(), String> {
+    let _ = from_version;
+    validate_post_upgrade(conn)
 }
 
 /// 检查 localStorage 迁移是否已完成

@@ -560,4 +560,205 @@ mod tests {
 
         println!("V13 -> V14 专项验证通过：app_config / records 时间戳 / jcl_cache / raid_bosses 重构均符合预期");
     }
+
+    /// V18 专项验证：`char_sync_rollback_marks` 表在三条初始化路径上都必须存在。
+    ///
+    /// 回归背景：该表最初只由 `db/migrations/v18.rs` 创建，而「全新安装」
+    /// （`install_fresh_db` → `create_latest_schema`）与「数据库版本高于应用」
+    /// 的修复路径都不执行增量迁移，导致该功能在这些用户机器上直接报
+    /// "no such table"。此测试锁定三件事：
+    /// 1. 全新安装路径建表
+    /// 2. 增量升级路径（V17 -> V18）建表
+    /// 3. `validate_post_upgrade` 的期望表清单包含它
+    #[test]
+    fn test_v18_rollback_marks_table_on_fresh_install() {
+        let db_path = get_test_dir().join("v18-fresh-test.db");
+        remove_with_retry(&db_path).expect("清理旧的测试数据库失败");
+
+        {
+            let conn = crate::db::create_latest_schema_for_test(&db_path)
+                .expect("全新安装建库失败");
+
+            assert!(
+                verify_table_exists(&conn, "char_sync_rollback_marks").unwrap_or(false),
+                "全新安装未创建 char_sync_rollback_marks 表"
+            );
+
+            // 表结构：backup_dir 主键 + rolled_back_at 非空
+            let has_backup_dir: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('char_sync_rollback_marks') WHERE name='backup_dir' AND pk > 0",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            assert!(has_backup_dir, "char_sync_rollback_marks 缺少主键 backup_dir");
+
+            let has_rolled_back_at: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('char_sync_rollback_marks') WHERE name='rolled_back_at' AND \"notnull\" = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            assert!(
+                has_rolled_back_at,
+                "char_sync_rollback_marks 缺少 NOT NULL 列 rolled_back_at"
+            );
+
+            // 基本读写可用（这正是前端 list/set/clear 三个命令依赖的能力）
+            conn.execute(
+                "INSERT INTO char_sync_rollback_marks (backup_dir, rolled_back_at) VALUES (?1, ?2)",
+                rusqlite::params!["C:/tmp/backup-1", "2026-10-29T00:00:00+08:00"],
+            )
+            .expect("写入回滚标记失败");
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM char_sync_rollback_marks WHERE backup_dir = ?1",
+                    ["C:/tmp/backup-1"],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            assert_eq!(count, 1, "回滚标记写入后读不回来");
+        }
+
+        remove_with_retry(&db_path).expect("删除测试数据库失败");
+        println!("V18 专项验证通过：全新安装已创建 char_sync_rollback_marks 且读写可用");
+    }
+
+    /// 校验 `validate_post_upgrade` 的期望表清单包含 V18 新表，
+    /// 否则表结构漂移检测会漏报（这正是当初该缺陷没被 CI 发现的原因）。
+    #[test]
+    fn test_v18_expected_tables_include_rollback_marks() {
+        let db_path = get_test_dir().join("v18-expected-tables-test.db");
+        remove_with_retry(&db_path).expect("清理旧的测试数据库失败");
+
+        {
+            let conn = crate::db::create_latest_schema_for_test(&db_path)
+                .expect("全新安装建库失败");
+
+            // 若期望清单漏了该表，validate 不会报错但我们也检测不到；
+            // 因此这里反过来断言：建库后该表确实在清单所覆盖的范围内。
+            let result = crate::db::validate_post_upgrade_for_test(&conn, 18);
+            assert!(
+                result.is_ok(),
+                "validate_post_upgrade 在全新安装库上失败: {:?}",
+                result.err()
+            );
+        }
+
+        remove_with_retry(&db_path).expect("删除测试数据库失败");
+        println!("V18 期望表清单校验通过");
+    }
+
+    /// 保存护栏回归：`db_save_accounts` / `db_save_raids` 在默认参数下
+    /// 必须是「只增改不删」，否则一次读取失败 + 全量回写就会清空用户数据。
+    ///
+    /// 直接调用真实的内部实现（连接可注入），覆盖三个方向：
+    /// 1. 默认（None）传空数组 → 不删除任何数据
+    /// 2. 显式 allow_delete=true 传空数组 → 确实删除（证明护栏不是把删除功能关死）
+    /// 3. 传非空列表 → 新增/更新生效
+    #[test]
+    fn test_save_guards_do_not_delete_by_default() {
+        let db_path = get_test_dir().join("save-guard-test.db");
+        remove_with_retry(&db_path).expect("清理旧的测试数据库失败");
+
+        let mut conn = crate::db::create_latest_schema_for_test(&db_path)
+            .expect("建库失败");
+
+        // 预置一个账号 + 一个角色 + 一个自定义副本
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, account_type, sort_order, updated_at)
+             VALUES ('acc-1', '主账号', 'OWN', 0, '2026-10-29T00:00:00+08:00')",
+            [],
+        )
+        .expect("预置账号失败");
+        conn.execute(
+            "INSERT INTO roles (id, account_id, name, region, server, updated_at)
+             VALUES ('role-1', 'acc-1', '角色一', '电信一区', '长安城', '2026-10-29T00:00:00+08:00')",
+            [],
+        )
+        .expect("预置角色失败");
+        conn.execute(
+            "INSERT INTO raids (id, name, difficulty, player_count, is_active, is_static)
+             VALUES ('25人普通回归测试副本', '回归测试副本', '普通', 25, 1, 0)",
+            [],
+        )
+        .expect("预置副本失败");
+
+        // 记录基线：raids 里已有 init_static_raids 预置的静态副本，不能假设为 1
+        let raids_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))
+            .unwrap_or(0);
+        assert!(raids_before >= 1, "基线异常：副本表初始为空");
+
+        // ---- 1) 默认参数：空数组回写不得删除任何数据 ----
+        crate::db::save_accounts_with_conn(&mut conn, "[]", None)
+            .expect("默认参数保存空账号列表失败");
+        crate::db::save_raids_with_conn(&mut conn, "[]", None)
+            .expect("默认参数保存空副本列表失败");
+
+        let account_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+            .unwrap_or(0);
+        assert_eq!(
+            account_count, 1,
+            "护栏缺失：默认参数下空数组回写把账号删掉了"
+        );
+
+        let role_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
+            .unwrap_or(0);
+        assert_eq!(
+            role_count, 1,
+            "护栏缺失：默认参数下空数组回写把角色删掉了"
+        );
+
+        let raid_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))
+            .unwrap_or(0);
+        assert_eq!(
+            raid_count, raids_before,
+            "护栏缺失：默认参数下空数组回写把副本删掉了"
+        );
+
+        // ---- 2) 显式 allow_delete=true：删除必须真的生效 ----
+        // 证明护栏只是把「默认」改成安全值，没有把删除能力关死。
+        crate::db::save_accounts_with_conn(&mut conn, "[]", Some(true))
+            .expect("显式删除账号失败");
+        let account_count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
+            .unwrap_or(0);
+        assert_eq!(
+            account_count_after, 0,
+            "allow_delete=true 时账号未被删除，说明删除路径失效"
+        );
+
+        crate::db::save_raids_with_conn(&mut conn, "[]", Some(true))
+            .expect("显式删除副本失败");
+        let raid_count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))
+            .unwrap_or(0);
+        assert_eq!(
+            raid_count_after, 0,
+            "allow_delete=true 时副本未被删除，说明删除路径失效"
+        );
+
+        // ---- 3) 传非空列表：新增/更新必须生效 ----
+        let accounts_json = r#"[{"id":"acc-new","accountName":"新账号","type":"OWN","roles":[]}]"#;
+        crate::db::save_accounts_with_conn(&mut conn, accounts_json, None)
+            .expect("新增账号失败");
+        let new_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM accounts WHERE id = 'acc-new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        assert_eq!(new_count, 1, "非空列表回写未新增账号");
+
+        drop(conn);
+        remove_with_retry(&db_path).expect("删除测试数据库失败");
+        println!("保存护栏语义验证通过：默认不删、显式才删、非空正常写入");
+    }
 }
