@@ -22,6 +22,6 @@
 
     "types": ["vite/client"]
   },
-  "include": ["src", "components", "services", "App.tsx", "index.tsx", "types.ts", "constants.ts"],
+  "include": ["src", "components", "services", "utils", "hooks", "contexts", "data", "App.tsx", "index.tsx", "types.ts", "constants.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -26,6 +26,8 @@ npm run build
 npm run tauri build
 npm run tauri:bundle
 npm run test
+npm run lint
+npm run coverage
 npm run release:notes -- v2.1.6 release-notes/v2.1.6.md
 npm run version:prepare -- --next-patch-from 2.1.19
 ```
@@ -36,7 +38,9 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - `npm run version:prepare -- --next-patch-from 2.1.19`：将版本号推进到下一个补丁版本，并自动生成新的 Release Notes 模板。
 - GitHub Release 工作流使用 `gh release create` / `gh release upload` 上传资产，避免依赖 Node 20 的第三方 action。
 - GitHub Release 工作流启用 `Swatinem/rust-cache@v2` 缓存 Rust 依赖，加速构建。
-- CI 工作流（`.github/workflows/ci.yml`）在 PR 和 push 到 master 时运行前端 `npm build` + `npm test` 和 Rust `cargo check --release` + `cargo test --release` 作为质量门禁。
+- CI 工作流（`.github/workflows/ci.yml`）在 PR 和 push 到 master 时运行前端 `npm run lint` + `npm build` + `npm test` + 设计规范合规扫描，以及 Rust `cargo check --release` + `cargo test --release` 作为质量门禁。
+- ESLint 采用 flat config（`eslint.config.js`），规则当前全部为 `warn`，`npm run lint` 用 `--max-warnings 9999` 保证不因存量告警阻断 CI；新增代码不应引入新的 `error` 级问题。
+- Release 工作流在构建前会跑 `npm test`，并在版本一致性校验中比对 `src-tauri/Cargo.lock` 的版本号；Gitee 镜像推送失败会直接让 workflow 失败，不再静默跳过。
 - 如需本地验证完整 release 配置，可临时设置环境变量 `JX3_TAURI_FULL_LOCAL_BUILD=1` 后再执行 `npm run tauri build`。
 
 ## 3. 前后端通信约定

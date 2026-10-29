@@ -27,11 +27,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: ESLint 代码检查
+        run: npm run lint
+
       - name: TypeScript 类型检查 + Vite 构建
         run: npm run build
 
       - name: 运行 Vitest 测试
         run: npm test
+
+      - name: 设计规范合规扫描
+        run: node scripts/design-compliance-scan.mjs
 
   rust:
     name: Rust 编译与测试

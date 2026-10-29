@@ -33,7 +33,7 @@ JX3 Raid Manager (剑网三副本管家) 是一个专为《剑网三》玩家设
    - 支持手动添加和扫描游戏目录自动识别
    - 拖动排序，排序结果持久化到数据库
 
-3. **副本管理 (Raid Manager)** —— `components/RaidManager.tsx` + `RaidDetail.tsx` + `RaidLogger.tsx` + `AddRecordModal.tsx` + `BossCooldownDisplay.tsx`
+3. **副本管理 (Raid Manager)** —— `components/RaidManager.tsx` + `RaidDetail.tsx`  + `AddRecordModal.tsx` + `BossCooldownDisplay.tsx`
    - 管理副本配置（预制 + 自定义），支持 10/25 人、普通/英雄/挑战难度
    - BOSS 单独选择与 CD 追踪
    - 角色维度查看详情：收支、掉落物、BOSS CD 状态
@@ -65,7 +65,7 @@ JX3 Raid Manager (剑网三副本管家) 是一个专为《剑网三》玩家设
 9. **配置 (Configuration)** —— `components/ConfigManagerModal.tsx` + `components/config-panels/`（5 个分类面板）
    - 游戏路径设置（`ConfigGamePanel`）
    - 主题切换：经典 / 江湖纸笺 / 暗色（`ConfigThemePanel`，主题名常量见 `services/themeStorage.ts`）
-   - 数据目录切换与迁移状态（`MigrationStatus.tsx`、`ConfigAdvancedPanel`）
+   - 数据目录切换与迁移状态（`ConfigAdvancedPanel`）
    - 自动更新（`ConfigUpdatePanel` + `UpdateDialog.tsx`）
    - 意见反馈（`ConfigFeedbackPanel`）
    - 自动扫描 polling 与启动刷新装分配置
@@ -125,10 +125,8 @@ jx3-raid-manager/
 │   ├── ImportRolesModal.tsx
 │   ├── IncomeDetail.tsx
 │   ├── LoadingSpinner.tsx
-│   ├── MigrationStatus.tsx
 │   ├── PendingRecordsPanel.tsx
 │   ├── RaidDetail.tsx
-│   ├── RaidLogger.tsx           # 快速记录副本
 │   ├── RaidManager.tsx
 │   ├── RoleRecordsModal.tsx
 │   ├── ScrapsItemsEditor.tsx    # 散件老板编辑
@@ -154,20 +152,16 @@ jx3-raid-manager/
 │   └── ThemeContext.tsx         # 主题管理
 │
 ├── hooks/                       # 自定义 Hooks
-│   ├── index.ts
-│   ├── useCountdown.tsx
 │   └── useDropScanner.ts
 │
 ├── services/                    # 业务逻辑（15 个 + 1 个测试）
-│   ├── db.ts                    # ⭐ IPC 唯一出口 · 724 行 · 28 处 invoke
+│   ├── db.ts                    # 数据访问层（IPC 经 services/invoke.ts）
 │   ├── charSync.ts              # 跨角色设置同步
 │   ├── migration.ts             # localStorage 旧数据 → SQLite 迁移
 │   ├── dropScanner.ts           # 自动扫描核心
 │   ├── activeDetector.ts        # 活跃检测
 │   ├── gameDirectoryScanner.ts  # 游戏目录扫描
 │   ├── directoryParser.ts
-│   ├── jx3BinaryParser.ts
-│   ├── gkpDirectoryScanner.ts
 │   ├── jx3BoxApi.ts             # JX3Box API 集成
 │   ├── appConfig.ts
 │   ├── themeStorage.ts
@@ -183,7 +177,6 @@ jx3-raid-manager/
 │   ├── scrapsUtils.ts           # 散件老板
 │   ├── trialFlipStats.ts        # 试炼翻牌统计
 │   ├── trialRecordUtils.ts
-│   ├── recordUtils.ts
 │   ├── recordLookupUtils.ts
 │   ├── raidUtils.ts
 │   ├── raidRoleUtils.ts
@@ -199,7 +192,6 @@ jx3-raid-manager/
 │   └── uuid.ts
 │
 ├── data/                        # 静态数据 + JSON 源
-│   ├── baizhanBosses.ts
 │   ├── raidBosses.ts
 │   └── kungfu_data.json         # ⚠️ 心法数据唯一源（自动生成 src/data/kungfuData.ts）
 │
@@ -275,8 +267,10 @@ jx3-raid-manager/
 - 切勿手动改 `src/data/kungfuData.ts`，下次 build 会被覆盖
 
 ### 数据层唯一性
-- **业务数据只写 SQLite**，通过 `services/db.ts` 的 `invoke` 调用后端 `db_*` 命令，不要在前端另起存储
-- 升 schema 版本时四处必须同步：`src-tauri/src/db.rs` 的 `CURRENT_SCHEMA_VERSION`、`db/migration.rs`、`db/migrations/mod.rs`、`db/upgrade_tests.rs`，并新增 `db/migrations/vN.rs`
+- **业务数据只写 SQLite**，通过 `services/db.ts` 调用后端 `db_*` 命令，不要在前端另起存储
+- **IPC 出口唯一**：所有 Tauri 调用统一走 `services/invoke.ts` 的 `invokeCommand`（自动处理浏览器环境回落 mock），业务文件不要再直接 `import '@tauri-apps/api/core'`
+- **自动保存不删除**：`db_save_accounts` / `db_save_raids` 默认 `allow_delete=false`（只增改不删），用户主动删除必须走 `db_delete_account_structured` / `db_delete_role_structured` / `db_delete_raid_structured`
+- 升 schema 版本时四处必须同步：`src-tauri/src/db.rs` 的 `CURRENT_SCHEMA_VERSION`、`db/migration.rs`、`db/migrations/mod.rs`、`db/upgrade_tests.rs`，并新增 `db/migrations/vN.rs`。若新表只由 `vN.rs` 创建，还必须同步加进 `create_latest_schema`（全新安装）与 `validate_post_upgrade` 的期望表清单
 - localStorage 只允许用于主题偏好等纯 UI 状态，不得承载业务数据
 
 ### 配色迁移（v2.2.0 已完成）

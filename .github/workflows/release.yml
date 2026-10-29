@@ -109,7 +109,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$notes_file" || true
           git commit -m "docs: 添加 v${version} 更新日志" || echo "Nothing to commit"
-          git push origin master || echo "Push skipped"
+          if ! git push origin master; then
+            echo "ERROR: Failed to push release notes commit to master" >&2
+            exit 1
+          fi
 
       - name: Create tag if needed
         if: github.event_name == 'workflow_dispatch'
@@ -164,19 +167,29 @@ jobs:
           package_version="$(node -p "require('./package.json').version")"
           tauri_version="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
           cargo_version="$(node -e "const fs=require('fs'); const text=fs.readFileSync('src-tauri/Cargo.toml','utf8'); const match=text.match(/^version\\s*=\\s*\"([^\"]+)\"/m); if(!match){throw new Error('Unable to read version from src-tauri/Cargo.toml')} process.stdout.write(match[1])")"
+          cargo_lock_version="$(node -e "const fs=require('fs'); const text=fs.readFileSync('src-tauri/Cargo.lock','utf8'); const blocks=text.split(/^\[\[package\]\]\$/m); const block=blocks.find((b)=>/^name\\s*=\\s*\"jx3-raid-manager\"\$/m.test(b)); if(!block){throw new Error('Unable to find jx3-raid-manager package in src-tauri/Cargo.lock')} const match=block.match(/^version\\s*=\\s*\"([^\"]+)\"\$/m); if(!match){throw new Error('Unable to read version from src-tauri/Cargo.lock')} process.stdout.write(match[1])")"
 
           echo "Release version: ${release_version}"
           echo "package.json: ${package_version}"
           echo "tauri.conf.json: ${tauri_version}"
           echo "Cargo.toml: ${cargo_version}"
+          echo "Cargo.lock: ${cargo_lock_version}"
 
           if [[ "${release_version}" != "${package_version}" || "${release_version}" != "${tauri_version}" || "${release_version}" != "${cargo_version}" ]]; then
             echo "ERROR: Version mismatch detected!" >&2
             exit 1
           fi
 
+          if [[ "${release_version}" != "${cargo_lock_version}" ]]; then
+            echo "ERROR: Version mismatch between release (${release_version}) and src-tauri/Cargo.lock (${cargo_lock_version})!" >&2
+            exit 1
+          fi
+
       - name: Install dependencies
         run: npm ci
+
+      - name: 运行 Vitest 测试
+        run: npm test
 
       - name: Generate updater bundle config
         run: node scripts/build-tauri-release-config.mjs
@@ -325,26 +338,40 @@ jobs:
           git remote add gitee "${GITEE_PUSH_URL}"
 
           # 重试机制：最多3次
+          master_synced=0
           for i in 1 2 3; do
             echo "Attempt $i: Pushing to Gitee..."
             if git push gitee refs/remotes/origin/master:refs/heads/master --force 2>&1; then
               echo "Master branch synced successfully"
+              master_synced=1
               break
             fi
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
 
+          if [[ "${master_synced}" -ne 1 ]]; then
+            echo "ERROR: Failed to sync master branch to Gitee after 3 attempts" >&2
+            exit 1
+          fi
+
           # 重试推送 tags
+          tags_synced=0
           for i in 1 2 3; do
             echo "Attempt $i: Pushing tags to Gitee..."
             if git push gitee --tags --force 2>&1; then
               echo "Tags synced successfully"
+              tags_synced=1
               break
             fi
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
+
+          if [[ "${tags_synced}" -ne 1 ]]; then
+            echo "ERROR: Failed to sync tags to Gitee after 3 attempts" >&2
+            exit 1
+          fi
 
       - name: Sync updater assets to Gitee
         shell: bash
@@ -446,7 +473,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml "release-notes/v${next_version}.md"
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock "release-notes/v${next_version}.md"
 
           if git diff --cached --quiet; then
             echo "No version bump changes to commit"

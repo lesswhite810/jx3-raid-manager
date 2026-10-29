@@ -11,6 +11,8 @@
     "tauri:bundle": "node scripts/run-tauri.mjs build --bundles nsis",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint . --max-warnings 9999",
+    "coverage": "vitest run --coverage",
     "release:notes": "node scripts/update-release-notes.mjs",
     "version:prepare": "node scripts/prepare-next-version.mjs"
   },
@@ -31,6 +33,7 @@
     "recharts": "^2.12.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@tauri-apps/api": "~2.10.1",
     "@tauri-apps/cli": "~2.10.0",
     "@types/node": "^20.11.24",
@@ -38,11 +41,17 @@
     "@types/react-datepicker": "^6.2.0",
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/coverage-v8": "^2.1.9",
     "autoprefixer": "^10.4.18",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.26",
+    "globals": "^15.15.0",
     "postcss": "^8.4.35",
     "sqlite3": "^6.0.1",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1",
     "vite": "^5.1.4",
     "vitest": "^2.1.9"
   },

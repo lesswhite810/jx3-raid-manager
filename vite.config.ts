@@ -9,6 +9,21 @@ export default defineConfig(() => ({
     // tmp/ 为本地一次性排查脚本的临时目录（已被 .gitignore 忽略），
     // 其中的 *.test.cjs 是历史残留且不含测试套件，需排除以免本地测试误红。
     exclude: [...configDefaults.exclude, "tmp/**"],
+    // 覆盖率基线观察用（v8 provider）。先不设 thresholds 硬门槛，
+    // 待基线稳定后再决定是否收紧；`npm run coverage` 会读取这里的配置。
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html"],
+      include: ["services/**/*.ts", "utils/**/*.ts", "hooks/**/*.ts", "contexts/**/*.tsx"],
+      exclude: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        // 自动生成的静态数据，无测试意义
+        "src/data/**",
+        // 仅浏览器 dev 环境下的 IPC mock 数据
+        "services/mockInvoke.ts",
+      ],
+    },
   },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   clearScreen: false,
