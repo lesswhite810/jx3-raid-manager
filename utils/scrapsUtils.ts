@@ -108,10 +108,14 @@ export function normalizeScrapsItems(items?: readonly RawScrapsItem[]): ScrapsIt
  *
  * 清单非空时按归一化后的单价重算（自动修正旧版数据的键名与单位问题）；
  * 无清单时回退到扫描时快照的 scrapsValue。
+ *
+ * 形参刻意放宽为「可能含旧版键名的原始清单」：
+ * 本函数的设计目标就是修正旧版数据，形参若收紧成 ScrapsItem[] 反而会拒绝旧版快照。
  */
-export function getRecordScrapsValue(
-  record: Pick<RaidRecord, 'scrapsItems' | 'scrapsValue'>,
-): number {
+export function getRecordScrapsValue(record: {
+  scrapsItems?: readonly RawScrapsItem[];
+  scrapsValue?: number;
+}): number {
   if (record.scrapsItems && record.scrapsItems.length > 0) {
     return computeScrapsValue(normalizeScrapsItems(record.scrapsItems));
   }

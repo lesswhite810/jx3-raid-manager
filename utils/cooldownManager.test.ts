@@ -15,12 +15,22 @@
  *   - 周日 23:59（周末末尾）
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     getLastMonday,
     getNextMonday,
     getTenPersonCycle,
     calculateCooldown,
+    getSeasonStartTimeMs,
+    getMonthStart,
+    getMonthEnd,
+    getRaidRefreshInfo,
+    getRaidCooldownRules,
+    formatRemainingTime,
+    formatCountdown,
+    logOperation,
+    getOperationLogs,
+    clearOperationLogs,
 } from './cooldownManager';
 import { Raid } from '../types';
 
@@ -40,11 +50,6 @@ function makeDate(dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6, hour: number, minute: nu
     d.setDate(ANCHOR_MONDAY.getDate() + daysOffset);
     d.setHours(hour, minute, 0, 0);
     return d;
-}
-
-/** 验证 makeDate 的日期是否正确（调试用） */
-function dayName(date: Date): string {
-    return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()];
 }
 
 /** 构造 Raid 对象 */
@@ -431,5 +436,221 @@ describe('getNextMonday', () => {
         expectedNext.setDate(now.getDate() + 7);
         expectedNext.setHours(7, 0, 0, 0);
         expect(result.getTime()).toBe(expectedNext.getTime());
+    });
+});
+
+// ─── getSeasonStartTimeMs 测试（秒级 / 毫秒级双格式）───────────────────────────
+describe('getSeasonStartTimeMs（赛季起始时间双格式兼容）', () => {
+    // 2026-02-16 08:00:00.000（本地时区），用作同一时间点的基准
+    const SAME_INSTANT = new Date(2026, 1, 16, 8, 0, 0, 0).getTime();
+    const AS_SECONDS = Math.floor(SAME_INSTANT / 1000);
+    const AS_MILLIS = SAME_INSTANT;
+
+    it('秒级数字 → 乘以 1000 得到毫秒时间戳', () => {
+        expect(getSeasonStartTimeMs(AS_SECONDS)).toBe(AS_MILLIS);
+    });
+
+    it('毫秒级数字 → 原样返回', () => {
+        expect(getSeasonStartTimeMs(AS_MILLIS)).toBe(AS_MILLIS);
+    });
+
+    it('同一时间点的秒级与毫秒级输入结果一致', () => {
+        const fromSeconds = getSeasonStartTimeMs(AS_SECONDS);
+        const fromMillis = getSeasonStartTimeMs(AS_MILLIS);
+        expect(fromSeconds).toBe(fromMillis);
+        expect(fromSeconds).toBe(SAME_INSTANT);
+    });
+
+    it('秒级输入换算后与 new Date(秒*1000) 等价', () => {
+        expect(getSeasonStartTimeMs(AS_SECONDS)).toBe(new Date(AS_SECONDS * 1000).getTime());
+    });
+
+    it('ISO 字符串 → 解析为毫秒时间戳', () => {
+        const iso = new Date(SAME_INSTANT).toISOString();
+        expect(getSeasonStartTimeMs(iso)).toBe(SAME_INSTANT);
+    });
+
+    it('边界：0 视为合法秒级时间戳（1970-01-01 00:00:00）', () => {
+        expect(getSeasonStartTimeMs(0)).toBe(0);
+    });
+
+    it('边界：undefined → 返回 null', () => {
+        expect(getSeasonStartTimeMs(undefined)).toBeNull();
+    });
+
+    it('边界：NaN / Infinity 等非有限数字 → 返回 null', () => {
+        expect(getSeasonStartTimeMs(Number.NaN)).toBeNull();
+        expect(getSeasonStartTimeMs(Number.POSITIVE_INFINITY)).toBeNull();
+        expect(getSeasonStartTimeMs(Number.NEGATIVE_INFINITY)).toBeNull();
+    });
+
+    it('边界：非法字符串 → 返回 null（不抛出）', () => {
+        expect(getSeasonStartTimeMs('not-a-date')).toBeNull();
+        expect(getSeasonStartTimeMs('')).toBeNull();
+    });
+
+    it('1e12 边界：刚好等于阈值时按毫秒级处理', () => {
+        // 实现用 `> 1e12` 判断，1e12 本身走秒级分支（*1000）
+        expect(getSeasonStartTimeMs(1e12)).toBe(1e15);
+        expect(getSeasonStartTimeMs(1e12 + 1)).toBe(1e12 + 1);
+    });
+});
+
+// ─── getMonthStart / getMonthEnd 测试 ────────────────────────────────────────
+describe('getMonthStart / getMonthEnd', () => {
+    it('getMonthStart → 本月 1 日 00:00:00.000', () => {
+        const now = makeDate(3, 12, 34); // 周三 12:34
+        const result = getMonthStart(now);
+        expect(result.getDate()).toBe(1);
+        expect(result.getHours()).toBe(0);
+        expect(result.getMinutes()).toBe(0);
+        expect(result.getSeconds()).toBe(0);
+        expect(result.getMilliseconds()).toBe(0);
+        expect(result.getMonth()).toBe(now.getMonth());
+    });
+
+    it('getMonthEnd → 下月 1 日 00:00:00.000', () => {
+        const now = makeDate(3, 12, 0);
+        const result = getMonthEnd(now);
+        const expected = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+        expect(result.getTime()).toBe(expected.getTime());
+    });
+
+    it('getMonthEnd 跨年：12 月 → 次年 1 月 1 日', () => {
+        const dec = new Date(2026, 11, 15, 10, 0, 0, 0);
+        const result = getMonthEnd(dec);
+        expect(result.getFullYear()).toBe(2027);
+        expect(result.getMonth()).toBe(0);
+        expect(result.getDate()).toBe(1);
+    });
+
+    it('getMonthStart 不修改入参（返回新 Date）', () => {
+        const now = makeDate(3, 12, 0);
+        const snapshot = now.getTime();
+        getMonthStart(now);
+        expect(now.getTime()).toBe(snapshot);
+    });
+});
+
+// ─── getRaidRefreshInfo / getRaidCooldownRules 测试 ──────────────────────────
+describe('getRaidRefreshInfo / getRaidCooldownRules', () => {
+    it('25人本 → 下次刷新为下周一 07:00，refreshCount=1', () => {
+        const now = makeDate(3, 12, 0); // 周三
+        const info = getRaidRefreshInfo(makeRaid(25), now);
+        expect(info.nextRefreshTime?.getDay()).toBe(1);
+        expect(info.nextRefreshTime?.getHours()).toBe(7);
+        expect(info.refreshCount).toBe(1);
+        expect(info.refreshSchedule).toBe('每周一 7:00');
+        expect(info.isRefreshing).toBe(false);
+    });
+
+    it('10人本上半周 → 下次刷新为本周五 07:00，refreshCount=2', () => {
+        const now = makeDate(3, 12, 0); // 周三，处于上半周
+        const info = getRaidRefreshInfo(makeRaid(10), now);
+        expect(info.nextRefreshTime?.getDay()).toBe(5); // 周五
+        expect(info.nextRefreshTime?.getHours()).toBe(7);
+        expect(info.refreshCount).toBe(2);
+        expect(info.refreshSchedule).toBe('周一/周五 7:00');
+    });
+
+    it('10人本下半周 → 下次刷新为下周一 07:00', () => {
+        const now = makeDate(6, 15, 0); // 周六，处于下半周
+        const info = getRaidRefreshInfo(makeRaid(10), now);
+        expect(info.nextRefreshTime?.getDay()).toBe(1);
+        expect(info.nextRefreshTime?.getHours()).toBe(7);
+    });
+
+    it('getRaidCooldownRules → 25人本 / 10人本文案分支', () => {
+        expect(getRaidCooldownRules(makeRaid(25))).toBe('25人本：每周一 7:00 刷新');
+        expect(getRaidCooldownRules(makeRaid(10))).toBe('10人本：每周一 7:00 和 周五 7:00 刷新');
+    });
+});
+
+// ─── formatRemainingTime / formatCountdown 测试 ─────────────────────────────
+describe('formatRemainingTime / formatCountdown', () => {
+    const MINUTE = 60 * 1000;
+    const HOUR = 60 * MINUTE;
+    const DAY = 24 * HOUR;
+
+    it('formatRemainingTime：<= 0 返回「可添加」', () => {
+        expect(formatRemainingTime(0)).toBe('可添加');
+        expect(formatRemainingTime(-1)).toBe('可添加');
+    });
+
+    it('formatRemainingTime：不足 1 小时只显示分钟', () => {
+        expect(formatRemainingTime(30 * MINUTE)).toBe('30分钟');
+    });
+
+    it('formatRemainingTime：不足 1 天显示「x小时x分钟」', () => {
+        expect(formatRemainingTime(2 * HOUR + 5 * MINUTE)).toBe('2小时5分钟');
+    });
+
+    it('formatRemainingTime：超过 1 天显示「x天x小时」', () => {
+        expect(formatRemainingTime(3 * DAY + 4 * HOUR)).toBe('3天4小时');
+    });
+
+    it('formatCountdown：<= 0 返回「已刷新」', () => {
+        expect(formatCountdown(0)).toBe('已刷新');
+        expect(formatCountdown(-1000)).toBe('已刷新');
+    });
+
+    it('formatCountdown：不足 1 天只显示 HH:MM:SS 并补零', () => {
+        expect(formatCountdown(1 * HOUR + 2 * MINUTE + 3 * 1000)).toBe('01:02:03');
+        expect(formatCountdown(59 * 1000)).toBe('00:00:59');
+    });
+
+    it('formatCountdown：超过 1 天显示「x天 HH:MM:SS」', () => {
+        expect(formatCountdown(2 * DAY + 3 * HOUR + 4 * MINUTE + 5 * 1000)).toBe('2天 03:04:05');
+    });
+});
+
+// ─── 操作日志（内存态）测试 ──────────────────────────────────────────────────
+describe('logOperation / getOperationLogs / clearOperationLogs', () => {
+    beforeEach(() => {
+        clearOperationLogs();
+        // 该模块会 console.log 每条操作日志，测试中静音避免污染输出
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('初始为空', () => {
+        expect(getOperationLogs()).toEqual([]);
+    });
+
+    it('logOperation 追加一条日志并带上入参字段', () => {
+        logOperation('role-1', '测试角色', '燃木京25', true, undefined, '详情');
+        const logs = getOperationLogs();
+        expect(logs).toHaveLength(1);
+        expect(logs[0].roleId).toBe('role-1');
+        expect(logs[0].roleName).toBe('测试角色');
+        expect(logs[0].raidName).toBe('燃木京25');
+        expect(logs[0].success).toBe(true);
+        expect(logs[0].details).toBe('详情');
+        expect(logs[0].id).toMatch(/^log_\d+_[a-z0-9]+$/);
+        expect(logs[0].timestamp).toBeInstanceOf(Date);
+    });
+
+    it('失败日志保留 errorMessage', () => {
+        logOperation('role-2', '角色二', '燃木京10', false, '写入失败');
+        expect(getOperationLogs()[0].errorMessage).toBe('写入失败');
+        expect(getOperationLogs()[0].success).toBe(false);
+    });
+
+    it('getOperationLogs 返回副本，外部修改不影响内部存储', () => {
+        logOperation('role-1', '角色一', '燃木京25', true);
+        const logs = getOperationLogs();
+        logs.length = 0;
+        expect(getOperationLogs()).toHaveLength(1);
+    });
+
+    it('clearOperationLogs 清空全部日志', () => {
+        logOperation('role-1', '角色一', '燃木京25', true);
+        logOperation('role-2', '角色二', '燃木京10', false, '失败');
+        expect(getOperationLogs()).toHaveLength(2);
+        clearOperationLogs();
+        expect(getOperationLogs()).toEqual([]);
     });
 });

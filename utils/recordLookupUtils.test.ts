@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Account, AccountType, Role, TrialPlaceRecord } from '../types';
+import { Account, AccountType, Role } from '../types';
 import {
   buildClientAccountIdSet,
   buildEquipmentLookup,

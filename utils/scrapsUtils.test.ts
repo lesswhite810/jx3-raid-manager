@@ -232,7 +232,7 @@ describe('summarizeScrapsByName', () => {
       avgPerRaid: 10 / 3,
     });
     // 不再包含 type 字段
-    expect((rows[0] as Record<string, unknown>).type).toBeUndefined();
+    expect((rows[0] as unknown as Record<string, unknown>).type).toBeUndefined();
   });
 
   it('同一记录内多个相同物品按一条统计（raidCount 不重复计）', () => {

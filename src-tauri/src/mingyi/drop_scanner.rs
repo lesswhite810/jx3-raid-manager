@@ -8401,7 +8401,8 @@ mod tests {
                     // NPC_LEAVE_SCENE: { dwID, szName, ... }
                     if fields.len() >= 2 {
                         let name = fields[1].trim().trim_matches('"');
-                        let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
+                        // dwID 当前仅用于解析校验，不参与统计
+                        let _dwid: i64 = fields[0].trim().parse().unwrap_or(0);
                         if name == "阿史那承庆" {
                             boss_leave_scene_count += 1;
                             same_name_leave_times.push(ts_sec);

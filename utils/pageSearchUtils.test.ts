@@ -35,9 +35,11 @@ function createMockSearchInput(readOnly = false): HTMLInputElement & MockSearchI
 }
 
 function createMockRoot(searchInput: HTMLInputElement | HTMLTextAreaElement | null): ParentNode {
+  // 被测函数只用到 querySelector，这里只提供该方法；
+  // 用 unknown 中转是必要的，因为 ParentNode 其余成员不参与测试。
   return {
     querySelector: () => searchInput,
-  } as ParentNode;
+  } as unknown as ParentNode;
 }
 
 describe('isPageFindShortcut', () => {
