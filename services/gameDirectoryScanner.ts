@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand } from './invoke';
 import { ParsedAccount, ParsedRole } from './directoryParser';
 
 // 重新导出 ParsedRole
@@ -42,13 +42,38 @@ export interface ScanOptions {
   activeRoles?: Array<{ name: string; server: string; region: string }>;
 }
 
+/**
+ * 游戏目录校验结果（与后端 game_directory.rs 的 GamePathValidationResult 对齐）
+ */
+export interface GamePathValidationResult {
+  isValid: boolean;
+  message: string;
+  details?: {
+    checkedPath: string;
+    expectedStructure: string;
+    currentStructure: string;
+    missingDirectories: string[];
+    checkTime: string;
+  };
+}
+
+/**
+ * 调用后端校验游戏目录结构是否可补全到 zhcn_hd 运行时目录。
+ * 浏览器预览环境会走 mockInvoke。
+ */
+export async function validateGamePath(gameDirectory: string): Promise<GamePathValidationResult> {
+  return invokeCommand<GamePathValidationResult>('validate_game_directory', {
+    gameDirectory
+  });
+}
+
 export async function scanGameDirectory(options: ScanOptions): Promise<GameDirectoryScanResult> {
   try {
     const { gameDirectory, onProgress, activeRoles } = options;
 
     onProgress?.({ current: 0, total: 2, message: '正在扫描账号信息...' });
 
-    const result = await invoke<GameDirectoryScanResult>('scan_game_directory', {
+    const result = await invokeCommand<GameDirectoryScanResult>('scan_game_directory', {
       gameDirectory,
       activeRoles: activeRoles ?? []
     });
@@ -69,7 +94,7 @@ export async function scanGameDirectory(options: ScanOptions): Promise<GameDirec
 
 export async function validateGameDirectory(gameDirectory: string): Promise<boolean> {
   try {
-    const result = await invoke<{ isValid: boolean }>('validate_game_directory', {
+    const result = await invokeCommand<{ isValid: boolean }>('validate_game_directory', {
       gameDirectory
     });
     return result.isValid;
@@ -85,7 +110,7 @@ export async function validateGameDirectory(gameDirectory: string): Promise<bool
  */
 export async function autoParseGameDirectory(gameDirectory: string): Promise<AutoParseResult> {
   try {
-    const result = await invoke<AutoParseResult>('auto_parse_game_directory', {
+    const result = await invokeCommand<AutoParseResult>('auto_parse_game_directory', {
       gameDirectory
     });
     return result;
@@ -106,7 +131,7 @@ export async function autoParseGameDirectory(gameDirectory: string): Promise<Aut
  */
 export async function analyzeRoles(gameDirectory: string): Promise<AutoParseResult> {
   try {
-    const result = await invoke<AutoParseResult>('analyze_roles', {
+    const result = await invokeCommand<AutoParseResult>('analyze_roles', {
       gameDirectory
     });
     return result;
@@ -152,7 +177,7 @@ export interface ScanClientsResult {
  */
 export async function scanJx3Clients(): Promise<ScanClientsResult> {
   try {
-    const result = await invoke<ScanClientsResult>('scan_jx3_clients');
+    const result = await invokeCommand<ScanClientsResult>('scan_jx3_clients');
     return result;
   } catch (error) {
     return {

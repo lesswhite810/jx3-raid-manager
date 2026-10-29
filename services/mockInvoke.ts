@@ -233,6 +233,78 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'clear_char_sync_rollback_marks':
           result = null;
           break;
+        // 游戏目录校验 / 扫描（浏览器环境返回成功空结果，避免预览时抛错）
+        case 'validate_game_directory':
+          result = {
+            isValid: true,
+            message: '游戏目录验证成功（浏览器预览环境）',
+            details: {
+              checkedPath: typeof args?.gameDirectory === 'string' ? args.gameDirectory : 'mock://browser-preview',
+              expectedStructure: 'SeasunGame\\Game\\JX3\\bin\\zhcn_hd',
+              currentStructure: 'mock://browser-preview',
+              missingDirectories: [],
+              checkTime: new Date().toISOString(),
+            },
+          };
+          break;
+        case 'scan_game_directory':
+          result = { success: true, accounts: [], gkpFiles: [] };
+          break;
+        case 'auto_parse_game_directory':
+          result = { success: true, newAccounts: 0, updatedAccounts: 0, newRoles: 0, updatedRoles: 0, error: null };
+          break;
+        case 'analyze_roles':
+          result = { success: true, newAccounts: 0, updatedAccounts: 0, newRoles: 0, updatedRoles: 0, error: null };
+          break;
+        case 'scan_jx3_clients':
+          result = { success: true, clients: [] };
+          break;
+        // 角色预览 / 选择性导入（浏览器环境返回空列表，UI 显示空状态）
+        case 'preview_importable_roles':
+          result = { success: true, accounts: [], error: null };
+          break;
+        case 'import_selected_roles':
+          result = { success: true, newAccounts: 0, updatedAccounts: 0, newRoles: 0, updatedRoles: 0, error: null };
+          break;
+        // 活跃检测 / 运行时状态（浏览器环境视为 JX3 未运行）
+        case 'detect_accounts_active':
+          result = {
+            jx3Running: false,
+            jx3StartTime: null,
+            jx3EndTime: null,
+            jx3ProcessCount: 0,
+            multiInstanceDetected: false,
+            multiInstanceHint: null,
+            roles: [],
+            scanDurationMs: 0,
+            processSessions: [],
+          };
+          break;
+        case 'get_jx3_runtime_status':
+          result = {
+            isRunning: false,
+            matchedProcess: null,
+            allProcesses: [],
+            matchedProcessCount: 0,
+            multiInstanceDetected: false,
+            multiInstanceHint: null,
+          };
+          break;
+        // 副本掉落扫描 / 记录确认（浏览器环境不产生任何扫描结果）
+        case 'scan_raid_drops':
+          result = 0;
+          break;
+        case 'scan_all_active_raid_drops':
+        case 'scan_raids_in_range':
+          result = [];
+          break;
+        case 'clear_jcl_cache':
+          result = 0;
+          break;
+        case 'confirm_record':
+        case 'reject_record':
+          result = null;
+          break;
         default:
           console.warn(`[Mock Invoke] Unhandled command: ${cmd}`);
           result = null;

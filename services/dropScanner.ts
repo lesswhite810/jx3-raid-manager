@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand } from './invoke';
 import { RaidRecord } from '../types';
 
 /**
@@ -30,7 +30,7 @@ export const dropScannerService = {
    * @returns 本次扫描处理（新增或更新）的副本实例数量
    */
   async scanRaidDrops(accountId: string): Promise<number> {
-    return invoke<number>('scan_raid_drops', { accountId });
+    return invokeCommand<number>('scan_raid_drops', { accountId });
   },
 
   /**
@@ -40,7 +40,7 @@ export const dropScannerService = {
    * @returns 每个活跃账号的扫描结果列表
    */
   async scanAllActiveRaidDrops(): Promise<AccountScanResult[]> {
-    return invoke<AccountScanResult[]>('scan_all_active_raid_drops');
+    return invokeCommand<AccountScanResult[]>('scan_all_active_raid_drops');
   },
 
   /**
@@ -60,7 +60,7 @@ export const dropScannerService = {
     endMs: number,
     processStartMs: number = 0,
   ): Promise<AccountScanResult[]> {
-    return invoke<AccountScanResult[]>('scan_raids_in_range', {
+    return invokeCommand<AccountScanResult[]>('scan_raids_in_range', {
       startMs,
       endMs,
       processStartMs,
@@ -75,7 +75,7 @@ export const dropScannerService = {
    */
   async confirmRecord(recordId: string, editData?: Partial<RaidRecord>): Promise<void> {
     const editDataStr = editData ? JSON.stringify(editData) : undefined;
-    await invoke('confirm_record', { recordId, editData: editDataStr });
+    await invokeCommand('confirm_record', { recordId, editData: editDataStr });
   },
 
   /**
@@ -83,7 +83,7 @@ export const dropScannerService = {
    * rejected 记录不参与 CD 计算，等价于该副本实例未发生。
    */
   async rejectRecord(recordId: string): Promise<void> {
-    await invoke('reject_record', { recordId });
+    await invokeCommand('reject_record', { recordId });
   },
 
   /**
@@ -95,6 +95,6 @@ export const dropScannerService = {
    * @returns 被清除的缓存条目数量
    */
   async clearJclCache(): Promise<number> {
-    return invoke<number>('clear_jcl_cache');
+    return invokeCommand<number>('clear_jcl_cache');
   },
 };

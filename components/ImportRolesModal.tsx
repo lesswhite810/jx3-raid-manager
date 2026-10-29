@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand } from '../services/invoke';
 import { X, Loader2, AlertCircle, User, Download, Check, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { toast } from '../utils/toastManager';
 import { getBaseServerName } from '../utils/serverUtils';
@@ -78,7 +78,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
     setSelectedKeys(new Set());
     setExpandedAccounts(new Set());
 
-    invoke<PreviewResult>('preview_importable_roles', { gameDirectory })
+    invokeCommand<PreviewResult>('preview_importable_roles', { gameDirectory })
       .then(result => {
         if (result.success) {
           setAccounts(result.accounts);
@@ -205,7 +205,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
         });
       });
 
-      const result = await invoke<ImportResult>('import_selected_roles', {
+      const result = await invokeCommand<ImportResult>('import_selected_roles', {
         gameDirectory,
         roles: rolesToImport,
       });
@@ -233,13 +233,13 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
     if (refreshingEquip) return;
     setRefreshingEquip(true);
     try {
-      const result = await invoke<ImportResult>('analyze_roles', { gameDirectory });
+      const result = await invokeCommand<ImportResult>('analyze_roles', { gameDirectory });
       if (result.success) {
         if (result.updatedRoles > 0) {
           toast.success(`已刷新 ${result.updatedRoles} 个角色的装分`);
           onImported();
           // 重新加载预览数据以显示最新装分
-          invoke<PreviewResult>('preview_importable_roles', { gameDirectory })
+          invokeCommand<PreviewResult>('preview_importable_roles', { gameDirectory })
             .then(previewResult => {
               if (previewResult.success) {
                 setAccounts(previewResult.accounts);

@@ -1,18 +1,10 @@
-import { invoke as tauriInvoke } from '@tauri-apps/api/core';
-import { mockInvoke } from './mockInvoke';
+import { invokeCommand } from './invoke';
 import type { GameVersion, Season, RaidRecord, Account, Role, Raid, Config, TrialPlaceRecord, BaizhanRecord, InstanceType, RoleInstanceVisibility } from '../types';
 
-// 环境检测：如果没有注入 __TAURI_INTERNALS__ ，说明是在纯浏览器环境运行
-// __TAURI_INTERNALS__ 类型声明位于 src/tauri.d.ts
-const isBrowserEnv = !window.__TAURI_INTERNALS__ && typeof window !== 'undefined';
+// IPC 出口统一收敛到 services/invoke.ts，本文件不再直接依赖 Tauri API。
+// 环境检测与 mock 回落逻辑见 services/invoke.ts。
+const invoke = invokeCommand;
 
-// 包装一个通用的 invoke 函数
-const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
-  if (isBrowserEnv) {
-    return mockInvoke<T>(cmd, args);
-  }
-  return tauriInvoke<T>(cmd, args);
-};
 class DatabaseService {
   private initialized = false;
 

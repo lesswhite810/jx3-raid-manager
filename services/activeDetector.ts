@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand } from './invoke';
 import type { BatchActiveResult, Jx3RuntimeStatus } from '../types';
 
 export const activeDetectorService = {
@@ -10,13 +10,13 @@ export const activeDetectorService = {
    * 调用方通过 roleName + server 匹配数据库角色，聚合到账号级别。
    */
   async detectAccountsActive(gameDirectory: string): Promise<BatchActiveResult> {
-    return invoke<BatchActiveResult>('detect_accounts_active', {
+    return invokeCommand<BatchActiveResult>('detect_accounts_active', {
       gameDirectory,
     });
   },
 
   async getJx3RuntimeStatus(gameDirectory: string): Promise<Jx3RuntimeStatus> {
-    return invoke<Jx3RuntimeStatus>('get_jx3_runtime_status', {
+    return invokeCommand<Jx3RuntimeStatus>('get_jx3_runtime_status', {
       gameDirectory,
     });
   },

@@ -1,5 +1,10 @@
 import { Config } from '../types';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  validateGamePath,
+  type GamePathValidationResult,
+} from '../services/gameDirectoryScanner';
+
+export type { GamePathValidationResult };
 
 export interface ConfigValidationResult {
   isValid: boolean;
@@ -127,20 +132,6 @@ export const mergeConfig = (base: Config, override: Partial<Config>): Config => 
   };
 };
 
-
-
-export interface GamePathValidationResult {
-  isValid: boolean;
-  message: string;
-  details?: {
-    checkedPath: string;
-    expectedStructure: string;
-    currentStructure: string;
-    missingDirectories: string[];
-    checkTime: string;
-  };
-}
-
 const GAME_RUNTIME_SUFFIX = ['Game', 'JX3', 'bin', 'zhcn_hd'] as const;
 const GAME_RUNTIME_SUFFIX_PATH = 'Game\\JX3\\bin\\zhcn_hd';
 
@@ -214,9 +205,7 @@ export const isValidGamePath = async (path: string): Promise<GamePathValidationR
   }
 
   try {
-    return await invoke<GamePathValidationResult>('validate_game_directory', {
-      gameDirectory: path
-    });
+    return await validateGamePath(path);
   } catch (error) {
     logValidationStep('读取目录异常', '读取运行时目录时发生错误', {
       runtimePath,
