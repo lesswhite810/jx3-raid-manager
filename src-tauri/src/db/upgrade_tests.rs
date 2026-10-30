@@ -10,9 +10,11 @@ mod tests {
 
     fn get_test_dir() -> PathBuf {
         let app_data = std::env::var("APPDATA").expect("无法获取 APPDATA 环境变量");
-        PathBuf::from(app_data)
+        let test_dir = PathBuf::from(app_data)
             .join("com.jx3raidmanager.app")
-            .join("upgrade-tests")
+            .join("upgrade-tests");
+        fs::create_dir_all(&test_dir).expect("创建测试目录失败");
+        test_dir
     }
 
     /// 带重试的文件复制，规避 Windows 上杀毒软件或文件句柄延迟导致的瞬时锁定
