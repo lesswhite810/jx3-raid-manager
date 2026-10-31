@@ -112,7 +112,7 @@ export interface RaidRecord {
   scrapsValue?: number;
   /** 散件支出（白名单材料的实际购买花费合计；其他装备/小铁等购买计入 goldExpense 不计入此字段） */
   scrapsExpense?: number;
-  /** 是否为散件老板（用户在确认弹窗勾选，默认 false） */
+  /** 是否为散件老板（确认时有散件清单默认选中，用户可取消） */
   isScrapsBoss?: boolean;
 }
 

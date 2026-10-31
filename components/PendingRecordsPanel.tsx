@@ -50,7 +50,7 @@ interface EditFormData {
   hasSecretBook: boolean;
   notes: string;
   bossNames: string[];
-  /** 是否为散件老板（用户在确认弹窗勾选，默认 false） */
+  /** 是否为散件老板（有散件清单时默认勾选，用户可取消） */
   isScrapsBoss: boolean;
   /** 散件清单（拷贝自 record.scrapsItems，允许用户编辑单价） */
   scrapsItems: ScrapsItem[];

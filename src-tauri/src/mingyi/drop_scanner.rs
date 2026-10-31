@@ -3344,7 +3344,7 @@ fn upsert_raid_drop_record(
     let (scraps_items, scraps_value, scraps_expense) = compute_scraps_items(conn, purchased_items, &item_categories, role_server);
     if !scraps_items.is_empty() {
         log::info!(
-            "[DropScanner] 副本 {} 散件清单: {} 项, 估价 {} 金, 散件支出 {} 金（isScrapsBoss 默认 false，待用户在确认弹窗勾选）",
+            "[DropScanner] 副本 {} 散件清单: {} 项, 估价 {} 金, 散件支出 {} 金（确认时默认标记散件老板，用户可取消）",
             instance.raid_display_name,
             scraps_items.len(),
             scraps_value,
@@ -5036,7 +5036,8 @@ pub async fn scan_raids_in_range(
 /// Tauri 命令：确认 pending 记录
 ///
 /// 1. 从 records 读取 pending 记录的 data JSON
-/// 2. 合并可选的编辑数据，强制设置 source='manual', status='confirmed'
+/// 2. 合并可选的编辑数据；有散件清单的 auto/pending 记录默认标记为散件老板
+///    （编辑数据显式指定 isScrapsBoss 时以用户选择为准）
 /// 3. UPDATE records（更新 data、source、status、updated_at）
 ///
 /// 可选传入 edit_data（RaidRecord 部分字段的 JSON 字符串），用于在确认时
@@ -5044,13 +5045,34 @@ pub async fn scan_raids_in_range(
 #[tauri::command]
 pub fn confirm_record(record_id: String, edit_data: Option<String>) -> Result<(), String> {
     let conn = db::init_db()?;
+    confirm_record_with_conn(&conn, &record_id, edit_data.as_deref())
+}
 
-    // 从 records 读取当前 data JSON 和 status
-    let (current_data, current_status): (String, String) = conn
+fn has_non_empty_scraps_items(record: &serde_json::Value) -> bool {
+    record
+        .get("scrapsItems")
+        .and_then(|value| value.as_array())
+        .map(|items| !items.is_empty())
+        .unwrap_or(false)
+}
+
+fn is_auto_pending_record(current_source: &str, current_status: &str) -> bool {
+    current_status == "pending" && (current_source == "auto_scan" || current_source == "auto")
+}
+
+fn confirm_record_with_conn(
+    conn: &rusqlite::Connection,
+    record_id: &str,
+    edit_data: Option<&str>,
+) -> Result<(), String> {
+
+    // 从 records 读取当前 data JSON、source 和 status；后两个字段必须在
+    // 确认前读取，防止已确认的用户明确 false 在重试时被默认逻辑翻回 true。
+    let (current_data, current_source, current_status): (String, String, String) = conn
         .query_row(
-            "SELECT data, status FROM records WHERE id = ?1",
+            "SELECT data, source, status FROM records WHERE id = ?1",
             params![record_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|e| format!("查询 records 记录失败: {}", e))?;
 
@@ -5063,17 +5085,31 @@ pub fn confirm_record(record_id: String, edit_data: Option<String>) -> Result<()
     let mut current_json: serde_json::Value =
         serde_json::from_str(&current_data).map_err(|e| format!("解析当前 data JSON 失败: {}", e))?;
 
-    // 若提供编辑数据，合并到 current_json
+    // 若提供编辑数据，合并到 current_json。显式携带 false 代表用户取消默认，
+    // 必须和 true 一样视为用户选择。
+    let mut scraps_boss_explicitly_selected = false;
     if let Some(edit_json_str) = edit_data {
         let edit_json: serde_json::Value =
-            serde_json::from_str(&edit_json_str).map_err(|e| format!("解析编辑数据失败: {}", e))?;
+            serde_json::from_str(edit_json_str).map_err(|e| format!("解析编辑数据失败: {}", e))?;
 
         if let (Some(current_obj), Some(edit_obj)) =
             (current_json.as_object_mut(), edit_json.as_object())
         {
+            scraps_boss_explicitly_selected = edit_obj.contains_key("isScrapsBoss");
             for (key, value) in edit_obj {
                 current_obj.insert(key.clone(), value.clone());
             }
+        }
+    }
+
+    // 历史自动扫描记录把 isScrapsBoss 初始化为 false。确认时才依据合并后的
+    // 清单补默认值，统一直接确认和编辑确认；不改金额、估价或物品价格快照。
+    if is_auto_pending_record(&current_source, &current_status)
+        && !scraps_boss_explicitly_selected
+        && has_non_empty_scraps_items(&current_json)
+    {
+        if let Some(obj) = current_json.as_object_mut() {
+            obj.insert("isScrapsBoss".to_string(), serde_json::json!(true));
         }
     }
 
@@ -5277,6 +5313,210 @@ mod tests {
         .expect("should insert scan record");
 
         (record_id, record_date)
+    }
+
+    fn insert_confirmation_test_record(
+        conn: &rusqlite::Connection,
+        account_id: &str,
+        role_id: &str,
+        source: &str,
+        status: &str,
+        mut data: serde_json::Value,
+    ) -> String {
+        let record_id = Uuid::new_v4().to_string();
+        let now = chrono::Local::now().to_rfc3339();
+        let record_date = 1_790_000_000_000_i64;
+        let data_obj = data.as_object_mut().expect("确认测试 data 应为对象");
+        data_obj.insert("id".to_string(), serde_json::json!(record_id));
+        data_obj.insert("accountId".to_string(), serde_json::json!(account_id));
+        data_obj.insert("roleId".to_string(), serde_json::json!(role_id));
+
+        conn.execute(
+            "INSERT INTO records
+             (id, data, raid_name, account_id, role_id, record_date, record_type,
+              source, status, drops, jcl_files, created_at, updated_at)
+             VALUES (?1, ?2, '25人普通阆风悬城', ?3, ?4, ?5, 'raid', ?6, ?7,
+                     '[\"掉落\"]', '[\"fixture.jcl\"]', ?8, ?8)",
+            sql_params![record_id, data.to_string(), account_id, role_id, record_date, source, status, now],
+        )
+        .expect("应写入确认测试记录");
+        record_id
+    }
+
+    /// 确认逻辑只依赖 records 表。使用内存库隔离这组回归，避免测试迁移或读取任何真实数据。
+    fn create_confirmation_test_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("应创建内存确认测试数据库");
+        conn.execute_batch(
+            "CREATE TABLE records (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                raid_name TEXT,
+                account_id TEXT,
+                role_id TEXT,
+                record_date INTEGER,
+                record_type TEXT,
+                source TEXT,
+                status TEXT,
+                drops TEXT,
+                jcl_files TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            );",
+        )
+        .expect("应创建确认测试 records 表");
+        conn
+    }
+
+    fn confirmation_json_without_mutable_fields(value: &serde_json::Value) -> serde_json::Value {
+        let mut result = value.clone();
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("isScrapsBoss");
+            obj.remove("source");
+            obj.remove("status");
+        }
+        result
+    }
+
+    #[test]
+    fn confirm_auto_pending_scraps_defaults_to_boss_without_changing_snapshots() {
+        let conn = create_confirmation_test_db();
+        let account_id = "confirmation-account";
+        let role_id = "confirmation-role";
+        let record_id = insert_confirmation_test_record(
+            &conn,
+            &account_id,
+            &role_id,
+            "auto_scan",
+            "pending",
+            serde_json::json!({
+                "source": "auto",
+                "status": "pending",
+                "isScrapsBoss": false,
+                "goldIncome": 1234,
+                "goldExpense": 56,
+                "scrapsValue": 78,
+                "scrapsExpense": 9,
+                "items": ["价格快照"],
+                "scrapsItems": [{ "name": "上品茶饼·兑", "count": 1, "unitPrice": 78 }]
+            }),
+        );
+        let (before_data, before_metadata): (String, (String, String, String, i64, String, String, String)) = conn
+            .query_row(
+                "SELECT data, raid_name, account_id, role_id, record_date, record_type, drops, jcl_files
+                 FROM records WHERE id = ?1",
+                sql_params![record_id],
+                |row| Ok((
+                    row.get(0)?,
+                    (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?),
+                )),
+            )
+            .expect("应读取确认前记录");
+
+        confirm_record_with_conn(&conn, &record_id, None).expect("直接确认应成功");
+
+        let (after_data, after_metadata, source, status): (String, (String, String, String, i64, String, String, String), String, String) = conn
+            .query_row(
+                "SELECT data, raid_name, account_id, role_id, record_date, record_type, drops, jcl_files, source, status
+                 FROM records WHERE id = ?1",
+                sql_params![record_id],
+                |row| Ok((
+                    row.get(0)?,
+                    (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?),
+                    row.get(8)?,
+                    row.get(9)?,
+                )),
+            )
+            .expect("应读取确认后记录");
+        let before_json: serde_json::Value = serde_json::from_str(&before_data).expect("确认前 JSON 应合法");
+        let after_json: serde_json::Value = serde_json::from_str(&after_data).expect("确认后 JSON 应合法");
+        assert_eq!(after_json["isScrapsBoss"], true);
+        assert_eq!(after_json["source"], "manual");
+        assert_eq!(after_json["status"], "confirmed");
+        assert_eq!(confirmation_json_without_mutable_fields(&after_json), confirmation_json_without_mutable_fields(&before_json));
+        assert_eq!(after_metadata, before_metadata, "确认不得改写 records 元数据快照");
+        assert_eq!((source, status), ("manual".to_string(), "confirmed".to_string()));
+    }
+
+    #[test]
+    fn confirm_explicit_scraps_boss_false_persists_across_retry() {
+        let conn = create_confirmation_test_db();
+        let account_id = "confirmation-account";
+        let role_id = "confirmation-role";
+        let record_id = insert_confirmation_test_record(
+            &conn,
+            &account_id,
+            &role_id,
+            "auto_scan",
+            "pending",
+            serde_json::json!({
+                "source": "auto",
+                "status": "pending",
+                "isScrapsBoss": false,
+                "scrapsItems": [{ "name": "散件", "count": 1 }]
+            }),
+        );
+
+        confirm_record_with_conn(&conn, &record_id, Some(r#"{"isScrapsBoss":false}"#))
+            .expect("编辑确认应成功");
+        confirm_record_with_conn(&conn, &record_id, None).expect("重复确认应成功");
+        let data: String = conn
+            .query_row("SELECT data FROM records WHERE id = ?1", sql_params![record_id], |row| row.get(0))
+            .expect("应读取确认记录");
+        let json: serde_json::Value = serde_json::from_str(&data).expect("确认 JSON 应合法");
+        assert_eq!(json["isScrapsBoss"], false, "用户明确取消不得被重试翻回 true");
+    }
+
+    #[test]
+    fn confirm_edit_without_scraps_choice_uses_the_same_default_as_direct_confirmation() {
+        let conn = create_confirmation_test_db();
+        let account_id = "confirmation-account";
+        let role_id = "confirmation-role";
+        let record_id = insert_confirmation_test_record(
+            &conn, &account_id, &role_id, "auto_scan", "pending",
+            serde_json::json!({
+                "source": "auto",
+                "status": "pending",
+                "isScrapsBoss": false,
+                "scrapsItems": [{ "name": "散件", "count": 1 }]
+            }),
+        );
+
+        // 模拟编辑入口仅改备注、没有指定散件老板选择；应与直接确认同样补默认。
+        confirm_record_with_conn(&conn, &record_id, Some(r#"{"notes":"已核对"}"#))
+            .expect("编辑确认应成功");
+        let data: String = conn
+            .query_row("SELECT data FROM records WHERE id = ?1", sql_params![record_id], |row| row.get(0))
+            .expect("应读取确认记录");
+        let json: serde_json::Value = serde_json::from_str(&data).expect("确认 JSON 应合法");
+        assert_eq!(json["isScrapsBoss"], true);
+        assert_eq!(json["notes"], "已核对");
+    }
+
+    #[test]
+    fn confirm_empty_scraps_items_uses_stable_default() {
+        let conn = create_confirmation_test_db();
+        let account_id = "confirmation-account";
+        let role_id = "confirmation-role";
+        let empty_record = insert_confirmation_test_record(
+            &conn, &account_id, &role_id, "auto_scan", "pending",
+            serde_json::json!({ "source": "auto", "status": "pending", "isScrapsBoss": false, "scrapsItems": [] }),
+        );
+        let explicit_true_record = insert_confirmation_test_record(
+            &conn, &account_id, &role_id, "auto_scan", "pending",
+            serde_json::json!({ "source": "auto", "status": "pending", "isScrapsBoss": false, "scrapsItems": [] }),
+        );
+
+        confirm_record_with_conn(&conn, &empty_record, None).expect("空清单确认应成功");
+        confirm_record_with_conn(&conn, &explicit_true_record, Some(r#"{"isScrapsBoss":true}"#))
+            .expect("显式选中确认应成功");
+        let empty_flag: bool = conn
+            .query_row("SELECT json_extract(data, '$.isScrapsBoss') FROM records WHERE id = ?1", sql_params![empty_record], |row| row.get(0))
+            .expect("应读取空清单标记");
+        let explicit_true_flag: bool = conn
+            .query_row("SELECT json_extract(data, '$.isScrapsBoss') FROM records WHERE id = ?1", sql_params![explicit_true_record], |row| row.get(0))
+            .expect("应读取显式选中标记");
+        assert!(!empty_flag, "空清单不得默认散件老板");
+        assert!(explicit_true_flag, "用户显式选中应优先于空清单默认值");
     }
 
     /// 插入一条指定状态的扫描记录，返回 (record_id, record_date)
