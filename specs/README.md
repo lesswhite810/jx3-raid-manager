@@ -13,6 +13,7 @@
 | [`scraps-boss-design.md`](./scraps-boss-design.md) | 395 | 2026-08-10 | ✅ 已实现 | 散件老板功能 · 业务规则 / 数据结构 / UI 设计 |
 | [`scraps-boss-ui-optimization.md`](./scraps-boss-ui-optimization.md) | 230 | 2026-08-21 | 🚧 实现中 | 散件老板界面分析与优化方案（`AddRecordModal` + `PendingRecordsPanel`） |
 | [`season_design.md`](./season_design.md) | 185 | 2026-04-28 | ✅ 已实现 | 赛季系统 · 版本 → 赛季 → 副本 三层层级数据模型（v2.1.32 上线） |
+| [`jcl-encounter-recognition-design.md`](./jcl-encounter-recognition-design.md) | 173 | 2026-10-31 | ⚠️ 部分实现 / 完整方案未实施 | 统一 JCL 战斗状态机、证据与待确认结果 |
 
 > 📝 **状态徽章约定**：
 > - ✅ 已实现：代码已落地，文档作为架构参考
@@ -36,6 +37,7 @@
 | 改散件老板相关弹窗 | `scraps-boss-ui-optimization.md` |
 | 调整赛季 / 版本 / 副本层级 | `season_design.md` |
 | 理解副本层级数据模型 | `season_design.md §3-4 数据模型设计` |
+| 理解 JCL 首领识别方案 | `jcl-encounter-recognition-design.md` |
 
 ### 与其它文档的关联
 

@@ -10,3 +10,6 @@
 *.exe binary
 *.dll binary
 *.zip binary
+
+# JCL 回归原始样本为 GBK/CRLF，保留原始字节及 manifest 哈希
+src-tauri/src/mingyi/drop_scanner/fixtures/**/*.jcl binary

@@ -24,6 +24,11 @@ static GOLD_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"t
 static SILVER_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"text="(\d+)"[^>]*name="Text_Silver""#).unwrap());
 static COPPER_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"text="(\d+)"[^>]*name="Text_Copper""#).unwrap());
 
+// type=21 的 result 表中，13/14 分别是对目标的有效伤害/有效治疗。
+// 这里只解析原始数值，不从文本、成就或副本进度推断击杀。
+static DAMAGE_EFF_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[13\]\s*=\s*(-?\d+)").unwrap());
+static HEAL_EFF_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\[14\]\s*=\s*(-?\d+)").unwrap());
+
 // parse_expense_amount 用
 static BRICK_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(\d+)金砖").unwrap());
 static EXPENSE_GOLD_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(\d+)金").unwrap());
@@ -222,7 +227,7 @@ struct JclFileInfo {
 /// 通过解析 JCL 文件内容提取以下信息：
 /// - 真实 BOSS 名（当文件名 BOSS 不在 raid_bosses 配置中时，从内容搜索）
 /// - 战斗开始/结束时间（来自 FIGHT_TIME 事件，比文件名时间更精确）
-/// - BOSS 击杀状态（基于 NPC_FIGHT_HINT 的 bFight True→False 转变 + 宝箱信号判定通关）
+/// - BOSS 击杀状态（基于同一运行时实体的参战加 type=28/HP=0 终局死亡，或专属宝箱判定）
 #[derive(Debug, Clone)]
 struct JclAnalysis {
     /// 真实 BOSS 名（从 JCL 内容解析，当文件名 BOSS 不在配置中时使用）
@@ -233,9 +238,54 @@ struct JclAnalysis {
     /// 战斗结束时间（毫秒，Unix timestamp）
     /// 来自最后 FIGHT_TIME 事件（bFighting=false）的时间戳
     fight_end_ms: i64,
-    /// 是否击杀 BOSS（true=通关，false=拉托）
-    /// 判定依据：宝箱路径 或 NPC_FIGHT_HINT 的 bFight True→False 转变
+    /// 是否按当前解析规则确认击杀；false 也可能是证据不足，并不等于确认拉脱。
+    /// 宝箱与首领战斗事件参与判定，成就和奖励消息不参与。
     is_kill: bool,
+}
+
+/// 外部 10 金只能补强这一类已经有完整战斗证据的候选。
+///
+/// 它刻意不写入 JclAnalysis / SQLite 缓存：`is_kill` 始终只代表 JCL 内的强证据，
+/// 本结构只在单次扫描的聚类阶段消耗。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DamageCompletionCandidate {
+    boss_name: String,
+    fight_end_ms: i64,
+}
+
+/// 单个运行时 NPC 的击杀证据。
+///
+/// 仅接受同一 dwID 的参战和终局死亡（死亡通知或 HP=0）。若其后再次进入战斗或
+/// 报告正血量，则前面的死亡证据已不再是终局证据。
+#[derive(Default)]
+struct RuntimeEntityEvidence {
+    participated: bool,
+    terminal_death: bool,
+}
+
+impl RuntimeEntityEvidence {
+    fn observe_fight_hint(&mut self, in_fight: bool, hp: f64) {
+        if in_fight {
+            self.participated = true;
+            self.terminal_death = false;
+        } else if hp > 0.0 && self.terminal_death {
+            // 终局死亡后同一 dwID 又以满血脱战，说明此前死亡不再能代表终局；
+            // 后续死亡必须先有新的 bFight=true。普通脱战本身不推断新的战斗轮次。
+            self.participated = false;
+            self.terminal_death = false;
+        }
+        if hp == 0.0 {
+            self.terminal_death = true;
+        }
+    }
+
+    fn observe_death_notify(&mut self) {
+        self.terminal_death = true;
+    }
+
+    fn is_confirmed_kill(&self) -> bool {
+        self.participated && self.terminal_death
+    }
 }
 
 /// chatlog 预加载记录（单条 ChatLog 行的内存表示）
@@ -717,7 +767,7 @@ fn resolve_next_jcl_time(
 /// 1. 按时间戳升序排序所有 JCL
 /// 2. 按 JCL 顺序遍历，连续相同 raid_display_name 的 JCL 归为同一组
 ///    （raid_display_name 变化即开始新组，不再使用30分钟间隔聚类）
-/// 3. 对每组使用 JclAnalysis.is_kill 过滤拉托（只保留通关 JCL）
+/// 3. 对每组使用 JclAnalysis.is_kill 筛选已确认击杀的 JCL
 /// 4. 构建 RaidInstance（只含通关 JCL）
 /// 副本会话时间间隔阈值（毫秒）
 ///
@@ -796,7 +846,7 @@ fn cluster_raid_instances(
         // 2小时阈值智能分组：
         // - 副本名变化 → 必定分割
         // - 时间间隔 > 2h 且前组有 boss 击杀 → 分割（无论是否有工资）
-        // - 时间间隔 > 2h 但前组无击杀 → 不分割（避免对纯拉托组做无谓分割）
+        // - 时间间隔 > 2h 但前组无击杀 → 不分割（避免对无已确认击杀的组做无谓分割）
         // - 时间间隔 <= 2h 但中间有工资记录 → 强制分割（发工资说明上个副本已结算）
         let should_split = if name_changed {
             true
@@ -833,7 +883,7 @@ fn cluster_raid_instances(
             if !current_group.is_empty() {
                 let gap_start = current_group.last().unwrap().timestamp;
                 let gap_end = jcl.timestamp;
-                // 只有前组有击杀时才做工资检查（避免对纯拉托组做无谓查询）
+                // 只有前组有击杀时才做工资检查（避免对无已确认击杀的组做无谓查询）
                 let prev_has_kill = current_group.iter().any(|jcl| {
                     jcl_analyses.get(&jcl.file_name)
                         .map(|a| a.is_kill)
@@ -886,9 +936,9 @@ fn get_effective_boss_name(jcl: &JclFileInfo, jcl_analyses: &HashMap<String, Jcl
 
 /// 从一组同副本名的 JCL 构建一个 RaidInstance
 ///
-/// 通关判定优先使用 JCL 内部信号（宝箱/bFight=false/HP=0/分身离场等）。
-/// 若某个连续相同 BOSS 的子组内无任何 JCL 内部击杀信号，则取该子组最后一个 JCL 作为击杀（组级别兜底）。
-/// 若整组全为拉托且无兜底击杀，返回 None 跳过。
+/// 通关判定只使用专属宝箱，或同一运行时实体的参战加终局死亡（type=28/HP=0）证据。
+/// 每个连续相同 BOSS 的子组只取最后一份已确认击杀的 JCL，不根据名称差异或文件顺序补记击杀。
+/// 若整组没有可计入的击杀（包括证据不足），返回 None 跳过。
 fn build_raid_instance(
     account_id: &str,
     group: &[JclFileInfo],
@@ -911,7 +961,7 @@ fn build_raid_instance(
     let mut success_jcls: Vec<&JclFileInfo> = Vec::new();
     for boss_group in &boss_groups {
         // 先尝试 JCL 内部信号（is_kill=true），取最后一个明确击杀的 JCL
-        // （一个 BOSS 子组内可能有多场战斗，只有最后一次击杀才是真正的通关）
+        // 一个 BOSS 子组内可能有多次尝试或重复日志，按最后一份已确认击杀的记录去重。
         let last_definite_kill: Option<&&JclFileInfo> = boss_group
             .iter()
             .rev()
@@ -925,48 +975,13 @@ fn build_raid_instance(
         if let Some(kill_jcl) = last_definite_kill {
             // 有明确击杀信号，只取这一个 JCL（不 extend 所有 is_kill=true）
             success_jcls.push(*kill_jcl);
-        } else if !boss_group.is_empty() {
-            // 无明确击杀信号，组级别兜底：最后一个 JCL 为击杀
-            // 适用场景：部分 BOSS 击杀时不触发 bFight=false 也不产生宝箱（如墨家机侍→唐怀仁、须罗巨傀）
-            let last_jcl = boss_group.last().unwrap();
-            // 跳过纯小怪子组：JclAnalysis.boss_name=None 说明是路径 B 小怪 JCL
-            let analysis_boss_name = jcl_analyses
-                .get(&last_jcl.file_name)
-                .and_then(|a| a.boss_name.as_deref());
-            if analysis_boss_name.is_none() {
-                log::debug!(
-                    "[DropScanner] 子组最后一个 JCL 的 boss_name=None（纯小怪/出场对话），跳过兜底: {}",
-                    last_jcl.file_name
-                );
-                continue;
-            }
-            // 仅当文件名 BOSS 与内容 BOSS 不同时才兜底（说明是小怪 JCL，真实 BOSS 从内容中识别）
-            // 文件名 BOSS 与内容 BOSS 相同且 is_kill=false → 真正的灭团，不兜底
-            let file_boss = &last_jcl.boss_name;
-            let analysis_boss = analysis_boss_name.unwrap_or("");
-            if file_boss == analysis_boss {
-                log::debug!(
-                    "[DropScanner] BOSS {} is_kill=false 且文件名BOSS与内容BOSS一致，判定为灭团不兜底: {}",
-                    file_boss,
-                    last_jcl.file_name
-                );
-                continue;
-            }
-            let boss_name = get_effective_boss_name(last_jcl, jcl_analyses);
-            log::info!(
-                "[DropScanner] BOSS {} (文件名:{}) 无JCL内部击杀信号，组级别兜底取最后一个JCL为击杀: {}",
-                boss_name,
-                file_boss,
-                last_jcl.file_name
-            );
-            success_jcls.push(*last_jcl);
         }
     }
 
     if success_jcls.is_empty() {
-        // 整组都是拉托，跳过
+        // 整组没有可计入的击杀，跳过；不能据此断言所有战斗都是拉脱。
         log::debug!(
-            "[DropScanner] 副本 {} 的一个组全为拉托，跳过（共{}个JCL）",
+            "[DropScanner] 副本 {} 的一个组没有可计入的击杀，跳过（共{}个JCL）",
             group.first().map(|j| j.raid_display_name.as_str()).unwrap_or(""),
             group.len()
         );
@@ -1323,7 +1338,7 @@ fn match_raid_name<'a>(jcl_raid_name: &str, raids: &'a [RaidEntry]) -> Option<&'
 ///
 /// 当 raid_bosses 为空（副本未配置 BOSS 追踪）时返回 true，含义是"不做过滤"。
 /// 这样无配置副本的 JCL 也会走 analyze_jcl 路径 A（文件名 BOSS 即真实 BOSS），
-/// 通过 bFight true→false / HP=0 / 分身离场等信号判定击杀，从而能正常扫描记录。
+/// 通过同一运行时实体的参战加终局死亡或专属宝箱判定击杀，从而能正常扫描记录。
 fn is_valid_boss(boss_name: &str, raid_bosses: &[(String, String)]) -> bool {
     // 无 BOSS 配置时，不做过滤（所有 BOSS 名都视为有效）
     if raid_bosses.is_empty() {
@@ -1340,6 +1355,38 @@ fn is_valid_boss(boss_name: &str, raid_bosses: &[(String, String)]) -> bool {
         return true;
     }
     false
+}
+
+/// 宝箱名称兼容中点和英文点号；保留其他字符，避免把不同首领合并。
+fn normalize_treasure_boss_name(name: &str) -> String {
+    name.chars().filter(|c| !matches!(c, '·' | '.')).collect()
+}
+
+/// 先直接匹配完整首领名，再尝试唯一的去点匹配。
+/// 例如“伊曼寂夜”可匹配“伊曼·寂夜”；去点后存在多个候选时不猜测归属。
+fn match_treasure_box_boss<'a>(
+    chest_boss_name: &str,
+    raid_bosses: &'a [(String, String)],
+) -> Option<&'a str> {
+    if chest_boss_name.is_empty() {
+        return None;
+    }
+    if let Some((_, name)) = raid_bosses.iter().find(|(_, name)| name == chest_boss_name) {
+        return Some(name.as_str());
+    }
+
+    let normalized = normalize_treasure_boss_name(chest_boss_name);
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut candidates = raid_bosses
+        .iter()
+        .filter(|(_, name)| normalize_treasure_boss_name(name) == normalized);
+    let (_, name) = candidates.next()?;
+    if candidates.next().is_some() {
+        return None;
+    }
+    Some(name.as_str())
 }
 
 /// 将 BOSS 名列表映射为 BOSS ID 列表
@@ -1401,9 +1448,8 @@ fn map_boss_names_to_ids(
 /// - NPC_INFO (type=8)：`{ dwID, szName, dwTemplateID, ... }`
 ///   - 通过 dwTemplateID 匹配文件名中的 boss_id，找到 BOSS 的运行时 dwID
 /// - NPC_FIGHT_HINT (type=9)：`{ dwID, bFight, fCurrentLife, ... }`
-///   - 跟踪 BOSS 的 bFight 状态变化
-///   - **通关判定**：bFight 从 true 变为 false（BOSS 退出战斗=被击杀）
-///   - 拉托时 BOSS 只有 bFight=true（无 false），且会有 NPC_LEAVE_SCENE 事件
+///   - 仅用 `bFight=true` 确认该运行时实体实际参战
+///   - 击杀还必须由该实体的 type=28 或 HP=0 终局死亡确认
 ///
 /// 同时支持双 BOSS 模型（路径 B）：
 /// 当文件名 BOSS 名不在 raid_bosses 配置中时（小怪 JCL，如"须罗巨傀"对应唐怀仁战斗），
@@ -1421,8 +1467,15 @@ fn map_boss_names_to_ids(
 /// - boss_template_id: BOSS 模板 ID（来自 JCL 文件名，如 137005）
 /// - raid_bosses: raid_bosses 表的 (boss_id, boss_name) 列表
 ///
-/// 从 SQLite 缓存读取 JCL 解析结果（跨会话复用）
-/// 缓存键：file_path + file_mtime，文件未修改时直接返回缓存
+/// 所有副本共用解析版本，确保曾将服务器文本作为击杀依据的旧结果不会命中。
+const JCL_ANALYSIS_CACHE_VERSION: &str = "jcl-analysis-v8|";
+
+fn jcl_cache_key(jcl_path: &Path) -> String {
+    format!("{}{}", JCL_ANALYSIS_CACHE_VERSION, jcl_path.to_string_lossy())
+}
+
+/// 从 SQLite 缓存读取 JCL 解析结果（跨会话复用）。
+/// 所有副本使用版本化 path + mtime，旧缓存无需迁移或删除。
 fn get_jcl_cache(conn: &Connection, file_path: &str, file_mtime: i64) -> Option<JclAnalysis> {
     let result: rusqlite::Result<(Option<String>, i64, i64, i64)> = conn.query_row(
         "SELECT boss_name, fight_start_ms, fight_end_ms, is_kill FROM jcl_cache WHERE file_path = ?1 AND file_mtime = ?2",
@@ -1494,12 +1547,12 @@ fn analyze_jcl_cached(
     boss_template_id: i64,
     raid_bosses: &[(String, String)],
 ) -> Option<JclAnalysis> {
-    let path_str = jcl_path.to_string_lossy().to_string();
+    let cache_key = jcl_cache_key(jcl_path);
     let file_mtime = get_file_mtime(jcl_path);
 
     // 1. 查缓存
     if file_mtime > 0 {
-        if let Some(cached) = get_jcl_cache(conn, &path_str, file_mtime) {
+        if let Some(cached) = get_jcl_cache(conn, &cache_key, file_mtime) {
             return Some(cached);
         }
     }
@@ -1509,7 +1562,7 @@ fn analyze_jcl_cached(
 
     // 3. 写回缓存
     if file_mtime > 0 {
-        set_jcl_cache(conn, &path_str, file_mtime, &analysis);
+        set_jcl_cache(conn, &cache_key, file_mtime, &analysis);
     }
 
     Some(analysis)
@@ -1546,13 +1599,7 @@ fn analyze_jcl(
     let mut fight_start_ms: i64 = 0;
     let mut fight_end_ms: i64 = 0;
     let mut boss_dwid: i64 = 0;
-    let mut boss_fight_true_seen = false;
-    let mut boss_fight_false_seen = false;
-    let mut boss_hp_zero_seen = false;
-    // 主 BOSS LEAVE_SCENE：单独不可靠（拉托时也会离场），
-    // 但与 bFight=false 组合可区分击杀/拉托（见下方 leave_scene_is_kill）。
-    // 路径 B 也使用，因为真实 BOSS 击杀时可能无 bFight=false。
-    let mut boss_leave_scene_seen = false;
+    let mut file_boss_evidence = RuntimeEntityEvidence::default();
     // 已发现的 BOSS 专属宝箱 NPC（"BOSS名+宝箱"），用于路径 A/B 判定
     let mut treasure_box_bosses: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -1563,46 +1610,12 @@ fn analyze_jcl(
     // - 或"唐怀仁宝箱"NPC 出现
     let mut real_boss_dwid: i64 = 0;
     let mut real_boss_name: Option<String> = None;
-    let mut real_boss_fight_true_seen = false;
-    let mut real_boss_fight_false_seen = false;
-    // 真实 BOSS HP=0 信号（NPC_FIGHT_HINT fCurrentLife=0）
-    let mut real_boss_hp_zero_seen = false;
-    // 真实 BOSS 死亡事件（SYS_MSG_UI_OME_DEATH_NOTIFY type=28）
-    // 茗伊源码: D.InsertLog(LOG_TYPE.SYS_MSG_UI_OME_DEATH_NOTIFY, { dwCharacterID, dwKiller })
-    // 这是 JCL 中唯一的真正死亡事件，fields[0]=死亡目标ID
-    let mut real_boss_death_notify_seen = false;
-    // 真实 BOSS 的 nFaceDirection 状态追踪（辅助区分击杀/团灭）
-    // 茗伊源码确认 NPC_INFO fields[7] 是 nFaceDirection（朝向方向），不是存活/死亡状态。
-    // 但实测发现：击杀时 face_dir 呈现 192 后不再回 0 的模式，
-    //            团灭时 face_dir 呈现 192→0 的模式（BOSS 重置）。
-    // 在缺乏 DEATH_NOTIFY/HP=0 等可靠死亡信号时，作为辅助判定保留。
-    let mut real_boss_face_dir_dead = false;
-    let mut real_boss_face_dir_respawned = false;
-
-    // 路径 A 使用：主 BOSS 死亡事件信号
-    // SYS_MSG_UI_OME_DEATH_NOTIFY (type=28): JCL 中唯一的真正死亡事件
-    let mut boss_death_notify_seen = false;
-    // 主 BOSS 的 nFaceDirection 状态追踪（辅助区分击杀/团灭，同上）
-    let mut boss_face_dir_dead = false;
-    let mut boss_face_dir_respawned = false;
-    // 主 BOSS LEAVE_SCENE 时间戳（用于校验离场发生在 face_dir=192 之后）
-    let mut boss_leave_scene_ms: i64 = 0;
-    // 主 BOSS 首次 face_dir=192 的时间戳
-    let mut boss_face_dir_dead_ms: i64 = 0;
-    // 真实 BOSS LEAVE_SCENE 时间戳和首次 face_dir=192 时间戳
-    let mut real_boss_leave_scene_ms: i64 = 0;
-    let mut real_boss_face_dir_dead_ms: i64 = 0;
-
-    // 同名 NPC 追踪（BOSS 分身/幻影）
-    // 某些 BOSS（如"笑妆娘"、"柳公子"）有多个 templateId 的同名 NPC（分身/幻影），
-    // 击杀时主 BOSS 可能不触发 bFight=false，但分身/幻影会 LEAVE_SCENE。
-    // 注意：团灭时分身也会集中离场，因此不能仅凭"有分身离场"判定击杀。
-    // 辅助区分信号：主 BOSS 的死亡迹象（face_dir=192 / HP=0 / DEATH_NOTIFY）+ 之后无重生。
-    //   - 击杀：BOSS 有死亡迹象且之后没有再出现 BOSS 活动（face_dir 没从 192 回到 0）
-    //   - 团灭：BOSS 无死亡迹象，或 BOSS 重生（face_dir 从 192 回到 0）
-    // 不再使用分身离场时间跨度（clone_leave_span）——柳公子团灭时跨度也可达 145~226s，无法可靠区分。
-    let mut same_name_dwids: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    let mut same_name_leave_scene_count: u32 = 0;
+    let mut real_boss_evidence = RuntimeEntityEvidence::default();
+    // 归属映射与当前一轮的击杀证据分离：实体曾经参战即可识别归属，复位只会撤销击杀资格。
+    let mut real_boss_ever_participated = false;
+    // 同名实体只能否定，不能把其中一者的参战和另一者的死亡拼成击杀。
+    let mut same_name_dwids: HashSet<i64> = HashSet::new();
+    let mut same_name_resumed_after_file_death = false;
 
     for line in reader.split(b'\n') {
         let line_bytes: Vec<u8> = match line {
@@ -1631,7 +1644,7 @@ fn analyze_jcl(
         }
 
         // 解析事件类型，处理相关类型（基于茗伊 MY_CombatLogs.lua 源码）：
-        // 1=FIGHT_TIME, 7=NPC_LEAVE_SCENE, 8=NPC_INFO, 9=NPC_FIGHT_HINT, 28=SYS_MSG_UI_OME_DEATH_NOTIFY
+        // 1=FIGHT_TIME, 8=NPC_INFO, 9=NPC_FIGHT_HINT, 28=SYS_MSG_UI_OME_DEATH_NOTIFY
         let event_type: u8 = match std::str::from_utf8(parts[4])
             .ok()
             .and_then(|s| s.parse().ok())
@@ -1639,12 +1652,7 @@ fn analyze_jcl(
             Some(t) => t,
             None => continue,
         };
-        if event_type != 1
-            && event_type != 7
-            && event_type != 8
-            && event_type != 9
-            && event_type != 28
-        {
+        if event_type != 1 && event_type != 8 && event_type != 9 && event_type != 28 {
             continue;
         }
 
@@ -1681,13 +1689,6 @@ fn analyze_jcl(
                 if !bfight {
                     fight_end_ms = timestamp_sec * 1000;
                 }
-                // 无 BOSS 配置时，全局战斗信号也作为 BOSS 战斗信号
-                // 某些 BOSS（如白帝江关的赵八嫂）不产生 NPC_FIGHT_HINT 事件，
-                // 但 JCL 文件以该 BOSS 命名，说明游戏客户端认为是该 BOSS 的战斗，
-                // 因此全局 FIGHT_TIME 的 bFight=true 可作为 BOSS 进入战斗的信号。
-                if raid_bosses.is_empty() && bfight {
-                    boss_fight_true_seen = true;
-                }
             }
             8 => {
                 // NPC_INFO: { dwID, szName, dwTemplateID, dwEmployer, nX, nY, nZ }
@@ -1723,64 +1724,31 @@ fn analyze_jcl(
                     }
                 }
 
-                // 用途 2：检测"BOSS名+宝箱"NPC（**精确匹配配置中的 BOSS**）
+                // 用途 2：检测"BOSS名+宝箱"NPC（完整名称直接匹配或唯一去点匹配）
                 // 例如：NPC 名为 "笑妆娘宝箱" 时，提取前缀 "笑妆娘"，
                 //       若在 raid_bosses 配置中则记为对应 BOSS 的宝箱已出现
                 let name_trimmed = name.trim_matches('"');
                 if name_trimmed.ends_with("宝箱") {
                     let prefix_len = name_trimmed.len() - "宝箱".len();
                     let prefix = &name_trimmed[..prefix_len];
-                    // 检查前缀是否正好是配置中的某个 BOSS 名
-                    for (_boss_id, boss_name) in raid_bosses {
-                        if prefix == *boss_name {
-                            treasure_box_bosses.insert(boss_name.clone());
-                            break;
-                        }
+                    if let Some(boss_name) = match_treasure_box_boss(prefix, raid_bosses) {
+                        treasure_box_bosses.insert(boss_name.to_string());
                     }
-                    // 无 BOSS 配置时，用文件名 BOSS 名做模糊匹配
-                    // 例如 "罗芬和胡汤宝箱" 能匹配文件名 BOSS "罗芬"
-                    if raid_bosses.is_empty()
-                        && !jcl_boss_name.is_empty()
-                        && prefix.contains(jcl_boss_name)
-                    {
-                        treasure_box_bosses.insert(jcl_boss_name.to_string());
+                    // 无 BOSS 配置时也支持去点后的完整名称匹配，并保留联名宝箱兼容。
+                    // 例如 "罗芬和胡汤宝箱" 仍能匹配文件名 BOSS "罗芬"。
+                    if raid_bosses.is_empty() && !jcl_boss_name.is_empty() {
+                        let normalized_boss = normalize_treasure_boss_name(jcl_boss_name);
+                        if prefix.contains(jcl_boss_name)
+                            || (!normalized_boss.is_empty()
+                                && normalize_treasure_boss_name(prefix) == normalized_boss)
+                        {
+                            treasure_box_bosses.insert(jcl_boss_name.to_string());
+                        }
                     }
                 }
 
-                // 用途 4：当文件名 BOSS 在配置中时，追踪所有同名 NPC 的 dwID（多阶段 BOSS）
-                // 某些 BOSS（如"唐醉"）有多个 templateId 的同名 NPC（分身/幻影），
-                // 主 BOSS 被击杀后可能不触发 LEAVE_SCENE，但分身/幻影会离场。
                 if file_boss_in_config && name_trimmed == jcl_boss_name {
                     same_name_dwids.insert(dwid);
-                }
-                // 用途 5：nFaceDirection 辅助判定
-                // 茗伊源码确认 fields[7] 是 nFaceDirection（朝向方向），不是存活/死亡状态。
-                // 但实测发现：击杀时 face_dir=192 后不再回 0，团灭时 face_dir 192→0（BOSS 重置）。
-                // 在缺乏 DEATH_NOTIFY/HP=0 时，作为辅助区分击杀/团灭的信号。
-                let face_dir: i64 = if fields.len() >= 8 {
-                    fields[7].trim().parse().unwrap_or(-1)
-                } else {
-                    -1
-                };
-                if file_boss_in_config && boss_dwid != 0 && dwid == boss_dwid {
-                    if face_dir == 192 {
-                        boss_face_dir_dead = true;
-                        if boss_face_dir_dead_ms == 0 {
-                            boss_face_dir_dead_ms = timestamp_sec * 1000;
-                        }
-                    } else if face_dir == 0 && boss_face_dir_dead {
-                        boss_face_dir_respawned = true;
-                    }
-                }
-                if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
-                    if face_dir == 192 {
-                        real_boss_face_dir_dead = true;
-                        if real_boss_face_dir_dead_ms == 0 {
-                            real_boss_face_dir_dead_ms = timestamp_sec * 1000;
-                        }
-                    } else if face_dir == 0 && real_boss_face_dir_dead {
-                        real_boss_face_dir_respawned = true;
-                    }
                 }
             }
             9 => {
@@ -1798,208 +1766,86 @@ fn analyze_jcl(
                 } else {
                     -1.0
                 };
-                let hp_zero = hp == 0.0;
-
                 // 文件名 BOSS（小怪路径下是小怪 dwID）的 bFight 状态
                 if boss_dwid != 0 && dwid == boss_dwid {
-                    if bfight {
-                        boss_fight_true_seen = true;
-                    } else {
-                        boss_fight_false_seen = true;
-                    }
-                    if hp_zero {
-                        boss_hp_zero_seen = true;
-                    }
-                }
-                // 无 BOSS 配置时，同名 NPC（不同 templateID 的分身/阶段）的 bFight 也算
-                // 例如水鬼有 templateID=103400 和 103848 两套同名 NPC，
-                // boss_dwid 只追踪了文件名中的 103400，但实际参战的是 103848
-                if file_boss_in_config
-                    && raid_bosses.is_empty()
+                    file_boss_evidence.observe_fight_hint(bfight, hp);
+                } else if file_boss_evidence.terminal_death
                     && same_name_dwids.contains(&dwid)
-                    && !(boss_dwid != 0 && dwid == boss_dwid)
+                    && bfight
                 {
-                    if bfight {
-                        boss_fight_true_seen = true;
-                    } else {
-                        boss_fight_false_seen = true;
-                    }
-                    if hp_zero {
-                        boss_hp_zero_seen = true;
-                    }
+                    same_name_resumed_after_file_death = true;
                 }
                 // 真实 BOSS（小怪路径下追踪唐怀仁等配置 BOSS）的 bFight 状态
                 if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
                     if bfight {
-                        real_boss_fight_true_seen = true;
-                    } else {
-                        real_boss_fight_false_seen = true;
+                        real_boss_ever_participated = true;
                     }
-                    if hp_zero {
-                        real_boss_hp_zero_seen = true;
-                    }
-                }
-            }
-            7 => {
-                // NPC_LEAVE_SCENE: { dwID }
-                // 茗伊源码: D.InsertLog(LOG_TYPE.NPC_LEAVE_SCENE, { dwID })
-                // 主 BOSS LEAVE_SCENE 不可靠（拉托时也会离场），路径 A 不单独使用。
-                // 路径 B（小怪 JCL）使用：真实 BOSS 击杀时可能无 bFight=false，需 leave_scene 兜底。
-                // 同名 NPC 分身离场：需结合离场时间跨度区分击杀/团灭（见下方 clone_leave_signal）。
-                if fields.is_empty() {
-                    continue;
-                }
-                let dwid: i64 = fields[0].trim().parse().unwrap_or(0);
-
-                // 文件名 BOSS 离开场景
-                if boss_dwid != 0 && dwid == boss_dwid {
-                    boss_leave_scene_seen = true;
-                    boss_leave_scene_ms = timestamp_sec * 1000;
-                }
-                // 真实 BOSS 离开场景（仅路径 B 使用）
-                if !file_boss_in_config && real_boss_dwid != 0 && dwid == real_boss_dwid {
-                    real_boss_leave_scene_ms = timestamp_sec * 1000;
-                }
-                // 同名 NPC 离开场景（BOSS 分身/幻影离场）
-                if file_boss_in_config && same_name_dwids.contains(&dwid) {
-                    same_name_leave_scene_count += 1;
+                    real_boss_evidence.observe_fight_hint(bfight, hp);
                 }
             }
             28 => {
                 // SYS_MSG_UI_OME_DEATH_NOTIFY: { dwCharacterID, dwKiller }
                 // 茗伊源码: D.InsertLog(LOG_TYPE.SYS_MSG_UI_OME_DEATH_NOTIFY, { dwCharacterID, dwKiller })
                 // 这是 JCL 中唯一的真正死亡事件，fields[0]=死亡目标ID
-                // 注意：多阶段 BOSS（如笑妆娘）有多个同名分身，分身被击杀时也会触发此事件，
-                //       需匹配 same_name_dwids 才能正确识别。
                 if fields.is_empty() {
                     continue;
                 }
                 let dead_dwid: i64 = fields[0].trim().parse().unwrap_or(0);
-                // 主 BOSS 或同名分身死亡
-                if boss_dwid != 0
-                    && (dead_dwid == boss_dwid
-                        || (file_boss_in_config && same_name_dwids.contains(&dead_dwid)))
-                {
-                    boss_death_notify_seen = true;
+                if boss_dwid != 0 && dead_dwid == boss_dwid {
+                    file_boss_evidence.observe_death_notify();
                 }
                 // 真实 BOSS 死亡（路径 B）
                 if !file_boss_in_config && real_boss_dwid != 0 && dead_dwid == real_boss_dwid {
-                    real_boss_death_notify_seen = true;
+                    real_boss_evidence.observe_death_notify();
                 }
             }
             _ => {}
         }
     }
 
-    // 通关判定逻辑（3 类分类：击杀 / 拉托 / 小怪）
+    // 通关判定只使用专属宝箱，或同一运行时实体的“参战 + 终局死亡”证据。
+    // SYS_MSG_UI_OME_DEATH_NOTIFY (type=28) 和 NPC_FIGHT_HINT 的 HP=0 是死亡证据；
+    // 脱战、离场、朝向和成就消息都不参与判定。
     //
-    // **死亡信号可靠性**（基于茗伊 MY_CombatLogs.lua 源码校验）：
-    // 1. SYS_MSG_UI_OME_DEATH_NOTIFY (type=28): JCL 中唯一的真正死亡事件
-    //    源码: D.InsertLog(LOG_TYPE.SYS_MSG_UI_OME_DEATH_NOTIFY, { dwCharacterID, dwKiller })
-    //    fields[0]=死亡目标ID，是最可靠的击杀信号。
-    // 2. NPC_FIGHT_HINT (type=9) fCurrentLife=0: BOSS 血量归零
-    //    源码: D.InsertLog(LOG_TYPE.NPC_FIGHT_HINT, { dwID, bFight, fCurrentLife, fMaxLife, ... })
-    // 3. bFight true→false（无 LEAVE_SCENE）: BOSS 死在原地不消失
-    //    拉托时 BOSS 会先 bFight=false（脱战）再 LEAVE_SCENE，
-    //    所以 bFight=false + 无 LEAVE = 击杀，bFight=false + 有 LEAVE = 拉托。
-    // 4. clone_leave_signal: 分身离场 + 主 BOSS 有死亡迹象（face_dir=192/HP=0/DEATH_NOTIFY）+ 之后无重生
-    // 5. LEAVE_SCENE + face_dir=192（辅助）: BOSS 被击杀后直接消失
-    //    nFaceDirection(192) 后不回 0 = 击杀，192→0 = 团灭（BOSS 重置）。
-    //
-    // 注意：NPC_INFO fields[7] 是 nFaceDirection（朝向方向），不是存活/死亡状态（茗伊源码确认）。
-    //       但实测发现其值变化模式能辅助区分击杀/团灭，在缺乏 DEATH_NOTIFY/HP=0 时作为兜底。
-    //       type=5 (PLAYER_FIGHT_HINT) 的 dwID 是玩家ID，不匹配 NPC，不使用。
-    //
-    // 路径 A：文件名 BOSS 在 raid_bosses 配置中（普通 BOSS 如"唐醉"、"笑妆娘"）
-    //   1) 宝箱路径（首选）：该 BOSS 名+"宝箱" NPC 出现
-    //   2) 死亡路径：boss_dwid!=0 + boss_fight_true_seen + 任一击杀信号
-    //   注意：clone_leave_signal 需要分身离场 + 死亡迹象 + 未重生三重条件，
-    //         避免柳公子团灭时分身离场跨度大导致误判。
-    //
-    // 路径 B：文件名 BOSS 不在配置中（小怪 JCL 如"须罗巨傀"对应唐怀仁战斗）
-    //   Q1: JCL 中能找到配置 BOSS 吗？→ 否 → 小怪
-    //   Q2: 配置 BOSS 进入战斗了吗？→ 否 → 小怪
-    //   Q3: 双 BOSS 都死亡？→ 击杀
+    // 路径 A：文件名 BOSS 已在配置中（或该副本无 BOSS 配置）。
+    // 路径 B：文件名是小怪时，文件实体和配置首领必须分别满足相同的强证据；
+    // 若两者已解析为同一 dwID，则按同一实体处理，避免把同名但不同实体拼接为击杀。
     let is_kill = if file_boss_in_config {
-        // 路径 A
         let treasure_ok = if raid_bosses.is_empty() {
             !treasure_box_bosses.is_empty()
         } else {
             treasure_box_bosses.contains(jcl_boss_name)
         };
-        // clone_leave_signal: 分身离场 + 主 BOSS 有死亡迹象 + 之后无重生（无 BOSS 活动）。
-        // 不再使用 clone_leave_span_sec>=120 阈值——该阈值过于特殊，
-        // 柳公子团灭时分身离场跨度也可达 145~226s，无法可靠区分击杀/团灭。
-        // 改为依赖"死亡迹象 + 未重生"组合：face_dir=192/HP=0/DEATH_NOTIFY 表明 BOSS 已死，
-        // !boss_face_dir_respawned 表明之后没有再出现 BOSS 活动（face_dir 没有从 192 回到 0）。
-        // 历史数据验证：柳公子 17 个 JCL 新旧逻辑一致；笑妆娘击杀基本都有宝箱（treasure_ok）保护。
-        let has_death_sign = boss_death_notify_seen
-            || boss_hp_zero_seen
-            || boss_face_dir_dead;
-        let clone_leave_signal =
-            same_name_leave_scene_count > 0 && has_death_sign && !boss_face_dir_respawned;
-        let bfight_false_is_kill = boss_fight_false_seen && !boss_leave_scene_seen;
-        // leave_scene_is_kill 受 face_dir 校验：仅当 face_dir=192 后未重生且 LEAVE_SCENE 在之后
-        let leave_scene_is_kill = boss_leave_scene_seen
-            && !boss_fight_false_seen
-            && !boss_face_dir_respawned
-            && if boss_face_dir_dead {
-                boss_leave_scene_ms > 0 && boss_leave_scene_ms >= boss_face_dir_dead_ms
-            } else {
-                false
-            };
-        // death_ok: clone_leave_signal 不受 face_dir_respawned 影响（笑妆娘修复）
-        let death_ok = boss_dwid != 0
-            && boss_fight_true_seen
-            && (boss_death_notify_seen
-                || boss_hp_zero_seen
-                || bfight_false_is_kill
-                || clone_leave_signal
-                || leave_scene_is_kill);
-        treasure_ok || death_ok
+        treasure_ok
+            || (boss_dwid != 0
+                && file_boss_evidence.is_confirmed_kill()
+                && !same_name_resumed_after_file_death)
     } else {
-        // 路径 B
-        if real_boss_dwid == 0 || !real_boss_fight_true_seen {
-            false
-        } else {
-            let real_treasure_ok = real_boss_name
-                .as_ref()
-                .map(|n| treasure_box_bosses.contains(n))
-                .unwrap_or(false);
-            let file_boss_died = boss_dwid != 0
-                && boss_fight_true_seen
-                && (boss_death_notify_seen
-                    || boss_hp_zero_seen
-                    || boss_fight_false_seen
-                    || boss_leave_scene_seen);
-            // 真实 BOSS 死亡信号（face_dir 辅助区分击杀/团灭）
-            let real_boss_face_dir_death = real_boss_face_dir_dead && !real_boss_face_dir_respawned;
-            let real_boss_leave_scene_is_kill = if real_boss_face_dir_dead_ms > 0 {
-                real_boss_leave_scene_ms > 0 && real_boss_leave_scene_ms >= real_boss_face_dir_dead_ms
-            } else {
-                false
-            };
-            let real_boss_died = real_boss_dwid != 0
-                && real_boss_fight_true_seen
-                && !real_boss_face_dir_respawned
-                && (real_boss_death_notify_seen
-                    || real_boss_hp_zero_seen
-                    || real_boss_fight_false_seen
-                    || real_boss_face_dir_death
-                    || real_boss_leave_scene_is_kill);
-            real_treasure_ok || (file_boss_died && real_boss_died)
-        }
+        let real_treasure_ok = real_boss_name
+            .as_ref()
+            .map(|name| treasure_box_bosses.contains(name))
+            .unwrap_or(false);
+        real_boss_dwid != 0
+            && real_boss_ever_participated
+            && (real_treasure_ok
+                || if boss_dwid == real_boss_dwid {
+                    real_boss_evidence.is_confirmed_kill()
+                } else {
+                    boss_dwid != 0
+                        && file_boss_evidence.is_confirmed_kill()
+                        && real_boss_evidence.is_confirmed_kill()
+                })
     };
 
     // 确定返回的 boss_name：
     // - 路径 A（文件名 BOSS 在配置中）：直接用文件名 BOSS 名
     // - 路径 B（文件名 BOSS 不在配置中，小怪 JCL）：
-    //   * 仅当真实 BOSS 真正进入战斗（real_boss_fight_true_seen=true）时才返回 real_boss_name
+    //   * 仅当真实 BOSS 的运行时实体进入战斗时才返回 real_boss_name
     //   * 否则返回 None（小怪 JCL，effective boss name 回退到文件名）
     //   注意：不以对话/NPC_INFO 文本作为依据，避免出场对话 JCL 被误判为该 BOSS 的战斗。
     let final_boss_name = if file_boss_in_config {
         Some(jcl_boss_name.to_string())
-    } else if real_boss_fight_true_seen {
+    } else if real_boss_ever_participated {
         real_boss_name.clone()
     } else {
         None
@@ -2011,6 +1857,322 @@ fn analyze_jcl(
         fight_end_ms,
         is_kill,
     })
+}
+
+/// 从一个 JCL 提取可由同角色 10 金补强的完成候选。
+///
+/// 这是保守的独立路径，不影响 `analyze_jcl` 的强证据语义，也不持久化候选或金币：
+/// - 只接受文件名与副本配置**精确唯一**对应的首领，避免小怪/别名/多实体拼接；
+/// - type=1 必须恰有一组同 UUID 的开始和结束，且 UUID 精确对应当前账号目录 UID；
+/// - 只计算该首领运行时实体、战斗区间内的 type=21 result[13]/[14]；
+/// - 有效伤害必须刚好等于唯一观测 maxHP，且没有有效治疗、重入或另一轮战斗。
+///
+/// `None` 只表示不能安全补强，不会否定已有的 JCL 强击杀证据。
+fn analyze_damage_completion_candidate(
+    jcl_path: &Path,
+    jcl_boss_name: &str,
+    boss_template_id: i64,
+    raid_bosses: &[(String, String)],
+    expected_uid: &str,
+) -> Option<DamageCompletionCandidate> {
+    if expected_uid.is_empty() || boss_template_id == 0 {
+        return None;
+    }
+
+    // 只有文件名首领在该副本配置中精确且唯一时，才允许补强。
+    // 模糊名、无配置副本、由小怪文件推导出的真实首领都只保留强证据路径。
+    if raid_bosses.iter().filter(|(_, name)| name == jcl_boss_name).count() != 1 {
+        return None;
+    }
+
+    use std::io::BufRead;
+    type Effect = (i64, i64, i64, i64, usize);
+    type PendingEffect = (i64, i64, i64, Option<i64>, Option<i64>, usize);
+    type FightHint = (i64, i64, i64, bool, f64, i64, usize);
+    let file = std::fs::File::open(jcl_path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let gbk = encoding_rs::GBK;
+
+    let mut fight_start: Option<(i64, i64, String, usize)> = None;
+    let mut fight_end: Option<(i64, i64, String, usize)> = None;
+    let mut invalid_attempt = false;
+    let mut boss_dwid: Option<i64> = None;
+    let mut has_multiple_boss_runtime = false;
+    let mut has_template_name_mismatch = false;
+    let mut fight_hints: Vec<FightHint> = Vec::new();
+    let mut effects: Vec<Effect> = Vec::new();
+    // NPC_INFO 有时晚于同秒的首批 type=21；先暂存，确认唯一运行时首领后再归属。
+    // 只在尚未找到目标实体时缓存，避免大 JCL 为无关战斗事件持续占用内存。
+    let mut pending_effects: Vec<PendingEffect> = Vec::new();
+    let mut malformed_effect = false;
+    let mut seen_type21_records: HashSet<Vec<u8>> = HashSet::new();
+
+    for (line_number, line) in reader.split(b'\n').enumerate() {
+        let line_bytes = match line {
+            Ok(line) => line,
+            Err(_) => return None,
+        };
+        let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
+        let mut start = 0;
+        for (index, &byte) in line_bytes.iter().enumerate() {
+            if byte == b'\t' {
+                parts.push(&line_bytes[start..index]);
+                start = index + 1;
+                if parts.len() >= 5 {
+                    break;
+                }
+            }
+        }
+        if parts.len() >= 5 {
+            parts.push(&line_bytes[start..]);
+        }
+        if parts.len() < 6 {
+            if !line_bytes.is_empty() { return None; }
+            continue;
+        }
+
+        let event_type = std::str::from_utf8(parts[4]).ok()?.parse::<u8>().ok()?;
+        if !matches!(event_type, 1 | 8 | 9 | 21) { continue; }
+        let timestamp_sec = std::str::from_utf8(parts[2]).ok()?.parse::<i64>().ok()?;
+        let client_ms = std::str::from_utf8(parts[3]).ok()?.parse::<i64>().ok()?;
+        let (lua_str, _, decode_errors) = gbk.decode(parts[5]);
+        if decode_errors {
+            return None;
+        }
+        let lua_trimmed = lua_str.trim();
+        let lua_inner = lua_trimmed.strip_prefix('{').and_then(|value| value.strip_suffix('}')).unwrap_or(lua_trimmed);
+        let fields: Vec<&str> = lua_inner.split(',').collect();
+
+        match event_type {
+            1 => {
+                if fields.len() < 2 {
+                    invalid_attempt = true;
+                    continue;
+                }
+                let in_fight = match fields[0].trim() {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        invalid_attempt = true;
+                        continue;
+                    }
+                };
+                let uuid = fields[1].trim().trim_matches('"').to_string();
+                let target = if in_fight { &mut fight_start } else { &mut fight_end };
+                if target.is_some() || !jcl_uuid_matches_uid(&uuid, expected_uid) {
+                    invalid_attempt = true;
+                } else {
+                    *target = Some((timestamp_sec, client_ms, uuid, line_number));
+                }
+            }
+            8 => {
+                if fields.len() < 3 {
+                    return None;
+                }
+                let dwid = fields[0].trim().parse::<i64>().ok()?;
+                let template_id = fields[2].trim().parse::<i64>().ok()?;
+                if dwid != 0 && template_id == boss_template_id {
+                    if fields[1].trim().trim_matches('"') != jcl_boss_name {
+                        // 同模板但不同名字的实体不能借用文件名首领的伤害。
+                        has_template_name_mismatch = true;
+                    } else {
+                        match boss_dwid {
+                            Some(existing) if existing != dwid => has_multiple_boss_runtime = true,
+                            Some(_) => {}
+                            None => {
+                                boss_dwid = Some(dwid);
+                                for (target_dwid, timestamp_sec, client_ms, damage, heal, line_number) in pending_effects.drain(..) {
+                                    if target_dwid != dwid {
+                                        continue;
+                                    }
+                                    match (damage, heal) {
+                                        (Some(damage), Some(heal)) if damage >= 0 && heal == 0 => effects.push((timestamp_sec, client_ms, damage, heal, line_number)),
+                                        _ => malformed_effect = true,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            9 => {
+                if fields.len() < 4 { return None; }
+                let dwid = fields[0].trim().parse::<i64>().ok()?;
+                let in_fight = match fields[1].trim() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return None,
+                };
+                let current_hp = fields[2].trim().parse::<f64>().ok().filter(|value| value.is_finite() && *value >= 0.0)?;
+                let max_hp = fields[3].trim().parse::<f64>().ok().filter(|value| value.is_finite() && *value > 0.0).and_then(|value| {
+                    let rounded = value.round();
+                    ((value - rounded).abs() < 0.0001).then_some(rounded as i64)
+                })?;
+                fight_hints.push((dwid, timestamp_sec, client_ms, in_fight, current_hp, max_hp, line_number));
+            }
+            21 => {
+                // type=21: {sourceDwid, targetDwid, ..., result={[13]=damageEff,[14]=healEff}}
+                let mut duplicate_key = Vec::with_capacity(parts[0].len() + parts[1].len() + parts[3].len() + parts[5].len() + 3);
+                duplicate_key.extend_from_slice(parts[0]);
+                duplicate_key.push(0);
+                duplicate_key.extend_from_slice(parts[1]);
+                duplicate_key.push(0);
+                duplicate_key.extend_from_slice(parts[3]);
+                duplicate_key.push(0);
+                duplicate_key.extend_from_slice(parts[5]);
+                if !seen_type21_records.insert(duplicate_key) {
+                    return None;
+                }
+                let target_dwid = fields.get(1).and_then(|value| value.trim().parse::<i64>().ok());
+                let target_dwid = target_dwid?;
+                let damage = DAMAGE_EFF_RE.captures(lua_inner).and_then(|captures| captures[1].parse::<i64>().ok());
+                let heal = HEAL_EFF_RE.captures(lua_inner).and_then(|captures| captures[1].parse::<i64>().ok());
+                if Some(target_dwid) == boss_dwid {
+                    match (damage, heal) {
+                        (Some(damage), Some(heal)) if damage >= 0 && heal == 0 => effects.push((timestamp_sec, client_ms, damage, heal, line_number)),
+                        (Some(_), Some(_)) => return None,
+                        _ => malformed_effect = true,
+                    }
+                } else if boss_dwid.is_none() {
+                    pending_effects.push((target_dwid, timestamp_sec, client_ms, damage, heal, line_number));
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let (start_sec, start_client_ms, start_uuid, start_line) = fight_start?;
+    let (end_sec, _end_client_ms, end_uuid, end_line) = fight_end?;
+    if invalid_attempt
+        || start_uuid != end_uuid
+        || !jcl_uuid_matches_uid(&start_uuid, expected_uid)
+        || !jcl_uuid_matches_uid(&end_uuid, expected_uid)
+        || end_sec < start_sec
+        || end_line <= start_line
+        || boss_dwid.is_none()
+        || has_multiple_boss_runtime
+        || has_template_name_mismatch
+        || malformed_effect
+    {
+        return None;
+    }
+
+    let boss_dwid = boss_dwid?;
+    let mut saw_participation = false;
+    let mut first_false_line: Option<usize> = None;
+    let mut observed_max_hp: Option<i64> = None;
+    let mut last_active_hp: Option<f64> = None;
+    for (dwid, timestamp_sec, client_ms, in_fight, current_hp, max_hp, line_number) in fight_hints {
+        if dwid != boss_dwid { continue; }
+        let in_import_prefix = line_number < start_line
+            && timestamp_sec >= start_sec.saturating_sub(1)
+            && timestamp_sec <= start_sec
+            && client_ms >= start_client_ms.saturating_sub(1000)
+            && client_ms <= start_client_ms;
+        if line_number >= end_line || (!in_import_prefix && (line_number <= start_line || timestamp_sec < start_sec || timestamp_sec > end_sec)) {
+            return None;
+        }
+        if in_fight {
+            if first_false_line.is_some() || last_active_hp.is_some_and(|previous| current_hp > previous) { return None; }
+            saw_participation = true;
+            last_active_hp = Some(current_hp);
+        } else if saw_participation {
+            first_false_line.get_or_insert(line_number);
+        }
+        if observed_max_hp.is_some_and(|previous| previous != max_hp) { return None; }
+        observed_max_hp.get_or_insert(max_hp);
+    }
+    if !saw_participation { return None; }
+
+    let max_hp = observed_max_hp?;
+    let mut total_damage = 0i64;
+    let mut total_heal = 0i64;
+    let mut reached_max = false;
+    for (timestamp_sec, client_ms, damage, heal, line_number) in effects {
+        // 文件头/尾不完整或跨战斗的伤害不能参与，也不能忽略后伪造完整击杀。
+        let in_import_prefix = line_number < start_line
+            && timestamp_sec >= start_sec.saturating_sub(1)
+            && timestamp_sec <= start_sec
+            && client_ms >= start_client_ms.saturating_sub(1000)
+            && client_ms <= start_client_ms;
+        if line_number >= end_line || (!in_import_prefix && (line_number <= start_line || timestamp_sec < start_sec || timestamp_sec > end_sec)) {
+            if damage != 0 || heal != 0 {
+                return None;
+            }
+            continue;
+        }
+        if first_false_line.is_some_and(|false_line| line_number > false_line) && damage > 0 {
+            return None;
+        }
+        if reached_max && damage > 0 {
+            return None;
+        }
+        total_damage = total_damage.checked_add(damage)?;
+        total_heal = total_heal.checked_add(heal)?;
+        if total_damage == max_hp {
+            reached_max = true;
+        } else if total_damage > max_hp {
+            return None;
+        }
+    }
+
+    if !reached_max || total_damage != max_hp || total_heal != 0 {
+        return None;
+    }
+
+    Some(DamageCompletionCandidate { boss_name: jcl_boss_name.to_string(), fight_end_ms: end_sec.saturating_mul(1000) })
+}
+
+/// type=1 的 szUUID 带有运行时包装，例如 `服务器::U123456/1`；ChatInfo 保存的是
+/// 数字 user_global_id。只接受完整 U 段，绝不做数字子串匹配。
+fn jcl_uuid_matches_uid(jcl_uuid: &str, expected_uid: &str) -> bool {
+    let with_u = if let Some((_, suffix)) = jcl_uuid.rsplit_once("::U") {
+        suffix
+    } else if let Some(suffix) = jcl_uuid.strip_prefix('U') {
+        suffix
+    } else {
+        return false;
+    };
+    let Some((uid, instance)) = with_u.split_once('/') else {
+        return false;
+    };
+    !uid.is_empty()
+        && uid.bytes().all(|byte| byte.is_ascii_digit())
+        && !instance.is_empty()
+        && instance.bytes().all(|byte| byte.is_ascii_digit())
+        && uid == expected_uid
+}
+
+/// 收集本轮每份 JCL 中同角色的全部 type=1 结束时间，供外部 10 金做争用锚。
+/// 它不判首领、不写缓存；任一文件损坏时调用方必须禁用补漏，不能把该文件附近的
+/// 10 金借给别的候选。
+fn collect_type1_end_anchors(jcl_path: &Path, expected_uid: &str) -> Option<Vec<i64>> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(jcl_path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let gbk = encoding_rs::GBK;
+    let mut ends = Vec::new();
+    for line in reader.split(b'\n') {
+        let line = line.ok()?;
+        if line.is_empty() { continue; }
+        let parts: Vec<&[u8]> = line.splitn(6, |byte| *byte == b'\t').collect();
+        if parts.len() < 6 { return None; }
+        let event_type = std::str::from_utf8(parts[4]).ok()?.parse::<u8>().ok()?;
+        if event_type != 1 { continue; }
+        let timestamp = std::str::from_utf8(parts[2]).ok()?.parse::<i64>().ok()?;
+        let (lua, _, errors) = gbk.decode(parts[5]);
+        if errors { return None; }
+        let inner = lua.trim().strip_prefix('{').and_then(|value| value.strip_suffix('}')).unwrap_or(lua.trim());
+        let fields: Vec<&str> = inner.split(',').collect();
+        if fields.len() < 2 { return None; }
+        match fields[0].trim() {
+            "true" => {}
+            "false" if jcl_uuid_matches_uid(fields[1].trim().trim_matches('"'), expected_uid) => ends.push(timestamp.saturating_mul(1000)),
+            "false" => {}
+            _ => return None,
+        }
+    }
+    Some(ends)
 }
 
 /// BOSS 击杀奖励（单位：金）。JX3 金币单位为 砖/金/银/铜，
@@ -2062,6 +2224,118 @@ fn parse_money_from_msg(msg: &str) -> Option<(i64, i64, i64)> {
     }
 
     Some((total_gold, silver, copper))
+}
+
+/// 候选 JCL 结束与同角色固定 10 金奖励的最大允许时间差。
+///
+/// 这是当前样本覆盖的候选时间窗；它不代表通用写盘延迟，也不降低任何 JCL 侧门槛。
+const DAMAGE_MONEY_MATCH_WINDOW_SECS: i64 = 15;
+
+/// 从单个角色确认为自己的 chatlog DB 中读取精确 10 金时间。
+///
+/// 这是完成候选的补充证据，故不能复用财务预加载：预加载允许多个可读文件参与收入
+/// 统计，而这里逐库要求 ChatInfo.user_global_id 与当前 JCL UUID 精确相同。未知、缺失
+/// 或不匹配的 DB 整库跳过，且不影响现有收入/掉落逻辑。
+fn read_role_verified_ten_gold_times(chatlog_files: &[PathBuf], expected_uid: &str, candidates: &[DamageCompletionCandidate]) -> Vec<i64> {
+    if expected_uid.is_empty() || candidates.is_empty() {
+        return Vec::new();
+    }
+
+    let first_sec = candidates.iter().map(|candidate| candidate.fight_end_ms / 1000).min().unwrap_or(0).saturating_sub(DAMAGE_MONEY_MATCH_WINDOW_SECS);
+    let last_sec = candidates.iter().map(|candidate| candidate.fight_end_ms / 1000).max().unwrap_or(0).saturating_add(DAMAGE_MONEY_MATCH_WINDOW_SECS);
+
+    let mut reward_times = Vec::new();
+    for path in chatlog_files {
+        let conn = match Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => conn,
+            Err(error) => {
+                log::warn!("[DropScanner] 补漏打开 chatlog 失败: {} - {}", path.display(), error);
+                continue;
+            }
+        };
+        let user_global_id: Option<String> = conn.query_row(
+            "SELECT value FROM ChatInfo WHERE key = 'user_global_id'",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        ).ok().flatten().and_then(|value| normalize_chatlog_user_global_id(&value));
+        if user_global_id.as_deref() != Some(expected_uid) {
+            log::debug!("[DropScanner] 补漏跳过非当前角色或未标识 chatlog: {}", path.display());
+            continue;
+        }
+
+        let mut statement = match conn.prepare(
+            "SELECT msg, time FROM ChatLog \
+             WHERE type = 'MSG_MONEY' AND text LIKE '你获得：%' AND time >= ?1 AND time <= ?2",
+        ) {
+            Ok(statement) => statement,
+            Err(error) => {
+                log::warn!("[DropScanner] 补漏查询 chatlog 失败: {} - {}", path.display(), error);
+                continue;
+            }
+        };
+        let rows = statement.query_map(params![first_sec, last_sec], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?))
+        });
+        if let Ok(rows) = rows {
+            for row in rows.flatten() {
+                if row.0.as_deref().is_some_and(is_exact_boss_kill_reward_msg) {
+                    reward_times.push(row.1);
+                }
+            }
+        }
+    }
+    reward_times.sort_unstable();
+    reward_times.dedup();
+    reward_times
+}
+
+/// 仅供完成补漏使用的严格 10 金格式：金、银、铜三项必须实际出现在消息 XML 中。
+/// 财务统计继续使用兼容旧日志的 `parse_money_from_msg`，这里不能把缺失字段默认成 0。
+fn is_exact_boss_kill_reward_msg(msg: &str) -> bool {
+    let gold = GOLD_RE.captures(msg).and_then(|captures| captures[1].parse::<i64>().ok());
+    let silver = SILVER_RE.captures(msg).and_then(|captures| captures[1].parse::<i64>().ok());
+    let copper = COPPER_RE.captures(msg).and_then(|captures| captures[1].parse::<i64>().ok());
+    let gold_brick = GOLDB_RE.captures(msg).and_then(|captures| captures[1].parse::<i64>().ok()).unwrap_or(0);
+    matches!((gold, silver, copper), (Some(gold), Some(0), Some(0)) if gold_brick == 0 && gold == BOSS_KILL_REWARD_GOLD)
+}
+
+/// ChatInfo 的 user_global_id 在不同茗伊版本中可能是裸数字，也可能是 JSON 字符串。
+/// 仅接受这两种完整数字表示，拒绝任意引号裁剪或数字子串匹配。
+fn normalize_chatlog_user_global_id(value: &str) -> Option<String> {
+    let normalized = if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        value.to_string()
+    } else {
+        serde_json::from_str::<String>(value).ok()?
+    };
+    (!normalized.is_empty() && normalized.bytes().all(|byte| byte.is_ascii_digit())).then_some(normalized)
+}
+
+/// 从候选和已校验角色身份的 10 金中选出可补强的 JCL 文件。
+///
+/// 一个 10 金不能服务于多个候选；同一候选即使有多条同场 10 金，也最多补强一次。
+/// `attempt_end_times` 包含本轮所有有完整战斗边界的 JCL 尝试，故一笔钱即使只落在
+/// 一个候选、但同时邻近另一未达标/强证据尝试，也不会被借用。
+fn select_damage_money_promotions(
+    candidates: &HashMap<String, DamageCompletionCandidate>,
+    attempt_end_times: &[i64],
+    reward_times: &[i64],
+) -> HashSet<String> {
+    let mut result = HashSet::new();
+    for (file_name, candidate) in candidates {
+        let end_sec = candidate.fight_end_ms / 1000;
+        let has_exclusive_reward = reward_times.iter().any(|reward_time| {
+            (reward_time - end_sec).abs() <= DAMAGE_MONEY_MATCH_WINDOW_SECS
+                && attempt_end_times
+                    .iter()
+                    .filter(|end_ms| ((**end_ms / 1000) - reward_time).abs() <= DAMAGE_MONEY_MATCH_WINDOW_SECS)
+                    .count()
+                    == 1
+        });
+        if has_exclusive_reward {
+            result.insert(file_name.clone());
+        }
+    }
+    result
 }
 
 /// 1 金砖 = 10000 金（JX3 标准换算）
@@ -2730,7 +3004,7 @@ fn is_role_online(account_dir: &Path, jx3_running: bool) -> bool {
 /// 7. 时间兜底：副本最后一个 JCL 距今超过 RAID_STALE_THRESHOLD_MS（6 小时），
 ///    无论进程/角色状态如何均视为已完成。避免历史副本因当前 JX3 运行而被误判为"进行中"。
 ///
-/// 由于通关判定改为基于 JCL 数据（NPC_FIGHT_HINT 的 bFight True→False），
+/// 由于通关判定改为基于 JCL 的运行时实体证据（参战加终局死亡或专属宝箱），
 /// 不再依赖 chatlog 10金，所有条件均可可靠检查。
 fn is_raid_complete(
     instance: &RaidInstance,
@@ -3191,7 +3465,7 @@ fn upsert_raid_drop_record(
 /// 新流程（基于10金匹配 + 增量状态）：
 /// 1. 扫描 combat_logs/*.jcl
 /// 2. 查询 chatlog 获取所有10金记录
-/// 3. 聚类为副本实例（带10金匹配，过滤拉托）
+/// 3. 聚类为副本实例（带10金匹配，只计入识别到的击杀）
 /// 4. 对每个副本实例，提取 chatlog 物品分配和金币收入
 /// 5. 写入 records 表（source='auto_scan'）：
 ///    - 副本未完成（BOSS未全击杀 / 无底薪 / 进程在跑 / 角色在线）→ status='scanning'，UI 锁定不可确认
@@ -3302,7 +3576,7 @@ pub fn scan_raid_drops_with_raids(
     //     在聚类前过滤，避免对未配置副本做10金匹配和"拉托"判定
     let mut skipped_unconfigured: Vec<String> = Vec::new();
     let configured_jcl_files: Vec<JclFileInfo> = jcl_files
-        .into_iter()
+        .iter()
         .filter(|jcl| {
             if match_raid_name(&jcl.raid_display_name, &raids).is_some() {
                 true
@@ -3311,6 +3585,7 @@ pub fn scan_raid_drops_with_raids(
                 false
             }
         })
+        .cloned()
         .collect();
 
     if !skipped_unconfigured.is_empty() {
@@ -3360,7 +3635,7 @@ pub fn scan_raid_drops_with_raids(
     );
 
     // 3. 分析每个 JCL 文件内容，提取战斗时间和击杀状态
-    //    替代原 10金查询方案：通过 JCL 的 NPC_FIGHT_HINT (bFight True→False) 判定通关
+    //    替代原 10金查询方案：通过 JCL 的运行时实体证据判定通关
     //    每个 JCL 只解析一次，结果缓存到 jcl_analyses
     //    同时使用 SQLite 持久化缓存（jcl_cache 表），跨会话复用解析结果
     let conn = match db::init_db() {
@@ -3372,6 +3647,7 @@ pub fn scan_raid_drops_with_raids(
     };
     let combat_logs_dir = account_dir.join("userdata").join("combat_logs");
     let mut jcl_analyses: HashMap<String, JclAnalysis> = HashMap::new();
+    let mut damage_candidates: HashMap<String, DamageCompletionCandidate> = HashMap::new();
     for jcl in &configured_jcl_files {
         // 查找 JCL 对应的 raid_entry，获取 raid_bosses 配置
         let raid_entry = match match_raid_name(&jcl.raid_display_name, &raids) {
@@ -3400,10 +3676,70 @@ pub fn scan_raid_drops_with_raids(
             analysis.fight_end_ms,
             analysis.boss_name
         );
+        // 强证据已足够时不需要金币；否则只为满足完整通用门槛的直接配置首领建立候选。
+        // 候选独立重读文件，确保 SQLite 缓存命中也不会丢失本轮补漏所需的 type=21 证据。
+        if !analysis.is_kill {
+            if let Some(candidate) = analyze_damage_completion_candidate(
+                &jcl_path,
+                &jcl.boss_name,
+                jcl.boss_id,
+                raid_bosses,
+                account_id,
+            ) {
+                damage_candidates.insert(jcl.file_name.clone(), candidate);
+            }
+        }
         jcl_analyses.insert(jcl.file_name.clone(), analysis);
     }
 
-    // 4. 聚类（按 JCL 顺序，使用 is_kill 过滤拉托，2小时阈值智能分组）
+    // 同角色、精确 10 金只补强完整伤害候选。这里的结果仅用于本次聚类；JCL 强证据
+    // `is_kill`、SQLite 缓存和后续财务收入统计都不被改写。
+    let (verified_reward_times, promoted_files) = if damage_candidates.is_empty() {
+        (Vec::new(), HashSet::new())
+    } else {
+        let candidate_values: Vec<DamageCompletionCandidate> = damage_candidates.values().cloned().collect();
+        let verified_reward_times = read_role_verified_ten_gold_times(&chatlog_files, account_id, &candidate_values);
+        let mut attempt_end_times = Vec::new();
+        let mut anchors_complete = true;
+        for jcl in &jcl_files {
+            match collect_type1_end_anchors(&combat_logs_dir.join(&jcl.file_name), account_id) {
+                Some(ends) => attempt_end_times.extend(ends),
+                None => {
+                    anchors_complete = false;
+                    log::warn!("[DropScanner] 10金补漏停用：无法完整读取尝试结束锚 '{}'", jcl.file_name);
+                }
+            }
+        }
+        let promoted = if anchors_complete {
+            select_damage_money_promotions(&damage_candidates, &attempt_end_times, &verified_reward_times)
+        } else {
+            HashSet::new()
+        };
+        (verified_reward_times, promoted)
+    };
+    let mut effective_jcl_analyses = jcl_analyses.clone();
+    for file_name in &promoted_files {
+        if let (Some(candidate), Some(effective)) = (damage_candidates.get(file_name), effective_jcl_analyses.get_mut(file_name)) {
+            effective.is_kill = true;
+            log::info!(
+                "[DropScanner] 10金补强击杀: 文件='{}', BOSS='{}', end={}, window={}s",
+                file_name,
+                candidate.boss_name,
+                candidate.fight_end_ms,
+                DAMAGE_MONEY_MATCH_WINDOW_SECS
+            );
+        }
+    }
+    if !damage_candidates.is_empty() {
+        log::info!(
+            "[DropScanner] 伤害+10金补漏: 候选={}，角色校验10金={}，补强={}",
+            damage_candidates.len(),
+            verified_reward_times.len(),
+            promoted_files.len()
+        );
+    }
+
+    // 4. 聚类（按 JCL 顺序，使用 is_kill 筛选已确认击杀，2小时阈值智能分组）
     //    使用预加载的 chatlog 记录进行工资检测，避免重复打开 SQLite
     //    预提取所有已配置 JCL 的时间戳（排序），用于后续 chatlog_end 截断：
     //    不管下一个副本是否通关，只要有 JCL 产生就说明新副本活动已开始，应截断 chatlog
@@ -3415,7 +3751,7 @@ pub fn scan_raid_drops_with_raids(
     let mut instances = cluster_raid_instances(
         account_id,
         configured_jcl_files,
-        &jcl_analyses,
+        &effective_jcl_analyses,
         &preloaded_records,
     );
     log::info!(
@@ -3555,7 +3891,6 @@ pub fn scan_raid_drops_with_raids(
         let mut base_salary: Option<i64> = None;
         let other_income: i64;
         let total_expense: i64;
-        let chatlog_query_count = if preloaded_records.is_empty() { 0u32 } else { 1u32 };
         // 合并所有 chatlog 文件的收入记录 (time_sec, gold)，用于精确收入匹配
         let mut all_income_records: Vec<(i64, i64)> = Vec::new();
         // 累加所有 chatlog 文件的 boss_kill_times，用于击杀数验证
@@ -3585,10 +3920,8 @@ pub fn scan_raid_drops_with_raids(
             preloaded_records.len()
         );
 
-        // Boss 击杀数验证：以 chatlog 10金次数校验 JCL 判定的击杀数。
-        // 但 chatlog 10金校验仅在 chatlog 确认落盘后（游戏退出或角色离线）执行，
-        // 因为茗伊插件在游戏运行期间不实时刷盘，chatlog 数据可能不完整。
-        // 判定信号：jx3_running=false 或 role_online=false 表示 chatlog 已落盘。
+        // 10 金不再反向裁剪 JCL 强证据。它只在聚类前与同角色、完整有效伤害候选
+        // 联合使用；这里保留诊断计数，避免漏盘、跨文件或非击杀的同额收入删掉真击杀。
         let boss_all_killed = !raid_bosses.is_empty() && {
             let configured_names: std::collections::HashSet<&str> = raid_bosses
                 .iter()
@@ -3602,47 +3935,12 @@ pub fn scan_raid_drops_with_raids(
             killed_configured >= raid_bosses.len() as u32
         };
 
-        // chatlog 是否已落盘：游戏退出或角色离线时，chatlog 不再被实时写入，视为已落盘
-        let chatlog_flushed = !jx3_running || !role_online;
-
-        if boss_all_killed {
-            log::info!(
-                "[DropScanner] 副本 {} BOSS已全清({}/{}), 跳过 chatlog 10金校验",
-                instance.raid_display_name,
-                instance.boss_kill_count,
-                raid_bosses.len()
-            );
-        } else if !chatlog_flushed {
-            // 游戏运行中且角色在线：chatlog 可能未完全落盘，跳过校验，保留 JCL 判定
-            log::info!(
-                "[DropScanner] 副本 {} BOSS未全清({}/{}), chatlog 未落盘(jx3_running={}, role_online={}), 跳过10金校验保留JCL判定",
-                instance.raid_display_name,
-                instance.boss_kill_count,
-                raid_bosses.len(),
-                jx3_running,
-                role_online
-            );
-        } else if chatlog_query_count > 0 {
-            // chatlog 已落盘：执行原有 10金校验逻辑
-            let chatlog_boss_kills = all_boss_kill_times.len() as u32;
-            if chatlog_boss_kills < instance.boss_kill_count {
-                log::warn!(
-                    "[DropScanner] 副本 {} BOSS击杀数校验: JCL判定={}, chatlog 10金={}, 以 chatlog 为准",
-                    instance.raid_display_name, instance.boss_kill_count, chatlog_boss_kills
-                );
-                // 从后往前裁剪 bosses_killed，保留 chatlog_boss_kills 个
-                while instance.bosses_killed.len() > chatlog_boss_kills as usize {
-                    instance.bosses_killed.pop();
-                }
-                instance.boss_kill_count = chatlog_boss_kills;
-            }
-        } else {
-            // chatlog 已落盘但无数据（chatlog_query_count == 0），保留 JCL 判定
-            log::info!(
-                "[DropScanner] 副本 {} chatlog 已落盘但无10金记录, 保留JCL判定",
-                instance.raid_display_name
-            );
-        }
+        log::info!(
+            "[DropScanner] 副本 {} 击杀证据: JCL有效={}, chatlog 10金诊断={}，不以10金反向裁剪",
+            instance.raid_display_name,
+            instance.boss_kill_count,
+            all_boss_kill_times.len()
+        );
 
         // 最终收入计算：
         // - 有底薪：在收入记录中找金额 >= 底薪值的第一条记录，用该金额作为收入
@@ -4896,6 +5194,35 @@ mod tests {
         (temp_dir, path)
     }
 
+    /// 将脱敏的 GBK 回归 fixture 写回其原始文件名，以覆盖生产用的文件名副本识别逻辑。
+    fn write_luoyang_fixture(
+        fixture_file: &str,
+        source_file_name: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let fixture_bytes: &[u8] = match fixture_file {
+            "01-tuli-success.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/01-tuli-success.jcl"),
+            "02-tian-success.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/02-tian-success.jcl"),
+            "03-shenshi-minion.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/03-shenshi-minion.jcl"),
+            "04-shibing-minion.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/04-shibing-minion.jcl"),
+            "05-zhuyan-reset.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/05-zhuyan-reset.jcl"),
+            "06-jingye-success.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/06-jingye-success.jcl"),
+            "07-ashina-reset.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/07-ashina-reset.jcl"),
+            "08-ashina-success.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/08-ashina-success.jcl"),
+            "09-shiyi-success.jcl" => include_bytes!("drop_scanner/fixtures/luoyang/09-shiyi-success.jcl"),
+            _ => panic!("未知洛阳 fixture: {}", fixture_file),
+        };
+        let dir_name = format!(
+            "jx3-raid-manager-luoyang-fixture-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let temp_dir = std::env::temp_dir().join(dir_name);
+        fs::create_dir_all(&temp_dir).expect("洛阳 fixture 临时目录应可创建");
+        let path = temp_dir.join(source_file_name);
+        fs::write(&path, fixture_bytes).expect("洛阳 GBK fixture 应可写入");
+        (temp_dir, path)
+    }
+
     /// 在测试数据库中创建测试账号和角色
     fn create_test_account_role(conn: &rusqlite::Connection) -> (String, String) {
         let account_id = Uuid::new_v4().to_string();
@@ -5707,8 +6034,81 @@ mod tests {
         assert_eq!(instances.len(), 0, "全为拉托应跳过不创建实例");
     }
 
-    /// 洛阳之战逐焰文件沿用历史的多 BOSS 判定：由 JCL 内容把逐焰解析为寂夜本体，
-    /// 无击杀信号时走既有的组级别兜底，不额外引入分身专属规则。
+    #[test]
+    fn test_cluster_raid_instances_require_confirmed_kill_for_every_raid() {
+        let raids = [
+            ("10人普通洛阳之战", 828, "伊曼·寂夜", "伊曼·逐焰"),
+            ("25人普通洛阳之战", 828, "伊曼·寂夜", "伊曼·逐焰"),
+            ("25人英雄洛阳之战", 828, "伊曼·寂夜", "伊曼·逐焰"),
+            ("25人英雄阆风悬城", 795, "唐怀仁", "须罗巨傀"),
+        ];
+        // None 表示缺少解析结果；明确成功后出现未确认或缺失日志，不应覆盖已有击杀。
+        let scenarios: &[(&[Option<bool>], Option<usize>)] = &[
+            (&[Some(false)], None),
+            (&[Some(false), Some(false)], None),
+            (&[None, None], None),
+            (&[Some(false), Some(false), Some(true)], Some(2)),
+            (&[Some(false), Some(true), Some(false)], Some(1)),
+            (&[Some(true), Some(true)], Some(1)),
+            (&[Some(true), None], Some(0)),
+        ];
+
+        for (raid_name, map_id, boss_name, entity_name) in raids {
+            for file_boss_name in [boss_name, entity_name] {
+                for &(outcomes, expected_index) in scenarios {
+                    let mut analyses = HashMap::new();
+                    let files: Vec<JclFileInfo> = outcomes
+                        .iter()
+                        .enumerate()
+                        .map(|(index, outcome)| {
+                            let timestamp = 1_700_000_000_000 + index as i64 * 60_000;
+                            let file_name = format!("{}-{}-{}.jcl", raid_name, file_boss_name, index);
+                            if let Some(is_kill) = outcome {
+                                analyses.insert(
+                                    file_name.clone(),
+                                    JclAnalysis {
+                                        boss_name: Some(boss_name.to_string()),
+                                        fight_start_ms: timestamp,
+                                        fight_end_ms: timestamp + 30_000,
+                                        is_kill: *is_kill,
+                                    },
+                                );
+                            }
+                            JclFileInfo {
+                                file_name,
+                                timestamp,
+                                raid_display_name: raid_name.to_string(),
+                                raid_id: map_id,
+                                boss_name: file_boss_name.to_string(),
+                                boss_id: 1,
+                            }
+                        })
+                        .collect();
+
+                    let instances = cluster_raid_instances(
+                        "test_account",
+                        files.clone(),
+                        &analyses,
+                        &[],
+                    );
+                    let context = format!("{} / {} / {:?}", raid_name, file_boss_name, outcomes);
+                    if let Some(index) = expected_index {
+                        assert_eq!(instances.len(), 1, "{}", context);
+                        let instance = &instances[0];
+                        assert_eq!(instance.boss_kill_count, 1, "{}", context);
+                        assert_eq!(instance.jcl_files, vec![files[index].file_name.clone()], "{}", context);
+                        assert_eq!(instance.jcl_boss_names, vec![boss_name], "{}", context);
+                        assert_eq!(instance.end_time, files[index].timestamp + 30_000, "{}", context);
+                        assert_eq!(instance.last_jcl_time, files.last().unwrap().timestamp, "{}", context);
+                    } else {
+                        assert!(instances.is_empty(), "无确认击杀不得补记：{}", context);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 洛阳之战逐焰文件仍映射为寂夜本体，但无明确完成信号时不能由聚类兜底记为击杀。
     #[test]
     fn test_analyze_jcl_luoyang_clone_uses_generic_boss_resolution() {
         let raid_bosses = vec![
@@ -5737,8 +6137,8 @@ mod tests {
             "仅解析单份 JCL 时，逐焰的死亡/离场不产生寂夜的明确击杀信号"
         );
 
-        // 无明确击杀信号时，沿用既有的组级别兜底：把该 BOSS 子组的最后一个 JCL 记为击杀。
         // 覆盖静态配置中的 10人普通、25人普通、25人英雄三种副本显示名。
+        // 逐焰拉脱不能仅因文件名与内容首领不同而提前计入寂夜。
         for raid_display_name in ["10人普通洛阳之战", "25人普通洛阳之战", "25人英雄洛阳之战"] {
             let clone_file = format!("{}-逐焰.jcl", raid_display_name);
             let next_boss_file = format!("{}-阿史那承庆.jcl", raid_display_name);
@@ -5781,11 +6181,516 @@ mod tests {
             assert_eq!(instances.len(), 1, "{} 应产出后续 BOSS 的副本实例", raid_display_name);
             assert_eq!(
                 instances[0].jcl_boss_names,
-                vec!["伊曼·寂夜", "阿史那承庆"],
-                "{} 中逐焰文件按历史多 BOSS 兜底解析为寂夜本体",
+                vec!["阿史那承庆"],
+                "{} 中无完成信号的逐焰文件不能由聚类兜底解析为寂夜击杀",
                 raid_display_name
             );
         }
+    }
+
+    #[test]
+    fn test_generic_reset_signals_are_raid_metadata_invariant() {
+        let contents = concat!(
+            "crc\t1\t1700000000\t0\t1\t{true,\"fight\",0}\n",
+            "crc\t2\t1700000001\t0\t8\t{101,\"测试首领\",138376,0,0,0,0,192}\n",
+            "crc\t3\t1700000002\t0\t9\t{101,true,100,100}\n",
+            "crc\t4\t1700000003\t0\t9\t{101,false,100,100}\n",
+            "crc\t5\t1700000004\t0\t7\t{101}\n",
+            "crc\t6\t1700000005\t0\t1\t{false,\"fight\",5}\n",
+        );
+        for (raid_name, map_id, business_id) in [
+            ("洛阳之战", 828, "luoyangzhizhan_4"),
+            ("25人英雄阆风悬城", 795, "other_1"),
+        ] {
+            let file_name = format!(
+                "2026-10-29-22-22-20-{}({})-测试首领(138376).jcl",
+                raid_name, map_id
+            );
+            let raid_bosses = vec![(business_id.to_string(), "测试首领".to_string())];
+            let (temp_dir, jcl_path) = write_gbk_jcl_fixture(&file_name, contents);
+            let analysis = analyze_jcl(&jcl_path, "测试首领", 138376, &raid_bosses)
+                .expect("临时 JCL 应可解析");
+            fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+            assert!(
+                !analysis.is_kill,
+                "仅脱战、离场和朝向 192 不能判定击杀：{} / {} / {}",
+                raid_name,
+                map_id,
+                business_id
+            );
+        }
+    }
+
+    #[test]
+    fn test_luoyang_accepts_jiye_chest_without_achievement() {
+        let raid_bosses = vec![
+            ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string()),
+        ];
+        let (chest_dir, chest_path) = write_gbk_jcl_fixture(
+            "2026-10-29-22-09-07-洛阳之战(828)-伊曼·寂夜(138932).jcl",
+            concat!(
+                "crc\t1\t1700000200\t0\t1\t{true,\"fight\",0}\n",
+                "crc\t2\t1700000201\t0\t8\t{202,\"伊曼·寂夜\",138932,0,0,0,0,0}\n",
+                "crc\t3\t1700000202\t0\t9\t{202,true,100,100}\n",
+                "crc\t4\t1700000203\t0\t8\t{303,\"伊曼寂夜宝箱\",0,0,0,0,0,0}\n",
+                "crc\t5\t1700000204\t0\t1\t{false,\"fight\",4}\n",
+            ),
+        );
+        let chest = analyze_jcl(&chest_path, "伊曼·寂夜", 138932, &raid_bosses)
+            .expect("宝箱 JCL 应可解析");
+        fs::remove_dir_all(chest_dir).expect("临时 JCL 目录应可删除");
+        assert!(chest.is_kill, "没有成就消息时也应根据对应首领宝箱识别成功");
+    }
+
+    #[test]
+    fn test_achievement_messages_do_not_affect_either_boss_path() {
+        let raid_bosses = vec![
+            ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string()),
+            ("luoyangzhizhan_4".to_string(), "阿史那承庆".to_string()),
+        ];
+        let cases = [
+            (
+                "阿史那承庆", 138376,
+                concat!(
+                    "crc\t2\t1700000301\t0\t8\t{101,\"阿史那承庆\",138376,0,0,0,0,0}\n",
+                    "crc\t3\t1700000302\t0\t9\t{101,true,100,100}\n",
+                ),
+                "crc\t7\t1700000306\t0\t8\t{303,\"阿史那承庆宝箱\",140033,0,0,0,0,0}\n",
+                "crc\t6\t1700000305\t0\t18\t{\"[全胜！洛阳之战]：4/5，击败阿史那承庆(完成)\\n\",\"MSG_SYS\"}\n",
+            ),
+            (
+                "伊曼·逐焰", 138933,
+                concat!(
+                    "crc\t2\t1700000301\t0\t8\t{101,\"伊曼·逐焰\",138933,0,0,0,0,0}\n",
+                    "crc\t3\t1700000302\t0\t8\t{202,\"伊曼·寂夜\",138932,0,0,0,0,0}\n",
+                    "crc\t4\t1700000303\t0\t9\t{101,true,100,100}\n",
+                    "crc\t5\t1700000304\t0\t9\t{202,true,100,100}\n",
+                ),
+                "crc\t7\t1700000306\t0\t8\t{303,\"伊曼寂夜宝箱\",140032,0,0,0,0,0}\n",
+                "crc\t6\t1700000305\t0\t18\t{\"[全胜！洛阳之战]：3/5，击败伊曼寂夜、伊曼逐焰(完成)\\n\",\"MSG_SYS\"}\n",
+            ),
+        ];
+        for (boss_name, boss_id, actors, chest, achievement) in cases {
+            for with_chest in [false, true] {
+                let mut baseline = None;
+                for repetitions in [0, 1, 3] {
+                    let mut contents = String::from(
+                        "crc\t1\t1700000300\t0\t1\t{true,\"fight\",0}\n",
+                    );
+                    contents.push_str(actors);
+                    for _ in 0..repetitions {
+                        contents.push_str(achievement);
+                    }
+                    if with_chest {
+                        contents.push_str(chest);
+                    }
+                    contents.push_str(
+                        "crc\t8\t1700000307\t0\t1\t{false,\"fight\",7}\n",
+                    );
+                    let file_name = format!(
+                        "2026-10-29-22-09-07-洛阳之战(828)-{}({}).jcl",
+                        boss_name, boss_id
+                    );
+                    let (temp_dir, jcl_path) = write_gbk_jcl_fixture(&file_name, &contents);
+                    let analysis = analyze_jcl(&jcl_path, boss_name, boss_id, &raid_bosses)
+                        .expect("成就不变性样本应可解析");
+                    fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+                    assert_eq!(analysis.is_kill, with_chest, "成就消息不能补充击杀依据");
+                    let snapshot = (
+                        analysis.boss_name,
+                        analysis.fight_start_ms,
+                        analysis.fight_end_ms,
+                        analysis.is_kill,
+                    );
+                    if let Some(expected) = &baseline {
+                        assert_eq!(&snapshot, expected, "成就出现、缺失或重复不应改变任何解析结果");
+                    } else {
+                        baseline = Some(snapshot);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_jcl_cache_key_versions_all_raids_after_analysis_changes() {
+        for file_name in [
+            "2026-10-29-22-29-08-洛阳之战(828)-阿史那承庆(138376).jcl",
+            "2026-10-29-22-29-08-25人英雄阆风悬城(795)-阿史那承庆(138376).jcl",
+        ] {
+            assert_eq!(
+                jcl_cache_key(Path::new(file_name)),
+                format!("{}{}", JCL_ANALYSIS_CACHE_VERSION, file_name),
+                "解析规则更新后，旧缓存均须重算"
+            );
+        }
+    }
+
+    #[test]
+    fn test_jcl_versioned_cache_ignores_old_entries_and_still_uses_mtime() {
+        let raid_bosses = vec![("business_1".to_string(), "普通首领".to_string())];
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "2026-10-30-10-00-00-任意副本(999)-普通首领(61001).jcl",
+            concat!(
+                "crc\t1\t1700001100\t0\t1\t{true,\"fight\",0}\n",
+                "crc\t2\t1700001101\t0\t8\t{101,\"普通首领\",61001,0,0,0,0,0}\n",
+                "crc\t3\t1700001102\t0\t9\t{101,true,100,100}\n",
+            ),
+        );
+        let conn = Connection::open_in_memory().expect("内存数据库应可创建");
+        conn.execute_batch(
+            "CREATE TABLE jcl_cache (
+                file_path TEXT PRIMARY KEY,
+                file_mtime INTEGER NOT NULL,
+                boss_name TEXT,
+                fight_start_ms INTEGER NOT NULL,
+                fight_end_ms INTEGER NOT NULL,
+                is_kill INTEGER NOT NULL,
+                cached_at TEXT NOT NULL
+            )",
+        )
+        .expect("内存缓存表应可创建");
+        let mtime = get_file_mtime(&jcl_path);
+        let raw_path = jcl_path.to_string_lossy().to_string();
+        for old_key in [
+            raw_path.clone(),
+            format!("jcl-luoyang-v2|{}", raw_path),
+            format!("jcl-analysis-v3|{}", raw_path),
+            format!("jcl-analysis-v4|{}", raw_path),
+            format!("jcl-analysis-v5|{}", raw_path),
+            format!("jcl-analysis-v6|{}", raw_path),
+            format!("jcl-analysis-v7|{}", raw_path),
+        ] {
+            set_jcl_cache(
+                &conn,
+                &old_key,
+                mtime,
+                &JclAnalysis {
+                    boss_name: Some("普通首领".to_string()),
+                    fight_start_ms: 1,
+                    fight_end_ms: 2,
+                    is_kill: true,
+                },
+            );
+        }
+
+        let first = analyze_jcl_cached(&conn, &jcl_path, "普通首领", 61001, &raid_bosses)
+            .expect("版本化缓存首次应重新解析");
+        assert!(!first.is_kill, "v7 的旧 true 缓存必须按实体证据重新解析为不确认");
+        let cache_key = jcl_cache_key(&jcl_path);
+        assert!(get_jcl_cache(&conn, &cache_key, mtime).is_some(), "新键应写入并复用");
+        assert!(
+            get_jcl_cache(&conn, &cache_key, mtime + 1).is_none(),
+            "文件 mtime 改变时版本化缓存仍须失效"
+        );
+        let second = analyze_jcl_cached(&conn, &jcl_path, "普通首领", 61001, &raid_bosses)
+            .expect("新键缓存命中应可读取");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(!second.is_kill);
+    }
+
+    #[test]
+    fn test_v8_false_cache_hit_can_promote_without_cache_writeback() {
+        let bosses = vec![("boss_1".to_string(), "测试首领".to_string())];
+        let (temp_dir, path) = write_gbk_jcl_fixture(
+            "cached-candidate.jcl",
+            concat!(
+                "crc\t1\t1700000000\t0\t1\t{true,\"fixture::U123456/1\",0}\n",
+                "crc\t2\t1700000001\t0\t8\t{9001,\"测试首领\",61001,0,0,0,0}\n",
+                "crc\t3\t1700000002\t0\t9\t{9001,true,100,100,0,0}\n",
+                "crc\t4\t1700000003\t0\t21\t{111,9001,0,0,0,0,0,0,{[13]=100,[14]=0}}\n",
+                "crc\t5\t1700000004\t0\t9\t{9001,false,100,100,0,0}\n",
+                "crc\t6\t1700000005\t0\t1\t{false,\"fixture::U123456/1\",5}\n",
+            ),
+        );
+        let conn = Connection::open_in_memory().expect("内存数据库应可创建");
+        conn.execute_batch("CREATE TABLE jcl_cache (file_path TEXT PRIMARY KEY, file_mtime INTEGER NOT NULL, boss_name TEXT, fight_start_ms INTEGER NOT NULL, fight_end_ms INTEGER NOT NULL, is_kill INTEGER NOT NULL, cached_at TEXT NOT NULL)")
+            .expect("缓存表应可创建");
+        let first = analyze_jcl_cached(&conn, &path, "测试首领", 61001, &bosses).expect("首次解析");
+        assert!(!first.is_kill);
+        let cached = analyze_jcl_cached(&conn, &path, "测试首领", 61001, &bosses).expect("v8 false 缓存命中");
+        assert!(!cached.is_kill, "缓存只存JCL强证据");
+        let candidate = analyze_damage_completion_candidate(&path, "测试首领", 61001, &bosses, "123456").expect("缓存命中仍需独立重建候选");
+        let mut candidates = HashMap::new();
+        candidates.insert("cached-candidate.jcl".to_string(), candidate.clone());
+        assert_eq!(select_damage_money_promotions(&candidates, &[candidate.fight_end_ms], &[candidate.fight_end_ms / 1000 - 5]), HashSet::from(["cached-candidate.jcl".to_string()]));
+        let cache = get_jcl_cache(&conn, &jcl_cache_key(&path), get_file_mtime(&path)).expect("v8缓存仍存在");
+        assert!(!cache.is_kill, "外部补强不得回写JCL缓存");
+        fs::remove_dir_all(temp_dir).expect("临时目录应可删除");
+    }
+
+    #[test]
+    fn test_treasure_box_name_matches_directly_or_without_dots() {
+        let bosses = vec![("boss_1".to_string(), "伊曼·寂夜".to_string())];
+        for name in ["伊曼·寂夜", "伊曼寂夜", "伊曼.寂夜", "伊·曼.寂夜"] {
+            assert_eq!(match_treasure_box_boss(name, &bosses), Some("伊曼·寂夜"));
+        }
+        for name in ["", ".·", "伊曼寂夜幻影", "伊曼寂", "伊曼-寂夜"] {
+            assert_eq!(match_treasure_box_boss(name, &bosses), None, "{}", name);
+        }
+        let plain = vec![("boss_1".to_string(), "伊曼寂夜".to_string())];
+        assert_eq!(match_treasure_box_boss("伊曼·寂夜", &plain), Some("伊曼寂夜"));
+        let ascii = vec![("boss_1".to_string(), "伊曼.寂夜".to_string())];
+        assert_eq!(match_treasure_box_boss("伊曼寂夜", &ascii), Some("伊曼.寂夜"));
+    }
+
+    #[test]
+    fn test_treasure_box_name_prefers_exact_match_and_rejects_dot_collisions() {
+        let bosses = vec![
+            ("boss_1".to_string(), "甲·乙".to_string()),
+            ("boss_2".to_string(), "甲乙".to_string()),
+        ];
+        assert_eq!(match_treasure_box_boss("甲乙", &bosses), Some("甲乙"));
+        assert_eq!(match_treasure_box_boss("甲·乙", &bosses), Some("甲·乙"));
+        assert_eq!(match_treasure_box_boss("甲.乙", &bosses), None);
+    }
+
+    #[test]
+    fn test_treasure_box_name_matching_is_generic_with_or_without_config() {
+        for configured in [true, false] {
+            for (boss_name, chest_name, expected_kill) in [
+                ("伊曼·寂夜", "伊曼·寂夜宝箱", true),
+                ("伊曼·寂夜", "伊曼寂夜宝箱", true),
+                ("伊曼.寂夜", "伊曼寂夜宝箱", true),
+                ("伊曼寂夜", "伊曼·寂夜宝箱", true),
+                ("伊曼·寂夜", "伊曼寂夜幻影宝箱", false),
+            ] {
+                let bosses = if configured {
+                    vec![("other_1".to_string(), boss_name.to_string())]
+                } else {
+                    Vec::new()
+                };
+                let file_name = format!(
+                    "2026-10-30-10-00-00-测试副本(999)-{}(138932).jcl",
+                    boss_name
+                );
+                let contents = format!(
+                    concat!(
+                        "crc\t1\t1700000200\t0\t1\t{{true,\"fight\",0}}\n",
+                        "crc\t2\t1700000201\t0\t8\t{{101,\"{}\",138932,0,0,0,0,0}}\n",
+                        "crc\t3\t1700000202\t0\t9\t{{101,true,100,100}}\n",
+                        "crc\t4\t1700000203\t0\t8\t{{303,\"{}\",140032,0,0,0,0,0}}\n",
+                        "crc\t5\t1700000204\t0\t1\t{{false,\"fight\",4}}\n"
+                    ),
+                    boss_name, chest_name
+                );
+                let (temp_dir, jcl_path) = write_gbk_jcl_fixture(&file_name, &contents);
+                let analysis = analyze_jcl(&jcl_path, boss_name, 138932, &bosses)
+                    .expect("宝箱匹配样本应可解析");
+                fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+                assert_eq!(
+                    analysis.is_kill, expected_kill,
+                    "配置={}，首领={}，宝箱={}", configured, boss_name, chest_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_luoyang_real_fixtures_and_prefix_clustering() {
+        let raid_bosses = vec![
+            ("luoyangzhizhan_1".to_string(), "突利和顺".to_string()),
+            ("luoyangzhizhan_2".to_string(), "田承嗣".to_string()),
+            ("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string()),
+            ("luoyangzhizhan_4".to_string(), "阿史那承庆".to_string()),
+            ("luoyangzhizhan_5".to_string(), "史朝义".to_string()),
+        ];
+        let fixtures = [
+            ("01-tuli-success.jcl", "2026-10-29-21-43-36-洛阳之战(828)-突利和顺(137976).jcl", Some("突利和顺"), true),
+            ("02-tian-success.jcl", "2026-10-29-21-53-40-洛阳之战(828)-田承嗣(139113).jcl", Some("田承嗣"), true),
+            ("03-shenshi-minion.jcl", "2026-10-29-22-00-50-洛阳之战(828)-拜火燎原团神使(140546).jcl", None, false),
+            ("04-shibing-minion.jcl", "2026-10-29-22-01-49-洛阳之战(828)-拜火燎原团士兵(140545).jcl", None, false),
+            ("05-zhuyan-reset.jcl", "2026-10-29-22-05-01-洛阳之战(828)-伊曼·逐焰(138933).jcl", Some("伊曼·寂夜"), false),
+            ("06-jingye-success.jcl", "2026-10-29-22-09-07-洛阳之战(828)-伊曼·寂夜(138932).jcl", Some("伊曼·寂夜"), true),
+            ("07-ashina-reset.jcl", "2026-10-29-22-22-20-洛阳之战(828)-阿史那承庆(138376).jcl", Some("阿史那承庆"), false),
+            ("08-ashina-success.jcl", "2026-10-29-22-29-08-洛阳之战(828)-阿史那承庆(138376).jcl", Some("阿史那承庆"), true),
+            ("09-shiyi-success.jcl", "2026-10-29-22-40-04-洛阳之战(828)-史朝义(138261).jcl", Some("史朝义"), true),
+        ];
+        let expected_prefix_counts = [1, 2, 2, 2, 2, 3, 3, 4, 5];
+        let ten_gold_fixture: serde_json::Value = serde_json::from_str(include_str!("drop_scanner/fixtures/luoyang/ten-gold.json"))
+            .expect("10金 fixture 应为合法 JSON");
+        let role_uid = ten_gold_fixture["roleUid"].as_str().expect("10金 fixture 应含 roleUid");
+        let reward_times: Vec<i64> = ten_gold_fixture["times"]
+            .as_array()
+            .expect("10金 fixture 应含 times")
+            .iter()
+            .map(|value| value.as_i64().expect("10金时间必须为整数"))
+            .collect();
+        let mut jcl_files = Vec::new();
+        let mut analyses = HashMap::new();
+        let mut candidates = HashMap::new();
+
+        for (index, (fixture_file, source_file, expected_boss, expected_kill)) in fixtures.iter().enumerate() {
+            let info = parse_jcl_filename(source_file).expect("fixture 源文件名应可解析");
+            let (temp_dir, jcl_path) = write_luoyang_fixture(fixture_file, source_file);
+            let analysis = analyze_jcl(&jcl_path, &info.boss_name, info.boss_id, &raid_bosses)
+                .expect("真实脱敏 fixture 应可解析");
+            if *fixture_file == "09-shiyi-success.jcl" {
+                assert!(!analysis.is_kill, "史朝义的 fixture 强证据应保持不足，由伤害+10金单独补强");
+                let candidate = analyze_damage_completion_candidate(&jcl_path, &info.boss_name, info.boss_id, &raid_bosses, role_uid)
+                    .expect("史朝义应具有完整有效伤害候选");
+                candidates.insert(info.file_name.clone(), candidate);
+            }
+            fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+
+            assert_eq!(analysis.boss_name.as_deref(), *expected_boss, "{} BOSS 归属", fixture_file);
+            assert_eq!(analysis.is_kill, *expected_kill && *fixture_file != "09-shiyi-success.jcl", "{} JCL 强击杀判定", fixture_file);
+            analyses.insert(info.file_name.clone(), analysis);
+            jcl_files.push(info);
+
+            let attempt_end_times: Vec<i64> = analyses
+                .values()
+                .filter(|analysis| analysis.fight_start_ms > 0 && analysis.fight_end_ms >= analysis.fight_start_ms)
+                .map(|analysis| analysis.fight_end_ms)
+                .collect();
+            let promotions = select_damage_money_promotions(&candidates, &attempt_end_times, &reward_times);
+            let mut effective_analyses = analyses.clone();
+            for file_name in promotions {
+                effective_analyses.get_mut(&file_name).expect("补强文件必须存在").is_kill = true;
+            }
+            let instances = cluster_raid_instances(
+                "test_account",
+                jcl_files.clone(),
+                &effective_analyses,
+                &[],
+            );
+            let actual_count = instances.first().map(|instance| instance.boss_kill_count).unwrap_or(0);
+            assert_eq!(actual_count, expected_prefix_counts[index], "{} 前缀聚类", fixture_file);
+        }
+    }
+
+    #[test]
+    fn test_damage_completion_candidate_requires_uid_bound_single_attempt() {
+        let raid_bosses = vec![("boss_1".to_string(), "测试首领".to_string())];
+        let source_file = "2026-10-31-21-00-00-测试副本(999)-测试首领(61001).jcl";
+        let complete = concat!(
+            "crc\t1\t1700000000\t0\t1\t{true,\"fixture::U123456/1\",0}\n",
+            "crc\t2\t1700000001\t0\t8\t{9001,\"测试首领\",61001,0,0,0,0}\n",
+            "crc\t3\t1700000002\t0\t9\t{9001,true,100,100,0,0}\n",
+            "crc\t4\t1700000003\t0\t21\t{111,9001,0,0,0,0,0,0,{[13]=100,[14]=0}}\n",
+            "crc\t5\t1700000004\t0\t9\t{9001,false,100,100,0,0}\n",
+            "crc\t6\t1700000005\t0\t1\t{false,\"fixture::U123456/1\",5}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(source_file, complete);
+        let candidate = analyze_damage_completion_candidate(&jcl_path, "测试首领", 61001, &raid_bosses, "123456");
+        assert_eq!(candidate, Some(DamageCompletionCandidate { boss_name: "测试首领".to_string(), fight_end_ms: 1_700_000_005_000 }));
+        assert!(analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses).is_some_and(|analysis| !analysis.is_kill), "伤害候选不能污染 JCL 强证据");
+        assert!(analyze_damage_completion_candidate(&jcl_path, "测试首领", 61001, &raid_bosses, "999999").is_none(), "UID 不匹配不能补漏");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+
+        let wrong_name = complete.replacen("\"测试首领\",61001", "\"同模板小怪\",61001", 1);
+        let (wrong_name_dir, wrong_name_path) = write_gbk_jcl_fixture(source_file, &wrong_name);
+        assert!(analyze_damage_completion_candidate(&wrong_name_path, "测试首领", 61001, &raid_bosses, "123456").is_none(), "同模板但名字不符不能借用伤害");
+        fs::remove_dir_all(wrong_name_dir).expect("临时 JCL 目录应可删除");
+
+        let wrong_template = complete.replacen("\"测试首领\",61001", "\"测试首领\",61002", 1);
+        let (wrong_template_dir, wrong_template_path) = write_gbk_jcl_fixture(source_file, &wrong_template);
+        assert!(analyze_damage_completion_candidate(&wrong_template_path, "测试首领", 61001, &raid_bosses, "123456").is_none(), "模板不符不能补漏");
+        fs::remove_dir_all(wrong_template_dir).expect("临时 JCL 目录应可删除");
+
+        for (label, contents) in [
+            ("bad-event", complete.replacen("\t1\t{true", "\tbad\t{true", 1)),
+            ("bad-type8", complete.replacen("{9001,\"测试首领\",61001", "{bad,\"测试首领\",61001", 1)),
+            ("bad-line", format!("{}损坏行", complete)),
+            ("end-hint", format!("{}crc\t7\t1700000006\t0\t9\t{{9001,true,100,100,0,0}}\n", complete)),
+        ] {
+            let (dir, path) = write_gbk_jcl_fixture(source_file, &contents);
+            assert!(analyze_damage_completion_candidate(&path, "测试首领", 61001, &raid_bosses, "123456").is_none(), "{} 不能候选", label);
+            fs::remove_dir_all(dir).expect("临时 JCL 目录应可删除");
+        }
+
+        let pre_npc_reentry = complete.replacen(
+            "crc\t2\t1700000001\t0\t8",
+            concat!(
+                "crc\t2\t1700000001\t0\t9\t{9001,true,100,100,0,0}\n",
+                "crc\t3\t1700000001\t0\t9\t{9001,false,100,100,0,0}\n",
+                "crc\t4\t1700000001\t0\t9\t{9001,true,100,100,0,0}\n",
+                "crc\t5\t1700000001\t0\t8",
+            ),
+            1,
+        );
+        let (pre_npc_dir, pre_npc_path) = write_gbk_jcl_fixture(source_file, &pre_npc_reentry);
+        assert!(analyze_damage_completion_candidate(&pre_npc_path, "测试首领", 61001, &raid_bosses, "123456").is_none(), "NPC_INFO 前重入不能被延迟归属绕过");
+        fs::remove_dir_all(pre_npc_dir).expect("临时 JCL 目录应可删除");
+
+        let reentered = complete.replace(
+            "crc\t5\t1700000004\t0\t9\t{9001,false,100,100,0,0}\n",
+            concat!(
+                "crc\t5\t1700000004\t0\t9\t{9001,false,100,100,0,0}\n",
+                "crc\t6\t1700000005\t0\t9\t{9001,true,100,100,0,0}\n",
+            ),
+        );
+        let (reenter_dir, reenter_path) = write_gbk_jcl_fixture(source_file, &reentered);
+        assert!(analyze_damage_completion_candidate(&reenter_path, "测试首领", 61001, &raid_bosses, "123456").is_none(), "同运行时 false->true 重入不能补漏");
+        fs::remove_dir_all(reenter_dir).expect("临时 JCL 目录应可删除");
+    }
+
+    #[test]
+    fn test_damage_money_promotions_rejects_nearby_attempt_and_ambiguous_rewards() {
+        let candidate = |end_sec: i64| DamageCompletionCandidate { boss_name: "测试首领".to_string(), fight_end_ms: end_sec * 1000 };
+        let mut candidates = HashMap::new();
+        candidates.insert("candidate.jcl".to_string(), candidate(1_000));
+
+        assert_eq!(
+            select_damage_money_promotions(&candidates, &[1_000_000], &[1_005]),
+            HashSet::from(["candidate.jcl".to_string()]),
+            "一笔唯一且邻近的 10 金可补强"
+        );
+        assert_eq!(
+            select_damage_money_promotions(&candidates, &[1_000_000], &[1_015]),
+            HashSet::from(["candidate.jcl".to_string()]),
+            "±15 秒边界应包含"
+        );
+        assert!(
+            select_damage_money_promotions(&candidates, &[1_000_000], &[1_016]).is_empty(),
+            "±16 秒必须排除"
+        );
+        assert!(
+            select_damage_money_promotions(&candidates, &[1_000_000, 1_012_000], &[1_005]).is_empty(),
+            "同一笔钱同时邻近强证据或未达标的另一尝试时不能借用"
+        );
+        assert_eq!(
+            select_damage_money_promotions(&candidates, &[1_000_000], &[1_005, 1_007]),
+            HashSet::from(["candidate.jcl".to_string()]),
+            "同一场多笔 10 金只要存在唯一归属的一笔，仍只补强一次"
+        );
+    }
+
+    #[test]
+    fn test_type1_end_anchors_include_all_attempts_even_without_boss_config() {
+        let contents = concat!(
+            "crc\t1\t1700000000\t0\t1\t{true,\"fixture::U123456/1\",0}\n",
+            "crc\t2\t1700000010\t0\t1\t{false,\"fixture::U123456/1\",10}\n",
+            "crc\t3\t1700000020\t0\t1\t{true,\"fixture::U123456/1\",0}\n",
+            "crc\t4\t1700000030\t0\t1\t{false,\"fixture::U123456/1\",10}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture("unconfigured-two-attempts.jcl", contents);
+        assert_eq!(
+            collect_type1_end_anchors(&jcl_path, "123456"),
+            Some(vec![1_700_000_010_000, 1_700_000_030_000]),
+            "同文件多次 type1 false 都必须成为金额争用锚"
+        );
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+    }
+
+    #[test]
+    fn test_chatlog_user_global_id_normalization_is_strict() {
+        assert_eq!(normalize_chatlog_user_global_id("123456"), Some("123456".to_string()));
+        assert_eq!(normalize_chatlog_user_global_id("\"123456\""), Some("123456".to_string()));
+        assert_eq!(normalize_chatlog_user_global_id("\"999999\""), Some("999999".to_string()), "错 UID 必须保留给调用方精确比较");
+        assert_eq!(normalize_chatlog_user_global_id("null"), None);
+        assert_eq!(normalize_chatlog_user_global_id("\"12x\""), None);
+        assert_eq!(normalize_chatlog_user_global_id("prefix123456"), None);
+    }
+
+    #[test]
+    fn test_exact_boss_reward_requires_all_currency_components() {
+        let exact = r#"<text text="10" name="Text_Gold"/><text text="0" name="Text_Silver"/><text text="0" name="Text_Copper"/>"#;
+        let missing_copper = r#"<text text="10" name="Text_Gold"/><text text="0" name="Text_Silver"/>"#;
+        let non_zero_silver = r#"<text text="10" name="Text_Gold"/><text text="1" name="Text_Silver"/><text text="0" name="Text_Copper"/>"#;
+        assert!(is_exact_boss_kill_reward_msg(exact));
+        assert!(!is_exact_boss_kill_reward_msg(missing_copper), "补漏不能把缺省币种当成0");
+        assert!(!is_exact_boss_kill_reward_msg(non_zero_silver));
     }
 
     /// 路径 B：仅出现寂夜 NPC_INFO（如出场对话）时，不能归属给寂夜。
@@ -5830,8 +6735,9 @@ mod tests {
             "crc\t7\t1700000206\t0\t28\t{202,999}\n",
             "crc\t8\t1700000207\t0\t1\t{false,\"fight\",7}\n",
         );
-        let (first_dir, first_path) = write_gbk_jcl_fixture("luoyang-jiyen-first.jcl", clear_jcl);
-        let (second_dir, second_path) = write_gbk_jcl_fixture("luoyang-jiyen-second.jcl", clear_jcl);
+        let source_file = "2026-10-29-22-09-07-洛阳之战(828)-伊曼·逐焰(138933).jcl";
+        let (first_dir, first_path) = write_gbk_jcl_fixture(source_file, clear_jcl);
+        let (second_dir, second_path) = write_gbk_jcl_fixture(source_file, clear_jcl);
         let first_analysis = analyze_jcl(&first_path, "伊曼·逐焰", 61001, &raid_bosses)
             .expect("首份逐焰 JCL 应可解析");
         let second_analysis = analyze_jcl(&second_path, "伊曼·逐焰", 61001, &raid_bosses)
@@ -5894,6 +6800,272 @@ mod tests {
         assert_eq!(boss_ids.len(), 5, "全通应映射为 5 个正式 BOSS ID");
         assert_eq!(boss_ids[2], "luoyangzhizhan_3");
         assert_eq!(boss_names[2], "伊曼·寂夜");
+    }
+
+    #[test]
+    fn test_path_a_accepts_death_notify_or_hp_zero_for_any_raid_metadata() {
+        let raid_bosses = vec![
+            ("business_id_changes_do_not_matter".to_string(), "测试首领".to_string()),
+        ];
+        let death_signals = [
+            "crc\t4\t1700000403\t0\t28\t{101,999}\n",
+            "crc\t4\t1700000403\t0\t9\t{101,false,0,100}\n",
+        ];
+        for death_signal in death_signals {
+            let contents = format!(
+                "crc\t1\t1700000400\t0\t1\t{{true,\"fight\",0}}\n\
+                 crc\t2\t1700000401\t0\t8\t{{101,\"测试首领\",139113,0,0,0,0,0}}\n\
+                 crc\t3\t1700000402\t0\t9\t{{101,true,100,100}}\n{}",
+                death_signal
+            );
+            let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+                "2026-10-29-21-53-40-任意副本(999)-测试首领(139113).jcl",
+                &contents,
+            );
+            let analysis = analyze_jcl(&jcl_path, "测试首领", 139113, &raid_bosses)
+                .expect("路径 A 可靠死亡 JCL 应可解析");
+            fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+            assert!(analysis.is_kill, "路径 A 的可靠死亡证据应判定为击杀");
+        }
+    }
+
+    #[test]
+    fn test_path_b_requires_reliable_death_for_both_entities() {
+        let raid_bosses = vec![
+            ("unrelated_business_id".to_string(), "配置首领".to_string()),
+        ];
+        let prefix = concat!(
+            "crc\t1\t1700000500\t0\t1\t{true,\"fight\",0}\n",
+            "crc\t2\t1700000501\t0\t8\t{101,\"文件实体\",61001,0,0,0,0,0}\n",
+            "crc\t3\t1700000502\t0\t8\t{202,\"配置首领\",61002,0,0,0,0,0}\n",
+            "crc\t4\t1700000503\t0\t9\t{101,true,100,100}\n",
+            "crc\t5\t1700000504\t0\t9\t{202,true,100,100}\n",
+        );
+        let source_file = "2026-10-29-22-09-07-任意副本(999)-文件实体(61001).jcl";
+        let two_hp_zero = format!(
+            "{}crc\t6\t1700000505\t0\t9\t{{101,false,0,100}}\n\
+             crc\t7\t1700000506\t0\t9\t{{202,false,0,100}}\n",
+            prefix
+        );
+        let (success_dir, success_path) = write_gbk_jcl_fixture(source_file, &two_hp_zero);
+        let success = analyze_jcl(&success_path, "文件实体", 61001, &raid_bosses)
+            .expect("路径 B 双实体死亡 JCL 应可解析");
+        fs::remove_dir_all(success_dir).expect("临时 JCL 目录应可删除");
+        assert!(success.is_kill, "路径 B 两个实体均 HP 归零应判定为击杀");
+
+        let only_clone_died = format!("{}crc\t6\t1700000505\t0\t28\t{{101,999}}\n", prefix);
+        let (wipe_dir, wipe_path) = write_gbk_jcl_fixture(source_file, &only_clone_died);
+        let wipe = analyze_jcl(&wipe_path, "文件实体", 61001, &raid_bosses)
+            .expect("路径 B 单实体死亡 JCL 应可解析");
+        fs::remove_dir_all(wipe_dir).expect("临时 JCL 目录应可删除");
+        assert!(!wipe.is_kill, "路径 B 仅一方死亡不能判定配置首领完成");
+
+        let real_reset_without_refight = format!(
+            "{}crc\t6\t1700000505\t0\t9\t{{101,false,0,100}}\n\
+             crc\t7\t1700000506\t0\t9\t{{202,false,0,100}}\n\
+             crc\t8\t1700000507\t0\t9\t{{202,false,100,100}}\n\
+             crc\t9\t1700000508\t0\t28\t{{202,999}}\n",
+            prefix
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(source_file, &real_reset_without_refight);
+        let analysis = analyze_jcl(&jcl_path, "文件实体", 61001, &raid_bosses)
+            .expect("路径 B 复位反例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(
+            !analysis.is_kill,
+            "配置实体复位后未重新参战，不能复用前一轮参战与后一轮死亡"
+        );
+
+        let merged_runtime_id = concat!(
+            "crc\t1\t1700000520\t0\t8\t{101,\"文件实体\",61001,0,0,0,0,0}\n",
+            "crc\t2\t1700000521\t0\t8\t{101,\"配置首领\",61002,0,0,0,0,0}\n",
+            "crc\t3\t1700000522\t0\t9\t{101,true,100,100}\n",
+            "crc\t4\t1700000523\t0\t28\t{101,999}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(source_file, merged_runtime_id);
+        let analysis = analyze_jcl(&jcl_path, "文件实体", 61001, &raid_bosses)
+            .expect("路径 B 同一实体反例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(
+            analysis.is_kill,
+            "路径 B 的文件实体与配置实体明确解析为同一 dwID 时，可按单一正式实体确认"
+        );
+
+        let chest_without_real_participation = concat!(
+            "crc\t1\t1700000510\t0\t8\t{101,\"文件实体\",61001,0,0,0,0,0}\n",
+            "crc\t2\t1700000511\t0\t8\t{202,\"配置首领\",61002,0,0,0,0,0}\n",
+            "crc\t3\t1700000512\t0\t9\t{101,true,100,100}\n",
+            "crc\t4\t1700000513\t0\t8\t{303,\"配置首领宝箱\",0,0,0,0,0,0}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(source_file, chest_without_real_participation);
+        let analysis = analyze_jcl(&jcl_path, "文件实体", 61001, &raid_bosses)
+            .expect("未参战的配置首领宝箱反例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(
+            !analysis.is_kill,
+            "配置首领未参战时，宝箱文本不能将小怪文件确认成首领击杀"
+        );
+
+        let chest_after_real_disengage = concat!(
+            "crc\t1\t1700000530\t0\t8\t{101,\"文件实体\",61001,0,0,0,0,0}\n",
+            "crc\t2\t1700000531\t0\t8\t{202,\"配置首领\",61002,0,0,0,0,0}\n",
+            "crc\t3\t1700000532\t0\t9\t{202,true,100,100}\n",
+            "crc\t4\t1700000533\t0\t28\t{202,999}\n",
+            "crc\t5\t1700000534\t0\t9\t{202,false,100,100}\n",
+            "crc\t6\t1700000535\t0\t8\t{303,\"配置首领宝箱\",0,0,0,0,0,0}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(source_file, chest_after_real_disengage);
+        let analysis = analyze_jcl(&jcl_path, "文件实体", 61001, &raid_bosses)
+            .expect("配置首领宝箱正例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(analysis.is_kill, "曾参战的配置首领离战后出现专属宝箱仍应确认");
+        assert_eq!(analysis.boss_name.as_deref(), Some("配置首领"));
+    }
+
+    #[test]
+    fn test_path_a_requires_the_same_participating_runtime_entity() {
+        let raid_bosses = vec![("business_id".to_string(), "测试首领".to_string())];
+        let prefix = concat!(
+            "crc\t1\t1700000600\t0\t1\t{true,\"fight\",0}\n",
+            "crc\t2\t1700000601\t0\t8\t{101,\"测试首领\",61001,0,0,0,0,0}\n",
+            "crc\t3\t1700000602\t0\t8\t{202,\"测试首领\",61002,0,0,0,0,0}\n",
+            "crc\t4\t1700000603\t0\t9\t{101,true,100,100}\n",
+        );
+        let cases = [
+            ("陌生实体死亡", format!("{}crc\t5\t1700000604\t0\t28\t{{303,999}}\n", prefix)),
+            ("同名另一实体死亡", format!("{}crc\t5\t1700000604\t0\t28\t{{202,999}}\n", prefix)),
+            (
+                "死亡后同一实体重新参战",
+                format!(
+                    "{}crc\t5\t1700000604\t0\t28\t{{101,999}}\ncrc\t6\t1700000605\t0\t9\t{{101,true,100,100}}\n",
+                    prefix
+                ),
+            ),
+        ];
+        for (case_name, contents) in cases {
+            let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+                "2026-10-29-23-00-00-任意副本(999)-测试首领(61001).jcl",
+                &contents,
+            );
+            let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+                .expect("路径 A 反例应可解析");
+            fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+            assert!(!analysis.is_kill, "{} 不得确认击杀", case_name);
+        }
+
+        let no_participation = concat!(
+            "crc\t1\t1700000600\t0\t8\t{101,\"测试首领\",61001,0,0,0,0,0}\n",
+            "crc\t2\t1700000601\t0\t28\t{101,999}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "2026-10-29-23-00-00-任意副本(999)-测试首领(61001).jcl",
+            no_participation,
+        );
+        let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+            .expect("未参战反例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(!analysis.is_kill, "未参战实体的死亡通知不能确认击杀");
+
+        let death_then_reset_then_death = concat!(
+            "crc\t1\t1700000600\t0\t8\t{101,\"测试首领\",61001,0,0,0,0,0}\n",
+            "crc\t2\t1700000601\t0\t9\t{101,true,100,100}\n",
+            "crc\t3\t1700000602\t0\t28\t{101,999}\n",
+            "crc\t4\t1700000603\t0\t9\t{101,false,100,100}\n",
+            "crc\t5\t1700000604\t0\t28\t{101,999}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "2026-10-29-23-00-00-任意副本(999)-测试首领(61001).jcl",
+            death_then_reset_then_death,
+        );
+        let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+            .expect("复位后无重战的死亡反例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(!analysis.is_kill, "同一实体复位后无重新参战的死亡不能确认击杀");
+
+        let other_same_name_disengages = format!(
+            "{}crc\t5\t1700000604\t0\t28\t{{101,999}}\ncrc\t6\t1700000605\t0\t9\t{{202,false,100,100}}\n",
+            prefix
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "2026-10-29-23-00-00-任意副本(999)-测试首领(61001).jcl",
+            &other_same_name_disengages,
+        );
+        let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+            .expect("同名实体脱战正例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(analysis.is_kill, "另一同名实体的满血脱战不能撤销正式实体的终局死亡");
+
+        let other_same_name_refights = format!(
+            "{}crc\t5\t1700000604\t0\t28\t{{101,999}}\ncrc\t6\t1700000605\t0\t9\t{{202,true,100,100}}\n",
+            prefix
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "2026-10-29-23-00-00-任意副本(999)-测试首领(61001).jcl",
+            &other_same_name_refights,
+        );
+        let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+            .expect("同名实体重新参战反例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(!analysis.is_kill, "另一同名实体继续参战时保守不确认击杀");
+
+        let reset_then_refight = concat!(
+            "crc\t1\t1700000610\t0\t8\t{101,\"测试首领\",61001,0,0,0,0,0}\n",
+            "crc\t2\t1700000611\t0\t9\t{101,true,100,100}\n",
+            "crc\t3\t1700000612\t0\t28\t{101,999}\n",
+            "crc\t4\t1700000613\t0\t9\t{101,false,100,100}\n",
+            "crc\t5\t1700000614\t0\t9\t{101,true,100,100}\n",
+            "crc\t6\t1700000615\t0\t28\t{101,999}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+            "2026-10-29-23-00-00-任意副本(999)-测试首领(61001).jcl",
+            reset_then_refight,
+        );
+        let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+            .expect("重新参战后的死亡正例应可解析");
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+        assert!(analysis.is_kill, "复位后重新参战再死亡可确认击杀");
+    }
+
+    #[test]
+    fn test_system_messages_do_not_change_entity_evidence() {
+        let raid_bosses = vec![("business_1".to_string(), "测试首领".to_string())];
+        let base = concat!(
+            "crc\t1\t1700001000\t0\t1\t{true,\"fight\",0}\n",
+            "crc\t2\t1700001001\t0\t8\t{101,\"测试首领\",61001,0,0,0,0,0}\n",
+            "crc\t3\t1700001002\t0\t9\t{101,true,100,100}\n",
+        );
+        let messages = [
+            "crc\t4\t1700001003\t0\t18\t{\"和徒弟共同完成满级团队秘境，增加师徒值。\\n\",\"MSG_SYS\"}\n",
+            "crc\t4\t1700001003\t0\t18\t{\"[全胜！任意副本]：1/1，击败测试首领(完成)\\n\",\"MSG_SYS\"}\n",
+            "crc\t4\t1700001003\t0\t18\t{\"和徒弟共同完成武林通鉴·团队秘境，增加师徒值。\\n\",\"MSG_SYS\"}\n",
+            "crc\t4\t1700001003\t0\t18\t{\"你获得10金。\\n\",\"MSG_SYS\"}\n",
+        ];
+
+        for message in messages {
+            let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+                "2026-10-30-10-00-00-任意副本(999)-测试首领(61001).jcl",
+                &format!("{}{}", base, message),
+            );
+            let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+                .expect("消息无实体证据反例应可解析");
+            fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+            assert!(!analysis.is_kill, "消息不能替代实体完成证据");
+        }
+
+        let death = "crc\t4\t1700001003\t0\t28\t{101,999}\n";
+        let chest = "crc\t4\t1700001003\t0\t8\t{303,\"测试首领宝箱\",0,0,0,0,0,0}\n";
+        for evidence in [death, chest] {
+            for suffix in ["", messages[0]] {
+                let (temp_dir, jcl_path) = write_gbk_jcl_fixture(
+                    "2026-10-30-10-00-00-任意副本(999)-测试首领(61001).jcl",
+                    &format!("{}{}{}", base, evidence, suffix),
+                );
+                let analysis = analyze_jcl(&jcl_path, "测试首领", 61001, &raid_bosses)
+                    .expect("独立实体证据正例应可解析");
+                fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+                assert!(analysis.is_kill, "消息增加或删除不应改变独立实体证据");
+            }
+        }
     }
 
     /// 测试按 JCL 顺序聚类：连续相同副本名归为一组，副本名变化开始新组。
