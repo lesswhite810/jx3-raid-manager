@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Account, TrialPlaceRecord } from '../types';
 import { Package, Check, X, AlertCircle, Layers, Trophy, Save, HelpCircle } from 'lucide-react';
@@ -12,6 +12,8 @@ import { DateTimePicker } from './DateTimePicker';
 import { getBaseServerName } from '../utils/serverUtils';
 import { findTrialBossEquipmentStats } from '../utils/trialFlipStats';
 import { deriveTrialEquipmentLevelRange, getTrialEquipmentLevelRange } from '../utils/trialRecordUtils';
+import { getLatestTrialRecordForRole, getTrialLayerForRole, TrialProgressPeriod } from '../utils/trialProgress';
+import { getLastMonday } from '../utils/cooldownManager';
 
 interface RoleWithStatus {
     id: string;
@@ -21,7 +23,6 @@ interface RoleWithStatus {
     accountId: string;
     accountName: string;
     sect: string;
-    lastLayer?: number;
 }
 
 interface AddTrialRecordModalProps {
@@ -32,6 +33,7 @@ interface AddTrialRecordModalProps {
     initialRole?: RoleWithStatus;
     autoFillEnabled?: boolean;
     records?: TrialPlaceRecord[];
+    trialProgressPeriod?: TrialProgressPeriod | null;
 }
 
 const BOSS_LEVEL_1 = ['寅', '雷神', '子'];
@@ -258,10 +260,11 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     accounts,
     initialRole,
     autoFillEnabled = false,
-    records = []
+    records = [],
+    trialProgressPeriod = null
 }) => {
     const [selectedRoleId, setSelectedRoleId] = useState<string>(initialRole?.id || '');
-    const [layer, setLayer] = useState<number>(50);
+    const [layer, setLayer] = useState<number>(1);
     const [boss1, setBoss1] = useState<string>('');
     const [boss2, setBoss2] = useState<string>('');
     const [boss3, setBoss3] = useState<string>('');
@@ -291,6 +294,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [recordDate, setRecordDate] = useState<string>('');
+    const hasInitializedOpenDraft = useRef(false);
 
     // 将日期转换为输入框显示用的字符串，支持时间戳和ISO字符串
     const formatDateForInput = (date: Date | string | number): string => {
@@ -312,62 +316,54 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     // Attribute filter state
     const [attrFilters, setAttrFilters] = useState<Set<string>>(new Set());
 
-    // --- Reset State when Modal Opens ---
-    useEffect(() => {
-        if (isOpen) {
-            setSelectedRoleId(initialRole?.id || '');
-            setLayer(initialRole?.lastLayer ?? 50);
-            setBoss1('');
-            setBoss2('');
-            setBoss3('');
+    const applyRoleProgress = useCallback((roleId: string) => {
+        setBoss1('');
+        setBoss2('');
+        setBoss3('');
+        setLayer(getTrialLayerForRole(records, roleId, trialProgressPeriod));
 
-            setFlipIndex(1);
-            setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
-            setSelectedCard(null);
-            setShowEquipSelector(false);
-            setNotes('');
-            setError(null);
-            setIsSubmitting(false);
-            setRecordDate(formatDateForInput(new Date()));
-            setAttrFilters(new Set());
-            setSelectedBindType(null);
+        if (!autoFillEnabled || !roleId) return;
 
-            // 自动填充逻辑：查找本周最新记录
-            if (autoFillEnabled && initialRole?.id) {
-                const now = new Date();
-                const startOfWeek = new Date(now);
-                startOfWeek.setHours(7, 0, 0, 0);
-                if (now.getDay() === 0) {
-                    startOfWeek.setDate(startOfWeek.getDate() - 6);
-                } else {
-                    startOfWeek.setDate(startOfWeek.getDate() - (now.getDay() - 1));
-                }
+        const latestWeeklyRecord = getLatestTrialRecordForRole(
+            records,
+            roleId,
+            trialProgressPeriod,
+            getLastMonday(new Date()).getTime()
+        );
+        if (!latestWeeklyRecord) return;
 
-                const roleRecords = records.filter(r => r.roleId === initialRole.id);
-                const thisWeekRecords = roleRecords.filter(r => {
-                    const recordTime = typeof r.date === 'number' ? r.date : new Date(r.date).getTime();
-                    return recordTime >= startOfWeek.getTime();
-                });
-
-                if (thisWeekRecords.length > 0) {
-                    const sortedRecords = [...thisWeekRecords].sort((a, b) => {
-                        const timeA = typeof a.date === 'number' ? a.date : new Date(a.date).getTime();
-                        const timeB = typeof b.date === 'number' ? b.date : new Date(b.date).getTime();
-                        return timeB - timeA;
-                    });
-                    const latestRecord = sortedRecords[0];
-                    setLayer(latestRecord.layer);
-                    if (latestRecord.bosses && latestRecord.bosses.length >= 3) {
-                        setBoss1(latestRecord.bosses[0]);
-                        setBoss2(latestRecord.bosses[1]);
-                        setBoss3(latestRecord.bosses[2]);
-                    }
-                }
-            }
-
-            loadAllEquipments();
+        setLayer(latestWeeklyRecord.layer);
+        if (Array.isArray(latestWeeklyRecord.bosses) && latestWeeklyRecord.bosses.length >= 3) {
+            setBoss1(latestWeeklyRecord.bosses[0]);
+            setBoss2(latestWeeklyRecord.bosses[1]);
+            setBoss3(latestWeeklyRecord.bosses[2]);
         }
-    }, [isOpen, initialRole, autoFillEnabled, records]);
+    }, [autoFillEnabled, records, trialProgressPeriod]);
+
+    // 只在每次打开时初始化一次；records 或异步元数据更新不能覆盖用户正在编辑的草稿。
+    useEffect(() => {
+        if (!isOpen) {
+            hasInitializedOpenDraft.current = false;
+            return;
+        }
+        if (hasInitializedOpenDraft.current) return;
+
+        hasInitializedOpenDraft.current = true;
+        const roleId = initialRole?.id || '';
+        setSelectedRoleId(roleId);
+        applyRoleProgress(roleId);
+        setFlipIndex(1);
+        setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
+        setSelectedCard(null);
+        setShowEquipSelector(false);
+        setNotes('');
+        setError(null);
+        setIsSubmitting(false);
+        setRecordDate(formatDateForInput(new Date()));
+        setAttrFilters(new Set());
+        setSelectedBindType(null);
+        loadAllEquipments();
+    }, [isOpen, applyRoleProgress, initialRole?.id]);
 
     // 锁定背景滚动
     useEffect(() => {
@@ -657,7 +653,11 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                     <select
                                         className="pl-2 pr-8 py-1.5 rounded-lg bg-base border border-base text-sm focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer hover:bg-base/80"
                                         value={selectedRoleId}
-                                        onChange={e => setSelectedRoleId(e.target.value)}
+                                        onChange={e => {
+                                            const roleId = e.target.value;
+                                            setSelectedRoleId(roleId);
+                                            applyRoleProgress(roleId);
+                                        }}
                                     >
                                         <option value="">选择挑战角色...</option>
                                         {allRoles.map(r => (

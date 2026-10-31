@@ -10,6 +10,12 @@ import { toast } from '../utils/toastManager';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
+import {
+    getTrialProgressPeriod,
+    isTrialRecordInProgressPeriod,
+    toTrialProgressTimestamp,
+    TrialProgressPeriod,
+} from '../utils/trialProgress';
 
 interface TrialPlaceManagerProps {
     records: TrialPlaceRecord[];
@@ -78,52 +84,70 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
     const [selectedRole, setSelectedRole] = useState<any>(null); // For passing to modal
 
+    // undefined 表示仍在加载；null 表示无法确定周期，必须阻止录入以保护已有进度。
+    const [trialProgressPeriod, setTrialProgressPeriod] = useState<TrialProgressPeriod | null | undefined>(undefined);
     const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
 
     useEffect(() => {
-        db.getCurrentSeason().then(s => {
-            setCurrentSeason(s);
-        }).catch(() => {});
+        let cancelled = false;
+        setTrialProgressPeriod(undefined);
+
+        Promise.all([db.getCurrentSeason(), db.getSeasons(), db.getGameVersions()])
+            .then(([currentSeason, seasons, versions]) => {
+                if (!cancelled) {
+                    setCurrentSeason(currentSeason);
+                    setTrialProgressPeriod(getTrialProgressPeriod(currentSeason, seasons, versions));
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setCurrentSeason(null);
+                    setTrialProgressPeriod(null);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     // Statistics per role
     const roleStats = useMemo(() => {
-        const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string, lastLayer?: number }>();
+        const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string }>();
 
         const now = new Date();
         const startOfWeek = getLastMonday(now);
-
-        const getRecordTime = (date: string | number): number => {
-            return typeof date === 'number' ? date : new Date(date).getTime();
-        };
-
-        const seasonStartTime = currentSeason?.startDate
-            ? (currentSeason.startDate > 1e12 ? currentSeason.startDate : currentSeason.startDate * 1000)
-            : null;
+        const seasonStartTime = currentSeason ? toTrialProgressTimestamp(currentSeason.startDate) : null;
 
         allRoles.forEach(role => {
             const roleRecords = records.filter(r => r.roleId === role.id);
-            const thisWeekRecords = roleRecords.filter(r => getRecordTime(r.date) >= startOfWeek.getTime());
-
-            const seasonRecords = seasonStartTime !== null
-                ? roleRecords.filter(r => getRecordTime(r.date) >= seasonStartTime)
-                : [];
-            const maxLayer = seasonRecords.length > 0 ? Math.max(...seasonRecords.map(r => r.layer)) : 0;
-
-            const lastRunRecord = [...roleRecords].sort((a, b) => getRecordTime(b.date) - getRecordTime(a.date))[0];
+            const versionRecords = roleRecords.filter(record => isTrialRecordInProgressPeriod(record, trialProgressPeriod));
+            const thisWeekRecords = versionRecords.filter(record => {
+                const timestamp = toTrialProgressTimestamp(record.date);
+                return timestamp !== null && timestamp >= startOfWeek.getTime();
+            });
+            const seasonRecords = seasonStartTime === null
+                ? []
+                : roleRecords.filter(record => {
+                    const timestamp = toTrialProgressTimestamp(record.date);
+                    return timestamp !== null && timestamp >= seasonStartTime;
+                });
+            const maxLayer = seasonRecords.length > 0 ? Math.max(...seasonRecords.map(record => record.layer)) : 0;
+            const lastRunRecord = roleRecords.reduce<TrialPlaceRecord | undefined>((latest, record) => {
+                const timestamp = toTrialProgressTimestamp(record.date);
+                const latestTimestamp = latest ? toTrialProgressTimestamp(latest.date) : null;
+                return timestamp !== null && (latestTimestamp === null || timestamp > latestTimestamp) ? record : latest;
+            }, undefined);
             const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
-
-            const lastLayer = lastRunRecord ? lastRunRecord.layer : undefined;
 
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
                 maxLayer,
-                lastRunDate,
-                lastLayer
+                lastRunDate
             });
         });
         return stats;
-    }, [allRoles, records, currentSeason]);
+    }, [allRoles, records, trialProgressPeriod, currentSeason]);
 
     const roleFlipStats = useMemo(() => {
         const stats = new Map<string, ReturnType<typeof calculateTrialFlipStats>>();
@@ -176,9 +200,16 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     }, [sortedRoles, roleSearchTerm]);
 
     const handleOpenAddModal = (role?: any) => {
+        if (trialProgressPeriod === undefined) {
+            toast.info('试炼进度数据正在加载，请稍后再试');
+            return;
+        }
+        if (trialProgressPeriod === null) {
+            toast.error('无法确定当前试炼大版本，请检查赛季配置后重试');
+            return;
+        }
         if (role) {
-            const stats = roleStats.get(role.id);
-            setSelectedRole({ ...role, lastLayer: stats?.lastLayer });
+            setSelectedRole(role);
         } else {
             setSelectedRole(null);
         }
@@ -486,6 +517,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 initialRole={selectedRole}
                 autoFillEnabled={autoFillEnabled}
                 records={records}
+                trialProgressPeriod={trialProgressPeriod}
             />
 
             {
