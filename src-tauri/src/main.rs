@@ -4,6 +4,7 @@ mod app_config;
 mod char_sync;
 mod char_sync_rollback_marks;
 mod db;
+mod desktop;
 mod drop_table;
 mod equip_sync;
 mod game_directory;
@@ -104,22 +105,12 @@ fn run_prepare_install_data() -> Result<(), String> {
     db::init_db_skip_migration().map(|_| ())
 }
 
-fn main() {
-    if is_prepare_install_data_mode() {
-        if let Err(error) = run_prepare_install_data() {
-            eprintln!("准备安装版数据失败: {}", error);
-            std::process::exit(1);
-        }
-        return;
+/// 仅在单实例插件确认当前进程为主实例后执行，避免重复启动触发数据迁移或后台同步。
+fn initialize_primary_instance(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    app.handle().plugin(init_logging().build())?;
+    if let Err(error) = desktop::initialize_tray(app) {
+        log::error!("系统托盘初始化失败，最小化将保留在任务栏: {}", error);
     }
-
-    // 设置 panic hook
-    std::panic::set_hook(Box::new(|info| {
-        log::error!("Panic occurred: {:?}", info);
-    }));
-
-    // 先初始化日志
-    let log_plugin = init_logging().build();
 
     // 预先初始化数据库（确保表结构准备好）
     match db::init_db() {
@@ -168,13 +159,33 @@ fn main() {
         }
     }
 
+    Ok(())
+}
+
+fn main() {
+    // 安装器的数据准备命令不创建桌面实例，保持其独立运行路径。
+    if is_prepare_install_data_mode() {
+        if let Err(error) = run_prepare_install_data() {
+            eprintln!("准备安装版数据失败: {}", error);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("Panic occurred: {:?}", info);
+    }));
+
     let builder = tauri::Builder::default()
+        // 必须第一个注册：重复实例在初始化其他插件、窗口和应用数据之前退出。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            desktop::restore_main_window(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(log_plugin);
+        .plugin(tauri_plugin_fs::init());
 
     let builder = if option_env!("TAURI_PUBLIC_KEY")
         .unwrap_or("")
@@ -191,7 +202,10 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
 
     builder
+        .setup(initialize_primary_instance)
+        .on_window_event(desktop::handle_window_event)
         .invoke_handler(tauri::generate_handler![
+            desktop::minimize_to_tray,
             gkp_parser::parse_binary_gkp,
             game_directory::scan_game_directory,
             game_directory::auto_parse_game_directory,

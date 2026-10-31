@@ -1,13 +1,15 @@
 import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { toast } from '../utils/toastManager';
+import { invokeCommand } from '../services/invoke';
 
 /** 是否为 Tauri 环境（非浏览器/PWA 模式） */
 const isTauriEnv = (): boolean =>
   typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
 
 /**
- * 自定义标题栏的窗口控制按钮（最小化 / 最大化 / 关闭）。
+ * 自定义标题栏的窗口控制按钮（最小化到托盘 / 最大化 / 关闭）。
  *
  * 仅在 Tauri 环境下显示（浏览器/PWA 模式返回 null）。
  * 样式贴近 Windows 原生标题栏按钮：占满标题栏高度、紧密排列、无圆角。
@@ -17,6 +19,15 @@ export const WindowControls: React.FC = () => {
   if (!isTauriEnv()) return null;
 
   const appWindow = getCurrentWindow();
+
+  const handleMinimize = async () => {
+    try {
+      await invokeCommand('minimize_to_tray');
+    } catch (error) {
+      console.error('最小化失败:', error);
+      toast.error('最小化失败，请重试');
+    }
+  };
 
   // 显式区分最大化/还原：部分 Windows 环境下 toggleMaximize 不可靠
   const handleToggleMaximize = async () => {
@@ -34,8 +45,8 @@ export const WindowControls: React.FC = () => {
   return (
     <div className="flex items-stretch h-full app-region-no-drag border-l border-border">
       <button
-        onClick={() => appWindow.minimize()}
-        title="最小化"
+        onClick={handleMinimize}
+        title="最小化到托盘"
         className="w-11 h-full flex items-center justify-center text-muted hover:bg-base hover:text-main transition-colors"
       >
         <Minus size={15} />
