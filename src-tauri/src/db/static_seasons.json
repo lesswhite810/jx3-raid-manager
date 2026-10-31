@@ -34,6 +34,7 @@
     "version_name": "苍生铸世",
     "start_date": 1793228400,
     "end_date": 0,
-    "sort_order": 5
+    "sort_order": 5,
+    "trial_equip_level_min": 900
   }
 ]

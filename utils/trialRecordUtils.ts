@@ -1,21 +1,58 @@
 import { Season, TrialPlaceRecord } from '../types';
 
 export interface TrialEquipmentLevelRange {
-  min: number;
-  max: number;
+  min?: number;
+  max?: number;
 }
 
-/** 赛季是否已配置合法的试炼装备品级范围。 */
+const normalizeTrialEquipmentLevelBound = (
+  value: number | null | undefined
+): number | undefined | null => {
+  if (value === undefined || value === null || value === 0) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+};
+
+/**
+ * 解析赛季试炼装备品级边界。
+ *
+ * `undefined`/0 表示对应边界尚未配置；可只配置最低或最高品级。
+ * 返回 null 表示配置非法，空对象表示上下界均未配置。
+ */
 export const getTrialEquipmentLevelRange = (
   season: Pick<Season, 'trialEquipLevelMin' | 'trialEquipLevelMax'> | null | undefined
 ): TrialEquipmentLevelRange | null => {
-  const min = season?.trialEquipLevelMin;
-  const max = season?.trialEquipLevelMax;
-  if (typeof min !== 'number' || typeof max !== 'number'
-    || !Number.isInteger(min) || !Number.isInteger(max) || min <= 0 || max < min) {
+  // `db.getCurrentSeason()` 失败时会返回 null；这不是“未配置边界”，不能
+  // 降级为读取旧装备缓存。
+  if (!season) {
     return null;
   }
-  return { min, max };
+  const min = normalizeTrialEquipmentLevelBound(season?.trialEquipLevelMin);
+  const max = normalizeTrialEquipmentLevelBound(season?.trialEquipLevelMax);
+  if (min === null || max === null || (min !== undefined && max !== undefined && max < min)) {
+    return null;
+  }
+  return {
+    ...(min !== undefined ? { min } : {}),
+    ...(max !== undefined ? { max } : {}),
+  };
+};
+
+/** 在赛季已确认的边界内保留合法装备品级。 */
+export const isTrialEquipmentLevelInRange = (
+  level: number | null | undefined,
+  range: TrialEquipmentLevelRange
+): level is number => {
+  return typeof level === 'number'
+    && Number.isFinite(level)
+    && Number.isInteger(level)
+    && level > 0
+    && (range.min === undefined || level >= range.min)
+    && (range.max === undefined || level <= range.max);
 };
 
 /**
@@ -26,7 +63,7 @@ export const getTrialEquipmentLevelRange = (
  */
 export const deriveTrialEquipmentLevelRange = (
   levels: readonly (number | null | undefined)[]
-): TrialEquipmentLevelRange | null => {
+): Required<TrialEquipmentLevelRange> | null => {
   const valid = levels.filter(
     (level): level is number => typeof level === 'number' && Number.isFinite(level) && level > 0
   );

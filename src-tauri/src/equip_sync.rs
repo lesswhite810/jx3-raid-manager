@@ -37,6 +37,29 @@ pub enum SyncError {
 
 pub struct EquipSync;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EquipRange {
+    min: Option<i32>,
+    max: Option<i32>,
+}
+
+impl EquipRange {
+    fn describe(self) -> String {
+        match (self.min, self.max) {
+            (None, None) => "未配置品级范围，同步全部无修装备".to_string(),
+            (Some(min), None) => format!("最低品级: {}", min),
+            (None, Some(max)) => format!("最高品级: {}", max),
+            (Some(min), Some(max)) => format!("品级范围: {}-{}", min, max),
+        }
+    }
+
+    fn includes(self, level: i64) -> bool {
+        level > 0
+            && self.min.map_or(true, |min| level >= i64::from(min))
+            && self.max.map_or(true, |max| level <= i64::from(max))
+    }
+}
+
 impl EquipSync {
     pub async fn sync_if_needed() -> Result<usize, SyncError> {
         // 单连接复用：原流程 4 次 init_db（get_current_season + is_season_synced
@@ -51,12 +74,6 @@ impl EquipSync {
             }
         };
 
-        let cache_key = format!("equip_cache_{}", season.name);
-        if Self::is_season_synced_with_conn(&conn, &cache_key)? {
-            info!("[EquipSync] 赛季「{}」已同步，跳过", season.name);
-            return Ok(0);
-        }
-
         let range = match Self::resolve_equip_range(
             season.trial_equip_level_min,
             season.trial_equip_level_max,
@@ -70,44 +87,29 @@ impl EquipSync {
                 return Ok(0);
             }
         };
-
-        match range {
-            Some((min, max)) => info!(
-                "[EquipSync] 开始同步赛季「{}」装备，范围: {}-{}",
-                season.name, min, max
-            ),
-            None => info!(
-                "[EquipSync] 赛季「{}」未配置品级范围，同步全部无修装备",
-                season.name
-            ),
-        }
-
-        let start_time = std::time::Instant::now();
-
-        let armor_items = Self::fetch_equipments("armor", range).await?;
-        let trinket_items = Self::fetch_equipments("trinket", range).await?;
-        let weapon_items = Self::fetch_equipments("weapon", range).await?;
-
-        let total_items = armor_items.len() + trinket_items.len() + weapon_items.len();
-        info!("[EquipSync] 获取到 {} 件装备（防具: {}, 饰品: {}, 武器: {}）", total_items, armor_items.len(), trinket_items.len(), weapon_items.len());
-
-        if total_items == 0 {
-            warn!("[EquipSync] 未获取到任何装备，保留现有装备数据并跳过写入");
+        // 缓存必须绑定实际生效的边界。这样旧的“未配置范围”缓存不会在
+        // 静态配置补入最低品级后阻止重新同步。
+        let cache_key = Self::cache_key(&season, range);
+        if Self::is_season_synced_with_conn(&conn, &cache_key)? {
+            info!("[EquipSync] 赛季「{}」当前品级边界已同步，跳过", season.name);
             return Ok(0);
         }
 
-        let all_items: Vec<serde_json::Value> = armor_items
-            .iter()
-            .chain(trinket_items.iter())
-            .chain(weapon_items.iter())
-            .cloned()
-            .collect();
-        if let Some((min, max)) = Self::derive_level_range(&all_items) {
-            info!("[EquipSync] 实际同步品级范围: {}-{}", min, max);
-        }
+        info!(
+            "[EquipSync] 开始同步赛季「{}」装备，{}",
+            season.name,
+            range.describe()
+        );
 
-        Self::save_equipments_with_conn(&conn, &armor_items, &trinket_items, &weapon_items)?;
-        Self::mark_season_synced_with_conn(&conn, &cache_key)?;
+        let start_time = std::time::Instant::now();
+
+        // 三类接口均成功返回后才允许覆盖本地装备。任何抓取失败都会在保存前
+        // 返回，已有装备和同步标记均保持不变。
+        let fetched = Self::fetch_all_equipments(range).await;
+        let total_items = Self::persist_fetch_result_with_conn(&conn, &cache_key, fetched)?;
+        if total_items == 0 {
+            return Ok(0);
+        }
 
         let duration = start_time.elapsed();
         info!("[EquipSync] ✓ 赛季「{}」同步完成！共同步 {} 件装备，耗时 {:?}", season.name, total_items, duration);
@@ -153,24 +155,110 @@ impl EquipSync {
 
     /// 解析赛季试炼装备品级范围。
     ///
-    /// - 未配置（或配置为 0）→ 不限范围，同步全部「无修」装备，范围由实际数据推导。
-    /// - 已配置且合法 → 按该区间同步。低等级新赛季允许低于 20000 的品级。
-    /// - 配置不完整或非法 → 返回错误，调用方不得继续。
+    /// - `None` 或 0 表示该端未配置；上下界可独立配置。
+    /// - 两端均未配置时不限范围；配置的边界会同时用于请求和落库前过滤。
+    /// - 负数及反向区间属于非法配置，调用方不得继续。
     fn resolve_equip_range(
         min_level: Option<i32>,
         max_level: Option<i32>,
-    ) -> Result<Option<(i32, i32)>, String> {
-        let min = min_level.filter(|v| *v > 0);
-        let max = max_level.filter(|v| *v > 0);
+    ) -> Result<EquipRange, String> {
+        let normalize = |value: Option<i32>, boundary_name: &str| match value {
+            None | Some(0) => Ok(None),
+            Some(value) if value > 0 => Ok(Some(value)),
+            Some(_) => Err(format!("试炼装备品级{}必须为正整数或 0", boundary_name)),
+        };
+        let min = normalize(min_level, "下限")?;
+        let max = normalize(max_level, "上限")?;
 
-        match (min, max) {
-            (None, None) => Ok(None),
-            (Some(min), Some(max)) if max >= min => Ok(Some((min, max))),
-            (Some(_), Some(_)) => {
-                Err("试炼装备品级范围无效（最大值不得小于最小值）".to_string())
+        if let (Some(min), Some(max)) = (min, max) {
+            if max < min {
+                return Err("试炼装备品级范围无效（最大值不得小于最小值）".to_string());
             }
-            _ => Err("试炼装备品级范围配置不完整".to_string()),
         }
+
+        Ok(EquipRange { min, max })
+    }
+
+    fn cache_key(season: &Season, range: EquipRange) -> String {
+        let min = range.min.map_or("none".to_string(), |value| value.to_string());
+        let max = range.max.map_or("none".to_string(), |value| value.to_string());
+        format!("equip_cache_v2_{}_min_{}_max_{}", season.id, min, max)
+    }
+
+    fn filter_equipments_by_range(
+        items: Vec<serde_json::Value>,
+        range: EquipRange,
+    ) -> Vec<serde_json::Value> {
+        if range.min.is_none() && range.max.is_none() {
+            return items;
+        }
+
+        items
+            .into_iter()
+            .filter(|item| {
+                let Some(level) = item.get("Level").and_then(|value| value.as_i64()) else {
+                    return false;
+                };
+                range.includes(level)
+            })
+            .collect()
+    }
+
+    fn build_range_query(range: EquipRange) -> String {
+        let mut query = String::new();
+        if let Some(min) = range.min {
+            query.push_str(&format!("&min_level={}", min));
+        }
+        if let Some(max) = range.max {
+            query.push_str(&format!("&max_level={}", max));
+        }
+        query
+    }
+
+    async fn fetch_all_equipments(
+        range: EquipRange,
+    ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>), SyncError> {
+        let armor_items = Self::filter_equipments_by_range(
+            Self::fetch_equipments("armor", range).await?,
+            range,
+        );
+        let trinket_items = Self::filter_equipments_by_range(
+            Self::fetch_equipments("trinket", range).await?,
+            range,
+        );
+        let weapon_items = Self::filter_equipments_by_range(
+            Self::fetch_equipments("weapon", range).await?,
+            range,
+        );
+        Ok((armor_items, trinket_items, weapon_items))
+    }
+
+    fn persist_fetch_result_with_conn(
+        conn: &rusqlite::Connection,
+        cache_key: &str,
+        fetched: Result<(Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>), SyncError>,
+    ) -> Result<usize, SyncError> {
+        let (armor_items, trinket_items, weapon_items) = fetched?;
+        let total_items = armor_items.len() + trinket_items.len() + weapon_items.len();
+        info!("[EquipSync] 获取到 {} 件装备（防具: {}, 饰品: {}, 武器: {}）", total_items, armor_items.len(), trinket_items.len(), weapon_items.len());
+        if total_items == 0 {
+            warn!("[EquipSync] 未获取到任何装备，保留现有装备数据并跳过写入");
+            return Ok(0);
+        }
+
+        let all_items: Vec<serde_json::Value> = armor_items
+            .iter()
+            .chain(trinket_items.iter())
+            .chain(weapon_items.iter())
+            .cloned()
+            .collect();
+        if let Some((min, max)) = Self::derive_level_range(&all_items) {
+            info!("[EquipSync] 实际同步品级范围: {}-{}", min, max);
+        }
+
+        Self::save_equipments_with_conn(conn, &armor_items, &trinket_items, &weapon_items)?;
+        Self::mark_season_synced_with_conn(conn, cache_key)?;
+        Ok(total_items)
     }
 
     /// 从已抓取的装备数据推导实际品级区间，用于记录同步结果。
@@ -204,16 +292,11 @@ impl EquipSync {
         )
         .map_err(|reason| format!("当前赛季「{}」{}", season.name, reason))?;
 
-        match range {
-            Some((min, max)) => info!(
-                "[EquipSync] 强制同步赛季「{}」装备，范围: {}-{}",
-                season.name, min, max
-            ),
-            None => info!(
-                "[EquipSync] 赛季「{}」未配置品级范围，将同步全部无修装备",
-                season.name
-            ),
-        }
+        info!(
+            "[EquipSync] 强制同步赛季「{}」装备，{}",
+            season.name,
+            range.describe()
+        );
 
         conn.execute("DELETE FROM cache WHERE key LIKE 'equip_cache_%'", [])
             .map_err(|e| format!("清除同步标记失败: {}", e))?;
@@ -249,7 +332,7 @@ impl EquipSync {
 
     async fn fetch_equipments(
         equip_type: &str,
-        range: Option<(i32, i32)>,
+        range: EquipRange,
     ) -> Result<Vec<serde_json::Value>, SyncError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -258,11 +341,8 @@ impl EquipSync {
         let per = 100;
         let max_pages = 10;
 
-        // 未配置范围时不传 min_level/max_level，由接口返回全部「无修」装备。
-        let range_query = match range {
-            Some((min, max)) => format!("&min_level={}&max_level={}", min, max),
-            None => String::new(),
-        };
+        // 只传实际配置的边界，避免把未知上限伪造成固定值。
+        let range_query = Self::build_range_query(range);
 
         let build_url = |page: i32| {
             format!(
@@ -279,7 +359,7 @@ impl EquipSync {
         };
         info!("[EquipSync] 获取 {} 第1页...", type_name);
 
-        let first_response = client.get(build_url(1)).send().await?;
+        let first_response = client.get(build_url(1)).send().await?.error_for_status()?;
         let first_data: JX3EquipResponse = first_response.json().await?;
 
         let total_pages = first_data.pages.min(max_pages);
@@ -294,7 +374,7 @@ impl EquipSync {
                 urls.iter().map(|url| {
                     let client = client.clone();
                     async move {
-                        let response = client.get(url).send().await?;
+                        let response = client.get(url).send().await?.error_for_status()?;
                         let data: JX3EquipResponse = response.json().await?;
                         Ok(serde_json::json!({ "list": data.list }))
                     }
@@ -309,9 +389,7 @@ impl EquipSync {
                             all_items.extend(list.clone());
                         }
                     }
-                    Err(e) => {
-                        warn!("[EquipSync] {} 页获取失败: {}", type_name, e);
-                    }
+                    Err(e) => return Err(SyncError::Http(e)),
                 }
             }
         }
@@ -400,11 +478,12 @@ impl EquipSync {
             let diamonds = serde_json::to_string(&all_diamonds).unwrap_or_default();
             let data = item.to_string();
 
-            let _ = stmt.execute(rusqlite::params![
+            stmt.execute(rusqlite::params![
                 &id, &name, &ui_id, icon_id, level,
                 &quality, bind_type, type_label,
                 &attr_types, &attrs, &recommend, &diamonds, &data, &timestamp,
-            ]);
+            ])
+            .map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
         }
 
         let total = armor_items.len() + trinket_items.len() + weapon_items.len();
@@ -485,6 +564,38 @@ mod tests {
         conn
     }
 
+    fn setup_equipments_save_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("应创建内存数据库");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE equipments (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                ui_id TEXT,
+                icon_id INTEGER,
+                level INTEGER,
+                quality TEXT,
+                bind_type INTEGER,
+                type_label TEXT,
+                attribute_types TEXT,
+                attributes TEXT,
+                recommend TEXT,
+                diamonds TEXT,
+                data TEXT,
+                updated_at TEXT
+            );
+            CREATE TABLE cache (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            );
+            INSERT INTO equipments (id, name) VALUES ('legacy', '旧装备');
+            "#,
+        )
+        .expect("应创建装备保存测试表");
+        conn
+    }
+
     #[test]
     fn force_sync_rejects_invalid_range_without_touching_equipments() {
         // 反向区间属于明确非法配置，必须在清理前拒绝。
@@ -505,18 +616,17 @@ mod tests {
     }
 
     #[test]
-    fn force_sync_rejects_partial_range_configuration() {
-        // 只配了最小值或最大值，属于配置不完整，不能当作"未配置"放行。
-        for (min_level, max_level) in [(Some(100), None), (None, Some(100))] {
+    fn force_sync_accepts_single_bound_configuration() {
+        // 新赛季可只确认最低品级；最高品级未确定时不得阻断同步。
+        for (min_level, max_level) in [(Some(900), None), (None, Some(900))] {
             let conn = setup_force_sync_preflight_db(min_level, max_level);
-            let error = EquipSync::prepare_force_sync_with_conn(&conn)
-                .expect_err("不完整的范围配置应被拒绝");
-            assert!(error.contains("不完整"), "错误信息应指明配置不完整: {}", error);
+            EquipSync::prepare_force_sync_with_conn(&conn)
+                .expect("单边范围应允许强制同步");
 
             let equipment_count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM equipments", [], |row| row.get(0))
                 .expect("应统计历史装备");
-            assert_eq!(equipment_count, 1, "配置不完整不得删除历史装备");
+            assert_eq!(equipment_count, 1, "强制同步准备阶段不得删除历史装备");
         }
     }
 
@@ -527,7 +637,7 @@ mod tests {
         for (min_level, max_level) in [(Some(0), Some(0)), (None, None)] {
             assert_eq!(
                 EquipSync::resolve_equip_range(min_level, max_level),
-                Ok(None),
+                Ok(EquipRange { min: None, max: None }),
                 "未配置范围应解析为不限范围"
             );
 
@@ -551,7 +661,7 @@ mod tests {
     fn equip_range_accepts_low_level_future_season() {
         assert_eq!(
             EquipSync::resolve_equip_range(Some(50), Some(100)),
-            Ok(Some((50, 100))),
+            Ok(EquipRange { min: Some(50), max: Some(100) }),
             "等级压缩后的低品级范围应被接受"
         );
 
@@ -576,5 +686,119 @@ mod tests {
         assert_eq!(EquipSync::derive_level_range(&[]), None);
         let no_level = vec![serde_json::json!({ "Name": "无修冠" })];
         assert_eq!(EquipSync::derive_level_range(&no_level), None);
+    }
+
+    #[test]
+    fn min_only_range_requests_and_filters_from_900_without_inventing_max() {
+        let range = EquipSync::resolve_equip_range(Some(900), None)
+            .expect("最低品级配置应合法");
+        assert_eq!(range, EquipRange { min: Some(900), max: None });
+        assert_eq!(EquipSync::build_range_query(range), "&min_level=900");
+
+        let filtered = EquipSync::filter_equipments_by_range(
+            vec![
+                serde_json::json!({ "ID": 1, "Level": 899 }),
+                serde_json::json!({ "ID": 2, "Level": 900 }),
+                serde_json::json!({ "ID": 3, "Level": 1200 }),
+                serde_json::json!({ "ID": 4, "Level": 0 }),
+            ],
+            range,
+        );
+        assert_eq!(
+            filtered.iter().map(|item| item["Level"].as_i64()).collect::<Vec<_>>(),
+            vec![Some(900), Some(1200)],
+            "即使服务端忽略 min_level，落库前也必须排除低于 900 的装备"
+        );
+    }
+
+    #[test]
+    fn max_only_range_is_supported_and_invalid_values_are_rejected() {
+        let max_only = EquipSync::resolve_equip_range(None, Some(900))
+            .expect("单独配置最高品级应合法");
+        assert_eq!(max_only, EquipRange { min: None, max: Some(900) });
+        assert_eq!(EquipSync::build_range_query(max_only), "&max_level=900");
+        assert!(EquipSync::resolve_equip_range(Some(-1), None).is_err());
+        assert!(EquipSync::resolve_equip_range(None, Some(-1)).is_err());
+        assert!(EquipSync::resolve_equip_range(Some(901), Some(900)).is_err());
+    }
+
+    #[test]
+    fn cache_key_changes_when_a_new_bound_is_configured() {
+        let season = Season {
+            id: 42,
+            name: "苍生铸世".to_string(),
+            game_version_id: 9,
+            trial_equip_level_min: Some(900),
+            trial_equip_level_max: None,
+        };
+        let unconfigured = EquipSync::cache_key(
+            &season,
+            EquipRange { min: None, max: None },
+        );
+        let minimum_900 = EquipSync::cache_key(
+            &season,
+            EquipRange { min: Some(900), max: None },
+        );
+        assert_ne!(unconfigured, minimum_900);
+        assert_ne!(minimum_900, "equip_cache_苍生铸世");
+    }
+
+    #[test]
+    fn empty_or_failed_fetch_keeps_existing_equipments_and_cache_unmarked() {
+        for fetched in [
+            Ok((Vec::new(), Vec::new(), Vec::new())),
+            Err(SyncError::Database("模拟抓取失败".to_string())),
+        ] {
+            let conn = setup_force_sync_preflight_db(Some(900), None);
+            let result = EquipSync::persist_fetch_result_with_conn(
+                &conn,
+                "equip_cache_v2_1_min_900_max_none",
+                fetched,
+            );
+
+            let equipment_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM equipments", [], |row| row.get(0))
+                .expect("应统计历史装备");
+            let cache_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM cache", [], |row| row.get(0))
+                .expect("应统计历史缓存");
+            assert_eq!(equipment_count, 1, "空结果或失败不得删除历史装备");
+            assert_eq!(cache_count, 1, "空结果或失败不得写入新同步标记");
+            if let Ok(count) = result {
+                assert_eq!(count, 0, "空结果不应视为同步成功");
+            }
+        }
+    }
+
+    #[test]
+    fn failed_equipment_insert_rolls_back_delete_and_does_not_mark_cache() {
+        let conn = setup_equipments_save_db();
+        let duplicate_items = vec![
+            serde_json::json!({ "ID": 100, "Name": "一号装备", "Level": 900 }),
+            serde_json::json!({ "ID": 100, "Name": "重复装备", "Level": 901 }),
+        ];
+        let result = EquipSync::persist_fetch_result_with_conn(
+            &conn,
+            "equip_cache_v2_1_min_900_max_none",
+            Ok((duplicate_items, Vec::new(), Vec::new())),
+        );
+        assert!(result.is_err(), "主键冲突必须传播，不能静默丢弃装备");
+
+        let persisted_ids: Vec<String> = conn
+            .prepare("SELECT id FROM equipments ORDER BY id")
+            .expect("应准备装备查询")
+            .query_map([], |row| row.get(0))
+            .expect("应查询装备")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("应读取装备");
+        assert_eq!(persisted_ids, vec!["legacy".to_string()], "失败时应回滚删除操作");
+        let cache_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cache WHERE key = 'equip_cache_v2_1_min_900_max_none'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("应查询新缓存键");
+        assert_eq!(cache_count, 0, "保存失败不得标记同步成功");
     }
 }

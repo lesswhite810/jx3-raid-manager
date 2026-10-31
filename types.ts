@@ -344,8 +344,9 @@ export interface Season {
   startDate: number;
   endDate?: number;
   sortOrder: number;
-  trialEquipLevelMin?: number;
-  trialEquipLevelMax?: number;
+  // Rust Option<i64> 在 IPC 中会序列化为 null；null 与 0 都表示该端未配置。
+  trialEquipLevelMin?: number | null;
+  trialEquipLevelMax?: number | null;
 }
 
 // ==================== 活跃检测（C 阶段） ====================

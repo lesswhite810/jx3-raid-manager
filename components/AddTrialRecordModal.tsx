@@ -11,7 +11,11 @@ import { db } from '../services/db';
 import { DateTimePicker } from './DateTimePicker';
 import { getBaseServerName } from '../utils/serverUtils';
 import { findTrialBossEquipmentStats } from '../utils/trialFlipStats';
-import { deriveTrialEquipmentLevelRange, getTrialEquipmentLevelRange } from '../utils/trialRecordUtils';
+import {
+    deriveTrialEquipmentLevelRange,
+    getTrialEquipmentLevelRange,
+    isTrialEquipmentLevelInRange,
+} from '../utils/trialRecordUtils';
 import { getLatestTrialRecordForRole, getTrialLayerForRole, TrialProgressPeriod } from '../utils/trialProgress';
 import { getLastMonday } from '../utils/cooldownManager';
 
@@ -403,20 +407,44 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         setAllEquipments([]);
         try {
             const season = await db.getCurrentSeason();
+            const configuredBounds = getTrialEquipmentLevelRange(season);
+            if (!configuredBounds) {
+                setEquipmentRangeMessage('当前赛季信息或试炼装备品级范围不可用，请关闭后重试。');
+                return;
+            }
+            const hasConfiguredBound = configuredBounds.min !== undefined || configuredBounds.max !== undefined;
 
-            const items = await getEquip('无修');
+            // 有已确认边界时不能读后台同步前残留的旧赛季 SQLite 缓存；
+            // 远端失败/空结果会保持空列表，不把旧装备混回选择器。
+            const items = await getEquip('无修', {
+                preferRemote: hasConfiguredBound,
+                minLevel: configuredBounds.min,
+                maxLevel: configuredBounds.max,
+            });
             if (items.length === 0) {
-                setEquipmentRangeMessage('未获取到试炼装备数据，请检查网络后重试。');
+                setEquipmentRangeMessage(
+                    hasConfiguredBound
+                        ? '未获取到当前赛季试炼装备数据，请检查网络后重试；仍可录入无装备试炼。'
+                        : '未获取到试炼装备数据，请检查网络后重试。'
+                );
                 return;
             }
 
-            // 优先使用赛季配置范围；新赛季尚未配置时，按实际装备品级推导。
-            const range = getTrialEquipmentLevelRange(season)
-                ?? deriveTrialEquipmentLevelRange(items.map(item => item.Level));
-            if (!range) {
-                setEquipmentRangeMessage('当前赛季尚未配置试炼装备品级范围，且装备数据缺少品级信息。');
+            // 先根据已确认的单边/双边范围过滤，再从过滤结果推导尚未确认的一端。
+            // 不允许用旧赛季缓存的全量品级反推出范围，避免把低于当前赛季下限的
+            // 装备混入选择器。
+            const seasonItems = items.filter(item =>
+                isTrialEquipmentLevelInRange(item.Level, configuredBounds)
+            );
+            const actualRange = deriveTrialEquipmentLevelRange(seasonItems.map(item => item.Level));
+            if (!actualRange) {
+                setEquipmentRangeMessage('当前赛季尚无符合品级范围的试炼装备，可继续录入无装备试炼。');
                 return;
             }
+            const range = {
+                min: configuredBounds.min ?? actualRange.min,
+                max: configuredBounds.max ?? actualRange.max,
+            };
 
             // 使用解析出的品级范围设置筛选器
             setLevelBounds(range);
@@ -431,7 +459,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             };
 
             // Sort items: Level Desc -> Type -> Physical -> Magical
-            const sorted = items.sort((a, b) => {
+            const sorted = seasonItems.sort((a, b) => {
                 // 1. Level Descending
                 if (b.Level !== a.Level) return b.Level - a.Level;
 

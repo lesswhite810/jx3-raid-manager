@@ -5,20 +5,34 @@ import {
   getTrialEquipmentLevelRange,
   getTrialRecordEquipmentEntries,
   getTrialRecordEquipmentIds,
+  isTrialEquipmentLevelInRange,
 } from './trialRecordUtils';
 
 describe('赛季试炼装备品级范围', () => {
-  it('新赛季未配置范围时不回退到旧赛季品级', () => {
-    expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 0, trialEquipLevelMax: 0 })).toBeNull();
-    expect(getTrialEquipmentLevelRange({})).toBeNull();
-    expect(getTrialEquipmentLevelRange(null)).toBeNull();
+  it('存在赛季但未配置边界时以空配置表示', () => {
+    expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 0, trialEquipLevelMax: 0 })).toEqual({});
+    expect(getTrialEquipmentLevelRange({})).toEqual({});
+    expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: null, trialEquipLevelMax: null })).toEqual({});
+    expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 900, trialEquipLevelMax: null }))
+      .toEqual({ min: 900 });
+    expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: null, trialEquipLevelMax: 900 }))
+      .toEqual({ max: 900 });
   });
 
-  it('允许等级压缩后的低品级，以及单一品级', () => {
+  it('当前赛季元数据不可用时返回 null，不能降级读取旧装备', () => {
+    expect(getTrialEquipmentLevelRange(null)).toBeNull();
+    expect(getTrialEquipmentLevelRange(undefined)).toBeNull();
+  });
+
+  it('允许等级压缩后的低品级、单一品级和单边配置', () => {
     expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 100, trialEquipLevelMax: 500 }))
       .toEqual({ min: 100, max: 500 });
     expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 100, trialEquipLevelMax: 100 }))
       .toEqual({ min: 100, max: 100 });
+    expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 900 }))
+      .toEqual({ min: 900 });
+    expect(getTrialEquipmentLevelRange({ trialEquipLevelMax: 900 }))
+      .toEqual({ max: 900 });
   });
 
   it('保留旧赛季有效范围，拒绝反向、负数和非整数范围', () => {
@@ -28,6 +42,29 @@ describe('赛季试炼装备品级范围', () => {
     expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: -1, trialEquipLevelMax: 100 })).toBeNull();
     expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 1.5, trialEquipLevelMax: 100 })).toBeNull();
     expect(getTrialEquipmentLevelRange({ trialEquipLevelMin: 1, trialEquipLevelMax: Infinity })).toBeNull();
+  });
+
+  it('最低品级 900 先过滤旧品级，再按匹配结果推导未知上限', () => {
+    const range = getTrialEquipmentLevelRange({ trialEquipLevelMin: 900 });
+    expect(range).toEqual({ min: 900 });
+    if (!range) throw new Error('最低品级配置应合法');
+
+    const eligibleLevels = [899, 900, 1200, 25500]
+      .filter(level => isTrialEquipmentLevelInRange(level, range));
+    expect(eligibleLevels).toEqual([900, 1200, 25500]);
+
+    const actual = deriveTrialEquipmentLevelRange(eligibleLevels);
+    expect(actual).toEqual({ min: 900, max: 25500 });
+    expect({ min: range.min ?? actual?.min, max: range.max ?? actual?.max })
+      .toEqual({ min: 900, max: 25500 });
+  });
+
+  it('没有符合单边范围的装备时不回退到旧装备', () => {
+    const range = getTrialEquipmentLevelRange({ trialEquipLevelMin: 900 });
+    if (!range) throw new Error('最低品级配置应合法');
+    const eligibleLevels = [100, 899].filter(level => isTrialEquipmentLevelInRange(level, range));
+    expect(eligibleLevels).toEqual([]);
+    expect(deriveTrialEquipmentLevelRange(eligibleLevels)).toBeNull();
   });
 });
 
@@ -53,13 +90,15 @@ describe('按实际装备数据推导品级范围', () => {
     expect(deriveTrialEquipmentLevelRange([23500])).toEqual({ min: 23500, max: 23500 });
   });
 
-  it('赛季已配置范围时优先使用赛季范围，不用实际数据覆盖', () => {
+  it('赛季已配置范围优先固定已知边界，未知边界由实际数据补齐', () => {
     const seasonRange = getTrialEquipmentLevelRange({ trialEquipLevelMin: 25500, trialEquipLevelMax: 41400 });
     const dataRange = deriveTrialEquipmentLevelRange([19800, 23500]);
-    expect(seasonRange ?? dataRange).toEqual({ min: 25500, max: 41400 });
+    expect(seasonRange).toEqual({ min: 25500, max: 41400 });
+    expect(dataRange).toEqual({ min: 19800, max: 23500 });
 
     const unconfiguredRange = getTrialEquipmentLevelRange({ trialEquipLevelMin: 0, trialEquipLevelMax: 0 });
-    expect(unconfiguredRange ?? dataRange).toEqual({ min: 19800, max: 23500 });
+    expect(unconfiguredRange).toEqual({});
+    expect(dataRange).toEqual({ min: 19800, max: 23500 });
   });
 });
 

@@ -305,6 +305,35 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
         }
     }
 
+    // 静态赛季的品级边界可在赛季上线后逐项确认。对已存在的预置赛季，
+    // 仅回填 NULL/0 这两种历史占位值；任何用户已设置的正值及赛季日期
+    // 都保持不变。这里基于 static_seasons 的通用映射，不按赛季名称分支。
+    for s in seasons.iter() {
+        let name = s["name"].as_str().unwrap_or_default();
+        let version_name = s["version_name"].as_str().unwrap_or_default();
+        let min = s["trial_equip_level_min"].as_i64().unwrap_or(0);
+        let max = s["trial_equip_level_max"].as_i64().unwrap_or(0);
+
+        if min <= 0 && max <= 0 {
+            continue;
+        }
+
+        if let Some(&version_id) = version_id_map.get(version_name) {
+            conn.execute(
+                "UPDATE seasons
+                 SET trial_equip_level_min = CASE
+                         WHEN ? > 0 AND (trial_equip_level_min IS NULL OR trial_equip_level_min = 0)
+                         THEN ? ELSE trial_equip_level_min END,
+                     trial_equip_level_max = CASE
+                         WHEN ? > 0 AND (trial_equip_level_max IS NULL OR trial_equip_level_max = 0)
+                         THEN ? ELSE trial_equip_level_max END
+                 WHERE name = ? AND version_id = ?",
+                params![min, min, max, max, name, version_id],
+            )
+            .map_err(error_to_string)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -429,6 +458,72 @@ mod tests {
             )
             .expect("应统计空数据库预置结果");
         assert_eq!(seeded_counts, (1, 1, 3, 5));
+
+        let equip_bounds: (i64, Option<i64>) = conn
+            .query_row(
+                "SELECT trial_equip_level_min, trial_equip_level_max
+                 FROM seasons WHERE name = '苍生铸世'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("新数据库应写入当前赛季最低试炼品级");
+        assert_eq!(equip_bounds, (900, Some(0)));
+    }
+
+    #[test]
+    fn static_sync_backfills_only_placeholder_trial_bounds_idempotently() {
+        let conn = Connection::open_in_memory().expect("应创建内存数据库");
+        setup_v18_database(&conn);
+        conn.execute(
+            "INSERT INTO game_versions (name, sort_order, created_at) VALUES ('苍生铸世', 9, 'old')",
+            [],
+        )
+        .expect("应写入当前版本");
+        let version_id: i64 = conn
+            .query_row(
+                "SELECT id FROM game_versions WHERE name = '苍生铸世'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("应读取当前版本 ID");
+        conn.execute(
+            "INSERT INTO seasons
+             (name, version_id, start_date, end_date, sort_order,
+              trial_equip_level_min, trial_equip_level_max, created_at)
+             VALUES ('苍生铸世', ?, 123, 456, 5, NULL, NULL, 'old')",
+            params![version_id],
+        )
+        .expect("应写入旧版 NULL 占位范围");
+
+        init_static_raids(&conn).expect("静态同步应回填 NULL 占位范围");
+        let backfilled: (i64, Option<i64>, i64, i64) = conn
+            .query_row(
+                "SELECT trial_equip_level_min, trial_equip_level_max, start_date, end_date
+                 FROM seasons WHERE name = '苍生铸世' AND version_id = ?",
+                params![version_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("应读取回填结果");
+        assert_eq!(backfilled, (900, None, 123, 456));
+
+        conn.execute(
+            "UPDATE seasons SET trial_equip_level_min = 1000, trial_equip_level_max = 1200
+             WHERE name = '苍生铸世' AND version_id = ?",
+            params![version_id],
+        )
+        .expect("应模拟用户自定义正范围");
+        init_static_raids(&conn).expect("重复同步应成功");
+
+        let retained: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT trial_equip_level_min, trial_equip_level_max,
+                        (SELECT COUNT(*) FROM seasons WHERE name = '苍生铸世' AND version_id = ?)
+                 FROM seasons WHERE name = '苍生铸世' AND version_id = ?",
+                params![version_id, version_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("应读取重复同步后的范围");
+        assert_eq!(retained, (1000, 1200, 1));
     }
 
     #[test]
