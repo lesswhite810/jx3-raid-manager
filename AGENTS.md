@@ -40,7 +40,8 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - GitHub Release 工作流启用 `Swatinem/rust-cache@v2` 缓存 Rust 依赖，加速构建。
 - CI 工作流（`.github/workflows/ci.yml`）在 PR 和 push 到 master 时运行前端 `npm run lint` + `npm build` + `npm test` + 设计规范合规扫描，以及 Rust `cargo check --release` + `cargo test --release` 作为质量门禁。
 - ESLint 采用 flat config（`eslint.config.js`），规则当前全部为 `warn`，`npm run lint` 用 `--max-warnings 9999` 保证不因存量告警阻断 CI；新增代码不应引入新的 `error` 级问题。
-- Release 工作流在构建前会跑 `npm test`，并在版本一致性校验中比对 `src-tauri/Cargo.lock` 的版本号；Gitee 镜像推送失败会直接让 workflow 失败，不再静默跳过。
+- Release 工作流在构建前会跑 `npm test`，并在版本一致性校验中比对 `src-tauri/Cargo.lock` 的版本号；源码镜像步骤显式绑定仓库 Secret `GITEE_PUSH_URL`，在自动推进下一个补丁版本后同步 `master` 与 GitHub tags。正常 Release 缺少该 Secret 时会跳过镜像并提示；配置后同步失败会使 workflow 失败。
+- 可通过 `.github/workflows/gitee-mirror.yml` 的手动工作流独立补同步源码镜像，无需重新构建或发布应用；手动运行必须配置 `GITEE_PUSH_URL`。默认保留 Gitee 独有标签，只有显式启用 `prune_tags` 才会删除；同步后校验两端 `master` SHA、GitHub 所有标签的对象 SHA 和剥离后的目标 SHA，并单列 Gitee 独有标签。
 - 如需本地验证完整 release 配置，可临时设置环境变量 `JX3_TAURI_FULL_LOCAL_BUILD=1` 后再执行 `npm run tauri build`。
 
 ## 3. 前后端通信约定
@@ -175,6 +176,8 @@ npm run version:prepare -- --next-patch-from 2.1.19
 - 发现历史 release 资产挂错时，先移除错资产，再在 notes 中给用户明确说明。
 - 自动更新发布依赖仓库 Secrets：`TAURI_PRIVATE_KEY`、`TAURI_PRIVATE_KEY_PASSWORD`、`TAURI_PUBLIC_KEY`。
 - 如果自动更新启用了 Gitee 回退源，同步配置 `GITEE_PUSH_URL`，可选配置 `GITEE_REPO`、`GITEE_ASSETS_BRANCH`。
+- 源码镜像使用仓库 Secret `GITEE_PUSH_URL`；Release 工作流需显式传入该 Secret，并在版本自动推进后同步 `master` 与 GitHub tags。缺少 Secret 时正常 Release 会跳过，手动补同步工作流则会失败提示配置要求。
+- 源码镜像可由 `.github/workflows/gitee-mirror.yml` 单独触发，无需构建应用。默认保留 Gitee 独有标签；仅在确认需要清理时显式设置 `prune_tags=true`。同步后确认两端 `master` SHA、GitHub 所有标签的对象 SHA 和剥离后的目标 SHA 一致，并单列 Gitee 独有标签。仅同步 `master` 与标签，禁止用 `git push --mirror` 删除 `updater-assets` 等其他分支。
 - 自动更新发布后要确认 release 中包含 `latest.json`，不要只检查安装包和 `.sig`。
 - 自动更新相关资产标签保持一致：`latest.json` 显示“自动更新元数据”，`.sig` 显示“自动更新签名文件”。
 

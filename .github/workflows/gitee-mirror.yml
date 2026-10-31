@@ -1,0 +1,41 @@
+name: Sync Gitee Source Mirror
+
+on:
+  workflow_dispatch:
+    inputs:
+      prune_tags:
+        description: '删除 Gitee 独有标签（默认保留）'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  mirror-code:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gitee-code-mirror
+      cancel-in-progress: false
+    steps:
+      - name: Checkout GitHub source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Mirror GitHub master and tags to Gitee
+        shell: bash
+        run: |
+          args=()
+          if [[ "${{ inputs.prune_tags }}" == "true" ]]; then
+            args+=(--prune-tags)
+          fi
+          node scripts/sync-gitee-mirror.mjs "${args[@]}"
+        env:
+          GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}

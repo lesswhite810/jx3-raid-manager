@@ -322,57 +322,6 @@ jobs:
 
           gh release upload "$tag" "${assets[@]}" --clobber
 
-      - name: Mirror code to Gitee
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GITEE_PUSH_URL:-}" ]]; then
-            echo "Missing GITEE_PUSH_URL, skipping Gitee mirror"
-            exit 0
-          fi
-
-          echo "=== Mirroring to Gitee ==="
-
-          git remote remove gitee 2>/dev/null || true
-          git remote add gitee "${GITEE_PUSH_URL}"
-
-          # 重试机制：最多3次
-          master_synced=0
-          for i in 1 2 3; do
-            echo "Attempt $i: Pushing to Gitee..."
-            if git push gitee refs/remotes/origin/master:refs/heads/master --force 2>&1; then
-              echo "Master branch synced successfully"
-              master_synced=1
-              break
-            fi
-            echo "Attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
-
-          if [[ "${master_synced}" -ne 1 ]]; then
-            echo "ERROR: Failed to sync master branch to Gitee after 3 attempts" >&2
-            exit 1
-          fi
-
-          # 重试推送 tags
-          tags_synced=0
-          for i in 1 2 3; do
-            echo "Attempt $i: Pushing tags to Gitee..."
-            if git push gitee --tags --force 2>&1; then
-              echo "Tags synced successfully"
-              tags_synced=1
-              break
-            fi
-            echo "Attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
-
-          if [[ "${tags_synced}" -ne 1 ]]; then
-            echo "ERROR: Failed to sync tags to Gitee after 3 attempts" >&2
-            exit 1
-          fi
-
       - name: Sync updater assets to Gitee
         shell: bash
         run: |
@@ -483,10 +432,33 @@ jobs:
           git commit -m "chore: 版本推进到 ${next_version}"
           git push origin HEAD:master
 
+  mirror-code:
+    needs: release
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gitee-code-mirror
+      cancel-in-progress: false
+    steps:
+      - name: Checkout GitHub source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Mirror GitHub master and tags to Gitee
+        run: node scripts/sync-gitee-mirror.mjs --skip-if-missing-target
+        env:
+          GITEE_PUSH_URL: ${{ secrets.GITEE_PUSH_URL }}
+
   success:
     needs:
       - prepare
       - release
+      - mirror-code
     runs-on: ubuntu-latest
     steps:
       - name: Success notification
