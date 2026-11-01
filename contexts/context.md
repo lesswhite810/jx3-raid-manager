@@ -47,7 +47,7 @@ JX3 Raid Manager (剑网三副本管家) 是一个专为《剑网三》玩家设
 
 5. **试炼之地 (Trial Place Manager)** —— `components/TrialPlaceManager.tsx` + `AddTrialRecordModal.tsx` + `TrialRoleRecordsModal.tsx` + `TrialFlipStatsModal.tsx` + `TrialFlipDetail.tsx` + `TrialBossEquipmentStatsSection.tsx`
    - 记录试炼之地通关数据（层数、翻牌、掉落装备）
-   - 装备数据来源于 JX3Box API
+   - 装备数据来源于 JX3Box API；前后端共用 `data/trialEquipmentSources.json`，苍生铸世使用 900～1280 品「无观」项链与暗器，旧赛季保留「无修」来源
    - 翻牌统计：按位置统计翻牌率 / 出装备率，按 Boss 组合统计高发装备位置
 
 6. **散件老板 (Scraps Boss)** —— `components/ScrapsItemsEditor.tsx`

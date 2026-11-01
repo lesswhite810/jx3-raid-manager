@@ -1,5 +1,13 @@
 import { db } from './db';
 import { fetch } from '@tauri-apps/plugin-http';
+import { Season } from '../types';
+import {
+    getTrialEquipmentSource,
+    isTrialEquipmentInSlot,
+    isTrialEquipmentFromSource,
+    TrialEquipmentSource,
+    TrialEquipmentType,
+} from '../utils/trialEquipmentSource';
 
 export interface JX3Equip {
     ID: number;
@@ -39,7 +47,7 @@ export interface JX3EquipResponse {
     list: JX3Equip[];
 }
 
-export type EquipType = 'weapon' | 'armor' | 'trinket';
+export type EquipType = TrialEquipmentType;
 
 export interface GetEquipOptions {
     /**
@@ -50,11 +58,19 @@ export interface GetEquipOptions {
     /** 仅在 preferRemote 时传入已确认的边界；未确认的一端不参与请求。 */
     minLevel?: number;
     maxLevel?: number;
+    /** 限定远端类别和条目，防止同名的非试炼装备进入选择器。 */
+    source?: TrialEquipmentSource;
 }
 
 const REMOTE_EQUIP_TYPES: EquipType[] = ['armor', 'trinket', 'weapon'];
 const REMOTE_PAGE_SIZE = 100;
 const MAX_REMOTE_PAGES = 10;
+
+interface PaginationMetadata {
+    total: number;
+    pages: number;
+    per: number;
+}
 
 const ATTR_NAME_MAP: Record<string, string> = {
     'atVitalityBase': '体质',
@@ -169,6 +185,12 @@ const appendConfiguredLevelBounds = (url: URL, options: GetEquipOptions): void =
     }
 };
 
+const isWithinConfiguredLevelBounds = (item: JX3Equip, options: GetEquipOptions): boolean =>
+    Number.isInteger(item.Level)
+    && item.Level > 0
+    && (options.minLevel === undefined || item.Level >= options.minLevel)
+    && (options.maxLevel === undefined || item.Level <= options.maxLevel);
+
 const getEquipmentTypeLabel = (item: JX3Equip): string => {
     const detailType = Number(item.DetailType ?? 0);
     if (detailType === 6) return '暗器';
@@ -220,6 +242,38 @@ const fetchRemoteEquipmentPage = async (
     }
 };
 
+const getValidPaginationMetadata = (
+    response: JX3EquipResponse,
+    requestedPage: number,
+    expected?: PaginationMetadata
+): PaginationMetadata | null => {
+    const { total, pages, per, page, list } = response;
+    if (!Number.isInteger(total) || total < 0
+        || !Number.isInteger(pages) || pages < 0
+        || !Number.isInteger(per) || per !== REMOTE_PAGE_SIZE
+        || page !== requestedPage
+        || !Array.isArray(list)) {
+        return null;
+    }
+
+    if (expected && (total !== expected.total || pages !== expected.pages || per !== expected.per)) {
+        return null;
+    }
+
+    if (total === 0) {
+        return list.length === 0 && (pages === 0 || pages === 1) ? { total, pages, per } : null;
+    }
+
+    if (pages < 1 || pages !== Math.ceil(total / per) || requestedPage > pages) {
+        return null;
+    }
+
+    const expectedListLength = requestedPage < pages
+        ? per
+        : total - per * (pages - 1);
+    return list.length === expectedListLength ? { total, pages, per } : null;
+};
+
 const fetchAllRemoteEquipments = async (
     keyword: string | number,
     options: GetEquipOptions
@@ -229,12 +283,14 @@ const fetchAllRemoteEquipments = async (
             equipType, keyword, 1, REMOTE_PAGE_SIZE, options
         );
         if (!firstPage) return null;
-
-        const pageCount = Number.isInteger(firstPage.pages) && firstPage.pages > 0
-            ? firstPage.pages
-            : 1;
+        const metadata = getValidPaginationMetadata(firstPage, 1);
+        if (!metadata) {
+            console.warn(`试炼装备接口 ${equipType} 第 1 页分页数据无效`);
+            return null;
+        }
+        const pageCount = metadata.pages;
         if (pageCount > MAX_REMOTE_PAGES) {
-            console.warn(`Remote ${equipType} has ${pageCount} pages, exceeding supported cap ${MAX_REMOTE_PAGES}`);
+            console.warn(`试炼装备接口 ${equipType} 共 ${pageCount} 页，超过安全上限 ${MAX_REMOTE_PAGES} 页`);
             return null;
         }
         const remainingPages = await Promise.all(
@@ -244,16 +300,54 @@ const fetchAllRemoteEquipments = async (
         );
         if (remainingPages.some(page => page === null)) return null;
 
-        return [
+        if (remainingPages.some((page, index) =>
+            !page || !getValidPaginationMetadata(page, index + 2, metadata)
+        )) {
+            console.warn(`试炼装备接口 ${equipType} 返回的分页数据不完整`);
+            return null;
+        }
+
+        const rawItems = [
             ...(firstPage.list || []),
             ...remainingPages.flatMap(page => page?.list || []),
-        ].map(normalizeRemoteEquipment);
+        ];
+        if (rawItems.length !== metadata.total
+            || rawItems.some(item => !Number.isInteger(item.ID))
+            || new Set(rawItems.map(item => item.ID)).size !== rawItems.length) {
+            console.warn(`试炼装备接口 ${equipType} 返回的数据不完整或装备重复`);
+            return null;
+        }
+
+        const items = rawItems.map(normalizeRemoteEquipment);
+
+        const source = options.source;
+        return items.filter(item =>
+            isWithinConfiguredLevelBounds(item, options)
+            && (!source || isTrialEquipmentFromSource(item, equipType, source))
+        );
     };
 
-    const results = await Promise.all(REMOTE_EQUIP_TYPES.map(fetchOneType));
+    const equipmentTypes = options.source
+        ? [...new Set(options.source.slots.map(slot => slot.type))]
+        : REMOTE_EQUIP_TYPES;
+    const results = await Promise.all(equipmentTypes.map(fetchOneType));
     // 任一类别或分页失败时不能把部分结果当作完整装备清单交给选择器。
     if (results.some(result => result === null)) return [];
-    return results.flatMap(result => result ?? []);
+    const allResults = results.flatMap(result => result ?? []);
+    if (new Set(allResults.map(item => item.ID)).size !== allResults.length) {
+        console.warn('试炼装备接口返回了重复的装备 ID');
+        return [];
+    }
+    if (options.source && options.source.slots
+        .filter(slot => slot.subType !== undefined || slot.detailType !== undefined)
+        .some(slot => {
+            const items = results[equipmentTypes.indexOf(slot.type)] ?? [];
+            return !items.some(item => isTrialEquipmentInSlot(item, slot.type, slot));
+        })) {
+        console.warn('试炼装备接口未返回全部必需部位的数据');
+        return [];
+    }
+    return allResults;
 };
 
 /**
@@ -295,4 +389,38 @@ export async function getEquip(
     } catch {
         return [];
     }
+}
+
+/**
+ * 读取当前赛季的试炼装备。
+ *
+ * 赛季来源配置会同时决定关键字、请求类别和远端响应白名单。新来源或已配置
+ * 品级边界时直连，历史来源且未配置边界时沿用本地缓存。
+ */
+export async function getTrialEquipments(
+    season: Pick<Season, 'name'> | null | undefined,
+    options: Pick<GetEquipOptions, 'minLevel' | 'maxLevel'> = {}
+): Promise<JX3Equip[]> {
+    const source = getTrialEquipmentSource(season);
+    const preferRemote = source.keyword !== '无修'
+        || options.minLevel !== undefined
+        || options.maxLevel !== undefined;
+    const items = await getEquip(source.keyword, {
+        ...options,
+        preferRemote,
+        source,
+    });
+    return items.filter(item =>
+        isTrialEquipmentFromSource(
+            item,
+            Number(item.DetailType) === 6 || Number(item.SubType) === 1
+                ? 'weapon'
+                : [4, 5, 7].includes(Number(item.SubType))
+                    ? 'trinket'
+                    : 'armor',
+            source
+        )
+        && (options.minLevel === undefined || item.Level >= options.minLevel)
+        && (options.maxLevel === undefined || item.Level <= options.maxLevel)
+    );
 }

@@ -35,6 +35,7 @@
     "start_date": 1793228400,
     "end_date": 0,
     "sort_order": 5,
-    "trial_equip_level_min": 900
+    "trial_equip_level_min": 900,
+    "trial_equip_level_max": 1280
   }
 ]

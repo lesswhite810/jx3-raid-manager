@@ -1,6 +1,68 @@
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
+
+const TRIAL_EQUIPMENT_SOURCES: &str = include_str!("../../data/trialEquipmentSources.json");
+const MAX_EQUIPMENT_PAGES: i32 = 10;
+
+#[derive(Debug, Clone, Deserialize)]
+struct TrialEquipmentSources {
+    default: TrialEquipmentSource,
+    #[serde(default)]
+    seasons: HashMap<String, TrialEquipmentSource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TrialEquipmentSource {
+    keyword: String,
+    slots: Vec<TrialEquipmentSlot>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TrialEquipmentSlot {
+    #[serde(rename = "type")]
+    equip_type: String,
+    #[serde(default, rename = "subType")]
+    sub_type: Option<i64>,
+    #[serde(default, rename = "detailType")]
+    detail_type: Option<i64>,
+}
+
+impl TrialEquipmentSource {
+    fn cache_identity(&self) -> String {
+        let slots = self
+            .slots
+            .iter()
+            .map(|slot| {
+                format!(
+                    "{}-{}-{}",
+                    slot.equip_type,
+                    slot.sub_type
+                        .map_or("any".to_string(), |value| value.to_string()),
+                    slot.detail_type
+                        .map_or("any".to_string(), |value| value.to_string()),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{}:{}", self.keyword, slots)
+    }
+
+    fn matches(&self, item: &serde_json::Value, slot: &TrialEquipmentSlot) -> bool {
+        let has_keyword = item
+            .get("Name")
+            .and_then(|value| value.as_str())
+            .is_some_and(|name| name.contains(&self.keyword));
+        has_keyword
+            && slot.sub_type.map_or(true, |expected| {
+                item.get("SubType").and_then(|value| value.as_i64()) == Some(expected)
+            })
+            && slot.detail_type.map_or(true, |expected| {
+                item.get("DetailType").and_then(|value| value.as_i64()) == Some(expected)
+            })
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,12 +86,21 @@ struct JX3EquipResponse {
     list: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EquipmentPageMetadata {
+    total: i32,
+    per: i32,
+    pages: i32,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
     #[error("HTTP请求失败: {0}")]
     Http(#[from] reqwest::Error),
     #[error("数据库错误: {0}")]
     Database(String),
+    #[error("装备数据源错误: {0}")]
+    DataSource(String),
     #[allow(dead_code)]
     #[error("赛季数据无效")]
     InvalidSeason,
@@ -46,7 +117,7 @@ struct EquipRange {
 impl EquipRange {
     fn describe(self) -> String {
         match (self.min, self.max) {
-            (None, None) => "未配置品级范围，同步全部无修装备".to_string(),
+            (None, None) => "未配置品级范围，同步全部符合来源的装备".to_string(),
             (Some(min), None) => format!("最低品级: {}", min),
             (None, Some(max)) => format!("最高品级: {}", max),
             (Some(min), Some(max)) => format!("品级范围: {}-{}", min, max),
@@ -87,9 +158,10 @@ impl EquipSync {
                 return Ok(0);
             }
         };
+        let source = Self::trial_equipment_source(&season.name)?;
         // 缓存必须绑定实际生效的边界。这样旧的“未配置范围”缓存不会在
-        // 静态配置补入最低品级后阻止重新同步。
-        let cache_key = Self::cache_key(&season, range);
+        // 静态配置补入最低品级或更换装备来源后阻止重新同步。
+        let cache_key = Self::cache_key(&season, range, &source);
         if Self::is_season_synced_with_conn(&conn, &cache_key)? {
             info!("[EquipSync] 赛季「{}」当前品级边界已同步，跳过", season.name);
             return Ok(0);
@@ -105,7 +177,7 @@ impl EquipSync {
 
         // 三类接口均成功返回后才允许覆盖本地装备。任何抓取失败都会在保存前
         // 返回，已有装备和同步标记均保持不变。
-        let fetched = Self::fetch_all_equipments(range).await;
+        let fetched = Self::fetch_all_equipments(&source, range).await;
         let total_items = Self::persist_fetch_result_with_conn(&conn, &cache_key, fetched)?;
         if total_items == 0 {
             return Ok(0);
@@ -179,57 +251,112 @@ impl EquipSync {
         Ok(EquipRange { min, max })
     }
 
-    fn cache_key(season: &Season, range: EquipRange) -> String {
-        let min = range.min.map_or("none".to_string(), |value| value.to_string());
-        let max = range.max.map_or("none".to_string(), |value| value.to_string());
-        format!("equip_cache_v2_{}_min_{}_max_{}", season.id, min, max)
-    }
+    fn trial_equipment_source(season_name: &str) -> Result<TrialEquipmentSource, SyncError> {
+        let sources: TrialEquipmentSources = serde_json::from_str(TRIAL_EQUIPMENT_SOURCES)
+            .map_err(|error| {
+                SyncError::DataSource(format!("解析内置装备来源配置失败: {}", error))
+            })?;
+        let source = sources
+            .seasons
+            .get(season_name)
+            .cloned()
+            .unwrap_or(sources.default);
 
-    fn filter_equipments_by_range(
-        items: Vec<serde_json::Value>,
-        range: EquipRange,
-    ) -> Vec<serde_json::Value> {
-        if range.min.is_none() && range.max.is_none() {
-            return items;
+        if source.keyword.trim().is_empty() {
+            return Err(SyncError::DataSource(format!(
+                "赛季「{}」的装备查询关键词为空",
+                season_name
+            )));
+        }
+        if source.slots.is_empty() {
+            return Err(SyncError::DataSource(format!(
+                "赛季「{}」未配置装备类别",
+                season_name
+            )));
         }
 
+        let mut seen_types = std::collections::HashSet::new();
+        for slot in &source.slots {
+            if !matches!(slot.equip_type.as_str(), "armor" | "trinket" | "weapon") {
+                return Err(SyncError::DataSource(format!(
+                    "赛季「{}」包含未知装备类别「{}」",
+                    season_name, slot.equip_type
+                )));
+            }
+            if !seen_types.insert(slot.equip_type.as_str()) {
+                return Err(SyncError::DataSource(format!(
+                    "赛季「{}」重复配置装备类别「{}」",
+                    season_name, slot.equip_type
+                )));
+            }
+        }
+
+        Ok(source)
+    }
+
+    fn cache_key(season: &Season, range: EquipRange, source: &TrialEquipmentSource) -> String {
+        let min = range
+            .min
+            .map_or("none".to_string(), |value| value.to_string());
+        let max = range
+            .max
+            .map_or("none".to_string(), |value| value.to_string());
+        format!(
+            "equip_cache_v3_{}_source_{}_min_{}_max_{}",
+            season.id,
+            source.cache_identity(),
+            min,
+            max
+        )
+    }
+
+    fn filter_equipments_for_source(
+        items: Vec<serde_json::Value>,
+        source: &TrialEquipmentSource,
+        slot: &TrialEquipmentSlot,
+        range: EquipRange,
+    ) -> Vec<serde_json::Value> {
         items
             .into_iter()
             .filter(|item| {
                 let Some(level) = item.get("Level").and_then(|value| value.as_i64()) else {
                     return false;
                 };
-                range.includes(level)
+                range.includes(level) && source.matches(item, slot)
             })
             .collect()
     }
 
-    fn build_range_query(range: EquipRange) -> String {
-        let mut query = String::new();
-        if let Some(min) = range.min {
-            query.push_str(&format!("&min_level={}", min));
-        }
-        if let Some(max) = range.max {
-            query.push_str(&format!("&max_level={}", max));
-        }
-        query
-    }
-
     async fn fetch_all_equipments(
+        source: &TrialEquipmentSource,
         range: EquipRange,
-    ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>), SyncError> {
-        let armor_items = Self::filter_equipments_by_range(
-            Self::fetch_equipments("armor", range).await?,
-            range,
-        );
-        let trinket_items = Self::filter_equipments_by_range(
-            Self::fetch_equipments("trinket", range).await?,
-            range,
-        );
-        let weapon_items = Self::filter_equipments_by_range(
-            Self::fetch_equipments("weapon", range).await?,
-            range,
-        );
+    ) -> Result<
+        (
+            Vec<serde_json::Value>,
+            Vec<serde_json::Value>,
+            Vec<serde_json::Value>,
+        ),
+        SyncError,
+    > {
+        let mut armor_items = Vec::new();
+        let mut trinket_items = Vec::new();
+        let mut weapon_items = Vec::new();
+
+        for slot in &source.slots {
+            let items = Self::filter_equipments_for_source(
+                Self::fetch_equipments(slot, source, range).await?,
+                source,
+                slot,
+                range,
+            );
+            Self::ensure_required_slot_items(slot, source, &items)?;
+            match slot.equip_type.as_str() {
+                "armor" => armor_items = items,
+                "trinket" => trinket_items = items,
+                "weapon" => weapon_items = items,
+                _ => unreachable!("装备来源配置已在读取时验证"),
+            }
+        }
         Ok((armor_items, trinket_items, weapon_items))
     }
 
@@ -291,6 +418,8 @@ impl EquipSync {
             season.trial_equip_level_max,
         )
         .map_err(|reason| format!("当前赛季「{}」{}", season.name, reason))?;
+        Self::trial_equipment_source(&season.name)
+            .map_err(|error| format!("当前赛季「{}」装备来源无效: {}", season.name, error))?;
 
         info!(
             "[EquipSync] 强制同步赛季「{}」装备，{}",
@@ -331,7 +460,8 @@ impl EquipSync {
     }
 
     async fn fetch_equipments(
-        equip_type: &str,
+        slot: &TrialEquipmentSlot,
+        source: &TrialEquipmentSource,
         range: EquipRange,
     ) -> Result<Vec<serde_json::Value>, SyncError> {
         let client = reqwest::Client::builder()
@@ -339,64 +469,215 @@ impl EquipSync {
             .build()?;
 
         let per = 100;
-        let max_pages = 10;
+        let build_url = |page: i32| Self::build_equipments_url(slot, source, range, page, per);
 
-        // 只传实际配置的边界，避免把未知上限伪造成固定值。
-        let range_query = Self::build_range_query(range);
-
-        let build_url = |page: i32| {
-            format!(
-                "https://node.jx3box.com/equip/{}?client=std&page={}&per={}&name=无修{}",
-                equip_type, page, per, range_query
-            )
-        };
-
-        let type_name = match equip_type {
+        let type_name = match slot.equip_type.as_str() {
             "armor" => "防具",
             "trinket" => "饰品",
             "weapon" => "武器",
-            _ => equip_type,
+            _ => unreachable!("装备来源配置已在读取时验证"),
         };
         info!("[EquipSync] 获取 {} 第1页...", type_name);
 
-        let first_response = client.get(build_url(1)).send().await?.error_for_status()?;
+        let first_response = client.get(build_url(1)?).send().await?.error_for_status()?;
         let first_data: JX3EquipResponse = first_response.json().await?;
 
-        let total_pages = first_data.pages.min(max_pages);
-        info!("[EquipSync] {} 共 {} 页，将获取 {} 页", type_name, first_data.pages, total_pages);
+        let metadata = Self::validate_first_equipments_page(type_name, &first_data)?;
+        let total_pages = metadata.pages;
+        info!(
+            "[EquipSync] {} 共 {} 页，将获取 {} 页",
+            type_name, first_data.pages, total_pages
+        );
 
         let mut all_items = first_data.list;
 
         if total_pages > 1 {
-            let urls: Vec<String> = (2..=total_pages).map(build_url).collect();
-
-            let results: Vec<Result<serde_json::Value, reqwest::Error>> = futures::future::join_all(
-                urls.iter().map(|url| {
-                    let client = client.clone();
-                    async move {
-                        let response = client.get(url).send().await?.error_for_status()?;
-                        let data: JX3EquipResponse = response.json().await?;
-                        Ok(serde_json::json!({ "list": data.list }))
-                    }
-                })
-            ).await;
-
-            for result in results {
-                match result {
-                    Ok(data) => {
-                        if let Some(list) = data.get("list").and_then(|v| v.as_array()) {
-                            info!("[EquipSync] {} 页: {} 件", type_name, list.len());
-                            all_items.extend(list.clone());
-                        }
-                    }
-                    Err(e) => return Err(SyncError::Http(e)),
-                }
+            for page in 2..=total_pages {
+                let response = client
+                    .get(build_url(page)?)
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                let data: JX3EquipResponse = response.json().await?;
+                Self::validate_following_equipments_page(type_name, &data, metadata, page)?;
+                info!(
+                    "[EquipSync] {} 第 {} 页: {} 件",
+                    type_name,
+                    page,
+                    data.list.len()
+                );
+                all_items.extend(data.list);
             }
         }
+
+        Self::validate_equipment_aggregation(type_name, &all_items, metadata)?;
 
         info!("[EquipSync] {} 共获取 {} 件", type_name, all_items.len());
 
         Ok(all_items)
+    }
+
+    fn build_equipments_url(
+        slot: &TrialEquipmentSlot,
+        source: &TrialEquipmentSource,
+        range: EquipRange,
+        page: i32,
+        per: i32,
+    ) -> Result<String, SyncError> {
+        let mut url = reqwest::Url::parse(&format!(
+            "https://node.jx3box.com/equip/{}",
+            slot.equip_type
+        ))
+        .map_err(|error| SyncError::DataSource(format!("构造装备查询地址失败: {}", error)))?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("client", "std");
+            query.append_pair("page", &page.to_string());
+            query.append_pair("per", &per.to_string());
+            query.append_pair("name", &source.keyword);
+            if let Some(min) = range.min {
+                query.append_pair("min_level", &min.to_string());
+            }
+            if let Some(max) = range.max {
+                query.append_pair("max_level", &max.to_string());
+            }
+        }
+        Ok(url.into())
+    }
+
+    fn checked_page_count(type_name: &str, pages: i32) -> Result<i32, SyncError> {
+        if pages > MAX_EQUIPMENT_PAGES {
+            return Err(SyncError::DataSource(format!(
+                "{}查询结果共 {} 页，超过安全上限 {} 页，已取消同步以避免写入不完整数据",
+                type_name, pages, MAX_EQUIPMENT_PAGES
+            )));
+        }
+        Ok(pages.max(1))
+    }
+
+    fn validate_first_equipments_page(
+        type_name: &str,
+        data: &JX3EquipResponse,
+    ) -> Result<EquipmentPageMetadata, SyncError> {
+        let pages = if data.total == 0 && data.pages == 0 {
+            1
+        } else {
+            data.pages
+        };
+        let metadata = EquipmentPageMetadata {
+            total: data.total,
+            per: data.per,
+            pages,
+        };
+        Self::validate_equipments_page(type_name, data, metadata, 1)?;
+        Ok(metadata)
+    }
+
+    fn validate_following_equipments_page(
+        type_name: &str,
+        data: &JX3EquipResponse,
+        expected: EquipmentPageMetadata,
+        requested_page: i32,
+    ) -> Result<(), SyncError> {
+        Self::validate_equipments_page(type_name, data, expected, requested_page)
+    }
+
+    fn validate_equipments_page(
+        type_name: &str,
+        data: &JX3EquipResponse,
+        expected: EquipmentPageMetadata,
+        requested_page: i32,
+    ) -> Result<(), SyncError> {
+        if expected.total < 0 || expected.per <= 0 || expected.pages <= 0 {
+            return Err(SyncError::DataSource(format!(
+                "{} 第 {} 页返回非法分页元数据（total={}, per={}, pages={}）",
+                type_name, requested_page, expected.total, expected.per, expected.pages
+            )));
+        }
+        let expected_pages = if expected.total == 0 {
+            1
+        } else {
+            (i64::from(expected.total) + i64::from(expected.per) - 1) / i64::from(expected.per)
+        } as i32;
+        if expected.pages != expected_pages {
+            return Err(SyncError::DataSource(format!(
+                "{} 返回的总页数 {} 与 total/per 推导的 {} 不一致",
+                type_name, expected.pages, expected_pages
+            )));
+        }
+        Self::checked_page_count(type_name, expected.pages)?;
+        if data.total != expected.total
+            || data.per != expected.per
+            || (if data.total == 0 && data.pages == 0 {
+                1
+            } else {
+                data.pages
+            }) != expected.pages
+            || data.page != requested_page
+        {
+            return Err(SyncError::DataSource(format!(
+                "{} 第 {} 页分页元数据不一致或页码错误",
+                type_name, requested_page
+            )));
+        }
+        let remaining =
+            i64::from(expected.total) - i64::from(requested_page - 1) * i64::from(expected.per);
+        let expected_items = remaining.clamp(0, i64::from(expected.per)) as usize;
+        if data.list.len() != expected_items {
+            return Err(SyncError::DataSource(format!(
+                "{} 第 {} 页返回 {} 件装备，预期 {} 件，已取消同步以避免写入不完整数据",
+                type_name,
+                requested_page,
+                data.list.len(),
+                expected_items
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_equipment_aggregation(
+        type_name: &str,
+        items: &[serde_json::Value],
+        metadata: EquipmentPageMetadata,
+    ) -> Result<(), SyncError> {
+        if items.len() != metadata.total as usize {
+            return Err(SyncError::DataSource(format!(
+                "{} 聚合后共 {} 件装备，与接口总数 {} 不一致",
+                type_name,
+                items.len(),
+                metadata.total
+            )));
+        }
+        let mut ids = std::collections::HashSet::new();
+        for item in items {
+            let id = item
+                .get("ID")
+                .and_then(|value| value.as_i64())
+                .ok_or_else(|| {
+                    SyncError::DataSource(format!("{} 返回了缺少有效 ID 的装备", type_name))
+                })?;
+            if !ids.insert(id) {
+                return Err(SyncError::DataSource(format!(
+                    "{} 返回了重复装备 ID {}，已取消同步以避免写入不完整数据",
+                    type_name, id
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_required_slot_items(
+        slot: &TrialEquipmentSlot,
+        source: &TrialEquipmentSource,
+        items: &[serde_json::Value],
+    ) -> Result<(), SyncError> {
+        if (slot.sub_type.is_some() || slot.detail_type.is_some()) && items.is_empty() {
+            return Err(SyncError::DataSource(format!(
+                "{} 未获取到符合「{}」来源与部位限制的装备，已取消同步以保留现有数据",
+                slot.equip_type, source.keyword
+            )));
+        }
+        Ok(())
     }
 
     fn save_equipments_with_conn(conn: &rusqlite::Connection, armor_items: &[serde_json::Value], trinket_items: &[serde_json::Value], weapon_items: &[serde_json::Value]) -> Result<(), SyncError> {
@@ -596,6 +877,28 @@ mod tests {
         conn
     }
 
+    fn mock_equipments(start_id: i64, count: usize) -> Vec<serde_json::Value> {
+        (start_id..start_id + count as i64)
+            .map(|id| serde_json::json!({ "ID": id, "Name": format!("装备{}", id) }))
+            .collect()
+    }
+
+    fn mock_equipments_page(
+        total: i32,
+        per: i32,
+        pages: i32,
+        page: i32,
+        list: Vec<serde_json::Value>,
+    ) -> JX3EquipResponse {
+        JX3EquipResponse {
+            total,
+            per,
+            pages,
+            page,
+            list,
+        }
+    }
+
     #[test]
     fn force_sync_rejects_invalid_range_without_touching_equipments() {
         // 反向区间属于明确非法配置，必须在清理前拒绝。
@@ -632,18 +935,20 @@ mod tests {
 
     #[test]
     fn unconfigured_range_syncs_all_equipments_and_keeps_them() {
-        // 新赛季未配置品级范围（0 或 NULL）时，按"同步全部无修装备"处理，
+        // 新赛季未配置品级范围（0 或 NULL）时，按来源配置同步装备，
         // 而不是报错跳过；同步标记会被清除以触发重新抓取。
         for (min_level, max_level) in [(Some(0), Some(0)), (None, None)] {
             assert_eq!(
                 EquipSync::resolve_equip_range(min_level, max_level),
-                Ok(EquipRange { min: None, max: None }),
+                Ok(EquipRange {
+                    min: None,
+                    max: None
+                }),
                 "未配置范围应解析为不限范围"
             );
 
             let conn = setup_force_sync_preflight_db(min_level, max_level);
-            EquipSync::prepare_force_sync_with_conn(&conn)
-                .expect("未配置范围应允许强制同步");
+            EquipSync::prepare_force_sync_with_conn(&conn).expect("未配置范围应允许强制同步");
 
             let equipment_count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM equipments", [], |row| row.get(0))
@@ -690,24 +995,44 @@ mod tests {
 
     #[test]
     fn min_only_range_requests_and_filters_from_900_without_inventing_max() {
-        let range = EquipSync::resolve_equip_range(Some(900), None)
-            .expect("最低品级配置应合法");
-        assert_eq!(range, EquipRange { min: Some(900), max: None });
-        assert_eq!(EquipSync::build_range_query(range), "&min_level=900");
-
-        let filtered = EquipSync::filter_equipments_by_range(
+        let range = EquipSync::resolve_equip_range(Some(900), None).expect("最低品级配置应合法");
+        assert_eq!(
+            range,
+            EquipRange {
+                min: Some(900),
+                max: None
+            }
+        );
+        let source = EquipSync::trial_equipment_source("苍生铸世").expect("应读取苍生铸世装备来源");
+        let slot = source
+            .slots
+            .iter()
+            .find(|slot| slot.equip_type == "trinket")
+            .expect("应配置项链来源");
+        let url = EquipSync::build_equipments_url(slot, &source, range, 1, 100)
+            .expect("单边下限应能构造查询地址");
+        let parsed = reqwest::Url::parse(&url).expect("应是有效 URL");
+        assert!(parsed.query_pairs().any(|(key, value)| key == "min_level" && value == "900"));
+        assert!(!parsed.query_pairs().any(|(key, _)| key == "max_level"));
+        let filtered = EquipSync::filter_equipments_for_source(
             vec![
-                serde_json::json!({ "ID": 1, "Level": 899 }),
-                serde_json::json!({ "ID": 2, "Level": 900 }),
-                serde_json::json!({ "ID": 3, "Level": 1200 }),
-                serde_json::json!({ "ID": 4, "Level": 0 }),
+                serde_json::json!({ "ID": 1, "Name": "无观项链·内·荒", "Level": 899, "SubType": 4 }),
+                serde_json::json!({ "ID": 2, "Name": "无观项链·内·荒", "Level": 900, "SubType": 4 }),
+                serde_json::json!({ "ID": 3, "Name": "无观冠·内·荒", "Level": 1200, "SubType": 3 }),
+                serde_json::json!({ "ID": 4, "Name": "无修项链", "Level": 1200, "SubType": 4 }),
+                serde_json::json!({ "ID": 5, "Name": "无观项链·内·荒", "Level": 0, "SubType": 4 }),
             ],
+            &source,
+            slot,
             range,
         );
         assert_eq!(
-            filtered.iter().map(|item| item["Level"].as_i64()).collect::<Vec<_>>(),
-            vec![Some(900), Some(1200)],
-            "即使服务端忽略 min_level，落库前也必须排除低于 900 的装备"
+            filtered
+                .iter()
+                .map(|item| item["Level"].as_i64())
+                .collect::<Vec<_>>(),
+            vec![Some(900)],
+            "即使服务端忽略 min_level，落库前也必须排除低品级、错误关键词和错误部位"
         );
     }
 
@@ -716,7 +1041,12 @@ mod tests {
         let max_only = EquipSync::resolve_equip_range(None, Some(900))
             .expect("单独配置最高品级应合法");
         assert_eq!(max_only, EquipRange { min: None, max: Some(900) });
-        assert_eq!(EquipSync::build_range_query(max_only), "&max_level=900");
+        let source = EquipSync::trial_equipment_source("旧赛季").expect("应读取历史装备来源");
+        let url = EquipSync::build_equipments_url(&source.slots[0], &source, max_only, 1, 100)
+            .expect("单边上限应能构造查询地址");
+        let parsed = reqwest::Url::parse(&url).expect("应是有效 URL");
+        assert!(parsed.query_pairs().any(|(key, value)| key == "max_level" && value == "900"));
+        assert!(!parsed.query_pairs().any(|(key, _)| key == "min_level"));
         assert!(EquipSync::resolve_equip_range(Some(-1), None).is_err());
         assert!(EquipSync::resolve_equip_range(None, Some(-1)).is_err());
         assert!(EquipSync::resolve_equip_range(Some(901), Some(900)).is_err());
@@ -731,16 +1061,184 @@ mod tests {
             trial_equip_level_min: Some(900),
             trial_equip_level_max: None,
         };
+        let default_source =
+            EquipSync::trial_equipment_source("旧赛季").expect("旧赛季应使用默认来源");
+        let cangsheng_source =
+            EquipSync::trial_equipment_source("苍生铸世").expect("苍生铸世应使用无观来源");
         let unconfigured = EquipSync::cache_key(
             &season,
-            EquipRange { min: None, max: None },
+            EquipRange {
+                min: None,
+                max: None,
+            },
+            &cangsheng_source,
         );
         let minimum_900 = EquipSync::cache_key(
             &season,
-            EquipRange { min: Some(900), max: None },
+            EquipRange {
+                min: Some(900),
+                max: None,
+            },
+            &cangsheng_source,
+        );
+        let old_source = EquipSync::cache_key(
+            &season,
+            EquipRange {
+                min: Some(900),
+                max: None,
+            },
+            &default_source,
         );
         assert_ne!(unconfigured, minimum_900);
-        assert_ne!(minimum_900, "equip_cache_苍生铸世");
+        assert_ne!(minimum_900, old_source, "来源变更必须重新同步");
+        assert!(minimum_900.starts_with("equip_cache_v3_"));
+    }
+
+    #[test]
+    fn cangsheng_source_uses_encoded_wuguan_query_and_only_trial_slots() {
+        let source = EquipSync::trial_equipment_source("苍生铸世").expect("应读取苍生铸世装备来源");
+        assert_eq!(source.keyword, "无观");
+        assert_eq!(
+            source
+                .slots
+                .iter()
+                .map(|slot| slot.equip_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["trinket", "weapon"],
+            "新赛季只应查询项链和暗器囊类别"
+        );
+
+        let range = EquipRange {
+            min: Some(900),
+            max: Some(1280),
+        };
+        let weapon_slot = source
+            .slots
+            .iter()
+            .find(|slot| slot.equip_type == "weapon")
+            .expect("应配置暗器囊来源");
+        let url = EquipSync::build_equipments_url(weapon_slot, &source, range, 2, 100)
+            .expect("应构造装备查询地址");
+        assert!(
+            url.contains("name=%E6%97%A0%E8%A7%82"),
+            "中文关键词必须由 URL 编码"
+        );
+        let parsed = reqwest::Url::parse(&url).expect("应是有效 URL");
+        assert_eq!(parsed.path(), "/equip/weapon");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "name")
+                .map(|(_, value)| value),
+            Some("无观".into())
+        );
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "min_level")
+                .map(|(_, value)| value),
+            Some("900".into())
+        );
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "max_level")
+                .map(|(_, value)| value),
+            Some("1280".into())
+        );
+    }
+
+    #[test]
+    fn source_filter_keeps_only_wuguan_trial_necklaces_and_concealed_weapons() {
+        let source = EquipSync::trial_equipment_source("苍生铸世").expect("应读取苍生铸世装备来源");
+        let range = EquipRange {
+            min: Some(900),
+            max: Some(1280),
+        };
+        let weapon_slot = source
+            .slots
+            .iter()
+            .find(|slot| slot.equip_type == "weapon")
+            .expect("应配置暗器囊来源");
+        let filtered = EquipSync::filter_equipments_for_source(
+            vec![
+                serde_json::json!({ "ID": 47942, "Name": "无观囊·内·荒", "Level": 900, "SubType": 1, "DetailType": 6 }),
+                serde_json::json!({ "ID": 112783, "Name": "无观冠·内·荒", "Level": 1280, "SubType": 3, "DetailType": false }),
+                serde_json::json!({ "ID": 99999, "Name": "无观剑", "Level": 1280, "SubType": 1, "DetailType": 0 }),
+                serde_json::json!({ "ID": 99998, "Name": "无修囊·内·荒", "Level": 900, "SubType": 1, "DetailType": 6 }),
+            ],
+            &source,
+            weapon_slot,
+            range,
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["ID"], 47942);
+    }
+
+    #[test]
+    fn page_limit_rejects_incomplete_sync_instead_of_truncating() {
+        let error = EquipSync::checked_page_count("武器", MAX_EQUIPMENT_PAGES + 1)
+            .expect_err("超过分页上限时不得截断后继续同步");
+        assert!(error.to_string().contains("超过安全上限"));
+        assert_eq!(
+            EquipSync::checked_page_count("武器", MAX_EQUIPMENT_PAGES)
+                .expect("上限内应允许完整同步"),
+            MAX_EQUIPMENT_PAGES
+        );
+    }
+
+    #[test]
+    fn pagination_validation_rejects_successful_but_incomplete_or_inconsistent_pages() {
+        let first_page = mock_equipments_page(101, 100, 2, 1, mock_equipments(1, 100));
+        let metadata = EquipSync::validate_first_equipments_page("暗器", &first_page)
+            .expect("完整首页分页元数据应有效");
+
+        let empty_last_page = mock_equipments_page(101, 100, 2, 2, Vec::new());
+        let short_page_error =
+            EquipSync::validate_following_equipments_page("暗器", &empty_last_page, metadata, 2)
+                .expect_err("HTTP 200 但末页缺失装备时必须拒绝同步");
+        assert!(short_page_error.to_string().contains("预期 1 件"));
+
+        let wrong_metadata_page = mock_equipments_page(101, 100, 2, 1, mock_equipments(101, 1));
+        let metadata_error = EquipSync::validate_following_equipments_page(
+            "暗器",
+            &wrong_metadata_page,
+            metadata,
+            2,
+        )
+        .expect_err("后续页返回首页页码时必须拒绝同步");
+        assert!(metadata_error
+            .to_string()
+            .contains("元数据不一致或页码错误"));
+
+        let mut duplicate_aggregate = first_page.list;
+        duplicate_aggregate.push(serde_json::json!({ "ID": 1, "Name": "重复装备" }));
+        let aggregation_error =
+            EquipSync::validate_equipment_aggregation("暗器", &duplicate_aggregate, metadata)
+                .expect_err("重复页导致重复 ID 时必须拒绝同步");
+        assert!(aggregation_error.to_string().contains("重复装备 ID"));
+    }
+
+    #[test]
+    fn current_source_requires_every_constrained_slot_to_have_items() {
+        let source = EquipSync::trial_equipment_source("苍生铸世").expect("应读取苍生铸世来源");
+        let trinket_slot = source
+            .slots
+            .iter()
+            .find(|slot| slot.equip_type == "trinket")
+            .expect("应配置项链来源");
+        let error = EquipSync::ensure_required_slot_items(trinket_slot, &source, &[])
+            .expect_err("当前赛季缺失项链时不得以暗器数据覆盖历史装备");
+        assert!(error.to_string().contains("取消同步以保留现有数据"));
+
+        let legacy_source = EquipSync::trial_equipment_source("旧赛季").expect("应读取默认来源");
+        let armor_slot = legacy_source
+            .slots
+            .iter()
+            .find(|slot| slot.equip_type == "armor")
+            .expect("应配置旧赛季防具来源");
+        EquipSync::ensure_required_slot_items(armor_slot, &legacy_source, &[])
+            .expect("未指定部位限制的旧赛季来源保持原有兼容性");
     }
 
     #[test]

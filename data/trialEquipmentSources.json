@@ -1,0 +1,19 @@
+{
+  "default": {
+    "keyword": "无修",
+    "slots": [
+      { "type": "armor" },
+      { "type": "trinket" },
+      { "type": "weapon" }
+    ]
+  },
+  "seasons": {
+    "苍生铸世": {
+      "keyword": "无观",
+      "slots": [
+        { "type": "trinket", "subType": 4 },
+        { "type": "weapon", "detailType": 6 }
+      ]
+    }
+  }
+}

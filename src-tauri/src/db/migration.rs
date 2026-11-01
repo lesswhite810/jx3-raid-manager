@@ -466,8 +466,8 @@ mod tests {
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .expect("新数据库应写入当前赛季最低试炼品级");
-        assert_eq!(equip_bounds, (900, Some(0)));
+            .expect("新数据库应写入当前赛季试炼品级范围");
+        assert_eq!(equip_bounds, (900, Some(1280)));
     }
 
     #[test]
@@ -504,7 +504,24 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("应读取回填结果");
-        assert_eq!(backfilled, (900, None, 123, 456));
+        assert_eq!(backfilled, (900, Some(1280), 123, 456));
+
+        conn.execute(
+            "UPDATE seasons SET trial_equip_level_min = 900, trial_equip_level_max = 0
+             WHERE name = '苍生铸世' AND version_id = ?",
+            params![version_id],
+        )
+        .expect("应模拟旧版仅设置最低品级的状态");
+        init_static_raids(&conn).expect("静态同步应补入已确认的最高品级");
+        let upgraded_bounds: (i64, i64) = conn
+            .query_row(
+                "SELECT trial_equip_level_min, trial_equip_level_max
+                 FROM seasons WHERE name = '苍生铸世' AND version_id = ?",
+                params![version_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("应读取旧版升级后的品级范围");
+        assert_eq!(upgraded_bounds, (900, 1280));
 
         conn.execute(
             "UPDATE seasons SET trial_equip_level_min = 1000, trial_equip_level_max = 1200

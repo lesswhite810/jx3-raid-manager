@@ -6,7 +6,7 @@ import { Package, Check, X, AlertCircle, Layers, Trophy, Save, HelpCircle } from
 import { DualRangeSlider } from './DualRangeSlider';
 import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
-import { getEquip, JX3Equip, JX3EquipMagicType } from '../services/jx3BoxApi';
+import { getTrialEquipments, JX3Equip, JX3EquipMagicType } from '../services/jx3BoxApi';
 import { db } from '../services/db';
 import { DateTimePicker } from './DateTimePicker';
 import { getBaseServerName } from '../utils/serverUtils';
@@ -414,10 +414,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             }
             const hasConfiguredBound = configuredBounds.min !== undefined || configuredBounds.max !== undefined;
 
-            // 有已确认边界时不能读后台同步前残留的旧赛季 SQLite 缓存；
-            // 远端失败/空结果会保持空列表，不把旧装备混回选择器。
-            const items = await getEquip('无修', {
-                preferRemote: hasConfiguredBound,
+            // 赛季来源决定装备名称和可选部位。新来源或已配置边界时不读旧的
+            // SQLite 缓存；历史来源未配置边界时保持本地缓存兼容。
+            const items = await getTrialEquipments(season, {
                 minLevel: configuredBounds.min,
                 maxLevel: configuredBounds.max,
             });
