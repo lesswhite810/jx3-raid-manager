@@ -10,6 +10,7 @@ import { db } from '../services/db';
 import { useCancellableEffect } from '../hooks/useCancellableEffect';
 import { RaidDetail } from './RaidDetail';
 import { PendingRecordsPanel } from './PendingRecordsPanel';
+import { buildWeeklyRaidGroups, WeeklyRaidGroup } from '../utils/weeklyRaids';
 
 interface RaidManagerProps {
   raids: Raid[];
@@ -28,6 +29,8 @@ interface RaidManagerProps {
   onRefreshBaizhanRecords?: () => void;
   /** 配置变更上抛给 App，避免子组件直连数据库形成双写 */
   onConfigChange?: (updater: (prev: Config) => Config) => void;
+  weeklyRaidNames: string[];
+  weeklyRaidStatus?: 'loading' | 'success' | 'error';
 }
 
 interface MergedRaid {
@@ -71,7 +74,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   onRefreshRecords,
   onRefreshTrialRecords,
   onRefreshBaizhanRecords,
-  onConfigChange
+  onConfigChange,
+  weeklyRaidNames,
+  weeklyRaidStatus = 'success'
 }) => {
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
@@ -285,6 +290,12 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     return favoriteList;
   }, [raids, favoriteRaids]);
 
+  const weeklyRaidGroups = useMemo<WeeklyRaidGroup[]>(
+    () => buildWeeklyRaidGroups(raids, weeklyRaidNames, favoriteRaids),
+    [raids, weeklyRaidNames, favoriteRaids],
+  );
+  const hasCollectionEntries = favoriteMergedRaids.length > 0 || weeklyRaidGroups.length > 0 || weeklyRaidStatus !== 'success';
+
   // 初始化 / 校正 selectedVersion：等收藏与版本字典都加载完后再决定默认视图
   useEffect(() => {
     if (!favoritesLoadedRef.current || !isOrderLoaded || versions.length === 0) {
@@ -293,7 +304,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
     setSelectedVersion((prev) => {
       // 收藏视图但收藏已清空：回退到最新版本
-      if (prev === FAVORITE_VIEW && favoriteMergedRaids.length === 0) {
+      if (prev === FAVORITE_VIEW && !hasCollectionEntries) {
         return versions[0];
       }
       // 收藏视图且有收藏：保留
@@ -305,9 +316,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         return prev;
       }
       // 初始值 'all' 或不在现存列表里：有收藏则默认进入收藏视图，否则推到数组首位（最新版本）
-      return favoriteMergedRaids.length > 0 ? FAVORITE_VIEW : versions[0];
+      return hasCollectionEntries ? FAVORITE_VIEW : versions[0];
     });
-  }, [versions, isOrderLoaded, favoriteMergedRaids]);
+  }, [versions, isOrderLoaded, favoriteMergedRaids, hasCollectionEntries]);
 
   const filteredRaids = useMemo(() => {
     return raids.filter(raid => raid.version === selectedVersion);
@@ -511,8 +522,10 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             <div className="flex gap-2 items-center">
               <PendingRecordsPanel
                 records={pendingRecords ?? []}
+                raids={raids}
                 accounts={accounts}
                 onRefreshRecords={onRefreshRecords}
+                onRefreshTrialRecords={onRefreshTrialRecords}
               />
               {versions.length > 0 && (
                 <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-lg border border-base shadow-sm">
@@ -522,7 +535,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                     value={selectedVersion}
                     onChange={e => setSelectedVersion(e.target.value)}
                   >
-                    {favoriteMergedRaids.length > 0 && (
+                    {hasCollectionEntries && (
                       <option value={FAVORITE_VIEW}>收藏</option>
                     )}
                     {versions.map(version => (
@@ -539,16 +552,53 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           </div>
 
           {/* 选中收藏视图且有收藏时显示收藏列表，否则按版本分组显示当前赛季 */}
-          {selectedVersion === FAVORITE_VIEW && favoriteMergedRaids.length > 0 ? (
+          {selectedVersion === FAVORITE_VIEW && hasCollectionEntries ? (
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
+              {weeklyRaidStatus !== 'success' && (
+                <div className="rounded-card border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-sm text-ds-warning-strong">
+                  {weeklyRaidStatus === 'loading' ? '正在获取本周团队秘境…' : '本周团队秘境获取失败，以下仅显示已收藏副本。'}
+                </div>
+              )}
+              {weeklyRaidGroups.length > 0 && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="h-px bg-ds-success-soft flex-1"></div>
+                    <h3 className="text-sm font-bold text-ds-success-strong uppercase tracking-wider bg-ds-success-soft px-3 py-1 rounded-tag border border-ds-success-soft flex items-center gap-1.5">
+                      <Shield size={14} />
+                      本周团队秘境
+                    </h3>
+                    <div className="h-px bg-ds-success-soft flex-1"></div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                    {weeklyRaidGroups.map(group => (
+                      <div key={`weekly-${group.name}`} className={`p-4 rounded-card border ${group.missingTenPlayerConfig ? 'border-ds-warning-soft bg-ds-warning-soft/30' : group.raids.every(raid => !raid.isActive) ? 'border-base bg-base opacity-70' : 'border-ds-success-soft bg-ds-success-soft/30'}`}>
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="p-1.5 rounded-tag bg-ds-success-soft text-ds-success-strong"><Shield size={16} /></span>
+                          <div>
+                            <h3 className="font-semibold text-sm text-main">{group.name}</h3>
+                            <p className="text-xs text-muted">{group.missingTenPlayerConfig ? '未找到10人配置' : group.raids.every(raid => !raid.isActive) ? '10人难度（已禁用）' : '10人难度'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {group.raids.map(raid => (
+                            <div key={getRaidKey(raid)} onClick={() => setSelectedRaid(raid)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); toggleRaidDifficultyStatus(getRaidKey(raid)); }} className={`px-2 py-1 text-xs font-medium rounded-tag border cursor-pointer ${raid.isActive ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft' : 'bg-base text-muted border-base'}`} title={`${raid.isActive ? '点击进入详情，右键禁用' : '已禁用，点击进入详情，右键启用'}`}>
+                              10人{DIFFICULTY_LABELS[raid.difficulty]}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {favoriteMergedRaids.length > 0 && <div className="flex items-center gap-3">
                 <div className="h-px bg-ds-warning-soft flex-1"></div>
                 <h3 className="text-sm font-bold text-ds-warning-strong uppercase tracking-wider bg-ds-warning-soft px-3 py-1 rounded-full border border-ds-warning-soft flex items-center gap-1.5">
                   <Star size={14} fill="currentColor" />
                   收藏
                 </h3>
                 <div className="h-px bg-ds-warning-soft flex-1"></div>
-              </div>
+              </div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                 {favoriteMergedRaids.map(mergedRaid => {
                   const isStatic = mergedRaid.raids.some(r => isStaticRaid(r));

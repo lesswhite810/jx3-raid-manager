@@ -6,7 +6,7 @@ import {
   Flag, Shirt, Crown, BookOpen, FileText, Pencil, Skull, Calendar, ChevronDown,
   Boxes,
 } from 'lucide-react';
-import { RaidRecord, ScrapsItem, Account } from '../types';
+import { Raid, RaidRecord, ScrapsItem, Account, IncomeCandidate } from '../types';
 import { dropScannerService } from '../services/dropScanner';
 import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
@@ -21,13 +21,28 @@ import {
 } from '../utils/scrapsUtils';
 import { toast } from '../utils/toastManager';
 import { getDefaultBosses } from '../data/raidBosses';
+import { getRaidKey } from '../utils/raidUtils';
 import { useDebug } from '../contexts/DebugContext';
 import { ScrapsItemsEditor } from './ScrapsItemsEditor';
+import {
+  hasUnreviewedIncomeCandidates,
+  formatIncomeCandidateAmount,
+  sumIncomeCandidates,
+  toggleIncomeCandidateSelection,
+} from '../utils/incomeCandidateUtils';
+import {
+  getPendingRecordBossConfirmFields,
+  getPendingRecordBossSelection,
+  isPendingRecordBossSelected,
+  togglePendingRecordBossSelection,
+} from '../utils/pendingRecordBossSelection';
 
 interface PendingRecordsPanelProps {
   records: RaidRecord[];
+  raids: Raid[];
   accounts: Account[];
   onRefreshRecords?: () => void;
+  onRefreshTrialRecords?: () => void;
 }
 
 interface RoleInfo {
@@ -48,12 +63,16 @@ interface EditFormData {
   hasAppearance: boolean;
   hasTitle: boolean;
   hasSecretBook: boolean;
+  bossIds: string[];
   notes: string;
   bossNames: string[];
+  /** 只有用户切换过 BOSS 时才覆写原字段，保留未编辑的历史/自定义数据。 */
+  bossSelectionChanged: boolean;
   /** 是否为散件老板（有散件清单时默认勾选，用户可取消） */
   isScrapsBoss: boolean;
   /** 散件清单（拷贝自 record.scrapsItems，允许用户编辑单价） */
   scrapsItems: ScrapsItem[];
+  incomeCandidateIds: string[];
 }
 
 /**
@@ -65,8 +84,10 @@ interface EditFormData {
  */
 export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   records,
+  raids,
   accounts,
   onRefreshRecords,
+  onRefreshTrialRecords,
 }) => {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [cdConflictRecord, setCdConflictRecord] = useState<RaidRecord | null>(null);
@@ -167,6 +188,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     const dropsHasXuanjing = record.drops?.some(d => d.includes('玄晶')) ?? false;
     // 散件清单归一化：兼容 v2.1.53 旧数据的 snake_case 键与 npc 单价铜→金问题
     const normalizedScraps = normalizeScrapsItems(record.scrapsItems ?? []);
+    const bossSelection = getPendingRecordBossSelection(record);
     setEditForm({
       goldIncome: record.goldIncome || 0,
       goldExpense: record.goldExpense || 0,
@@ -179,11 +201,21 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       hasTitle: record.hasTitle || false,
       hasSecretBook: record.hasSecretBook || false,
       notes: record.notes || '',
-      bossNames: record.bossNames ?? [],
+      bossIds: bossSelection.bossIds,
+      bossNames: bossSelection.bossNames,
+      bossSelectionChanged: false,
       // 扫描已识别出散件清单时默认勾选散件老板（用户可手动取消）
       isScrapsBoss: record.isScrapsBoss || normalizedScraps.length > 0,
       // 归一化后的新数组，避免直接修改 record 引用导致 React state 异常
       scrapsItems: normalizedScraps,
+      incomeCandidateIds: record.selectedIncomeCandidateIds ?? [],
+    });
+  }, []);
+
+  const getIncomeCandidateDate = useCallback((candidate: IncomeCandidate) => {
+    const timestamp = candidate.time < 10_000_000_000 ? candidate.time * 1000 : candidate.time;
+    return new Date(timestamp).toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
   }, []);
 
@@ -214,6 +246,11 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
 
   /** 直接确认（带 CD 冲突预检） */
   const handleDirectConfirm = useCallback((record: RaidRecord) => {
+    // 有未核对的多笔收入时必须先进入编辑，避免直接确认悄悄丢弃候选。
+    if (hasUnreviewedIncomeCandidates(record)) {
+      openEditModal(record);
+      return;
+    }
     if (checkCdConflict(record)) {
       setCdConflictAction('direct');
       setCdConflictRecord(record);
@@ -236,7 +273,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       // 散件支出按清单实际购买价（totalPrice）重算，保证确认后口径一致
       const scrapsValue = computeScrapsValue(editForm.scrapsItems);
       const scrapsExpense = computeScrapsExpense(editForm.scrapsItems);
-      await dropScannerService.confirmRecord(editingRecord.id, {
+      const editData: Partial<RaidRecord> = {
         goldIncome: editForm.goldIncome,
         goldExpense: editForm.goldExpense,
         hasXuanjing: editForm.hasXuanjing,
@@ -248,12 +285,16 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         hasTitle: editForm.hasTitle,
         hasSecretBook: editForm.hasSecretBook,
         notes: editForm.notes.trim() || undefined,
-        bossNames: editForm.bossNames,
         scrapsItems: editForm.scrapsItems,
         scrapsValue,
         scrapsExpense,
         isScrapsBoss: editForm.isScrapsBoss,
-      });
+        selectedIncomeCandidateIds: editForm.incomeCandidateIds,
+      };
+      if (editForm.bossSelectionChanged) {
+        Object.assign(editData, getPendingRecordBossConfirmFields(editForm));
+      }
+      await dropScannerService.confirmRecord(editingRecord.id, editData);
       onRefreshRecords?.();
       toast.success('记录已确认');
       closeEditModal();
@@ -308,13 +349,20 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       const results = await dropScannerService.scanRaidsInRange(startMs, endMs);
       const totalScanned = results.reduce((sum, r) => sum + (r.instanceCount ?? 0), 0);
       const failedCount = results.filter(r => !r.success).length;
+      const trialDrawsChanged = results.some(result => result.trialDrawsChanged);
       if (totalScanned > 0) {
-        toast.success(`扫描完成，处理 ${totalScanned} 个副本实例`);
+        toast.success(`扫描完成，处理 ${totalScanned} 条副本或试炼记录`);
         onRefreshRecords?.();
-      } else if (failedCount > 0) {
+      } else if (trialDrawsChanged) {
+        toast.success('已更新试炼翻牌明细');
+      }
+      if (totalScanned > 0 || trialDrawsChanged) {
+        onRefreshTrialRecords?.();
+      }
+      if (failedCount > 0) {
         toast.warning(`扫描完成但有 ${failedCount} 个账号失败`);
-      } else {
-        toast.info(`${rangeLabel}暂无副本数据`);
+      } else if (totalScanned === 0 && !trialDrawsChanged) {
+        toast.info(`${rangeLabel}没有需要更新的副本或试炼记录`);
       }
     } catch (error) {
       console.error(`扫描${rangeLabel}失败:`, error);
@@ -323,7 +371,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     } finally {
       setIsScanningThisWeek(false);
     }
-  }, [isScanningThisWeek, onRefreshRecords]);
+  }, [isScanningThisWeek, onRefreshRecords, onRefreshTrialRecords]);
 
   /** 扫描本周（周一7:00到下周一7:00） */
   const handleScanThisWeek = useCallback(() => {
@@ -479,6 +527,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 const scrapsExpense = getRecordScrapsExpense(record);
                 const bosses = record.bossNames?.filter(n => n) ?? [];
                 const isScanning = record.status === 'scanning';
+                const incomeCandidates = record.incomeCandidates ?? [];
 
                 return (
                   <div
@@ -514,6 +563,11 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                           {formatGold(income)}
                         </span>
                       </span>
+                      {incomeCandidates.length > 0 && (
+                        <span className="text-xs text-ds-warning-strong" title="扫描发现多笔待核对收入，确认前请打开编辑查看">
+                          {incomeCandidates.length} 笔收入待核对
+                        </span>
+                      )}
                       <span className="flex items-center gap-1">
                         <TrendingDown className="w-3.5 h-3.5 text-ds-warning-strong" />
                         <span className="text-muted text-xs">支出</span>
@@ -657,7 +711,12 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                       type="number"
                       min="0"
                       value={editForm.goldIncome || ''}
-                      onChange={e => setEditForm({ ...editForm, goldIncome: Number(e.target.value) })}
+                      onChange={e => setEditForm({
+                        ...editForm,
+                        goldIncome: Number(e.target.value),
+                        // 手动输入代表用户覆盖候选汇总，清除候选选中态避免显示与金额不一致。
+                        incomeCandidateIds: [],
+                      })}
                       placeholder="收入金额"
                       className="w-full pl-9 pr-3 py-2.5 bg-surface border border-ds-success-soft dark:border-ds-success-soft rounded-lg text-main placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ds-success transition-all font-mono text-[1rem]"
                     />
@@ -682,13 +741,58 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 </div>
               </div>
 
+              {/* 收入候选：没有明确工资标记时保留多笔入账，避免静默取第一笔。 */}
+              {(editingRecord?.incomeCandidates?.length ?? 0) > 0 && (
+                <div className="rounded-lg border border-ds-warning-soft bg-ds-warning-soft/20 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div>
+                      <p className="text-sm font-medium text-main">收入候选</p>
+                      <p className="text-xs text-muted mt-0.5">请选择属于本场副本的入账，可多选；无法确认时保留为 0。保存收入按整金记录。</p>
+                    </div>
+                    <span className="text-xs text-ds-warning-strong">待核对</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {editingRecord.incomeCandidates!.map(candidate => {
+                      const selected = editForm?.incomeCandidateIds.includes(candidate.id) ?? false;
+                      return (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          className={`w-full flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                            selected
+                              ? 'border-ds-success-soft bg-ds-success-soft/50 text-ds-success-strong'
+                              : 'border-base bg-surface text-main hover:border-ds-warning-soft'
+                          }`}
+                          onClick={() => {
+                            if (!editForm) return;
+                            const ids = toggleIncomeCandidateSelection(editForm.incomeCandidateIds, candidate.id);
+                            const total = sumIncomeCandidates(editingRecord.incomeCandidates!, ids);
+                            setEditForm({ ...editForm, incomeCandidateIds: ids, goldIncome: total });
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className={`inline-flex h-4 w-4 items-center justify-center rounded border ${selected ? 'border-ds-success bg-ds-success text-white' : 'border-base'}`}>
+                              {selected && <Check className="h-3 w-3" />}
+                            </span>
+                            <span>{getIncomeCandidateDate(candidate)}</span>
+                          </span>
+                          <span className="font-mono font-semibold">{formatIncomeCandidateAmount(candidate)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* BOSS 进度编辑 */}
               {editingRecord && (() => {
-                // 从副本名提取基础名，匹配默认 BOSS 列表
                 const raidName = editingRecord.raidName || '';
-                const baseName = raidName.replace(/^(10人|25人|英雄|普通)\s*/, '').replace(/·.+$/, '');
-                const defaultBosses = getDefaultBosses(baseName) ?? getDefaultBosses(raidName);
-                if (!defaultBosses || defaultBosses.length === 0) return null;
+                // 保留“·元心殿”等独立副本名；旧记录可能还带有“25人普通”等前缀。
+                const baseName = raidName.replace(/^(?:(?:10|25)人(?:普通|英雄|挑战)?|普通|英雄|挑战)\s*/, '');
+                const configuredRaid = raids.find(raid => getRaidKey(raid) === raidName)
+                  ?? raids.find(raid => raid.name === raidName);
+                const bosses = configuredRaid?.bosses ?? getDefaultBosses(raidName) ?? getDefaultBosses(baseName);
+                if (!bosses?.length) return null;
                 return (
                   <div>
                     <label className="flex items-center gap-2 text-sm font-medium text-main mb-1.5">
@@ -696,17 +800,23 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                       BOSS 进度
                     </label>
                     <div className="flex flex-wrap gap-2">
-                      {defaultBosses.map(boss => {
-                        const selected = editForm.bossNames.includes(boss.name);
+                      {bosses.map(boss => {
+                        const selected = isPendingRecordBossSelected(editForm, boss);
                         return (
                           <button
                             key={boss.id}
                             type="button"
                             onClick={() => {
-                              const next = selected
-                                ? editForm.bossNames.filter(n => n !== boss.name)
-                                : [...editForm.bossNames, boss.name];
-                              setEditForm({ ...editForm, bossNames: next });
+                              const nextSelection = togglePendingRecordBossSelection(
+                                editForm,
+                                boss,
+                                bosses,
+                              );
+                              setEditForm({
+                                ...editForm,
+                                ...nextSelection,
+                                bossSelectionChanged: true,
+                              });
                             }}
                             className={`px-2.5 py-1 rounded-lg text-sm font-medium border transition-colors ${
                               selected

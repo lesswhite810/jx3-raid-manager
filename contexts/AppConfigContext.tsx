@@ -14,6 +14,8 @@ interface AppConfigContextType {
   resetAll: () => Promise<void>;
   /** 设置自动扫描开关 */
   setAutoScanEnabled: (enabled: boolean) => Promise<void>;
+  /** 设置试炼结算翻牌位截图识别开关 */
+  setTrialScreenshotRecognitionEnabled: (enabled: boolean) => Promise<void>;
   /** 设置启动刷新装分开关 */
   setAutoRefreshEquipScoreEnabled: (enabled: boolean) => Promise<void>;
 }
@@ -25,6 +27,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   setupCompleted: false,
   lastScanMingyiAt: null,
   autoScanEnabled: false,
+  trialScreenshotRecognitionEnabled: false,
   autoRefreshEquipScore: true,
 };
 
@@ -38,7 +41,12 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const config = await appConfigService.get();
         if (!cancelled) {
-          setAppConfig(config);
+          // 新增字段在旧的本地配置中可能缺失，保持截图识别默认关闭。
+          setAppConfig({
+            ...DEFAULT_APP_CONFIG,
+            ...config,
+            trialScreenshotRecognitionEnabled: config.trialScreenshotRecognitionEnabled ?? false,
+          });
         }
       } catch (error) {
         console.error('[AppConfig] 加载应用配置失败:', error);
@@ -104,6 +112,21 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  const setTrialScreenshotRecognitionEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      await appConfigService.setTrialScreenshotRecognitionEnabled(enabled);
+      setAppConfig(prev => (
+        prev
+          ? { ...prev, trialScreenshotRecognitionEnabled: enabled }
+          : { ...DEFAULT_APP_CONFIG, trialScreenshotRecognitionEnabled: enabled }
+      ));
+    } catch (error) {
+      console.error('[AppConfig] 设置试炼截图识别开关失败:', error);
+      toast.error('保存试炼截图识别设置失败');
+      throw error;
+    }
+  }, []);
+
   const setAutoRefreshEquipScoreEnabled = useCallback(async (enabled: boolean) => {
     try {
       await appConfigService.setAutoRefreshEquipScoreEnabled(enabled);
@@ -124,6 +147,7 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         markSetupCompleted,
         resetAll,
         setAutoScanEnabled,
+        setTrialScreenshotRecognitionEnabled,
         setAutoRefreshEquipScoreEnabled,
       }}
     >

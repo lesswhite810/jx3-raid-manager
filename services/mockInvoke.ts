@@ -1,3 +1,5 @@
+import type { TrialPlaceRecord } from '../types';
+
 // 简单的 mock 拦截器，当由于没有 Tauri 后端导致 API 调用失败时使用。
 // 这里硬编码一些初始的基础测试数据。
 
@@ -41,7 +43,7 @@ const MOCK_RECORDS = [
   }
 ];
 
-const MOCK_TRIAL_RECORDS = [
+const MOCK_TRIAL_RECORDS: TrialPlaceRecord[] = [
   {
     "id": "mock-trial-1",
     "accountId": "mock-acc-1",
@@ -51,17 +53,40 @@ const MOCK_TRIAL_RECORDS = [
     "date": Date.now(),
     "layer": 90,
     "bosses": ["九色鹿", "吸血鬼", "推石头"],
-    "flippedIndex": 1,
+    "flippedIndex": 0,
+    "source": "auto",
+    "equipmentUnreviewed": true,
+    card1: '', card2: '', card3: '', card4: '', card5: '',
+    draws: [1, 2].map(sequence => ({
+      id: `mock-draw-${sequence}`,
+      sourceKey: `mock-receipt-${sequence}`,
+      sequence,
+      receiptTime: Date.now() - (2 - sequence) * 20000,
+      flippedIndex: sequence === 1 ? 1 : 0,
+      rewardItems: [{ name: '银叶子·试炼之地', quantity: sequence === 1 ? 31 : 33 }],
+      ...(sequence === 2 ? { staminaCost: 1000, staminaCosts: [125, 875] } : {}),
+      card1: '', card2: '', card3: '', card4: '', card5: '',
+      equipmentUnreviewed: true,
+    })),
     "type": "trial"
   }
 ];
 
 const mockCache = new Map<string, [string, string]>();
 
+const MOCK_APP_CONFIG = {
+  gameDirectory: 'mock://browser-preview',
+  setupCompleted: true,
+  lastScanMingyiAt: null,
+  autoScanEnabled: false,
+  trialScreenshotRecognitionEnabled: false,
+  autoRefreshEquipScore: true,
+};
+
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   console.log(`[Mock Invoke] Call: ${cmd}`, args);
   
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     setTimeout(() => {
       let result: any = null;
       
@@ -161,6 +186,49 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'db_get_trial_records':
           result = JSON.stringify(MOCK_TRIAL_RECORDS);
           break;
+        case 'db_update_trial_draw_flipped_index': {
+          const record = MOCK_TRIAL_RECORDS.find(row => row.id === args?.recordId);
+          const draw = record?.draws?.find(row => row.id === args?.drawId);
+          const slot = args?.flippedIndex ?? 0;
+          if (!draw || typeof slot !== 'number' || !Number.isInteger(slot) || slot < 0 || slot > 5) {
+            reject(new Error('未找到翻牌明细或牌位无效'));
+            return;
+          }
+          draw.flippedIndex = slot;
+          break;
+        }
+        case 'db_update_trial_draw_equipment': {
+          const drawId = args?.drawId;
+          const cardIndex = args?.cardIndex;
+          const equipmentId = args?.equipmentId;
+          const draw = MOCK_TRIAL_RECORDS.flatMap(record => record.draws ?? [])
+            .find(row => row.id === drawId);
+          if (!draw || typeof cardIndex !== 'number' || !Number.isInteger(cardIndex) || cardIndex < 1 || cardIndex > 5
+            || (equipmentId !== null && typeof equipmentId !== 'string')) {
+            reject(new Error('未找到翻牌明细、牌位或装备无效'));
+            return;
+          }
+          const key = `card${cardIndex}` as 'card1' | 'card2' | 'card3' | 'card4' | 'card5';
+          draw[key] = equipmentId?.trim() || '';
+          break;
+        }
+        case 'db_set_trial_draw_equipment_reviewed': {
+          const draw = MOCK_TRIAL_RECORDS.flatMap(record => record.draws ?? [])
+            .find(row => row.id === args?.drawId);
+          if (!draw || typeof args?.reviewed !== 'boolean') {
+            reject(new Error('未找到翻牌明细或核对状态无效'));
+            return;
+          }
+          const expectedCards = args.expectedCards;
+          if (args.reviewed && (args.expectedFlippedIndex !== draw.flippedIndex
+            || !Array.isArray(expectedCards) || expectedCards.length !== 5
+            || [draw.card1, draw.card2, draw.card3, draw.card4, draw.card5].some((card, index) => card !== expectedCards[index]))) {
+            reject(new Error('牌面已更新，请刷新后重新确认'));
+            return;
+          }
+          draw.equipmentUnreviewed = !args.reviewed;
+          break;
+        }
         case 'db_get_baizhan_records':
           result = '[]';
           break;
@@ -191,19 +259,19 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           result = null;
           break;
         case 'get_app_config':
-          result = {
-            gameDirectory: 'mock://browser-preview',
-            setupCompleted: true,
-            lastScanMingyiAt: null,
-            autoScanEnabled: false,
-            autoRefreshEquipScore: true,
-          };
+          result = { ...MOCK_APP_CONFIG };
           break;
         case 'complete_setup':
         case 'set_game_directory':
         case 'reset_setup':
         case 'set_auto_scan_enabled':
         case 'set_auto_refresh_equip_score_enabled':
+          result = null;
+          break;
+        case 'set_trial_screenshot_recognition_enabled':
+          if (typeof args?.enabled === 'boolean') {
+            MOCK_APP_CONFIG.trialScreenshotRecognitionEnabled = args.enabled;
+          }
           result = null;
           break;
         // 跨角色设置同步（浏览器环境仅返回空数据，避免 UI 崩溃）

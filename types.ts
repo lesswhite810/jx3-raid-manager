@@ -114,6 +114,60 @@ export interface RaidRecord {
   scrapsExpense?: number;
   /** 是否为散件老板（确认时有散件清单默认选中，用户可取消） */
   isScrapsBoss?: boolean;
+  /** 自动扫描发现的非首领奖励收入候选，待确认记录可供用户选择。 */
+  incomeCandidates?: IncomeCandidate[];
+  /** 用户确认时选中的收入候选 ID；旧记录缺失时保持 undefined。 */
+  selectedIncomeCandidateIds?: string[];
+}
+
+export interface IncomeCandidate {
+  id: string;
+  /** 消息时间（Unix 秒或毫秒）。 */
+  time: number;
+  /** 以金为单位的整数金额，兼容现有收入字段。 */
+  amount: number;
+  /** 原始铜数，存在时用于精确展示。 */
+  amountCopper?: number;
+  source?: string;
+}
+
+/** 单次翻牌的收据、牌位与画面识别结果。 */
+export interface TrialDrawReward {
+  name: string;
+  quantity: number;
+}
+
+export interface TrialDraw {
+  id: string;
+  sourceKey: string;
+  /** 同一轮内按收据时间排序、从 1 开始的序号。 */
+  sequence: number;
+  /** 同秒收据只能稳定显示排序，不能证明真实翻牌先后。 */
+  sequenceAmbiguous?: boolean;
+  /** 手工翻牌没有日志收据时间；自动翻牌保留日志来源。 */
+  source?: 'manual' | 'auto';
+  receiptTime: string | number;
+  /** 聊天记录哈希可能超过 JavaScript 安全整数范围，须保持字符串。 */
+  receiptHash?: string;
+  /** 1-5 为已知翻牌位；0 表示未知。 */
+  flippedIndex: number;
+  rewardItems: TrialDrawReward[];
+  /** 本次翻牌确认的精力消耗；未观察到时省略。 */
+  staminaCost?: number;
+  /** 同一收据窗口内拆分记录的精力消耗，用于保留原始明细。 */
+  staminaCosts?: number[];
+  // Flat structure for cards (Equip IDs), scoped to this draw.
+  card1: string;
+  card2: string;
+  card3: string;
+  card4: string;
+  card5: string;
+  /** 此次牌面尚未完整核对；不可据此将未观察牌视为无装备。 */
+  equipmentUnreviewed?: boolean;
+  /** 人工修改过的牌位，包含明确清空的牌。 */
+  manualEquipmentCardIndexes?: number[];
+  /** 本次表单明确修改的牌位，仅用于保存意图，不作为持久数据。 */
+  editedCardIndices?: number[];
 }
 
 export interface TrialPlaceRecord {
@@ -123,22 +177,39 @@ export interface TrialPlaceRecord {
   roleName: string;
   server: string;
   date: string | number;
-  layer: number; // 1-100
-  bosses: [string, string, string]; // 3 bosses
+  /** 0 表示自动扫描尚未取得层数，待用户补录确认。 */
+  layer: number; // 0-120
+  /** 三关 Boss。空字符串表示自动扫描尚未取得对应关卡。 */
+  bosses: [string, string, string];
   // Flat structure for cards (Equip IDs)
   card1: string;
   card2: string;
   card3: string;
   card4: string;
   card5: string;
-  flippedIndex: number; // 1-5
+  /** 1-5 为已知翻牌位，0 表示扫描未能识别翻牌位。 */
+  flippedIndex: number;
   type: 'trial';
   notes?: string;
+  /** 旧版手工记录缺失时按 manual 兼容。 */
+  source?: 'auto' | 'manual';
+  /** 旧版手工记录缺失时按 confirmed 兼容。 */
+  status?: 'pending' | 'confirmed';
+  /** 自动扫描候选的稳定来源键，用于幂等写入。 */
+  sourceKey?: string;
+  /** 五张牌尚未完整核对时为 true。已识别的选中牌可独立保留，旧记录按 false 兼容。 */
+  equipmentUnreviewed?: boolean;
+  /** 编辑草稿中用户实际修改过的牌位。后端会保留其余空位晚到的识别结果，不持久化。 */
+  editedCardIndices?: number[];
+  /** 一轮通关后的翻牌明细。旧记录固定按空数组兼容，绝不把父记录旧牌面虚构为首笔。 */
+  draws?: TrialDraw[];
 }
 
 export interface TrialFlipPositionStats {
   position: number;
   flipCount: number;
+  /** 该位置已确认装备结果的翻牌样本数。 */
+  equipmentReviewCount: number;
   flippedEquipmentCount: number;
   appearanceCount: number;
   flipEquipmentRate: number;
@@ -162,6 +233,12 @@ export interface TrialBossEquipmentStats {
 
 export interface TrialFlipStatsSummary {
   totalRecords: number;
+  /** 用于翻牌统计的明细数：新记录取子笔，旧记录兼容为一笔。 */
+  drawCount: number;
+  /** 已确认翻牌位的明细数。 */
+  knownPositionDrawCount: number;
+  /** 已完整核对五张牌的记录数，用作装备出现率和 Boss 统计的分母。 */
+  equipmentReviewedRecords: number;
   positions: TrialFlipPositionStats[];
   bestFlipPosition: TrialFlipPositionStats | null;
   bestAppearancePosition: TrialFlipPositionStats | null;
@@ -420,5 +497,7 @@ export interface AppConfig {
   setupCompleted: boolean;
   lastScanMingyiAt: string | null;
   autoScanEnabled: boolean;
+  /** 是否在自动扫描的试炼结算流程中识别已选翻牌位，默认关闭。 */
+  trialScreenshotRecognitionEnabled: boolean;
   autoRefreshEquipScore: boolean;
 }

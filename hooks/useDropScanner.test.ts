@@ -433,6 +433,17 @@ describe('useDropScanner 扫描结果与错误处理', () => {
         expect(harness.result().lastScanAt).toBe(NOW.getTime() + 2000);
     });
 
+    it('已有通关补到翻牌明细时刷新界面，新增通关数仍为 0', async () => {
+        pollerState.result = makeActiveResult({ jx3Running: true });
+        dropScannerMock.scanAllActiveRaidDrops.mockResolvedValue([
+            { ...makeScanResult('a1', 0), trialDrawsChanged: true },
+        ]);
+        const onRecordsUpdated = vi.fn();
+        mountHook({ autoScanEnabled: true, onRecordsUpdated });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(onRecordsUpdated).toHaveBeenCalledWith(0);
+    });
+
     it('扫描抛错时记录 lastError，且 isScanning 复位为 false', async () => {
         pollerState.result = makeActiveResult({ jx3Running: true });
         dropScannerMock.scanAllActiveRaidDrops.mockRejectedValue(new Error('扫描失败'));

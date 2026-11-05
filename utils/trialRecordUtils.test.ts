@@ -3,9 +3,15 @@ import { TrialPlaceRecord } from '../types';
 import {
   deriveTrialEquipmentLevelRange,
   getTrialEquipmentLevelRange,
+  getTrialCardEquipmentId,
+  getTrialRecordFlipSamples,
   getTrialRecordEquipmentEntries,
   getTrialRecordEquipmentIds,
+  hasRecordedTrialFlip,
+  isConfirmedTrialRecord,
   isTrialEquipmentLevelInRange,
+  isTrialEquipmentAppearanceReviewed,
+  hasObservedTrialFlippedEquipment,
 } from './trialRecordUtils';
 
 describe('赛季试炼装备品级范围', () => {
@@ -182,5 +188,107 @@ describe('getTrialRecordEquipmentIds', () => {
       { cardIndex: 1, equipId: '5001', isFlipped: true },
       { cardIndex: 3, equipId: '5001', isFlipped: false }
     ]);
+  });
+});
+
+describe('试炼自动记录状态', () => {
+  it('将缺失状态的历史手工记录视为已确认，并仅接受 1 至 5 号翻牌位', () => {
+    expect(isConfirmedTrialRecord(createTrialRecord())).toBe(true);
+    expect(isConfirmedTrialRecord(createTrialRecord({ status: 'pending' }))).toBe(false);
+    expect(hasRecordedTrialFlip(createTrialRecord({ flippedIndex: 1, status: 'confirmed' }))).toBe(true);
+    expect(hasRecordedTrialFlip(createTrialRecord({ flippedIndex: 0, status: 'confirmed' }))).toBe(false);
+    expect(hasRecordedTrialFlip(createTrialRecord({ flippedIndex: 6, status: 'confirmed' }))).toBe(false);
+    expect(hasRecordedTrialFlip(createTrialRecord({ flippedIndex: 1, status: 'pending' }))).toBe(false);
+  });
+
+  it('允许已识别的选中牌单独进入翻中装备统计，但不把未观察的牌当成完整核对', () => {
+    const record = createTrialRecord({
+      flippedIndex: 2,
+      card2: 'selected-item',
+      card3: 'hovered-other-item',
+      equipmentUnreviewed: true,
+    });
+
+    expect(getTrialCardEquipmentId(record, 2)).toBe('selected-item');
+    expect(getTrialCardEquipmentId(record, 6)).toBe('');
+    expect(hasObservedTrialFlippedEquipment(record)).toBe(true);
+    expect(isTrialEquipmentAppearanceReviewed(record)).toBe(false);
+  });
+
+  it('完整核对且选中牌为空时，仍作为翻中未出装备的样本', () => {
+    const record = createTrialRecord({ flippedIndex: 4, equipmentUnreviewed: false });
+
+    expect(hasObservedTrialFlippedEquipment(record)).toBe(false);
+    expect(isTrialEquipmentAppearanceReviewed(record)).toBe(true);
+  });
+
+  it('多次翻牌优先使用子项，空数组兼容已知父牌，未知父牌不凭空生成翻牌', () => {
+    const multiDraw = {
+      ...createTrialRecord({ source: 'auto', flippedIndex: 1, card1: 'parent-card' }),
+      draws: [
+        { card1: '', card2: '', card3: '', card4: '', card5: '', flippedIndex: 0, equipmentUnreviewed: true },
+        { card1: '', card2: 'child-card', card3: '', card4: '', card5: '', flippedIndex: 2, equipmentUnreviewed: false },
+      ],
+    } as TrialPlaceRecord & { draws: Array<{
+      card1: string; card2: string; card3: string; card4: string; card5: string;
+      flippedIndex: number; equipmentUnreviewed: boolean;
+    }> };
+    const automaticWithoutKnownParentFlip = {
+      ...createTrialRecord({ source: 'auto', flippedIndex: 1, card1: 'stale-card' }),
+      draws: [],
+    } as TrialPlaceRecord & { draws: unknown[] };
+    automaticWithoutKnownParentFlip.flippedIndex = 0;
+    const legacyManual = {
+      ...createTrialRecord({ source: 'manual', flippedIndex: 1, card1: 'manual-card' }),
+      draws: [],
+    } as TrialPlaceRecord & { draws: unknown[] };
+
+    expect(getTrialRecordFlipSamples(multiDraw)).toHaveLength(2);
+    expect(getTrialRecordFlipSamples(multiDraw)[1]).toMatchObject({ flippedIndex: 2, card2: 'child-card' });
+    expect(getTrialRecordFlipSamples(automaticWithoutKnownParentFlip)).toEqual([]);
+    expect(getTrialRecordFlipSamples(legacyManual)).toHaveLength(1);
+  });
+
+  it('同一轮同时有自动收据和待归属手工翻牌时，只返回自动收据', () => {
+    const record = {
+      ...createTrialRecord({ source: 'auto', flippedIndex: 0 }),
+      draws: [
+        { card1: 'manual-card', card2: '', card3: '', card4: '', card5: '', flippedIndex: 1, equipmentUnreviewed: false, source: 'manual' as const },
+        { card1: '', card2: 'auto-card', card3: '', card4: '', card5: '', flippedIndex: 2, equipmentUnreviewed: false, source: 'auto' as const },
+      ],
+    } as TrialPlaceRecord & { draws: Array<{
+      card1: string; card2: string; card3: string; card4: string; card5: string;
+      flippedIndex: number; equipmentUnreviewed: boolean; source: 'manual' | 'auto';
+    }> };
+
+    expect(getTrialRecordFlipSamples(record)).toEqual([
+      expect.objectContaining({ source: 'auto', flippedIndex: 2, card2: 'auto-card' }),
+    ]);
+  });
+
+  it('纯手工子项仍全部参与统计，历史未标来源的子项沿用自动兼容', () => {
+    const manualRecord = {
+      ...createTrialRecord({ source: 'manual', flippedIndex: 0 }),
+      draws: [
+        { card1: 'first', card2: '', card3: '', card4: '', card5: '', flippedIndex: 1, equipmentUnreviewed: false, source: 'manual' as const },
+        { card1: '', card2: 'second', card3: '', card4: '', card5: '', flippedIndex: 2, equipmentUnreviewed: false, source: 'manual' as const },
+      ],
+    } as TrialPlaceRecord & { draws: Array<{
+      card1: string; card2: string; card3: string; card4: string; card5: string;
+      flippedIndex: number; equipmentUnreviewed: boolean; source: 'manual';
+    }> };
+    const legacyRecord = {
+      ...createTrialRecord({ source: 'auto', flippedIndex: 0 }),
+      draws: [
+        { card1: '', card2: '', card3: 'legacy', card4: '', card5: '', flippedIndex: 3, equipmentUnreviewed: false },
+      ],
+    } as TrialPlaceRecord & { draws: Array<{
+      card1: string; card2: string; card3: string; card4: string; card5: string;
+      flippedIndex: number; equipmentUnreviewed: boolean;
+    }> };
+
+    expect(getTrialRecordFlipSamples(manualRecord)).toHaveLength(2);
+    expect(getTrialRecordFlipSamples(legacyRecord)).toHaveLength(1);
+    expect(getTrialRecordFlipSamples(legacyRecord)[0]).toMatchObject({ card3: 'legacy' });
   });
 });

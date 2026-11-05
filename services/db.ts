@@ -493,6 +493,22 @@ class DatabaseService {
     }
   }
 
+  /** 严格读取装备目录，供需要区分“空目录”和“读取失败”的界面使用。 */
+  async getEquipmentsStrict(): Promise<unknown[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_equipments');
+      const parsed: unknown = JSON.parse(data);
+      if (!Array.isArray(parsed)) {
+        throw new Error('装备目录格式无效');
+      }
+      return parsed;
+    } catch (error) {
+      console.error('Failed to get equipments strictly:', error);
+      throw error;
+    }
+  }
+
   async clearEquipments(): Promise<void> {
     await this.init();
     try {
@@ -502,10 +518,14 @@ class DatabaseService {
     }
   }
 
-  async addTrialRecord(record: TrialPlaceRecord): Promise<void> {
+  async addTrialRecord(record: TrialPlaceRecord, preserveFlippedIndex = false): Promise<void> {
     await this.init();
     try {
-      await invoke('db_add_trial_record', { record: JSON.stringify(record) });
+      await invoke('db_add_trial_record', {
+        record: JSON.stringify(
+          preserveFlippedIndex ? { ...record, preserveFlippedIndex: true } : record
+        ),
+      });
     } catch (error) {
       console.error('Failed to add trial record:', error);
       throw error;
@@ -519,8 +539,58 @@ class DatabaseService {
       return JSON.parse(data);
     } catch (error) {
       console.error('Failed to get trial records:', error);
-      return [];
+      throw error;
     }
+  }
+
+  /**
+   * 补录某一次翻牌的牌位。该命令只修改指定子笔，不能回写父轮旧牌面或其他翻牌。
+   * `null` 与 0 均表示清除为未知。
+   */
+  async updateTrialDrawFlippedIndex(
+    recordId: string,
+    drawId: string,
+    flippedIndex: number | null,
+  ): Promise<void> {
+    await this.init();
+    try {
+      await invoke('db_update_trial_draw_flipped_index', {
+        recordId,
+        drawId,
+        flippedIndex: flippedIndex && flippedIndex >= 1 && flippedIndex <= 5 ? flippedIndex : null,
+      });
+    } catch (error) {
+      console.error('Failed to update trial draw flipped index:', error);
+      throw error;
+    }
+  }
+
+  /** 仅补录指定翻牌子笔的一张牌；null 表示清空该牌位。 */
+  async updateTrialDrawEquipment(
+    drawId: string,
+    cardIndex: number,
+    equipmentId: string | null,
+  ): Promise<void> {
+    if (!Number.isInteger(cardIndex) || cardIndex < 1 || cardIndex > 5) {
+      throw new Error('牌位必须在 1 到 5 之间');
+    }
+    await this.init();
+    try {
+      await invoke('db_update_trial_draw_equipment', {
+        drawId,
+        cardIndex,
+        equipmentId: equipmentId?.trim() || null,
+      });
+    } catch (error) {
+      console.error('Failed to update trial draw equipment:', error);
+      throw error;
+    }
+  }
+
+  /** 显式确认或撤销某次翻牌的完整牌面核对，不改变其他明细。 */
+  async setTrialDrawEquipmentReviewed(drawId: string, reviewed: boolean, expectedFlippedIndex: number, expectedCards: string[]): Promise<void> {
+    await this.init();
+    await invoke('db_set_trial_draw_equipment_reviewed', { drawId, reviewed, expectedFlippedIndex, expectedCards });
   }
 
   async deleteTrialRecord(id: string): Promise<void> {

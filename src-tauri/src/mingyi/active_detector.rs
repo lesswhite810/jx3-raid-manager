@@ -448,6 +448,23 @@ fn unix_to_system_time(secs: u64) -> SystemTime {
     UNIX_EPOCH + std::time::Duration::from_secs(secs)
 }
 
+/// 将一次实际检测结果交给试炼截图捕获的会话归属判断。
+///
+/// `info.jx3dat` 不提供权威的实时地图；这里仅在单实例且恰有一个 Active
+/// 角色时提供 UID。任何不确定结果都显式撤销归属，避免沿用上一次检测的 UID。
+fn report_trial_capture_activity(
+    game_directory: &str,
+    process_start_ms: i64,
+    active_uid: Option<&str>,
+    observed_at_ms: i64,
+) {
+    // 监听器在同一配置/会话锁内先投递Activity再允许终局投递，避免首个终局
+    // 抢在角色归属消息之前到达截图线程。
+    crate::mingyi::drop_scanner::live::activity(
+        game_directory, process_start_ms, active_uid, observed_at_ms,
+    );
+}
+
 /// 计算活跃等级
 ///
 /// - `latest_mtime`: 账号最新活动时间
@@ -487,6 +504,11 @@ fn determine_active_level(
 /// 3. 每个目录读取 info.jx3dat 解析角色身份 + 检测 6 个数据源 mtime
 pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResult {
     let scan_start = SystemTime::now();
+    // 必须在检测开始时取值：较慢的目录遍历完成后，不能覆盖较新的检测结论。
+    let observed_at_ms = scan_start
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
 
     // 1. 获取 JX3 进程状态
     let runtime_status = jx3_process::get_jx3_runtime_status_internal(game_directory);
@@ -502,6 +524,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
+        report_trial_capture_activity(game_directory, 0, None, observed_at_ms);
         return BatchActiveResult {
             jx3_running: false,
             jx3_start_time: None,
@@ -522,6 +545,9 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
     let window_end = SystemTime::now();
     let jx3_start_time = Some(matched.start_time.clone());
     let jx3_start_time_unix = matched.start_time_unix;
+    let process_start_ms = i64::try_from(jx3_start_time_unix)
+        .unwrap_or(0)
+        .saturating_mul(1_000);
     // 进程运行中，无结束时间
     let jx3_end_time: Option<String> = None;
 
@@ -552,6 +578,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
                 .elapsed()
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
+            report_trial_capture_activity(game_directory, process_start_ms, None, observed_at_ms);
             return BatchActiveResult {
                 jx3_running: true,
                 jx3_start_time,
@@ -657,6 +684,24 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
         .elapsed()
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+
+    // 只有全系统恰有一个 JX3 客户端、其匹配当前游戏目录，且检测结果恰有一个
+    // Active 角色时，UID 才可作为截图会话归属。并列 mtime、多开或读取不完整
+    // 都按未知处理；这不是实时地图判断。
+    let active_uids: Vec<&str> = roles
+        .iter()
+        .filter(|role| role.is_online && role.active_level == AccountActiveLevel::Active)
+        .map(|role| role.uid.as_str())
+        .collect();
+    let active_uid = if runtime_status.all_processes.len() == 1
+        && runtime_status.matched_process_count == 1
+        && active_uids.len() == 1
+    {
+        Some(active_uids[0])
+    } else {
+        None
+    };
+    report_trial_capture_activity(game_directory, process_start_ms, active_uid, observed_at_ms);
 
     BatchActiveResult {
         jx3_running: true,

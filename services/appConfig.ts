@@ -33,6 +33,10 @@ export const appConfigService = {
     await invoke('set_auto_scan_enabled', { enabled });
   },
 
+  async setTrialScreenshotRecognitionEnabled(enabled: boolean): Promise<void> {
+    await invoke('set_trial_screenshot_recognition_enabled', { enabled });
+  },
+
   async setAutoRefreshEquipScoreEnabled(enabled: boolean): Promise<void> {
     await invoke('set_auto_refresh_equip_score_enabled', { enabled });
   },

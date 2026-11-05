@@ -33,6 +33,10 @@ pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
         16 => migrations::v16::migrate(conn),
         17 => migrations::v17::migrate(conn),
         18 => migrations::v18::migrate(conn),
+        19 => migrations::v19::migrate(conn),
+        20 => migrations::v20::migrate(conn),
+        21 => migrations::v21::migrate(conn),
+        22 => migrations::v22::migrate(conn),
         _ => Err(format!("未知的迁移版本: {}", version)),
     }
 }
@@ -52,7 +56,9 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
             .prepare("SELECT id, name FROM seasons")
             .map_err(error_to_string)?;
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
             .map_err(error_to_string)?;
         for r in iter.flatten() {
             season_id_map.insert(r.0, r.1);
@@ -89,12 +95,18 @@ pub fn init_static_raids(conn: &Connection) -> Result<(), String> {
             None
         };
 
-        let season_id: Option<i64> = target_season.as_ref().and_then(|s| season_id_map.get(s)).copied();
+        let season_id: Option<i64> = target_season
+            .as_ref()
+            .and_then(|s| season_id_map.get(s))
+            .copied();
 
         let effective_version = if !version.is_empty() {
             version.to_string()
         } else if !season_name.is_empty() {
-            season_to_version.get(season_name).cloned().unwrap_or_default()
+            season_to_version
+                .get(season_name)
+                .cloned()
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -159,7 +171,9 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
             .prepare("SELECT id, name FROM game_versions")
             .map_err(error_to_string)?;
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
             .map_err(error_to_string)?;
         for r in iter.flatten() {
             version_id_map.insert(r.0, r.1);
@@ -191,7 +205,8 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
             params_vec.push(Box::new(version_orders[i]));
             params_vec.push(Box::new(timestamp.clone()));
         }
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, params_refs.as_slice())
             .map_err(error_to_string)?;
 
@@ -199,7 +214,9 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
             .prepare("SELECT id, name FROM game_versions")
             .map_err(error_to_string)?;
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
             .map_err(error_to_string)?;
         version_id_map.clear();
         for r in iter.flatten() {
@@ -222,7 +239,9 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
             .prepare("SELECT id, name FROM seasons")
             .map_err(error_to_string)?;
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
             .map_err(error_to_string)?;
         for r in iter.flatten() {
             season_id_map.insert(r.0, r.1);
@@ -255,7 +274,9 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
 
     if !season_names.is_empty() {
         let count = season_names.len();
-        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string()).collect();
+        let placeholders: Vec<String> = (0..count)
+            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string())
+            .collect();
         let sql = format!(
             "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max, created_at) VALUES {}",
             placeholders.join(", ")
@@ -272,7 +293,8 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
             params_vec.push(Box::new(season_trial_maxs[i]));
             params_vec.push(Box::new(timestamp.clone()));
         }
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, params_refs.as_slice())
             .map_err(error_to_string)?;
 
@@ -400,11 +422,7 @@ mod tests {
         .expect("V18 数据库前置表应创建成功");
     }
 
-    fn seed_existing_dark_shadow(
-        conn: &Connection,
-        start_date: i64,
-        end_date: Option<i64>,
-    ) -> i64 {
+    fn seed_existing_dark_shadow(conn: &Connection, start_date: i64, end_date: Option<i64>) -> i64 {
         conn.execute(
             "INSERT INTO game_versions (name, sort_order, created_at) VALUES ('丝路风雨', 8, 'old')",
             [],
@@ -664,8 +682,8 @@ mod tests {
             ]
         );
 
-        let static_raid: serde_json::Value = serde_json::from_str(include_str!("static_raids.json"))
-            .expect("静态副本 JSON 应合法");
+        let static_raid: serde_json::Value =
+            serde_json::from_str(include_str!("static_raids.json")).expect("静态副本 JSON 应合法");
         assert_eq!(
             static_raid
                 .as_array()
@@ -687,9 +705,11 @@ mod tests {
             .expect("旧预置副本应保留");
         assert_eq!(old_raid_active, 0);
         let historical_record_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM records WHERE id = 'legacy-record'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM records WHERE id = 'legacy-record'",
+                [],
+                |row| row.get(0),
+            )
             .expect("历史记录应保留");
         assert_eq!(historical_record_count, 1);
         let invalidated_cache_count: i64 = conn
@@ -749,7 +769,8 @@ mod tests {
 
         let custom_start_conn = Connection::open_in_memory().expect("应创建内存数据库");
         setup_v18_database(&custom_start_conn);
-        let custom_version_id = seed_existing_dark_shadow(&custom_start_conn, 1_776_898_801, Some(0));
+        let custom_version_id =
+            seed_existing_dark_shadow(&custom_start_conn, 1_776_898_801, Some(0));
 
         init_static_raids(&custom_start_conn).expect("静态同步应成功");
         let custom_dates: (i64, i64) = custom_start_conn

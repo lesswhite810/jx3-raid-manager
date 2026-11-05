@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { LayoutDashboard, Users, Download, Shield, Settings } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import { useAppConfig } from './contexts/AppConfigContext';
 import { Dashboard } from './components/Dashboard';
 import { IncomeDetail } from './components/IncomeDetail';
@@ -39,9 +40,11 @@ import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts, preserveRoleOrder } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
+import { isTauriRuntime } from './services/invoke';
 import { analyzeRoles } from './services/gameDirectoryScanner';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { updaterService } from './services/updater';
+import { getNextWeeklyRaidRefreshDelay, getWeeklyRaidDungeons, isWeeklyRaidDateCurrent } from './services/weeklyRaidApi';
 import { toast } from './utils/toastManager';
 
 const ConfigManagerModal = lazy(async () => import('./components/ConfigManagerModal').then(module => ({ default: module.ConfigManagerModal })));
@@ -85,6 +88,8 @@ function App() {
   const [trialRecords, setTrialRecords] = useState<TrialPlaceRecord[]>([]);
   const [baizhanRecords, setBaizhanRecords] = useState<BaizhanRecord[]>([]);
   const [raids, setRaids] = useState<Raid[]>([]);
+  const [weeklyRaidNames, setWeeklyRaidNames] = useState<string[]>([]);
+  const [weeklyRaidStatus, setWeeklyRaidStatus] = useState<'loading' | 'success' | 'error'>('loading');
   // 装备数据：与账号/记录等一起在启动时并行加载，避免子组件单独异步加载导致数字先显示 0 再跳变
   const [equipments, setEquipments] = useState<any[]>([]);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
@@ -96,6 +101,44 @@ function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgressPayload | null>(null);
+
+  // 周常只在本次运行中展示，不写入固定收藏。
+  useEffect(() => {
+    let disposed = false;
+    let sequence = 0;
+    let refreshTimer: ReturnType<typeof setTimeout>;
+    const loadWeeklyRaids = async () => {
+      const request = ++sequence;
+      setWeeklyRaidNames([]);
+      setWeeklyRaidStatus('loading');
+      try {
+        const result = await getWeeklyRaidDungeons();
+        if (disposed || request !== sequence) return;
+        if (!result || !isWeeklyRaidDateCurrent(result.date, new Date())) {
+          setWeeklyRaidStatus('error');
+          return;
+        }
+        setWeeklyRaidNames(result.raids);
+        setWeeklyRaidStatus('success');
+      } catch (error) {
+        if (disposed || request !== sequence) return;
+        console.warn('获取周常副本失败:', error);
+        setWeeklyRaidStatus('error');
+      }
+    };
+    const scheduleRefresh = () => {
+      refreshTimer = setTimeout(() => {
+        void loadWeeklyRaids();
+        scheduleRefresh();
+      }, getNextWeeklyRaidRefreshDelay());
+    };
+    void loadWeeklyRaids();
+    scheduleRefresh();
+    return () => {
+      disposed = true;
+      clearTimeout(refreshTimer);
+    };
+  }, []);
 
   // 重新从数据库加载记录
   const reloadRecords = useCallback(async () => {
@@ -159,19 +202,13 @@ function App() {
     }
   }, [instanceTypes]);
 
-  // 副本掉落自动扫描（B 阶段）：JX3 在线时全局自动扫描 pending 记录
-  // 扫描到新记录后自动重新加载 records
-  useDropScanner({
-    autoScanEnabled: appConfig?.autoScanEnabled ?? false,
-    onRecordsUpdated: () => {
-      void reloadRecords();
-    },
-  });
-
   // 重新从数据库加载试炼记录
+  const trialReloadSequence = useRef(0);
   const reloadTrialRecords = useCallback(async () => {
+    const sequence = ++trialReloadSequence.current;
     try {
       const loadedTrialRecords = await db.getTrialRecords();
+      if (sequence !== trialReloadSequence.current) return;
       console.log(`重新加载试炼记录: ${loadedTrialRecords.length} 条`);
       setTrialRecords(loadedTrialRecords);
     } catch (error) {
@@ -179,6 +216,42 @@ function App() {
       toast.error('重新加载试炼记录失败');
     }
   }, []);
+
+  useDropScanner({
+    autoScanEnabled: appConfig?.autoScanEnabled ?? false,
+    onRecordsUpdated: (instanceCount) => {
+      if (instanceCount > 0) void reloadRecords();
+      void reloadTrialRecords();
+    },
+  });
+
+  // 截图补录翻牌位或某张牌的装备后，刷新详情与统计。
+  // 浏览器预览没有 Tauri 事件总线，跳过注册以保持 mock 可用。
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen('trial-flip-updated', () => {
+      if (!disposed) {
+        void reloadTrialRecords();
+      }
+    }).then(listener => {
+      if (disposed) {
+        void listener();
+      } else {
+        unlisten = listener;
+      }
+    }).catch(error => {
+      console.warn('注册试炼翻牌更新监听失败:', error);
+    });
+
+    return () => {
+      disposed = true;
+      void unlisten?.();
+    };
+  }, [reloadTrialRecords]);
 
   // 重新从数据库加载百战记录
   const reloadBaizhanRecords = useCallback(async () => {
@@ -324,7 +397,10 @@ function App() {
           db.getPendingRecords(),
           db.getRaids(),
           db.getConfig(),
-          db.getTrialRecords(),
+          db.getTrialRecords().catch(() => {
+            toast.error('加载试炼记录失败');
+            return [];
+          }),
           db.getBaizhanRecords(),
           db.getInstanceTypes(),
           db.getAllRoleVisibility(),
@@ -738,6 +814,8 @@ function App() {
             {activeTab === 'raidManager' && (
               <RaidManager
                 raids={raids}
+                weeklyRaidNames={weeklyRaidNames}
+                weeklyRaidStatus={weeklyRaidStatus}
                 setRaids={setRaids}
                 records={records}
                 setRecords={setRecords}

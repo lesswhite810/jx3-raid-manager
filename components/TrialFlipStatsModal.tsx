@@ -23,6 +23,20 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
     return null;
   }
 
+  const formatEquipmentRate = (rate: number, denominator: number): string => {
+    if (denominator > 0) {
+      return `${(rate * 100).toFixed(1)}%`;
+    }
+    return stats.drawCount > 0 && stats.equipmentReviewedRecords === 0 ? '待补录' : '—';
+  };
+
+  const formatEquipmentCount = (count: number, denominator: number): string => {
+    if (denominator > 0) {
+      return `${count} / ${denominator}`;
+    }
+    return stats.drawCount > 0 && stats.equipmentReviewedRecords === 0 ? '待补录' : '—';
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden"
@@ -52,8 +66,14 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
         <div className="space-y-5 px-6 py-5 max-h-[80vh] overflow-y-auto">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-base bg-base/40 px-4 py-3">
-              <div className="text-xs text-muted">总记录数</div>
+              <div className="text-xs text-muted">通关记录</div>
               <div className="mt-1 text-2xl font-semibold text-main">{stats.totalRecords}</div>
+              <div className="mt-1 text-xs text-muted">
+                可靠翻牌 {stats.drawCount} 次，已识别牌位 {stats.knownPositionDrawCount} 次
+              </div>
+              <div className="mt-1 text-xs text-muted">
+                概率统计使用全牌已核对的 {stats.equipmentReviewedRecords} 次翻牌
+              </div>
             </div>
             <div className="rounded-xl border border-base bg-base/40 px-4 py-3">
               <div className="text-xs text-muted">翻牌装备率最高</div>
@@ -62,8 +82,11 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
               </div>
               <div className="mt-1 text-sm text-ds-success-strong">
                 {stats.bestFlipPosition
-                  ? `${(stats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
-                  : '0%'}
+                  ? `${formatEquipmentRate(
+                    stats.bestFlipPosition.flipEquipmentRate,
+                    stats.bestFlipPosition.equipmentReviewCount,
+                  )}（${stats.bestFlipPosition.flippedEquipmentCount}/${stats.bestFlipPosition.equipmentReviewCount}）`
+                  : formatEquipmentRate(0, 0)}
               </div>
             </div>
             <div className="rounded-xl border border-base bg-base/40 px-4 py-3">
@@ -73,16 +96,21 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
               </div>
               <div className="mt-1 text-sm text-main">
                 {stats.bestAppearancePosition
-                  ? `${(stats.bestAppearancePosition.appearanceRate * 100).toFixed(1)}%`
-                  : '0%'}
+                  ? `${formatEquipmentRate(
+                    stats.bestAppearancePosition.appearanceRate,
+                    stats.equipmentReviewedRecords,
+                  )}（${stats.bestAppearancePosition.appearanceCount}/${stats.equipmentReviewedRecords}）`
+                  : formatEquipmentRate(0, 0)}
               </div>
             </div>
           </div>
 
-          {stats.totalRecords === 0 ? (
+          {stats.drawCount === 0 ? (
             <div className="rounded-xl border border-dashed border-base px-4 py-10 text-center">
-              <p className="text-muted">暂无翻牌记录</p>
-              <p className="mt-1 text-sm text-muted/70">新增试炼记录后会自动生成统计</p>
+              <p className="text-muted">{stats.totalRecords === 0 ? '暂无通关记录' : '尚未记录到可靠翻牌'}</p>
+              <p className="mt-1 text-sm text-muted/70">
+                {stats.totalRecords === 0 ? '通关后会自动汇总翻牌数据' : '已记录的通关不会重复计入，等待入包或牌位识别结果'}
+              </p>
             </div>
           ) : (
             <>
@@ -90,9 +118,9 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                 <div className="grid grid-cols-[88px_96px_110px_116px_110px_116px] bg-base/50 text-xs font-medium text-muted">
                   <div className="px-4 py-3">位置</div>
                   <div className="px-4 py-3">翻牌次数</div>
-                  <div className="px-4 py-3">翻中装备</div>
+                  <div className="px-4 py-3">翻中装备/已确认</div>
                   <div className="px-4 py-3">翻牌装备率</div>
-                  <div className="px-4 py-3">出现次数</div>
+                  <div className="px-4 py-3">出现次数/已确认</div>
                   <div className="px-4 py-3">位置出现率</div>
                 </div>
                 {stats.positions.map((position) => (
@@ -102,12 +130,12 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                   >
                     <div className="px-4 py-3 font-medium">{position.position}号位</div>
                     <div className="px-4 py-3">{position.flipCount}</div>
-                    <div className="px-4 py-3">{position.flippedEquipmentCount}</div>
+                    <div className="px-4 py-3">{formatEquipmentCount(position.flippedEquipmentCount, position.equipmentReviewCount)}</div>
                     <div className="px-4 py-3 font-medium text-ds-success">
-                      {(position.flipEquipmentRate * 100).toFixed(1)}%
+                      {formatEquipmentRate(position.flipEquipmentRate, position.equipmentReviewCount)}
                     </div>
-                    <div className="px-4 py-3">{position.appearanceCount}</div>
-                    <div className="px-4 py-3">{(position.appearanceRate * 100).toFixed(1)}%</div>
+                    <div className="px-4 py-3">{formatEquipmentCount(position.appearanceCount, stats.equipmentReviewedRecords)}</div>
+                    <div className="px-4 py-3">{formatEquipmentRate(position.appearanceRate, stats.equipmentReviewedRecords)}</div>
                   </div>
                 ))}
               </div>
@@ -118,7 +146,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="font-medium text-main">{position.position}号位</div>
                       <div className="text-xs font-semibold text-ds-success-strong">
-                        翻牌装备率 {(position.flipEquipmentRate * 100).toFixed(1)}%
+                        翻牌装备率 {formatEquipmentRate(position.flipEquipmentRate, position.equipmentReviewCount)}
                       </div>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-3">
@@ -127,23 +155,26 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                         <div className="mt-1 font-semibold text-main">{position.flipCount}</div>
                       </div>
                       <div className="rounded-lg bg-base/40 px-3 py-2">
-                        <div className="text-[11px] text-muted">翻中装备</div>
-                        <div className="mt-1 font-semibold text-main">{position.flippedEquipmentCount}</div>
+                        <div className="text-[11px] text-muted">翻中装备/已确认</div>
+                        <div className="mt-1 font-semibold text-main">{formatEquipmentCount(position.flippedEquipmentCount, position.equipmentReviewCount)}</div>
                       </div>
                       <div className="rounded-lg bg-base/40 px-3 py-2">
-                        <div className="text-[11px] text-muted">出现次数</div>
-                        <div className="mt-1 font-semibold text-main">{position.appearanceCount}</div>
+                        <div className="text-[11px] text-muted">出现次数/已确认</div>
+                        <div className="mt-1 font-semibold text-main">{formatEquipmentCount(position.appearanceCount, stats.equipmentReviewedRecords)}</div>
                       </div>
                       <div className="rounded-lg bg-base/40 px-3 py-2">
                         <div className="text-[11px] text-muted">位置出现率</div>
-                        <div className="mt-1 font-semibold text-main">{(position.appearanceRate * 100).toFixed(1)}%</div>
+                        <div className="mt-1 font-semibold text-main">{formatEquipmentRate(position.appearanceRate, stats.equipmentReviewedRecords)}</div>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
 
-              <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
+              <TrialBossEquipmentStatsSection
+                stats={stats.bossEquipmentStats}
+                equipmentReviewedRecords={stats.equipmentReviewedRecords}
+              />
             </>
           )}
         </div>

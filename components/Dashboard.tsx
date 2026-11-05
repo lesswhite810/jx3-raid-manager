@@ -7,7 +7,11 @@ import { getLastMonday, getSeasonStartTimeMs } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
 import { getRecordScrapsExpense, getRecordScrapsValue } from '../utils/scrapsUtils';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
-import { getTrialRecordEquipmentEntries } from '../utils/trialRecordUtils';
+import {
+  getTrialCardEquipmentId,
+  getTrialRecordFlipSamples,
+  hasRecordedTrialFlipSample,
+} from '../utils/trialRecordUtils';
 import { buildClientAccountIdSet, buildEquipmentLookup, EquipmentLike, getEquipmentById } from '../utils/recordLookupUtils';
 import { formatGold } from '../utils/goldFormat';
 
@@ -90,14 +94,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const totalTradableEquipCount = useMemo(() => {
     let count = 0;
     safeTrialRecords.forEach(record => {
-      const equipId = getTrialRecordEquipmentEntries(record).find(entry => entry.isFlipped)?.equipId;
-      if (!equipId) {
-        return;
-      }
-      const equip = findEquipmentById(equipId);
-      if (equip && (equip.BindType === 1 || equip.BindType === 2)) {
-        count += 1;
-      }
+      getTrialRecordFlipSamples(record).forEach(sample => {
+        if (!hasRecordedTrialFlipSample(sample)) {
+          return;
+        }
+        const equipId = getTrialCardEquipmentId(sample, sample.flippedIndex);
+        const equip = findEquipmentById(equipId);
+        if (equip && (equip.BindType === 1 || equip.BindType === 2)) {
+          count += 1;
+        }
+      });
     });
     return count;
   }, [safeTrialRecords, findEquipmentById]);
@@ -153,14 +159,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const clientIncome = clientRaidIncome + clientBaizhanIncome;
 
     let equipCount = 0;
-    filteredTrialRecords.forEach((r) => {
-      const equipId = getTrialRecordEquipmentEntries(r).find(entry => entry.isFlipped)?.equipId;
-      if (equipId) {
+    filteredTrialRecords.forEach((record) => {
+      getTrialRecordFlipSamples(record).forEach(sample => {
+        if (!hasRecordedTrialFlipSample(sample)) {
+          return;
+        }
+        const equipId = getTrialCardEquipmentId(sample, sample.flippedIndex);
         const equip = findEquipmentById(equipId);
         if (equip && (equip.BindType === 1 || equip.BindType === 2)) {
           equipCount++;
         }
-      }
+      });
     });
 
     // 散件估价合计：仅统计 isScrapsBoss=true 的记录（与 RoleRecordsModal 逻辑一致）
@@ -285,6 +294,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     return maxRole;
   }, [filteredRecords, filteredBaizhanRecords, safeAccounts]);
+
+  const formatTrialEquipmentRate = (rate: number, denominator: number): string => {
+    if (denominator > 0) {
+      return `${(rate * 100).toFixed(1)}%`;
+    }
+    return totalTrialFlipStats.totalRecords > 0 && totalTrialFlipStats.equipmentReviewedRecords === 0
+      ? '待补录'
+      : '—';
+  };
 
   return (
     <div className="flex flex-col h-full gap-5">
@@ -520,6 +538,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
               <div className="text-[10px] text-muted">总记录数</div>
               <div className="mt-1.5 text-lg font-bold text-main">{totalTrialFlipStats.totalRecords}</div>
+              <div className="mt-0.5 text-[10px] text-muted">
+                翻牌 {totalTrialFlipStats.drawCount} 次，已全牌核对 {totalTrialFlipStats.equipmentReviewedRecords} 次
+              </div>
             </div>
             <div className="rounded-lg border border-ds-success-soft/60 bg-ds-success-soft/60 px-2.5 py-2.5 dark:border-ds-success-soft/30 dark:bg-ds-success-soft/10">
               <div className="text-[10px] text-ds-success-strong dark:text-ds-success-strong">可交易装备</div>
@@ -538,8 +559,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div className="mt-0.5 text-[10px] text-ds-success-strong dark:text-ds-success-strong">
                 {totalTrialFlipStats.bestFlipPosition
-                  ? `${(totalTrialFlipStats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
-                  : '0%'}
+                  ? `${formatTrialEquipmentRate(
+                    totalTrialFlipStats.bestFlipPosition.flipEquipmentRate,
+                    totalTrialFlipStats.bestFlipPosition.equipmentReviewCount,
+                  )}（${totalTrialFlipStats.bestFlipPosition.flippedEquipmentCount}/${totalTrialFlipStats.bestFlipPosition.equipmentReviewCount}）`
+                  : formatTrialEquipmentRate(0, 0)}
               </div>
             </div>
             <div className="rounded-lg border border-base bg-slate-50/80 px-2.5 py-2.5 dark:bg-slate-800/30">
@@ -551,8 +575,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div className="mt-0.5 text-[10px] text-muted">
                 {totalTrialFlipStats.bestAppearancePosition
-                  ? `${(totalTrialFlipStats.bestAppearancePosition.appearanceRate * 100).toFixed(1)}%`
-                  : '0%'}
+                  ? `${formatTrialEquipmentRate(
+                    totalTrialFlipStats.bestAppearancePosition.appearanceRate,
+                    totalTrialFlipStats.equipmentReviewedRecords,
+                  )}（${totalTrialFlipStats.bestAppearancePosition.appearanceCount}/${totalTrialFlipStats.equipmentReviewedRecords}）`
+                  : formatTrialEquipmentRate(0, 0)}
               </div>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { TrialPlaceRecord, Account, Config, Season } from '../types';
+import { TrialDraw, TrialPlaceRecord, Account, Config, Season } from '../types';
 import { Trophy, Check, Copy, Target, Search, X, BarChart3 } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
@@ -10,6 +10,9 @@ import { toast } from '../utils/toastManager';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
+import { isConfirmedTrialRecord } from '../utils/trialRecordUtils';
+import { trialRecordNeedsReview } from '../utils/trialReviewState';
+import { getTrialWeeklyDrawProgress } from '../utils/trialWeeklyDrawProgress';
 import {
     getTrialProgressPeriod,
     isTrialRecordInProgressPeriod,
@@ -42,6 +45,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
     const [viewFlipStatsRole, setViewFlipStatsRole] = useState<any>(null);
+    const [recordToConfirm, setRecordToConfirm] = useState<TrialPlaceRecord | null>(null);
     const [roleSearchTerm, setRoleSearchTerm] = useState('');
     const [autoFillEnabled, setAutoFillEnabled] = useState(false);
 
@@ -113,14 +117,26 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
     // Statistics per role
     const roleStats = useMemo(() => {
-        const stats = new Map<string, { weeklyCount: number, maxLayer: number, lastRunDate?: string }>();
+        const stats = new Map<string, {
+            /** 保留既有通关次数口径，供层数、排序和三态样式使用。 */
+            weeklyCount: number;
+            /** 卡片面向用户展示的本周翻牌次数，可超过三次。 */
+            weeklyDrawCount: number;
+            /** 手工翻牌按父通关日期归属的次数，需要在卡片明确说明。 */
+            manualDateFallbackDrawCount: number;
+            /** 该角色历史上仍待处理的通关轮次数。 */
+            pendingCount: number;
+            maxLayer: number;
+            lastRunDate?: string;
+        }>();
 
         const now = new Date();
         const startOfWeek = getLastMonday(now);
         const seasonStartTime = currentSeason ? toTrialProgressTimestamp(currentSeason.startDate) : null;
 
         allRoles.forEach(role => {
-            const roleRecords = records.filter(r => r.roleId === role.id);
+            const allRoleRecords = records.filter(record => record.roleId === role.id);
+            const roleRecords = allRoleRecords.filter(isConfirmedTrialRecord);
             const versionRecords = roleRecords.filter(record => isTrialRecordInProgressPeriod(record, trialProgressPeriod));
             const thisWeekRecords = versionRecords.filter(record => {
                 const timestamp = toTrialProgressTimestamp(record.date);
@@ -139,9 +155,16 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 return timestamp !== null && (latestTimestamp === null || timestamp > latestTimestamp) ? record : latest;
             }, undefined);
             const lastRunDate = lastRunRecord ? String(lastRunRecord.date) : undefined;
+            const weeklyDrawProgress = getTrialWeeklyDrawProgress(allRoleRecords, {
+                weekStart: startOfWeek,
+                progressPeriod: trialProgressPeriod,
+            });
 
             stats.set(role.id, {
                 weeklyCount: thisWeekRecords.length,
+                weeklyDrawCount: weeklyDrawProgress.drawCount,
+                manualDateFallbackDrawCount: weeklyDrawProgress.manualDateFallbackDrawCount,
+                pendingCount: allRoleRecords.filter(trialRecordNeedsReview).length,
                 maxLayer,
                 lastRunDate
             });
@@ -163,8 +186,12 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     const sortedRoles = useMemo(() => {
         const sorted = [...allRoles];
         sorted.sort((a, b) => {
-            const statsA = roleStats.get(a.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
-            const statsB = roleStats.get(b.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
+            const statsA = roleStats.get(a.id) || {
+                weeklyCount: 0, weeklyDrawCount: 0, manualDateFallbackDrawCount: 0, pendingCount: 0, maxLayer: 0, lastRunDate: undefined,
+            };
+            const statsB = roleStats.get(b.id) || {
+                weeklyCount: 0, weeklyDrawCount: 0, manualDateFallbackDrawCount: 0, pendingCount: 0, maxLayer: 0, lastRunDate: undefined,
+            };
 
             // 1. 三态排序：未清(0) > 部分清(1-2次) > 完全清(3次)
             const getStatus = (count: number): number => {
@@ -213,6 +240,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         } else {
             setSelectedRole(null);
         }
+        setRecordToConfirm(null);
         setIsAdding(true);
     };
 
@@ -220,18 +248,61 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         setViewRecordsRole(role);
     };
 
+    const handleConfirmTrialRecord = useCallback((record: TrialPlaceRecord) => {
+        const role = allRoles.find(candidate => candidate.id === record.roleId);
+        if (!role) {
+            toast.error('未找到自动记录对应的角色，无法确认');
+            return;
+        }
+        setViewRecordsRole(null);
+        setSelectedRole(role);
+        setRecordToConfirm(record);
+        setIsAdding(true);
+    }, [allRoles]);
+
     const handleOpenFlipStatsModal = (role: any) => {
         setViewFlipStatsRole(role);
     };
 
-    // 添加试炼记录：刷新记录列表（toast 已在 Modal 中显示）
-    const handleAddTrialRecord = useCallback(async (record: TrialPlaceRecord) => {
+    // 新增与确认均由这里唯一写入，避免弹窗与页面分别落库。
+    const handleSaveTrialRecord = useCallback(async (
+        record: TrialPlaceRecord,
+        options?: { preserveFlippedIndex?: boolean },
+    ) => {
+        await db.addTrialRecord(record, options?.preserveFlippedIndex);
+        onRefreshRecords?.();
+    }, [onRefreshRecords]);
+
+    const handleUpdateTrialDrawFlippedIndex = useCallback(async (
+        recordId: string,
+        drawId: string,
+        flippedIndex: number | null,
+    ) => {
+        await db.updateTrialDrawFlippedIndex(recordId, drawId, flippedIndex);
+        onRefreshRecords?.();
+    }, [onRefreshRecords]);
+
+    const handleUpdateTrialDrawEquipment = useCallback(async (
+        _recordId: string,
+        drawId: string,
+        cardIndex: number,
+        equipmentId: string | null,
+    ) => {
+        await db.updateTrialDrawEquipment(drawId, cardIndex, equipmentId);
+        onRefreshRecords?.();
+    }, [onRefreshRecords]);
+
+    const handleUpdateTrialDrawEquipmentReview = useCallback(async (
+        _recordId: string,
+        draw: TrialDraw,
+        reviewed: boolean,
+    ) => {
         try {
-            await db.addTrialRecord(record);
+            await db.setTrialDrawEquipmentReviewed(draw.id, reviewed, draw.flippedIndex,
+                [draw.card1, draw.card2, draw.card3, draw.card4, draw.card5]);
+        } finally {
+            // 冲突时也刷新，避免用户重复按旧画面确认。
             onRefreshRecords?.();
-        } catch (error) {
-            console.error('添加试炼记录失败:', error);
-            toast.error('添加试炼记录失败');
         }
     }, [onRefreshRecords]);
 
@@ -318,7 +389,10 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredRoles.map(role => {
-                            const stats = roleStats.get(role.id) || { weeklyCount: 0, maxLayer: 0, lastRunDate: undefined };
+                            const stats = roleStats.get(role.id) || {
+                                weeklyCount: 0, weeklyDrawCount: 0, manualDateFallbackDrawCount: 0, pendingCount: 0, maxLayer: 0, lastRunDate: undefined,
+                            };
+                            const pendingCount = stats.pendingCount;
                             // 三态：未清(0) / 部分清(1-2) / 完全清(>=3)
                             const getTrialStatus = (): 'none' | 'partial' | 'complete' => {
                                 if (stats.weeklyCount === 0) return 'none';
@@ -328,19 +402,33 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                             // 按钮禁用逻辑：不限制添加次数
                             const canAddTrial = true;
                             const trialStatus = getTrialStatus();
+                            const pendingReviewDescription = pendingCount > 0
+                                ? `存在 ${pendingCount} 条待确认试炼记录`
+                                : undefined;
 
                             // 根据状态设置样式
                             const getCardStyle = () => {
+                                // 待确认优先于通关进度：避免已通关记录看起来像已完全处理。
+                                if (pendingCount > 0) {
+                                    return 'bg-ds-warning-soft/40 border-ds-warning hover:border-ds-warning';
+                                }
                                 if (trialStatus === 'complete') {
                                     return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-ds-warning-soft dark:bg-ds-warning-soft/10 border-ds-warning-soft dark:border-ds-warning hover:border-ds-warning';
+                                    return 'bg-surface border-base hover:border-ds-neutral';
                                 } else {
                                     return 'bg-ds-success-soft dark:bg-ds-success-soft/10 border-ds-success-soft dark:border-ds-success-soft hover:border-ds-success';
                                 }
                             };
 
                             const getIconStyle = () => {
+                                if (pendingCount > 0) {
+                                    return (
+                                        <div className="w-6 h-6 rounded-full bg-ds-warning-soft flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-warning" />
+                                        </div>
+                                    );
+                                }
                                 if (trialStatus === 'complete') {
                                     return (
                                         <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
@@ -349,8 +437,8 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                     );
                                 } else if (trialStatus === 'partial') {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-warning" />
+                                        <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-neutral" />
                                         </div>
                                     );
                                 } else {
@@ -363,20 +451,26 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                             };
 
                             const getButtonAddStyle = () => {
+                                if (pendingCount > 0) {
+                                    return 'bg-surface text-ds-warning-strong border border-ds-warning hover:bg-ds-warning-soft hover:border-ds-warning hover:shadow-ds-stack transform hover:-translate-y-0.5';
+                                }
                                 if (trialStatus === 'complete') {
                                     return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-ds-warning text-white hover:bg-ds-warning hover:shadow-ds-stack transform hover:-translate-y-0.5';
+                                    return 'bg-surface text-main border border-base hover:bg-base hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 } else {
                                     return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
                                 }
                             };
 
                             const getButtonViewStyle = () => {
+                                if (pendingCount > 0) {
+                                    return 'bg-surface text-ds-warning-strong border border-ds-warning hover:bg-ds-warning-soft hover:border-ds-warning';
+                                }
                                 if (trialStatus === 'complete') {
                                     return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
                                 } else if (trialStatus === 'partial') {
-                                    return 'bg-white text-ds-warning-strong border border-ds-warning-soft hover:bg-ds-warning-soft hover:border-ds-warning';
+                                    return 'bg-surface text-main border border-base hover:bg-base hover:border-ds-neutral';
                                 } else {
                                     return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
                                 }
@@ -387,6 +481,9 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                 <div
                                     key={role.id}
                                     className={`p-4 rounded-xl border-2 transition-all duration-300 ${getCardStyle()}`}
+                                    role="group"
+                                    aria-label={pendingReviewDescription}
+                                    title={pendingReviewDescription}
                                 >
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -417,11 +514,18 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                             </span>
                                         </div>
 
-                                        <div className="flex items-baseline gap-1">
-                                            <span className="text-xs text-muted">本周进度:</span>
-                                            <span className={`font-bold ${trialStatus === 'complete' ? 'text-slate-500' : trialStatus === 'partial' ? 'text-ds-warning' : 'text-ds-success'}`}>
-                                                {stats.weeklyCount}<span className="text-xs text-muted font-normal">/3</span>
+                                        <div className="flex flex-col items-end gap-0.5">
+                                            <div className="flex items-baseline gap-1">
+                                            <span className="text-xs text-muted">本周翻牌:</span>
+                                            <span className={`font-bold ${pendingCount > 0 ? 'text-ds-warning' : trialStatus === 'complete' ? 'text-slate-500' : trialStatus === 'partial' ? 'text-ds-neutral' : 'text-ds-success'}`}>
+                                                {stats.weeklyDrawCount}<span className="text-xs text-muted font-normal">次</span>
                                             </span>
+                                            </div>
+                                            {stats.manualDateFallbackDrawCount > 0 && (
+                                                <span className="text-[11px] text-muted">
+                                                    含手工 {stats.manualDateFallbackDrawCount} 次按通关日期计入
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
 
@@ -511,10 +615,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
 
             <AddTrialRecordModal
                 isOpen={isAdding}
-                onClose={() => setIsAdding(false)}
-                onSubmit={handleAddTrialRecord}
+                onClose={() => {
+                    setIsAdding(false);
+                    setRecordToConfirm(null);
+                }}
+                onSubmit={handleSaveTrialRecord}
                 accounts={accounts}
                 initialRole={selectedRole}
+                initialRecord={recordToConfirm || undefined}
                 autoFillEnabled={autoFillEnabled}
                 records={records}
                 trialProgressPeriod={trialProgressPeriod}
@@ -528,6 +636,10 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                         role={viewRecordsRole}
                         records={records}
                         onDeleteRecord={handleDeleteTrialRecord}
+                        onConfirmRecord={handleConfirmTrialRecord}
+                        onUpdateDrawFlippedIndex={handleUpdateTrialDrawFlippedIndex}
+                        onUpdateDrawEquipment={handleUpdateTrialDrawEquipment}
+                        onUpdateDrawEquipmentReview={handleUpdateTrialDrawEquipmentReview}
                     />
                 )
             }

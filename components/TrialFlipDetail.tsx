@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { TrialPlaceRecord } from '../types';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
+import { getTrialCardEquipmentId, getTrialRecordFlipSamples, hasRecordedTrialFlipSample } from '../utils/trialRecordUtils';
 import { TrialBossEquipmentStatsSection } from './TrialBossEquipmentStatsSection';
 
 interface TrialFlipDetailProps {
@@ -9,18 +10,6 @@ interface TrialFlipDetailProps {
   equipments: Record<string, unknown>[];
   onBack: () => void;
 }
-
-// 类型安全地获取试炼记录的翻牌装备 ID（避免动态 key 访问触发 as any）
-const getTrialCardId = (record: TrialPlaceRecord, index: number): string => {
-  switch (index) {
-    case 1: return record.card1;
-    case 2: return record.card2;
-    case 3: return record.card3;
-    case 4: return record.card4;
-    case 5: return record.card5;
-    default: return '';
-  }
-};
 
 export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, equipments, onBack }) => {
   // 内容分区：位置明细 / Boss 出装备统计
@@ -49,18 +38,34 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
   const tradableEquipCount = useMemo(() => {
     let count = 0;
     safeTrialRecords.forEach(record => {
-      const equipId = getTrialCardId(record, record.flippedIndex);
-      if (!equipId) {
-        return;
-      }
-      const equip = findEquipmentById(equipId);
-      const bindType = equip?.BindType;
-      if (typeof bindType === 'number' && (bindType === 1 || bindType === 2)) {
-        count += 1;
-      }
+      getTrialRecordFlipSamples(record).forEach(sample => {
+        if (!hasRecordedTrialFlipSample(sample)) {
+          return;
+        }
+        const equipId = getTrialCardEquipmentId(sample, sample.flippedIndex);
+        const equip = findEquipmentById(equipId);
+        const bindType = equip?.BindType;
+        if (typeof bindType === 'number' && (bindType === 1 || bindType === 2)) {
+          count += 1;
+        }
+      });
     });
     return count;
   }, [safeTrialRecords, equipments]);
+
+  const formatEquipmentRate = (rate: number, denominator: number): string => {
+    if (denominator > 0) {
+      return `${(rate * 100).toFixed(1)}%`;
+    }
+    return stats.drawCount > 0 && stats.equipmentReviewedRecords === 0 ? '待补录' : '—';
+  };
+
+  const formatEquipmentCount = (count: number, denominator: number): string => {
+    if (denominator > 0) {
+      return `${count} / ${denominator}`;
+    }
+    return stats.drawCount > 0 && stats.equipmentReviewedRecords === 0 ? '待补录' : '—';
+  };
 
   return (
     <div className="flex flex-col h-full gap-5">
@@ -75,7 +80,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           <div>
             <h2 className="text-2xl font-bold text-main">试炼翻牌统计</h2>
             <p className="mt-1 text-sm text-muted">
-              全部历史共 {stats.totalRecords} 条记录，统计 1-5 号位翻牌次数、翻中装备率、位置出现率与 Boss 出装备位置
+              全部历史 {stats.totalRecords} 轮通关，共 {stats.drawCount} 次翻牌（已确认牌位 {stats.knownPositionDrawCount} 次）。其中 {stats.equipmentReviewedRecords} 次已核对全部牌面，用于概率统计
             </p>
           </div>
         </div>
@@ -85,10 +90,14 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
         <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
           <div className="text-sm font-medium text-muted">总记录数</div>
           <div className="mt-2 text-3xl font-bold text-main">{stats.totalRecords}</div>
+        </div>
+        <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
+          <div className="text-sm font-medium text-muted">全牌已核对</div>
+          <div className="mt-2 text-3xl font-bold text-main">{stats.equipmentReviewedRecords}</div>
         </div>
         <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
           <div className="text-sm font-medium text-muted">可交易装备数</div>
@@ -101,8 +110,11 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           </div>
           <div className="mt-1 text-sm text-ds-success-strong">
             {stats.bestFlipPosition
-              ? `${(stats.bestFlipPosition.flipEquipmentRate * 100).toFixed(1)}%`
-              : '0%'}
+              ? `${formatEquipmentRate(
+                stats.bestFlipPosition.flipEquipmentRate,
+                stats.bestFlipPosition.equipmentReviewCount,
+              )}（${stats.bestFlipPosition.flippedEquipmentCount}/${stats.bestFlipPosition.equipmentReviewCount}）`
+              : formatEquipmentRate(0, 0)}
           </div>
         </div>
         <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
@@ -112,8 +124,11 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           </div>
           <div className="mt-1 text-sm text-main">
             {stats.bestAppearancePosition
-              ? `${(stats.bestAppearancePosition.appearanceRate * 100).toFixed(1)}%`
-              : '0%'}
+              ? `${formatEquipmentRate(
+                stats.bestAppearancePosition.appearanceRate,
+                stats.equipmentReviewedRecords,
+              )}（${stats.bestAppearancePosition.appearanceCount}/${stats.equipmentReviewedRecords}）`
+              : formatEquipmentRate(0, 0)}
           </div>
         </div>
       </div>
@@ -154,9 +169,9 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
               <div className="grid grid-cols-[88px_96px_110px_116px_110px_116px] bg-base/50 text-xs font-medium text-muted">
                 <div className="px-4 py-3">位置</div>
                 <div className="px-4 py-3">翻牌次数</div>
-                <div className="px-4 py-3">翻中装备</div>
+                  <div className="px-4 py-3">翻中装备/已确认</div>
                 <div className="px-4 py-3">翻牌装备率</div>
-                <div className="px-4 py-3">出现次数</div>
+                  <div className="px-4 py-3">出现次数/已确认</div>
                 <div className="px-4 py-3">位置出现率</div>
               </div>
               {stats.positions.map(position => (
@@ -166,10 +181,10 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
                 >
                   <div className="px-4 py-3 font-medium">{position.position}号位</div>
                   <div className="px-4 py-3">{position.flipCount}</div>
-                  <div className="px-4 py-3">{position.flippedEquipmentCount}</div>
-                  <div className="px-4 py-3 font-medium text-ds-success">{(position.flipEquipmentRate * 100).toFixed(1)}%</div>
-                  <div className="px-4 py-3">{position.appearanceCount}</div>
-                  <div className="px-4 py-3">{(position.appearanceRate * 100).toFixed(1)}%</div>
+                  <div className="px-4 py-3">{formatEquipmentCount(position.flippedEquipmentCount, position.equipmentReviewCount)}</div>
+                  <div className="px-4 py-3 font-medium text-ds-success">{formatEquipmentRate(position.flipEquipmentRate, position.equipmentReviewCount)}</div>
+                  <div className="px-4 py-3">{formatEquipmentCount(position.appearanceCount, stats.equipmentReviewedRecords)}</div>
+                  <div className="px-4 py-3">{formatEquipmentRate(position.appearanceRate, stats.equipmentReviewedRecords)}</div>
                 </div>
               ))}
             </div>
@@ -180,7 +195,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
                   <div className="flex items-center justify-between mb-3">
                     <div className="font-medium text-main">{position.position}号位</div>
                     <div className="text-xs font-semibold text-ds-success-strong">
-                      翻牌装备率 {(position.flipEquipmentRate * 100).toFixed(1)}%
+                      翻牌装备率 {formatEquipmentRate(position.flipEquipmentRate, position.equipmentReviewCount)}
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -189,16 +204,16 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
                       <div className="mt-1 font-semibold text-main">{position.flipCount}</div>
                     </div>
                     <div className="rounded-lg bg-base/40 px-3 py-2">
-                      <div className="text-[11px] text-muted">翻中装备</div>
-                      <div className="mt-1 font-semibold text-main">{position.flippedEquipmentCount}</div>
+                      <div className="text-[11px] text-muted">翻中装备/已确认</div>
+                      <div className="mt-1 font-semibold text-main">{formatEquipmentCount(position.flippedEquipmentCount, position.equipmentReviewCount)}</div>
                     </div>
                     <div className="rounded-lg bg-base/40 px-3 py-2">
-                      <div className="text-[11px] text-muted">出现次数</div>
-                      <div className="mt-1 font-semibold text-main">{position.appearanceCount}</div>
+                      <div className="text-[11px] text-muted">出现次数/已确认</div>
+                      <div className="mt-1 font-semibold text-main">{formatEquipmentCount(position.appearanceCount, stats.equipmentReviewedRecords)}</div>
                     </div>
                     <div className="rounded-lg bg-base/40 px-3 py-2">
                       <div className="text-[11px] text-muted">位置出现率</div>
-                      <div className="mt-1 font-semibold text-main">{(position.appearanceRate * 100).toFixed(1)}%</div>
+                      <div className="mt-1 font-semibold text-main">{formatEquipmentRate(position.appearanceRate, stats.equipmentReviewedRecords)}</div>
                     </div>
                   </div>
                 </div>
@@ -210,7 +225,10 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
       )}
 
       {contentTab === 'bossEquip' && (
-        <TrialBossEquipmentStatsSection stats={stats.bossEquipmentStats} />
+        <TrialBossEquipmentStatsSection
+          stats={stats.bossEquipmentStats}
+          equipmentReviewedRecords={stats.equipmentReviewedRecords}
+        />
       )}
       </div>
     </div>

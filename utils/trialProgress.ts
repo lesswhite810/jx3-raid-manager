@@ -1,4 +1,5 @@
 import { GameVersion, Season, TrialPlaceRecord } from '../types';
+import { isConfirmedTrialRecord } from './trialRecordUtils';
 
 export interface TrialProgressPeriod {
   start: number;
@@ -9,6 +10,9 @@ const DEFAULT_TRIAL_LAYER = 1;
 
 /** 将秒、毫秒或 ISO 日期统一成毫秒时间戳。 */
 export const toTrialProgressTimestamp = (value: string | number): number | null => {
+  if (typeof value === 'string' && /^\d{9,16}$/.test(value.trim())) {
+    return toTrialProgressTimestamp(Number(value.trim()));
+  }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
     const timestamp = Math.abs(value) < 100_000_000_000 ? value * 1000 : value;
@@ -82,7 +86,9 @@ export const getLatestTrialRecordForRole = (
   let latest: TrialPlaceRecord | undefined;
   let latestTimestamp = Number.NEGATIVE_INFINITY;
   for (const record of records) {
-    if (record.roleId !== roleId || !isTrialRecordInProgressPeriod(record, period)) continue;
+    if (record.roleId !== roleId
+      || !isConfirmedTrialRecord(record)
+      || !isTrialRecordInProgressPeriod(record, period)) continue;
     const timestamp = toTrialProgressTimestamp(record.date);
     if (timestamp === null || (minimumTimestamp !== undefined && timestamp < minimumTimestamp)) continue;
     if (timestamp > latestTimestamp) {
@@ -98,8 +104,19 @@ export const getTrialLayerForRole = (
   roleId: string,
   period: TrialProgressPeriod | null | undefined
 ): number => {
-  const latest = getLatestTrialRecordForRole(records, roleId, period);
-  return latest && Number.isFinite(latest.layer) && latest.layer >= DEFAULT_TRIAL_LAYER
-    ? latest.layer
-    : DEFAULT_TRIAL_LAYER;
+  let latestLayer = DEFAULT_TRIAL_LAYER;
+  let latestTimestamp = Number.NEGATIVE_INFINITY;
+  for (const record of records) {
+    if (record.roleId !== roleId
+      || !isConfirmedTrialRecord(record)
+      || !isTrialRecordInProgressPeriod(record, period)
+      || !Number.isFinite(record.layer)
+      || record.layer < DEFAULT_TRIAL_LAYER) continue;
+    const timestamp = toTrialProgressTimestamp(record.date);
+    if (timestamp !== null && timestamp > latestTimestamp) {
+      latestLayer = record.layer;
+      latestTimestamp = timestamp;
+    }
+  }
+  return latestLayer;
 };

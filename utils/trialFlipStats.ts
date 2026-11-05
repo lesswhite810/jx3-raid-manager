@@ -5,7 +5,14 @@ import {
   TrialFlipStatsSummary,
   TrialPlaceRecord
 } from '../types';
-import { getTrialRecordEquipmentEntries } from './trialRecordUtils';
+import {
+  getTrialCardEquipmentId,
+  getTrialRecordFlipSamples,
+  getTrialRecordEquipmentEntries,
+  hasRecordedTrialFlipSample,
+  isConfirmedTrialRecord,
+  isTrialFlipSampleEquipmentAppearanceReviewed,
+} from './trialRecordUtils';
 
 const TRIAL_POSITIONS = [1, 2, 3, 4, 5] as const;
 const TRIAL_BOSS_KEY_SEPARATOR = '\u001f';
@@ -13,6 +20,7 @@ const TRIAL_BOSS_KEY_SEPARATOR = '\u001f';
 const createEmptyPositionStats = (position: number): TrialFlipPositionStats => ({
   position,
   flipCount: 0,
+  equipmentReviewCount: 0,
   flippedEquipmentCount: 0,
   appearanceCount: 0,
   flipEquipmentRate: 0,
@@ -62,13 +70,34 @@ export const calculateTrialFlipStats = (records: TrialPlaceRecord[]): TrialFlipS
   const statsMap = new Map<number, TrialFlipPositionStats>(positions.map(item => [item.position, item]));
   const bossEquipmentStatsMap = new Map<string, TrialBossEquipmentStats>();
 
-  records.forEach(record => {
-    const flippedStats = statsMap.get(record.flippedIndex);
+  const confirmedRecords = records.filter(isConfirmedTrialRecord);
+  const flipSamples = confirmedRecords.flatMap(record => (
+    getTrialRecordFlipSamples(record).map(sample => ({ record, sample }))
+  ));
+  const knownPositionSamples = flipSamples.filter(({ sample }) => hasRecordedTrialFlipSample(sample));
+  let equipmentReviewedRecords = 0;
+
+  knownPositionSamples.forEach(({ record, sample }) => {
+    const flippedStats = statsMap.get(sample.flippedIndex);
     if (flippedStats) {
       flippedStats.flipCount += 1;
     }
 
-    const equipmentEntries = getTrialRecordEquipmentEntries(record);
+    // 只看到“翻中有装备”无法观测“翻中无装备”。把它并入概率分母会系统性
+    // 抬高出装率，所以翻中率与位置/Boss 统计共用完整核对的无偏样本。
+    if (!isTrialFlipSampleEquipmentAppearanceReviewed(sample)) {
+      return;
+    }
+
+    equipmentReviewedRecords += 1;
+    if (flippedStats) {
+      flippedStats.equipmentReviewCount += 1;
+      if (getTrialCardEquipmentId(sample, sample.flippedIndex)) {
+        flippedStats.flippedEquipmentCount += 1;
+      }
+    }
+
+    const equipmentEntries = getTrialRecordEquipmentEntries(sample);
     const bossSequence = normalizeTrialBossSequence(record.bosses);
     const bossKey = getTrialBossSequenceKey(bossSequence || undefined);
     const bossEquipmentStats = bossSequence && bossKey
@@ -95,10 +124,6 @@ export const calculateTrialFlipStats = (records: TrialPlaceRecord[]): TrialFlipS
       }
 
       positionStats.appearanceCount += 1;
-      if (entry.isFlipped) {
-        positionStats.flippedEquipmentCount += 1;
-      }
-
       if (bossEquipmentStats) {
         const bossPositionStats = bossEquipmentStats.positions.find(item => item.position === entry.cardIndex);
         if (bossPositionStats) {
@@ -109,26 +134,29 @@ export const calculateTrialFlipStats = (records: TrialPlaceRecord[]): TrialFlipS
     });
   });
 
-  const totalRecords = records.length;
+  // `totalRecords` keeps the parent-round meaning: one completed trial counts once,
+  // no matter how many times the player continued drawing. Draw-specific numbers use
+  // the two explicit counters below.
+  const totalRecords = confirmedRecords.length;
   positions.forEach(positionStats => {
     positionStats.flipEquipmentRate =
-      positionStats.flipCount > 0
-        ? positionStats.flippedEquipmentCount / positionStats.flipCount
+      positionStats.equipmentReviewCount > 0
+        ? positionStats.flippedEquipmentCount / positionStats.equipmentReviewCount
         : 0;
     positionStats.appearanceRate =
-      totalRecords > 0
-        ? positionStats.appearanceCount / totalRecords
+      equipmentReviewedRecords > 0
+        ? positionStats.appearanceCount / equipmentReviewedRecords
         : 0;
   });
 
   const bestFlipPosition = positions.reduce<TrialFlipPositionStats | null>((best, current) => {
-    if (current.flipCount === 0 && current.flippedEquipmentCount === 0) {
+    if (current.equipmentReviewCount === 0) {
       return best;
     }
     if (!best || current.flipEquipmentRate > best.flipEquipmentRate) {
       return current;
     }
-    if (best && current.flipEquipmentRate === best.flipEquipmentRate && current.flipCount > best.flipCount) {
+    if (best && current.flipEquipmentRate === best.flipEquipmentRate && current.equipmentReviewCount > best.equipmentReviewCount) {
       return current;
     }
     return best;
@@ -184,6 +212,9 @@ export const calculateTrialFlipStats = (records: TrialPlaceRecord[]): TrialFlipS
 
   return {
     totalRecords,
+    drawCount: flipSamples.length,
+    knownPositionDrawCount: knownPositionSamples.length,
+    equipmentReviewedRecords,
     positions,
     bestFlipPosition,
     bestAppearancePosition,

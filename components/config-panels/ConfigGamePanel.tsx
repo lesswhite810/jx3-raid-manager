@@ -18,20 +18,27 @@ export interface ConfigGamePanelProps {
 /**
  * 系统配置 · 游戏配置
  *
- * 包含：当前赛季、游戏目录选择与扫描客户端、自动扫描开关、启动刷新装分开关。
+ * 包含：当前赛季、游戏目录选择与扫描客户端、自动扫描、试炼截图识别、启动刷新装分开关。
  */
 export const ConfigGamePanel: React.FC<ConfigGamePanelProps> = ({
     currentSeason,
     seasonLoaded,
     onShowPathError,
 }) => {
-    const { appConfig, updateGameDirectory, setAutoScanEnabled, setAutoRefreshEquipScoreEnabled } = useAppConfig();
+    const {
+        appConfig,
+        updateGameDirectory,
+        setAutoScanEnabled,
+        setTrialScreenshotRecognitionEnabled,
+        setAutoRefreshEquipScoreEnabled,
+    } = useAppConfig();
 
     const [gameDirectory, setGameDirectory] = useState<string>(appConfig?.gameDirectory ?? '');
     const [pathValid, setPathValid] = useState<boolean | null>(null);
     const [scanningClients, setScanningClients] = useState(false);
     const [scanResults, setScanResults] = useState<Jx3ClientInfo[]>([]);
     const [showScanResults, setShowScanResults] = useState(false);
+    const [savingTrialScreenshotRecognition, setSavingTrialScreenshotRecognition] = useState(false);
 
     useEffect(() => {
         setGameDirectory(appConfig?.gameDirectory ?? '');
@@ -110,6 +117,20 @@ export const ConfigGamePanel: React.FC<ConfigGamePanelProps> = ({
 
     const handleAutoRefreshEquipScoreToggle = async (enabled: boolean) => {
         await setAutoRefreshEquipScoreEnabled(enabled);
+    };
+
+    const handleTrialScreenshotRecognitionToggle = async (enabled: boolean) => {
+        // 保存期间禁用控件，避免连续切换使界面状态与已持久化状态错位。
+        if (savingTrialScreenshotRecognition) return;
+
+        setSavingTrialScreenshotRecognition(true);
+        try {
+            await setTrialScreenshotRecognitionEnabled(enabled);
+        } catch {
+            // Context 已给出保存失败提示，界面保持上一次成功保存的状态。
+        } finally {
+            setSavingTrialScreenshotRecognition(false);
+        }
     };
 
     return (
@@ -204,7 +225,7 @@ export const ConfigGamePanel: React.FC<ConfigGamePanelProps> = ({
                         <label className="text-sm font-medium text-muted whitespace-nowrap w-20">自动扫描</label>
                         <p className="text-xs text-muted">
                             {appConfig?.autoScanEnabled
-                                ? '已开启，游戏运行时自动扫描副本掉落'
+                                ? '已开启，游戏运行时自动记录副本掉落和试炼通关'
                                 : '已关闭，仅手动录入副本记录'}
                         </p>
                     </div>
@@ -232,6 +253,47 @@ export const ConfigGamePanel: React.FC<ConfigGamePanelProps> = ({
                         </div>
                     </div>
                 )}
+
+                <div className="flex items-center justify-between gap-4 pt-4 border-t border-base">
+                    <div className="flex items-center gap-4">
+                        <label className="text-sm font-medium text-muted whitespace-nowrap w-20">试炼截图识别</label>
+                        <p id="trial-screenshot-recognition-description" className="text-xs text-muted">
+                            {appConfig?.trialScreenshotRecognitionEnabled
+                                ? appConfig.autoScanEnabled
+                                    ? '已开启，自动识别翻牌位和装备'
+                                    : '已保存，开启自动扫描后识别翻牌位和装备'
+                                : '已关闭，不读取试炼结算截图'}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        onClick={() => void handleTrialScreenshotRecognitionToggle(!(appConfig?.trialScreenshotRecognitionEnabled ?? false))}
+                        disabled={savingTrialScreenshotRecognition}
+                        aria-checked={appConfig?.trialScreenshotRecognitionEnabled ?? false}
+                        aria-busy={savingTrialScreenshotRecognition}
+                        aria-label="试炼截图识别"
+                        aria-describedby="trial-screenshot-recognition-description"
+                        className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-60 ${
+                            appConfig?.trialScreenshotRecognitionEnabled ? 'bg-ds-success' : 'bg-slate-300 dark:bg-slate-600'
+                        }`}
+                    >
+                        <span
+                            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+                                appConfig?.trialScreenshotRecognitionEnabled ? 'translate-x-5' : ''
+                            }`}
+                        />
+                    </button>
+                </div>
+
+                <div className="p-3 bg-base/30 border border-base rounded-lg">
+                    <div className="flex items-start gap-2">
+                        <Info className="w-4 h-4 text-muted flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-muted leading-relaxed">
+                            识别已选翻牌位及鼠标悬停牌的装备。未悬停的牌不会推断为无装备，画面仅在本机内存中处理。
+                        </p>
+                    </div>
+                </div>
 
                 <div className="flex items-center justify-between gap-4 pt-4 border-t border-base">
                     <div className="flex items-center gap-4">

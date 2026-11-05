@@ -11,6 +11,8 @@ export interface AccountScanResult {
   success: boolean;
   /** 扫描到的副本实例数量（成功时） */
   instanceCount?: number;
+  /** 已有通关的翻牌明细发生变化，通关数可以为零。 */
+  trialDrawsChanged?: boolean;
   /** 失败原因（失败时） */
   error?: string;
 }

@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Account, TrialPlaceRecord } from '../types';
+import { Account, TrialDraw, TrialPlaceRecord } from '../types';
 import { Package, Check, X, AlertCircle, Layers, Trophy, Save, HelpCircle } from 'lucide-react';
-import { DualRangeSlider } from './DualRangeSlider';
+import { TrialEquipmentCatalogState, TrialEquipmentPicker } from './TrialEquipmentPicker';
 import { generateUUID } from '../utils/uuid';
 import { toast } from '../utils/toastManager';
 import { getTrialEquipments, JX3Equip, JX3EquipMagicType } from '../services/jx3BoxApi';
@@ -16,8 +16,9 @@ import {
     getTrialEquipmentLevelRange,
     isTrialEquipmentLevelInRange,
 } from '../utils/trialRecordUtils';
-import { getLatestTrialRecordForRole, getTrialLayerForRole, TrialProgressPeriod } from '../utils/trialProgress';
+import { getLatestTrialRecordForRole, getTrialLayerForRole, toTrialProgressTimestamp, TrialProgressPeriod } from '../utils/trialProgress';
 import { getLastMonday } from '../utils/cooldownManager';
+import { getTrialDrawEquipmentAttributes, getTrialDrawEquipmentSlot } from '../utils/trialDrawEquipmentFilters';
 
 interface RoleWithStatus {
     id: string;
@@ -32,9 +33,11 @@ interface RoleWithStatus {
 interface AddTrialRecordModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSubmit: (record: TrialPlaceRecord) => void;
+    onSubmit: (record: TrialPlaceRecord, options?: { preserveFlippedIndex?: boolean }) => Promise<void> | void;
     accounts: Account[];
     initialRole?: RoleWithStatus;
+    /** 自动扫描的待确认记录会以原始 ID 打开，确认后在原行补齐。 */
+    initialRecord?: TrialPlaceRecord;
     autoFillEnabled?: boolean;
     records?: TrialPlaceRecord[];
     trialProgressPeriod?: TrialProgressPeriod | null;
@@ -43,9 +46,27 @@ interface AddTrialRecordModalProps {
 const BOSS_LEVEL_1 = ['寅', '雷神', '子'];
 const BOSS_LEVEL_2_3 = ['叶冬辰', '韦柔丝', '濯尘', '藤原樱奈', '方鹤影', '苏髓'];
 
+interface ManualTrialDrawDraft {
+    id: string;
+    flippedIndex: number;
+    cardItems: Record<number, string>;
+    equipmentUnreviewed: boolean;
+    /** 仅本次提交使用：用户明确选择或清空的牌位，不能被旧自动观察覆盖。 */
+    editedCardIndices: number[];
+}
+
+const createManualTrialDrawDraft = (): ManualTrialDrawDraft => ({
+    id: generateUUID(),
+    // 手工新建没有画面或日志证据；未选择牌位、未核对五张牌前不得进入装备统计。
+    flippedIndex: 0,
+    cardItems: { 1: '', 2: '', 3: '', 4: '', 5: '' },
+    equipmentUnreviewed: true,
+    editedCardIndices: [],
+});
+
 // --- Helper Functions & Components ---
 
-const ATTR_NAME_MAP: Record<string, string> = {
+export const ATTR_NAME_MAP: Record<string, string> = {
     'atVitalityBase': '体质',
     'atSpiritBase': '根骨',
     'atStrengthBase': '力道',
@@ -85,7 +106,7 @@ const ATTR_NAME_MAP: Record<string, string> = {
     'atSkillEventHandler': '特效',
 };
 
-const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
+export const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     const attrs: { label: string, color?: string }[] = [];
     const seen = new Set<string>();
 
@@ -130,7 +151,7 @@ const getFormattedAttributes = (item: JX3Equip, maxCount: number = 7) => {
     return attrs.slice(0, maxCount);
 };
 
-const hasAttribute = (item: JX3Equip, keyword: string) => {
+export const hasAttribute = (item: JX3Equip, keyword: string) => {
     const attrs = getFormattedAttributes(item);
     return attrs.some(a => a.label.includes(keyword));
 };
@@ -139,7 +160,7 @@ const hasAttribute = (item: JX3Equip, keyword: string) => {
  * Reusable Equipment Display Component ensures consistency
  * Used in both the list and the card
  */
-const EquipDisplay: React.FC<{ item: JX3Equip, simple?: boolean }> = ({ item, simple }) => {
+export const EquipDisplay: React.FC<{ item: JX3Equip, simple?: boolean }> = ({ item, simple }) => {
     const attributes = getFormattedAttributes(item);
     const iconId = item._IconID ?? item.IconID;
     const iconUrl = iconId ? `https://icon.jx3box.com/icon/${iconId}.png` : null;
@@ -263,10 +284,22 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     onSubmit,
     accounts,
     initialRole,
+    initialRecord,
     autoFillEnabled = false,
     records = [],
     trialProgressPeriod = null
 }) => {
+    // 自动记录的多次翻牌已各自落在子笔中；父轮表单不可将其误写回旧的单翻牌字段。
+    const hasRecordedDraws = (initialRecord?.draws?.length ?? 0) > 0;
+    // 仅纯手工记录可维护翻牌明细。自动来源或已被自动证据认领的手工父记录
+    // 仍只允许编辑通关信息，避免覆盖已关联的日志、精力和奖励。
+    const hasUnownedOrAutomaticDraw = Boolean(initialRecord?.draws?.some(draw => draw.source !== 'manual'));
+    const canEditManualDraws = !initialRecord || (
+        (initialRecord.source ?? 'manual') === 'manual'
+        && !initialRecord.sourceKey
+        && !hasUnownedOrAutomaticDraw
+    );
+    const hasProtectedDraws = hasRecordedDraws && !canEditManualDraws;
     const [selectedRoleId, setSelectedRoleId] = useState<string>(initialRole?.id || '');
     const [layer, setLayer] = useState<number>(1);
     const [boss1, setBoss1] = useState<string>('');
@@ -274,24 +307,28 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const [boss3, setBoss3] = useState<string>('');
 
     // 5 Cards State
+    // 0 表示日志未提供翻牌位，不应推断为 1 号位。
     const [flipIndex, setFlipIndex] = useState<number>(1);
+    const [hasExplicitFlipIndexChange, setHasExplicitFlipIndexChange] = useState(false);
     const [cardItems, setCardItems] = useState<Record<number, string>>({
         1: '', 2: '', 3: '', 4: '', 5: ''
     });
+    // 自动识别可能在编辑弹窗打开后才落库。只将用户实际动过的牌位写回，
+    // 其余空牌位交给后端保留晚到的识别结果。
+    const [editedCardIndices, setEditedCardIndices] = useState<Set<number>>(new Set());
+    const [equipmentUnreviewed, setEquipmentUnreviewed] = useState(false);
     const [selectedCard, setSelectedCard] = useState<number | null>(null);
+    // 手工新增时可在同一轮下录入多次翻牌。自动记录已有子笔时，这个表单
+    // 只编辑通关信息，不能把手工草稿覆盖到自动明细。
+    const [manualDraws, setManualDraws] = useState<ManualTrialDrawDraft[]>(() => [createManualTrialDrawDraft()]);
+    const [activeManualDrawIndex, setActiveManualDrawIndex] = useState(0);
 
     // Equipment selector state
     const [showEquipSelector, setShowEquipSelector] = useState(false);
     const [allEquipments, setAllEquipments] = useState<JX3Equip[]>([]);
     const [isLoadingEquipments, setIsLoadingEquipments] = useState(false);
     const [equipmentRangeMessage, setEquipmentRangeMessage] = useState<string | null>(null);
-
-    // Level Filter State
-    const [levelBounds, setLevelBounds] = useState({ min: 10000, max: 40000 });
-    const [minLevel, setMinLevel] = useState<number>(10000);
-    const [maxLevel, setMaxLevel] = useState<number>(40000);
-    const [selectedType, setSelectedType] = useState<string>('全部');
-    const [selectedBindType, setSelectedBindType] = useState<number | null>(null);
+    const [equipmentCatalogState, setEquipmentCatalogState] = useState<TrialEquipmentCatalogState>('loading');
 
 
     const [notes, setNotes] = useState<string>('');
@@ -302,7 +339,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
     // 将日期转换为输入框显示用的字符串，支持时间戳和ISO字符串
     const formatDateForInput = (date: Date | string | number): string => {
-        const d = new Date(date);
+        const d = date instanceof Date ? date : new Date(toTrialProgressTimestamp(date) ?? NaN);
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
@@ -316,9 +353,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         if (!dateStr) return Date.now();
         return new Date(dateStr).getTime();
     };
-
-    // Attribute filter state
-    const [attrFilters, setAttrFilters] = useState<Set<string>>(new Set());
 
     const applyRoleProgress = useCallback((roleId: string) => {
         setBoss1('');
@@ -353,21 +387,72 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         if (hasInitializedOpenDraft.current) return;
 
         hasInitializedOpenDraft.current = true;
-        const roleId = initialRole?.id || '';
+        const roleId = initialRecord?.roleId || initialRole?.id || '';
         setSelectedRoleId(roleId);
-        applyRoleProgress(roleId);
-        setFlipIndex(1);
-        setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
+        if (initialRecord) {
+            setLayer(initialRecord.layer);
+            setBoss1(initialRecord.bosses[0] || '');
+            setBoss2(initialRecord.bosses[1] || '');
+            setBoss3(initialRecord.bosses[2] || '');
+            setFlipIndex(initialRecord.flippedIndex >= 1 && initialRecord.flippedIndex <= 5 ? initialRecord.flippedIndex : 0);
+            setEquipmentUnreviewed(Boolean(initialRecord.equipmentUnreviewed));
+            setCardItems({
+                1: initialRecord.card1 || '',
+                2: initialRecord.card2 || '',
+                3: initialRecord.card3 || '',
+                4: initialRecord.card4 || '',
+                5: initialRecord.card5 || '',
+            });
+            if ((initialRecord.source ?? 'manual') === 'manual' && !initialRecord.sourceKey) {
+                const savedDraws = Array.isArray(initialRecord.draws) && initialRecord.draws.length > 0
+                    ? initialRecord.draws.map(draw => ({
+                        id: draw.id,
+                        flippedIndex: draw.flippedIndex,
+                        cardItems: {
+                            1: draw.card1 || '', 2: draw.card2 || '', 3: draw.card3 || '',
+                            4: draw.card4 || '', 5: draw.card5 || '',
+                        },
+                        equipmentUnreviewed: Boolean(draw.equipmentUnreviewed),
+                        editedCardIndices: draw.editedCardIndices || [],
+                    }))
+                    : [{
+                        id: generateUUID(),
+                        flippedIndex: initialRecord.flippedIndex >= 1 && initialRecord.flippedIndex <= 5
+                            ? initialRecord.flippedIndex : 0,
+                        cardItems: {
+                            1: initialRecord.card1 || '', 2: initialRecord.card2 || '', 3: initialRecord.card3 || '',
+                            4: initialRecord.card4 || '', 5: initialRecord.card5 || '',
+                        },
+                        equipmentUnreviewed: Boolean(initialRecord.equipmentUnreviewed),
+                        editedCardIndices: [],
+                    }];
+                const firstDraw = savedDraws[0];
+                setManualDraws(savedDraws);
+                setActiveManualDrawIndex(0);
+                setFlipIndex(firstDraw.flippedIndex);
+                setCardItems({ ...firstDraw.cardItems });
+                setEquipmentUnreviewed(firstDraw.equipmentUnreviewed);
+            }
+        } else {
+            applyRoleProgress(roleId);
+            setFlipIndex(0);
+            setEquipmentUnreviewed(true);
+            setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
+        }
+        setHasExplicitFlipIndexChange(false);
+        setEditedCardIndices(new Set());
         setSelectedCard(null);
+        if (!initialRecord) {
+            setManualDraws([createManualTrialDrawDraft()]);
+            setActiveManualDrawIndex(0);
+        }
         setShowEquipSelector(false);
-        setNotes('');
+        setNotes(initialRecord?.notes || '');
         setError(null);
         setIsSubmitting(false);
-        setRecordDate(formatDateForInput(new Date()));
-        setAttrFilters(new Set());
-        setSelectedBindType(null);
+        setRecordDate(formatDateForInput(initialRecord?.date || new Date()));
         loadAllEquipments();
-    }, [isOpen, applyRoleProgress, initialRole?.id]);
+    }, [isOpen, applyRoleProgress, initialRole?.id, initialRecord]);
 
     // 锁定背景滚动
     useEffect(() => {
@@ -379,17 +464,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             };
         }
     }, [isOpen]);
-
-    const ATTR_FILTERS = [
-        { key: '外功', label: '外功' },
-        { key: '内功', label: '内功' },
-        { key: '会心', label: '会心' },
-        { key: '会效', label: '会效' },
-        { key: '破防', label: '破防' },
-        { key: '加速', label: '加速' },
-        { key: '破招', label: '破招' },
-        { key: '无双', label: '无双' },
-    ];
 
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
@@ -403,6 +477,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
     const loadAllEquipments = async () => {
         setIsLoadingEquipments(true);
+        setEquipmentCatalogState('loading');
         setEquipmentRangeMessage(null);
         setAllEquipments([]);
         try {
@@ -410,6 +485,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             const configuredBounds = getTrialEquipmentLevelRange(season);
             if (!configuredBounds) {
                 setEquipmentRangeMessage('当前赛季信息或试炼装备品级范围不可用，请关闭后重试。');
+                setEquipmentCatalogState('empty');
                 return;
             }
             const hasConfiguredBound = configuredBounds.min !== undefined || configuredBounds.max !== undefined;
@@ -426,6 +502,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                         ? '未获取到当前赛季试炼装备数据，请检查网络后重试；仍可录入无装备试炼。'
                         : '未获取到试炼装备数据，请检查网络后重试。'
                 );
+                setEquipmentCatalogState('empty');
                 return;
             }
 
@@ -438,17 +515,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             const actualRange = deriveTrialEquipmentLevelRange(seasonItems.map(item => item.Level));
             if (!actualRange) {
                 setEquipmentRangeMessage('当前赛季尚无符合品级范围的试炼装备，可继续录入无装备试炼。');
+                setEquipmentCatalogState('empty');
                 return;
             }
-            const range = {
-                min: configuredBounds.min ?? actualRange.min,
-                max: configuredBounds.max ?? actualRange.max,
-            };
-
-            // 使用解析出的品级范围设置筛选器
-            setLevelBounds(range);
-            setMinLevel(range.min);
-            setMaxLevel(range.max);
 
             // Define Sort Order (Using TypeLabel as requested)
             const TYPE_ORDER: Record<string, number> = {
@@ -463,13 +532,13 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 if (b.Level !== a.Level) return b.Level - a.Level;
 
                 // 2. Equipment Type (TypeLabel)
-                const typeA = TYPE_ORDER[a.TypeLabel || ''] ?? 99;
-                const typeB = TYPE_ORDER[b.TypeLabel || ''] ?? 99;
+                const typeA = TYPE_ORDER[getTrialDrawEquipmentSlot(a)] ?? 99;
+                const typeB = TYPE_ORDER[getTrialDrawEquipmentSlot(b)] ?? 99;
                 if (typeA !== typeB) return typeA - typeB;
 
                 // 3. Physical
-                const aPhy = hasAttribute(a, '外功');
-                const bPhy = hasAttribute(b, '外功');
+                const aPhy = getTrialDrawEquipmentAttributes(a).includes('外功');
+                const bPhy = getTrialDrawEquipmentAttributes(b).includes('外功');
                 if (aPhy && !bPhy) return -1;
                 if (!aPhy && bPhy) return 1;
 
@@ -478,9 +547,11 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             });
 
             setAllEquipments(sorted);
+            setEquipmentCatalogState('ready');
         } catch (err) {
             console.error(err);
             setEquipmentRangeMessage('加载装备数据失败，请关闭后重新打开记录窗口重试。');
+            setEquipmentCatalogState('error');
             toast.error('加载装备数据失败');
         } finally {
             setIsLoadingEquipments(false);
@@ -509,6 +580,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 ...prev,
                 [selectedCard]: equipId
             }));
+            setEditedCardIndices(prev => new Set(prev).add(selectedCard));
         }
         setShowEquipSelector(false);
         setSelectedCard(null);
@@ -520,40 +592,74 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 ...prev,
                 [selectedCard]: ''
             }));
+            setEditedCardIndices(prev => new Set(prev).add(selectedCard));
         }
         setShowEquipSelector(false);
         setSelectedCard(null);
     };
 
-    const getFilteredEquipments = () => {
-        let items = allEquipments;
+    const handleConfirmNoEquipment = () => {
+        setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
+        setEditedCardIndices(new Set([1, 2, 3, 4, 5]));
+        setEquipmentUnreviewed(false);
+    };
 
-        // Level Range Filter
-        items = items.filter(item => item.Level >= minLevel && item.Level <= maxLevel);
+    const handleConfirmAllCardsReviewed = () => {
+        // 用户明确确认五张牌都已核对后，当前空位才可作为“未出装备”统计。
+        setEditedCardIndices(new Set([1, 2, 3, 4, 5]));
+        setEquipmentUnreviewed(false);
+    };
 
-        // Attribute Checkbox Filter
-        if (attrFilters.size > 0) {
-            items = items.filter(item => {
-                const attrs = getFormattedAttributes(item).map(a => a.label).join(' ');
-                // All selected attributes must be present
-                return Array.from(attrFilters).every(filter => attrs.includes(filter));
-            });
-        }
+    const getActiveManualDrawDraft = (): ManualTrialDrawDraft => ({
+        id: manualDraws[activeManualDrawIndex]?.id || generateUUID(),
+        flippedIndex: flipIndex,
+        cardItems: { ...cardItems },
+        equipmentUnreviewed,
+        editedCardIndices: Array.from(editedCardIndices),
+    });
 
-        // Type Filter
-        if (selectedType !== '全部') {
-            items = items.filter(item => {
-                if (selectedType === '武器') return item.TypeLabel === '武器' || item.TypeLabel === '投掷';
-                return item.TypeLabel === selectedType;
-            });
-        }
+    const loadManualDrawDraft = (draft: ManualTrialDrawDraft, index: number) => {
+        setManualDraws(current => current.map((entry, entryIndex) => (
+            entryIndex === activeManualDrawIndex ? getActiveManualDrawDraft() : entry
+        )));
+        setActiveManualDrawIndex(index);
+        setFlipIndex(draft.flippedIndex);
+        setCardItems({ ...draft.cardItems });
+        setEquipmentUnreviewed(draft.equipmentUnreviewed);
+        setEditedCardIndices(new Set(draft.editedCardIndices));
+        setSelectedCard(null);
+        setShowEquipSelector(false);
+    };
 
-        // Bind Type Filter
-        if (selectedBindType !== null) {
-            items = items.filter(item => Number(item.BindType) === selectedBindType);
-        }
+    const addManualDraw = () => {
+        const activeDraft = getActiveManualDrawDraft();
+        const nextDraft = createManualTrialDrawDraft();
+        setManualDraws(current => current.map((entry, index) => (
+            index === activeManualDrawIndex ? activeDraft : entry
+        )).concat(nextDraft));
+        setActiveManualDrawIndex(manualDraws.length);
+        setFlipIndex(nextDraft.flippedIndex);
+        setCardItems({ ...nextDraft.cardItems });
+        setEquipmentUnreviewed(nextDraft.equipmentUnreviewed);
+        setEditedCardIndices(new Set(nextDraft.editedCardIndices));
+        setSelectedCard(null);
+        setShowEquipSelector(false);
+    };
 
-        return items;
+    const removeActiveManualDraw = () => {
+        if (manualDraws.length <= 1) return;
+        const retained = manualDraws.filter((_, index) => index !== activeManualDrawIndex);
+        const nextIndex = Math.min(activeManualDrawIndex, retained.length - 1);
+        const nextDraft = retained[nextIndex];
+        if (!nextDraft) return;
+        setManualDraws(retained);
+        setActiveManualDrawIndex(nextIndex);
+        setFlipIndex(nextDraft.flippedIndex);
+        setCardItems({ ...nextDraft.cardItems });
+        setEquipmentUnreviewed(nextDraft.equipmentUnreviewed);
+        setEditedCardIndices(new Set(nextDraft.editedCardIndices));
+        setSelectedCard(null);
+        setShowEquipSelector(false);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -564,7 +670,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setError('请选择角色');
             return;
         }
-        if (layer < 1 || layer > 120) {
+        if (!Number.isInteger(layer) || layer < 1 || layer > 120) {
             setError('层数必须在 1-120 之间');
             return;
         }
@@ -583,28 +689,74 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         }
 
         try {
+            const recordId = initialRecord?.id || generateUUID();
+            const activeDraft = getActiveManualDrawDraft();
+            const drafts = canEditManualDraws
+                ? manualDraws.map((draft, index) => index === activeManualDrawIndex ? activeDraft : draft)
+                : [];
+            const shouldPersistManualDraws = canEditManualDraws && (
+                drafts.length > 1 || (initialRecord?.draws?.length ?? 0) > 0
+            );
+            const legacyDraw = drafts[0] || activeDraft;
+            const manualDrawDetails: TrialDraw[] = shouldPersistManualDraws
+                ? drafts.map((draft, index) => ({
+                    id: draft.id,
+                    sourceKey: `manual:${recordId}:${draft.id}`,
+                    source: 'manual',
+                    sequence: index + 1,
+                    // 手工记录没有收据时间；0 是后端约定的未知时间，不伪造同秒收据。
+                    receiptTime: 0,
+                    flippedIndex: draft.flippedIndex,
+                    rewardItems: [],
+                    card1: draft.cardItems[1] || '',
+                    card2: draft.cardItems[2] || '',
+                    card3: draft.cardItems[3] || '',
+                    card4: draft.cardItems[4] || '',
+                    card5: draft.cardItems[5] || '',
+                    equipmentUnreviewed: draft.equipmentUnreviewed,
+                    editedCardIndices: draft.editedCardIndices,
+                }))
+                : [];
             const record: TrialPlaceRecord = {
-                id: generateUUID(),
+                id: recordId,
                 accountId: role.accountId,
                 roleId: role.id,
                 roleName: role.name,
                 server: role.server,
-                date: formatDateFromInput(recordDate),
+                // 日期控件只显示到分钟；仅补录翻牌时保留日志中的准确通关时间。
+                date: initialRecord && recordDate === formatDateForInput(initialRecord.date)
+                    ? toTrialProgressTimestamp(initialRecord.date) ?? formatDateFromInput(recordDate)
+                    : formatDateFromInput(recordDate),
                 layer,
                 bosses: [boss1, boss2, boss3],
-                card1: cardItems[1] || '',
-                card2: cardItems[2] || '',
-                card3: cardItems[3] || '',
-                card4: cardItems[4] || '',
-                card5: cardItems[5] || '',
-                flippedIndex: flipIndex,
+                // 父字段只兼容旧单次记录。多次翻牌的展示和统计始终以 draws 为准。
+                card1: legacyDraw.cardItems[1] || '',
+                card2: legacyDraw.cardItems[2] || '',
+                card3: legacyDraw.cardItems[3] || '',
+                card4: legacyDraw.cardItems[4] || '',
+                card5: legacyDraw.cardItems[5] || '',
+                flippedIndex: legacyDraw.flippedIndex,
                 type: 'trial',
-                notes: notes.trim()
+                notes: notes.trim(),
+                source: initialRecord?.source || 'manual',
+                status: 'confirmed',
+                sourceKey: initialRecord?.sourceKey,
+                equipmentUnreviewed: legacyDraw.equipmentUnreviewed,
+                // 多次手工翻牌的修改标记只属于子笔；父记录保留旧单次兼容字段。
+                editedCardIndices: initialRecord && !shouldPersistManualDraws
+                    ? Array.from(editedCardIndices)
+                    : [],
+                draws: manualDrawDetails,
             };
 
-            await db.addTrialRecord(record);
-            onSubmit(record); // UI update callback
-            toast.success('试炼记录添加成功');
+            await onSubmit(record, {
+                preserveFlippedIndex: Boolean(
+                    initialRecord
+                    && !hasExplicitFlipIndexChange
+                    && flipIndex === initialRecord.flippedIndex
+                ),
+            });
+            toast.success(initialRecord?.status === 'pending' ? '试炼记录已确认' : '试炼记录已保存');
             onClose();
         } catch (err: any) {
             console.error(err);
@@ -641,8 +793,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
     if (!isOpen) return null;
 
-    const filteredEquipments = getFilteredEquipments();
-
     // Helper to get full equipment object for card display
     const getEquipForCard = (id: string) => {
         return allEquipments.find(e => e.ID.toString() === id);
@@ -663,7 +813,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 <Trophy className="w-5 h-5 text-ds-warning-strong/80" />
                             </div>
                             <div>
-                                <h2 className="text-lg font-bold text-main">记录试炼</h2>
+                                <h2 className="text-lg font-bold text-main">{hasProtectedDraws ? '编辑通关信息' : initialRecord ? (initialRecord.status === 'pending' ? '确认试炼记录' : '编辑试炼记录') : '新增试炼记录'}</h2>
                                 {initialRole && (
                                     <p className="text-xs text-muted mt-0.5">
                                         <span className="font-medium text-main">{initialRole.name}·{getBaseServerName(initialRole.server)}</span>
@@ -779,15 +929,64 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                     </div>
 
                     {/* Cards Section */}
+                    {hasProtectedDraws ? (
+                        <div className="rounded-lg border border-ds-success-soft bg-ds-success-soft px-3 py-3 text-sm text-ds-success-strong">
+                            <div className="font-semibold">本轮已有 {initialRecord?.draws?.length} 条翻牌明细</div>
+                            <p className="mt-1 text-xs leading-5">
+                                每次的牌位、装备、奖励和精力消耗均独立保存。请在“查看记录”中逐笔补录牌位和装备；此处只确认通关信息，不会修改任一翻牌明细。
+                            </p>
+                        </div>
+                    ) : (
                     <div className="space-y-4">
+                        {canEditManualDraws && (
+                            <div className="rounded-lg border border-base bg-base/30 p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <div className="mr-auto">
+                                        <div className="text-sm font-semibold text-main">本轮翻牌明细</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={addManualDraw}
+                                        className="inline-flex items-center justify-center rounded border border-ds-success-soft bg-ds-success-soft px-3 py-1.5 text-xs font-medium text-ds-success-strong transition-colors hover:bg-ds-success-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-success-strong"
+                                    >
+                                        增加一次翻牌
+                                    </button>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="选择本轮翻牌明细">
+                                    {manualDraws.map((draw, index) => (
+                                        <button
+                                            key={draw.id}
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={activeManualDrawIndex === index}
+                                            onClick={() => loadManualDrawDraft(draw, index)}
+                                            className={`inline-flex min-w-20 items-center justify-center rounded border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-success-strong ${activeManualDrawIndex === index
+                                                ? 'border-ds-success-soft bg-ds-success-soft text-ds-success-strong'
+                                                : 'border-base bg-surface text-main hover:bg-base'}`}
+                                        >
+                                            第 {index + 1} 次
+                                        </button>
+                                    ))}
+                                    {manualDraws.length > 1 && (
+                                        <button
+                                            type="button"
+                                            onClick={removeActiveManualDraw}
+                                            className="inline-flex items-center justify-center rounded border border-ds-warning-soft bg-ds-warning-soft px-3 py-1.5 text-xs font-medium text-ds-warning-strong transition-colors hover:bg-ds-warning-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-warning-strong"
+                                        >
+                                            删除当前次
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between">
                             <h3 className="text-sm font-semibold text-main flex items-center gap-2">
                                 <div className="w-1 h-4 bg-primary rounded"></div>
-                                翻牌记录
+                                {manualDraws.length > 1 ? `第 ${activeManualDrawIndex + 1} 次翻牌` : '翻牌记录'}
                             </h3>
                             <div className="text-xs text-muted flex items-center gap-1">
                                 <HelpCircle className="w-3 h-3" />
-                                点击卡牌设置装备，标记翻开的牌
+                                点击卡牌设置装备
                             </div>
                         </div>
 
@@ -875,15 +1074,15 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                         </button>
 
                                         {/* Flip Toggle */}
-                                        <label className="flex items-center justify-center cursor-pointer select-none">
-                                            <input
-                                                type="radio"
-                                                name="flippedCard"
-                                                checked={isFlipped}
-                                                onChange={() => setFlipIndex(idx)}
-                                                className="hidden"
-                                            />
-                                            <div className={`
+                                        <button
+                                            type="button"
+                                            aria-pressed={isFlipped}
+                                            aria-label={isFlipped ? `取消第 ${idx} 张翻牌位` : `标记第 ${idx} 张为翻牌位`}
+                                            onClick={() => {
+                                                setFlipIndex(currentIndex => currentIndex === idx ? 0 : idx);
+                                                setHasExplicitFlipIndexChange(true);
+                                            }}
+                                            className={`
                                                 flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-[10px] font-medium tracking-wide transition-colors border
                                                 ${isFlipped
                                                     ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
@@ -892,20 +1091,46 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                             `}>
                                                 {isFlipped && <Check className="w-3 h-3" />}
                                                 {isFlipped ? '当前翻开' : '标记翻开'}
-                                            </div>
-                                        </label>
+                                        </button>
                                     </div>
                                 );
                             })}
                         </div>
+                        {equipmentUnreviewed && (
+                            <div
+                                role="group"
+                                aria-label="装备核对操作"
+                                className="flex flex-wrap items-center gap-2 rounded-lg border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-xs text-ds-warning-strong"
+                            >
+                                <button
+                                    type="button"
+                                    onClick={handleConfirmNoEquipment}
+                                    className="rounded border border-ds-warning-strong/30 bg-surface px-2 py-1 font-medium hover:bg-ds-warning-soft/60"
+                                >
+                                    {manualDraws.length > 1 ? '确认本次无装备' : '确认本轮无装备'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleConfirmAllCardsReviewed}
+                                    className="rounded border border-ds-warning-strong/30 bg-surface px-2 py-1 font-medium hover:bg-ds-warning-soft/60"
+                                >
+                                    已核对全部牌面
+                                </button>
+                            </div>
+                        )}
                     </div>
+                    )}
 
                     {/* Flipped Item Notes */}
                     <div className="grid grid-cols-1 gap-6">
                         <div>
                             <label className="block text-xs font-medium text-muted mb-1.5 flex items-center gap-1.5">
                                 <Trophy className={`w-3.5 h-3.5 ${isTradable ? 'text-ds-success-strong/80' : 'text-slate-400'}`} />
-                                {isTradable ? '开出可交易物品！(可添加备注)' : '当前翻开物品绑定'}
+                                {hasProtectedDraws
+                                    ? '通关备注（不影响已保存的翻牌明细）'
+                                    : flipIndex === 0
+                                    ? '备注'
+                                    : isTradable ? '开出可交易物品！(可添加备注)' : '当前翻开物品绑定'}
                             </label>
                             <textarea
                                 value={notes}
@@ -935,7 +1160,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             ) : (
                                 <>
                                     <Save className="w-4 h-4" />
-                                    保存记录
+                                    {initialRecord ? (initialRecord.status === 'pending' ? '确认记录' : '保存修改') : '保存记录'}
                                 </>
                             )}
                         </button>
@@ -945,182 +1170,26 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
             {/* Equipment Selector - Modal */}
             {showEquipSelector && (
-                <div
-                    className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm animate-in fade-in duration-200 flex items-center justify-center p-8"
-                    onClick={() => {
-                        setShowEquipSelector(false);
-                    }}
-                >
-                    <div
-                        className="w-full max-w-5xl h-[80vh] bg-surface rounded-xl shadow-ds-modal border border-base flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        {/* Header Area */}
-                        <div className="flex-shrink-0 bg-base/50 backdrop-blur-md border-b border-base z-10">
-                            {/* Title & Close */}
-                            <div className="flex items-center justify-between px-4 py-3 border-b border-base/50">
-                                <h3 className="text-[1rem] font-bold text-main flex items-center gap-2">
-                                    <Package className="w-4 h-4 text-primary" />
-                                    选择装备 <span className="text-xs font-normal text-muted bg-surface px-2 py-0.5 rounded-full border border-base">#{selectedCard}</span>
-                                </h3>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowEquipSelector(false)}
-                                    className="p-1.5 rounded-lg hover:bg-base text-muted hover:text-main transition-colors"
-                                >
-                                    <X className="w-5 h-5" />
-                                </button>
-                            </div>
-
-                            {/* Filters Container */}
-                            {!equipmentRangeMessage && !isLoadingEquipments && (
-                            <div className="px-4 py-3 space-y-3">
-                                {/* Top Row: Level Range & Type Filters */}
-                                <div className="space-y-3">
-                                    {/* Level Range Filter (Compact) */}
-                                    <div className="flex items-center gap-3 bg-base/30 p-2 rounded-lg border border-base/50">
-                                        <span className="text-xs font-bold text-muted whitespace-nowrap">装分</span>
-                                        {levelBounds.max > levelBounds.min && <DualRangeSlider
-                                            min={levelBounds.min}
-                                            max={levelBounds.max}
-                                            value={{ min: minLevel, max: maxLevel }}
-                                            onChange={val => {
-                                                const clampedMin = Math.max(levelBounds.min, Math.min(val.min, levelBounds.max));
-                                                const clampedMax = Math.max(levelBounds.min, Math.min(val.max, levelBounds.max));
-                                                setMinLevel(clampedMin);
-                                                setMaxLevel(clampedMax);
-                                            }}
-                                            className="flex-1 mx-2"
-                                        />}
-                                        <div className="text-[10px] font-mono font-medium text-main bg-surface px-1.5 py-0.5 rounded border border-base min-w-[80px] text-center">
-                                            {minLevel} - {maxLevel}
-                                        </div>
-                                    </div>
-
-                                    {/* Type Filters */}
-                                    <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mask-gradient-r">
-                                        {['全部', '帽子', '鞋子', '项链', '腰坠', '暗器'].map(type => (
-                                            <button
-                                                key={type}
-                                                type="button"
-                                                onClick={() => setSelectedType(type)}
-                                                className={`
-                                                px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border
-                                                ${selectedType === type
-                                                        ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
-                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-ds-success-soft dark:hover:border-ds-success-soft'
-                                                    }
-                                            `}
-                                            >
-                                                {type}
-                                            </button>
-                                        ))}
-                                    </div>
-
-                                    {/* Bind Type Filters */}
-                                    <div className="flex items-center gap-2">
-                                        {[
-                                            { value: null, label: '全部绑定' },
-                                            { value: 2, label: '装备后绑定' },
-                                            { value: 3, label: '拾取后绑定' },
-                                        ].map(opt => (
-                                            <button
-                                                key={opt.label}
-                                                type="button"
-                                                onClick={() => setSelectedBindType(opt.value)}
-                                                className={`
-                                                px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors border
-                                                ${selectedBindType === opt.value
-                                                        ? 'bg-ds-success-soft dark:bg-ds-success-soft/20 text-ds-success-strong dark:text-ds-success-strong border-ds-success-soft dark:border-ds-success-soft'
-                                                        : 'bg-surface text-muted border-base hover:text-main hover:border-ds-success-soft dark:hover:border-ds-success-soft'
-                                                    }
-                                            `}
-                                            >
-                                                {opt.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Attribute Filters */}
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                                    {ATTR_FILTERS.map(filter => (
-                                        <label key={filter.key} className="flex items-center gap-1.5 cursor-pointer group select-none">
-                                            <div className={`
-                                                w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors
-                                                ${attrFilters.has(filter.key)
-                                                    ? 'bg-primary border-primary'
-                                                    : 'bg-surface border-gray-400 group-hover:border-primary'
-                                                }
-                                            `}>
-                                                {attrFilters.has(filter.key) && <Check className="w-2.5 h-2.5 text-white" />}
-                                            </div>
-                                            <input
-                                                type="checkbox"
-                                                checked={attrFilters.has(filter.key)}
-                                                onChange={(e) => {
-                                                    const newFilters = new Set(attrFilters);
-                                                    if (e.target.checked) newFilters.add(filter.key);
-                                                    else newFilters.delete(filter.key);
-                                                    setAttrFilters(newFilters);
-                                                }}
-                                                className="hidden"
-                                            />
-                                            <span className={`text-xs transition-colors ${attrFilters.has(filter.key) ? 'text-primary font-bold' : 'text-muted group-hover:text-main'}`}>
-                                                {filter.label}
-                                            </span>
-                                        </label>
-                                    ))}
-                                </div>
-                            </div>
-                            )}
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setShowEquipSelector(false)}>
+                    <div className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded-card border border-base bg-surface shadow-ds-modal" onClick={event => event.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-base bg-base/50 px-4 py-3">
+                            <h3 className="flex items-center gap-2 text-[1rem] font-bold text-main">
+                                <Package className="h-4 w-4 text-primary" />选择装备
+                                <span className="rounded-tag border border-base bg-surface px-2 py-0.5 text-xs font-normal text-muted">#{selectedCard}</span>
+                            </h3>
+                            <button type="button" onClick={() => setShowEquipSelector(false)} aria-label="关闭装备选择" className="rounded-tag p-1.5 text-muted transition-colors hover:bg-base hover:text-main">
+                                <X className="h-5 w-5" />
+                            </button>
                         </div>
-
-                        {/* Equipment List Grid */}
-                        <div className="flex-1 overflow-y-auto min-h-0 bg-base/30 p-4">
-                            {isLoadingEquipments ? (
-                                <div className="h-full flex flex-col items-center justify-center text-muted">
-                                    <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin mb-3"></div>
-                                    <span className="text-sm font-medium animate-pulse">正在从数据库加载装备...</span>
-                                </div>
-                            ) : equipmentRangeMessage ? (
-                                <div className="h-full flex items-center justify-center text-muted px-4 text-center">
-                                    <span className="text-sm">{equipmentRangeMessage}</span>
-                                </div>
-                            ) : filteredEquipments.length > 0 ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {/* Clear Option */}
-                                    <button
-                                        type="button"
-                                        onClick={handleClearEquipment}
-                                        className="col-span-full mb-2 flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed border-red-300 text-red-500 hover:bg-red-50 hover:border-red-500 transition-all group"
-                                    >
-                                        <X className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                                        <span className="text-xs font-bold">不佩戴装备 / 清空选择</span>
-                                    </button>
-
-                                    {filteredEquipments.map((equip, idx) => (
-                                        <button
-                                            key={`${equip.ID}-${idx}`}
-                                            type="button"
-                                            onClick={() => handleSelectEquipment(equip.ID.toString())}
-                                            className="relative group bg-surface border border-base rounded-xl p-2 hover:border-ds-success dark:hover:border-ds-success transition-colors duration-200 text-left overflow-hidden flex flex-col"
-                                        >
-                                            <EquipDisplay item={equip} />
-                                            {/* Hover Effect Highlight */}
-                                            <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
-                                        </button>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-muted gap-2">
-                                    <div className="w-12 h-12 rounded-full bg-base border border-base flex items-center justify-center">
-                                        <Package className="w-6 h-6 text-gray-400" />
-                                    </div>
-                                    <span className="text-sm font-medium">没有找到匹配的装备</span>
-                                    <span className="text-xs opacity-60">尝试调整筛选条件</span>
-                                </div>
-                            )}
+                        <div className="min-h-0 flex-1 overflow-y-auto bg-base/30 p-4">
+                            <TrialEquipmentPicker
+                                equipments={allEquipments}
+                                catalogState={isLoadingEquipments ? 'loading' : equipmentCatalogState}
+                                catalogMessage={equipmentRangeMessage}
+                                selectedEquipmentId={selectedCard === null ? '' : cardItems[selectedCard]}
+                                onSelect={handleSelectEquipment}
+                                onClear={handleClearEquipment}
+                            />
                         </div>
                     </div>
                 </div>

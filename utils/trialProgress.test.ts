@@ -88,6 +88,8 @@ describe('试炼大版本进度', () => {
   it('支持秒、毫秒和 ISO 日期，并在没有合法周期或记录时安全默认 1', () => {
     expect(toTrialProgressTimestamp(1_710_000_000)).toBe(1_710_000_000_000);
     expect(toTrialProgressTimestamp(1_710_000_000_000)).toBe(1_710_000_000_000);
+    expect(toTrialProgressTimestamp('1710000000')).toBe(1_710_000_000_000);
+    expect(toTrialProgressTimestamp('1710000000000')).toBe(1_710_000_000_000);
     expect(toTrialProgressTimestamp('2024-03-09T16:00:00.000Z')).toBe(1_710_000_000_000);
     expect(getTrialLayerForRole([
       record({ id: 'seconds', date: 1_710_000_001, layer: 4 }),
@@ -104,5 +106,30 @@ describe('试炼大版本进度', () => {
     getTrialLayerForRole(records, 'role-a', period);
     getLatestTrialRecordForRole(records, 'role-a', period, 1_710_000_000_000);
     expect(records).toEqual(snapshot);
+  });
+
+  it('待确认记录和未知层数不会影响正式进度或自动填充', () => {
+    const records = [
+      record({ id: 'confirmed', date: 1_710_000_100, layer: 12, status: 'confirmed' }),
+      record({ id: 'pending', date: 1_710_000_200, layer: 60, status: 'pending' }),
+      record({ id: 'unknown-layer', date: 1_710_000_300, layer: 0, status: 'confirmed' }),
+    ];
+
+    expect(getLatestTrialRecordForRole(records, 'role-a', period)?.id).toBe('unknown-layer');
+    expect(getTrialLayerForRole(records, 'role-a', period)).toBe(12);
+  });
+
+  it('同一轮的多次翻牌不额外推进层数或制造额外通关记录', () => {
+    const singleCompletion = {
+      ...record({ id: 'one-round', date: 1_720_000_100, layer: 18, source: 'auto' }),
+      draws: [
+        { flippedIndex: 0, card1: '', card2: '', card3: '', card4: '', card5: '', equipmentUnreviewed: true },
+        { flippedIndex: 2, card1: '', card2: '', card3: '', card4: '', card5: '', equipmentUnreviewed: true },
+        { flippedIndex: 5, card1: '', card2: '', card3: '', card4: '', card5: '', equipmentUnreviewed: true },
+      ],
+    } as TrialPlaceRecord & { draws: unknown[] };
+
+    expect(getTrialLayerForRole([singleCompletion], 'role-a', period)).toBe(18);
+    expect(getLatestTrialRecordForRole([singleCompletion], 'role-a', period)?.id).toBe('one-round');
   });
 });

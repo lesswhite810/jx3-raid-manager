@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_config;
+mod background_work;
 mod char_sync;
 mod char_sync_rollback_marks;
 mod db;
@@ -13,6 +14,7 @@ mod jx3_process;
 mod kungfu_data;
 mod mingyi;
 mod runtime_mode;
+mod trial_capture;
 mod updater;
 
 const PREPARE_INSTALL_DATA_FLAG: &str = "--prepare-install-data";
@@ -117,12 +119,26 @@ fn initialize_primary_instance(app: &mut tauri::App) -> Result<(), Box<dyn std::
         Ok(_) => log::info!("[INIT] 数据库预初始化完成"),
         Err(e) => log::error!("[INIT] 数据库预初始化失败: {}", e),
     }
+    let capture_config = app_config::get_app_config_internal().ok();
+    let capture_enabled = capture_config
+        .as_ref()
+        .is_some_and(app_config::is_trial_screenshot_capture_enabled);
+    trial_capture::start(app.handle().clone(), capture_enabled);
+    mingyi::drop_scanner::live::start();
+    let capture_directory = capture_config
+        .as_ref()
+        .and_then(|config| config.game_directory.as_deref())
+        .unwrap_or("");
+    mingyi::drop_scanner::live::configure(
+        capture_enabled,
+        &game_directory::resolve_game_runtime_directory(capture_directory),
+    );
 
     // 启动后台装备同步任务
     std::thread::spawn(|| {
         // 等待 2 秒让应用完全启动
         std::thread::sleep(std::time::Duration::from_secs(2));
-        
+
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
         rt.block_on(async {
             log::info!("[EquipSync] 开始后台装备同步...");
@@ -262,6 +278,7 @@ fn main() {
             app_config::complete_setup,
             app_config::reset_setup,
             app_config::set_auto_scan_enabled,
+            app_config::set_trial_screenshot_recognition_enabled,
             app_config::set_auto_refresh_equip_score_enabled,
             app_config::get_theme,
             app_config::set_theme,
@@ -295,6 +312,9 @@ fn main() {
             // 试炼记录
             db::db_add_trial_record,
             db::db_get_trial_records,
+            db::db_update_trial_draw_flipped_index,
+            db::db_update_trial_draw_equipment,
+            db::db_set_trial_draw_equipment_reviewed,
             db::db_delete_trial_record,
             // 百战记录
             db::db_add_baizhan_record,

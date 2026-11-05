@@ -42,6 +42,9 @@
       "allow": [
         {
           "url": "https://node.jx3box.com/*"
+        },
+        {
+          "url": "https://www.jx3api.com/active/calendar"
         }
       ]
     },

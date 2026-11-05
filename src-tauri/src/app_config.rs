@@ -1,5 +1,6 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 use crate::db;
 
@@ -11,6 +12,8 @@ pub struct AppConfig {
     pub setup_completed: bool,
     pub last_scan_mingyi_at: Option<String>,
     pub auto_scan_enabled: bool,
+    /// 试炼结算截图识别独立于常规 JCL 自动扫描，旧配置默认关闭。
+    pub trial_screenshot_recognition_enabled: bool,
     pub auto_refresh_equip_score: bool,
 }
 
@@ -18,19 +21,25 @@ const KEY_GAME_DIRECTORY: &str = "game_directory";
 const KEY_SETUP_COMPLETED: &str = "setup_completed";
 const KEY_LAST_SCAN_MINGYI_AT: &str = "last_scan_mingyi_at";
 const KEY_AUTO_SCAN_ENABLED: &str = "auto_scan_enabled";
+const KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED: &str = "trial_screenshot_recognition_enabled";
 const KEY_AUTO_REFRESH_EQUIP_SCORE: &str = "auto_refresh_equip_score";
 const KEY_THEME: &str = "theme";
 
+// 两个开关可能由前端并发切换。将“写入 -> 读取组合状态 -> 发布给采集线程”串行化，
+// 避免旧快照在较新的写入之后重新开启采集。
+static TRIAL_CAPTURE_CONFIG_LOCK: Mutex<()> = Mutex::new(());
+
 /// 从 app_config 表读取指定 key 的值
 fn read_value(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
-    let value: Option<String> = conn
-        .query_row(
-            "SELECT value FROM app_config WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(value)
+    match conn.query_row(
+        "SELECT value FROM app_config WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    ) {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// 更新指定 key 的值（UPSERT 语义）
@@ -50,17 +59,21 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|s| !s.is_empty())
 }
 
-/// 读取完整应用配置
-pub fn get_app_config_internal() -> Result<AppConfig, String> {
-    let conn = db::init_db()?;
-
-    let game_directory = non_empty(read_value(&conn, KEY_GAME_DIRECTORY)?);
-    let setup_completed_str = read_value(&conn, KEY_SETUP_COMPLETED)?.unwrap_or_default();
+/// 从既有连接读取完整应用配置，便于设置项写入后用同一连接计算运行时状态。
+fn read_app_config(conn: &rusqlite::Connection) -> Result<AppConfig, String> {
+    let game_directory = non_empty(read_value(conn, KEY_GAME_DIRECTORY)?);
+    let setup_completed_str = read_value(conn, KEY_SETUP_COMPLETED)?.unwrap_or_default();
     let setup_completed = setup_completed_str.eq_ignore_ascii_case("true");
-    let last_scan_mingyi_at = non_empty(read_value(&conn, KEY_LAST_SCAN_MINGYI_AT)?);
-    let auto_scan_enabled_str = read_value(&conn, KEY_AUTO_SCAN_ENABLED)?.unwrap_or_default();
+    let last_scan_mingyi_at = non_empty(read_value(conn, KEY_LAST_SCAN_MINGYI_AT)?);
+    let auto_scan_enabled_str = read_value(conn, KEY_AUTO_SCAN_ENABLED)?.unwrap_or_default();
     let auto_scan_enabled = auto_scan_enabled_str.eq_ignore_ascii_case("true");
-    let auto_refresh_equip_score_str = read_value(&conn, KEY_AUTO_REFRESH_EQUIP_SCORE)?.unwrap_or_default();
+    // 截图识别为新增能力。缺少该 key 的历史配置必须保持关闭。
+    let trial_screenshot_recognition_enabled =
+        read_value(conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED)?
+            .unwrap_or_default()
+            .eq_ignore_ascii_case("true");
+    let auto_refresh_equip_score_str =
+        read_value(conn, KEY_AUTO_REFRESH_EQUIP_SCORE)?.unwrap_or_default();
     // 未配置时默认开启（兼容历史用户与首次启动）
     let auto_refresh_equip_score = auto_refresh_equip_score_str.is_empty()
         || auto_refresh_equip_score_str.eq_ignore_ascii_case("true");
@@ -70,8 +83,33 @@ pub fn get_app_config_internal() -> Result<AppConfig, String> {
         setup_completed,
         last_scan_mingyi_at,
         auto_scan_enabled,
+        trial_screenshot_recognition_enabled,
         auto_refresh_equip_score,
     })
+}
+
+/// 读取完整应用配置
+pub fn get_app_config_internal() -> Result<AppConfig, String> {
+    let conn = db::init_db()?;
+    read_app_config(&conn)
+}
+
+/// 截图采集的运行条件。常规自动扫描仍只使用 `auto_scan_enabled`。
+pub fn is_trial_screenshot_capture_enabled(config: &AppConfig) -> bool {
+    config.auto_scan_enabled && config.trial_screenshot_recognition_enabled
+}
+
+/// 在配置写入成功后才切换截图采集，关闭任一开关会同步清理待处理识别。
+fn refresh_trial_screenshot_capture(conn: &rusqlite::Connection) -> Result<(), String> {
+    let config = read_app_config(conn)?;
+    crate::trial_capture::set_enabled(is_trial_screenshot_capture_enabled(&config));
+    crate::mingyi::drop_scanner::live::configure(
+        is_trial_screenshot_capture_enabled(&config),
+        &crate::game_directory::resolve_game_runtime_directory(
+            config.game_directory.as_deref().unwrap_or(""),
+        ),
+    );
+    Ok(())
 }
 
 /// 获取应用配置（Tauri 命令）
@@ -88,6 +126,9 @@ pub fn get_app_config() -> Result<AppConfig, String> {
 pub fn set_game_directory(path: String) -> Result<(), String> {
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_GAME_DIRECTORY, &path)?;
+    crate::mingyi::drop_scanner::live::clear();
+    crate::trial_capture::clear();
+    refresh_trial_screenshot_capture(&conn)?;
 
     log::info!("[AppConfig] 游戏目录已更新: {}", path);
     Ok(())
@@ -105,10 +146,15 @@ pub fn complete_setup() -> Result<(), String> {
 /// 重置配置，回到未引导状态（Tauri 命令）
 #[tauri::command]
 pub fn reset_setup() -> Result<(), String> {
+    let _capture_config_guard = TRIAL_CAPTURE_CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_GAME_DIRECTORY, "")?;
     upsert_value(&conn, KEY_SETUP_COMPLETED, "false")?;
     upsert_value(&conn, KEY_LAST_SCAN_MINGYI_AT, "")?;
+    upsert_value(&conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED, "false")?;
+    refresh_trial_screenshot_capture(&conn)?;
     log::info!("[AppConfig] 应用配置已重置，将回到引导界面");
     Ok(())
 }
@@ -116,9 +162,42 @@ pub fn reset_setup() -> Result<(), String> {
 /// 设置自动扫描开关（Tauri 命令）
 #[tauri::command]
 pub fn set_auto_scan_enabled(enabled: bool) -> Result<(), String> {
+    let _capture_config_guard = TRIAL_CAPTURE_CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let conn = db::init_db()?;
-    upsert_value(&conn, KEY_AUTO_SCAN_ENABLED, if enabled { "true" } else { "false" })?;
-    log::info!("[AppConfig] 自动扫描已{}", if enabled { "开启" } else { "关闭" });
+    upsert_value(
+        &conn,
+        KEY_AUTO_SCAN_ENABLED,
+        if enabled { "true" } else { "false" },
+    )?;
+    refresh_trial_screenshot_capture(&conn)?;
+    log::info!(
+        "[AppConfig] 自动扫描已{}",
+        if enabled { "开启" } else { "关闭" }
+    );
+    Ok(())
+}
+
+/// 设置试炼结算截图识别开关（Tauri 命令）。
+///
+/// 该开关仅影响截图采集；实际采集还要求自动扫描已开启。
+#[tauri::command]
+pub fn set_trial_screenshot_recognition_enabled(enabled: bool) -> Result<(), String> {
+    let _capture_config_guard = TRIAL_CAPTURE_CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let conn = db::init_db()?;
+    upsert_value(
+        &conn,
+        KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED,
+        if enabled { "true" } else { "false" },
+    )?;
+    refresh_trial_screenshot_capture(&conn)?;
+    log::info!(
+        "[AppConfig] 试炼截图识别已{}",
+        if enabled { "开启" } else { "关闭" }
+    );
     Ok(())
 }
 
@@ -126,9 +205,16 @@ pub fn set_auto_scan_enabled(enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn set_auto_refresh_equip_score_enabled(enabled: bool) -> Result<(), String> {
     let conn = db::init_db()?;
-    upsert_value(&conn, KEY_AUTO_REFRESH_EQUIP_SCORE, if enabled { "true" } else { "false" })?;
+    upsert_value(
+        &conn,
+        KEY_AUTO_REFRESH_EQUIP_SCORE,
+        if enabled { "true" } else { "false" },
+    )?;
 
-    log::info!("[AppConfig] 启动刷新装分已{}", if enabled { "开启" } else { "关闭" });
+    log::info!(
+        "[AppConfig] 启动刷新装分已{}",
+        if enabled { "开启" } else { "关闭" }
+    );
     Ok(())
 }
 
@@ -161,9 +247,7 @@ pub fn set_theme(theme: String) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// 在临时文件中创建测试数据库
-    fn setup_test_db() -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
+    fn create_app_config_table(conn: &rusqlite::Connection) {
         conn.execute_batch(
             r#"
             CREATE TABLE app_config (
@@ -174,6 +258,12 @@ mod tests {
             "#,
         )
         .unwrap();
+    }
+
+    /// 在临时文件中创建测试数据库
+    fn setup_test_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        create_app_config_table(&conn);
         let now = chrono::Local::now().to_rfc3339();
         for key in [
             KEY_GAME_DIRECTORY,
@@ -204,8 +294,17 @@ mod tests {
     #[test]
     fn test_non_empty_filters_empty_string() {
         assert_eq!(non_empty(Some(String::new())), None);
-        assert_eq!(non_empty(Some("value".to_string())), Some("value".to_string()));
+        assert_eq!(
+            non_empty(Some("value".to_string())),
+            Some("value".to_string())
+        );
         assert_eq!(non_empty(None), None);
+    }
+
+    #[test]
+    fn read_value_surfaces_database_errors_instead_of_treating_them_as_disabled() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        assert!(read_app_config(&conn).is_err());
     }
 
     #[test]
@@ -223,9 +322,73 @@ mod tests {
     fn test_auto_refresh_equip_score_false_when_explicitly_disabled() {
         let conn = setup_test_db();
         upsert_value(&conn, KEY_AUTO_REFRESH_EQUIP_SCORE, "false").unwrap();
-        let raw_str = read_value(&conn, KEY_AUTO_REFRESH_EQUIP_SCORE).unwrap().unwrap_or_default();
+        let raw_str = read_value(&conn, KEY_AUTO_REFRESH_EQUIP_SCORE)
+            .unwrap()
+            .unwrap_or_default();
         let enabled = raw_str.is_empty() || raw_str.eq_ignore_ascii_case("true");
         assert!(!enabled, "显式设为 false 后应为关闭");
     }
 
+    #[test]
+    fn trial_screenshot_recognition_defaults_to_disabled_for_legacy_config() {
+        let conn = setup_test_db();
+        upsert_value(&conn, KEY_AUTO_SCAN_ENABLED, "true").unwrap();
+        let config = read_app_config(&conn).unwrap();
+
+        assert!(config.auto_scan_enabled);
+        assert!(!config.trial_screenshot_recognition_enabled);
+        assert!(!is_trial_screenshot_capture_enabled(&config));
+    }
+
+    #[test]
+    fn trial_screenshot_preference_does_not_change_auto_scan_setting() {
+        let conn = setup_test_db();
+        upsert_value(&conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED, "true").unwrap();
+        let config = read_app_config(&conn).unwrap();
+
+        assert!(!config.auto_scan_enabled);
+        assert!(config.trial_screenshot_recognition_enabled);
+        assert!(!is_trial_screenshot_capture_enabled(&config));
+    }
+
+    #[test]
+    fn trial_screenshot_recognition_is_persisted_across_reopen() {
+        let path =
+            std::env::temp_dir().join(format!("jx3-app-config-{}.sqlite", uuid::Uuid::new_v4()));
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            create_app_config_table(&conn);
+            upsert_value(&conn, KEY_AUTO_SCAN_ENABLED, "true").unwrap();
+            upsert_value(&conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED, "true").unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let config = read_app_config(&conn).unwrap();
+            assert!(is_trial_screenshot_capture_enabled(&config));
+            upsert_value(&conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED, "false").unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let config = read_app_config(&conn).unwrap();
+            assert!(config.auto_scan_enabled);
+            assert!(!config.trial_screenshot_recognition_enabled);
+            assert!(!is_trial_screenshot_capture_enabled(&config));
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn trial_capture_requires_both_master_and_its_own_switch() {
+        let mut config = read_app_config(&setup_test_db()).unwrap();
+        config.auto_scan_enabled = true;
+        config.trial_screenshot_recognition_enabled = false;
+        assert!(!is_trial_screenshot_capture_enabled(&config));
+
+        config.auto_scan_enabled = false;
+        config.trial_screenshot_recognition_enabled = true;
+        assert!(!is_trial_screenshot_capture_enabled(&config));
+
+        config.auto_scan_enabled = true;
+        assert!(is_trial_screenshot_capture_enabled(&config));
+    }
 }

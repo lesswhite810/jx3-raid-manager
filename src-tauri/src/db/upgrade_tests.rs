@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use rusqlite::Connection;
     use std::fs;
+    use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
-    use rusqlite::Connection;
 
-    const CURRENT_SCHEMA_VERSION: i32 = 18;
+    use crate::db::CURRENT_SCHEMA_VERSION;
 
     fn get_test_dir() -> PathBuf {
         let app_data = std::env::var("APPDATA").expect("无法获取 APPDATA 环境变量");
@@ -80,7 +80,7 @@ mod tests {
                 |row| row.get(0),
             )
             .map_err(|e| format!("查询版本失败: {}", e))?;
-        
+
         Ok(actual == expected)
     }
 
@@ -92,19 +92,26 @@ mod tests {
                 |row| row.get(0),
             )
             .map_err(|e| format!("查询表失败: {}", e))?;
-        
+
         Ok(count > 0)
     }
 
-    fn verify_column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool, String> {
+    fn verify_column_exists(
+        conn: &Connection,
+        table_name: &str,
+        column_name: &str,
+    ) -> Result<bool, String> {
         let count: i64 = conn
             .query_row(
-                &format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'", table_name, column_name),
+                &format!(
+                    "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'",
+                    table_name, column_name
+                ),
                 [],
                 |row| row.get(0),
             )
             .map_err(|e| format!("查询列失败: {}", e))?;
-        
+
         Ok(count > 0)
     }
 
@@ -116,13 +123,13 @@ mod tests {
                 |row| row.get(0),
             )
             .map_err(|e| format!("查询索引失败: {}", e))?;
-        
+
         Ok(count > 0)
     }
 
     fn verify_data_integrity(conn: &Connection) -> Result<Vec<String>, String> {
         let mut issues = Vec::new();
-        
+
         if verify_table_exists(conn, "accounts")? {
             let count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
@@ -133,7 +140,7 @@ mod tests {
         } else {
             issues.push("accounts 表不存在".to_string());
         }
-        
+
         if verify_table_exists(conn, "roles")? {
             let count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
@@ -144,19 +151,19 @@ mod tests {
         } else {
             issues.push("roles 表不存在".to_string());
         }
-        
+
         if !verify_table_exists(conn, "instance_types")? {
             issues.push("instance_types 表不存在".to_string());
         }
-        
+
         if !verify_table_exists(conn, "game_versions")? {
             issues.push("game_versions 表不存在".to_string());
         }
-        
+
         if !verify_table_exists(conn, "seasons")? {
             issues.push("seasons 表不存在".to_string());
         }
-        
+
         Ok(issues)
     }
 
@@ -173,23 +180,26 @@ mod tests {
         // 将测试逻辑放在闭包中，确保任何失败路径都能恢复备份
         let result = (|| -> Result<String, String> {
             {
-                let conn = Connection::open(&db_path)
-                    .map_err(|e| format!("打开数据库失败: {}", e))?;
+                let conn =
+                    Connection::open(&db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
 
                 if !verify_schema_version(&conn, version)? {
                     return Err(format!("初始版本验证失败，期望 V{}", version));
                 }
             }
 
-            println!("  开始执行 V{} -> V{} 升级...", version, CURRENT_SCHEMA_VERSION);
+            println!(
+                "  开始执行 V{} -> V{} 升级...",
+                version, CURRENT_SCHEMA_VERSION
+            );
 
             let upgrade_conn = crate::db::init_db_with_path(&db_path)?;
             drop(upgrade_conn);
 
             let mut verification_results = Vec::new();
             {
-                let conn = Connection::open(&db_path)
-                    .map_err(|e| format!("重新打开数据库失败: {}", e))?;
+                let conn =
+                    Connection::open(&db_path).map_err(|e| format!("重新打开数据库失败: {}", e))?;
 
                 if !verify_schema_version(&conn, CURRENT_SCHEMA_VERSION)? {
                     let actual: i32 = conn
@@ -212,31 +222,31 @@ mod tests {
 
                 if verify_column_exists(&conn, "accounts", "sort_order")? {
                     verification_results.push("accounts.sort_order 存在".to_string());
-            } else {
-                verification_results.push("accounts.sort_order 缺失".to_string());
-            }
+                } else {
+                    verification_results.push("accounts.sort_order 缺失".to_string());
+                }
 
-            if verify_column_exists(&conn, "roles", "martial")? {
-                verification_results.push("roles.martial 存在".to_string());
-            } else {
-                verification_results.push("roles.martial 缺失".to_string());
-            }
+                if verify_column_exists(&conn, "roles", "martial")? {
+                    verification_results.push("roles.martial 存在".to_string());
+                } else {
+                    verification_results.push("roles.martial 缺失".to_string());
+                }
 
-            if verify_column_exists(&conn, "raids", "season_id")? {
-                verification_results.push("raids.season_id 存在".to_string());
-            } else {
-                verification_results.push("raids.season_id 缺失".to_string());
-            }
+                if verify_column_exists(&conn, "raids", "season_id")? {
+                    verification_results.push("raids.season_id 存在".to_string());
+                } else {
+                    verification_results.push("raids.season_id 缺失".to_string());
+                }
 
-            if verify_column_exists(&conn, "records", "raid_name")? {
-                verification_results.push("records.raid_name 存在".to_string());
-            } else {
-                verification_results.push("records.raid_name 缺失".to_string());
-            }
+                if verify_column_exists(&conn, "records", "raid_name")? {
+                    verification_results.push("records.raid_name 存在".to_string());
+                } else {
+                    verification_results.push("records.raid_name 缺失".to_string());
+                }
 
-            if verify_index_exists(&conn, "idx_accounts_sort_order")? {
-                verification_results.push("idx_accounts_sort_order 存在".to_string());
-            }
+                if verify_index_exists(&conn, "idx_accounts_sort_order")? {
+                    verification_results.push("idx_accounts_sort_order 存在".to_string());
+                }
             } // conn 在此处 drop，确保恢复前文件句柄已释放
 
             Ok(format!(
@@ -420,8 +430,7 @@ mod tests {
         copy_with_retry(&db_path, &backup_path).expect("备份数据库失败");
 
         // 执行升级（显式 expect 以暴露升级失败的根本原因）
-        let upgrade_result = crate::db::init_db_with_path(&db_path)
-            .expect("V13 -> V14 升级失败");
+        let upgrade_result = crate::db::init_db_with_path(&db_path).expect("V13 -> V14 升级失败");
         // 立即释放升级过程中打开的连接，避免后续文件操作被锁
         drop(upgrade_result);
 
@@ -528,7 +537,9 @@ mod tests {
                 .unwrap_or(false);
             if has_old_config {
                 let old_config_value: Option<String> = conn
-                    .query_row("SELECT value FROM config WHERE id = 1", [], |row| row.get(0))
+                    .query_row("SELECT value FROM config WHERE id = 1", [], |row| {
+                        row.get(0)
+                    })
                     .ok();
                 if let Some(json_str) = old_config_value {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
@@ -578,8 +589,8 @@ mod tests {
         remove_with_retry(&db_path).expect("清理旧的测试数据库失败");
 
         {
-            let conn = crate::db::create_latest_schema_for_test(&db_path)
-                .expect("全新安装建库失败");
+            let conn =
+                crate::db::create_latest_schema_for_test(&db_path).expect("全新安装建库失败");
 
             assert!(
                 verify_table_exists(&conn, "char_sync_rollback_marks").unwrap_or(false),
@@ -594,7 +605,10 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap_or(false);
-            assert!(has_backup_dir, "char_sync_rollback_marks 缺少主键 backup_dir");
+            assert!(
+                has_backup_dir,
+                "char_sync_rollback_marks 缺少主键 backup_dir"
+            );
 
             let has_rolled_back_at: bool = conn
                 .query_row(
@@ -636,12 +650,12 @@ mod tests {
         remove_with_retry(&db_path).expect("清理旧的测试数据库失败");
 
         {
-            let conn = crate::db::create_latest_schema_for_test(&db_path)
-                .expect("全新安装建库失败");
+            let conn =
+                crate::db::create_latest_schema_for_test(&db_path).expect("全新安装建库失败");
 
             // 若期望清单漏了该表，validate 不会报错但我们也检测不到；
             // 因此这里反过来断言：建库后该表确实在清单所覆盖的范围内。
-            let result = crate::db::validate_post_upgrade_for_test(&conn, 18);
+            let result = crate::db::validate_post_upgrade_for_test(&conn, 20);
             assert!(
                 result.is_ok(),
                 "validate_post_upgrade 在全新安装库上失败: {:?}",
@@ -665,8 +679,7 @@ mod tests {
         let db_path = get_test_dir().join("save-guard-test.db");
         remove_with_retry(&db_path).expect("清理旧的测试数据库失败");
 
-        let mut conn = crate::db::create_latest_schema_for_test(&db_path)
-            .expect("建库失败");
+        let mut conn = crate::db::create_latest_schema_for_test(&db_path).expect("建库失败");
 
         // 预置一个账号 + 一个角色 + 一个自定义副本
         conn.execute(
@@ -697,8 +710,7 @@ mod tests {
         // ---- 1) 默认参数：空数组回写不得删除任何数据 ----
         crate::db::save_accounts_with_conn(&mut conn, "[]", None)
             .expect("默认参数保存空账号列表失败");
-        crate::db::save_raids_with_conn(&mut conn, "[]", None)
-            .expect("默认参数保存空副本列表失败");
+        crate::db::save_raids_with_conn(&mut conn, "[]", None).expect("默认参数保存空副本列表失败");
 
         let account_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
@@ -711,10 +723,7 @@ mod tests {
         let role_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
             .unwrap_or(0);
-        assert_eq!(
-            role_count, 1,
-            "护栏缺失：默认参数下空数组回写把角色删掉了"
-        );
+        assert_eq!(role_count, 1, "护栏缺失：默认参数下空数组回写把角色删掉了");
 
         let raid_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))
@@ -726,8 +735,7 @@ mod tests {
 
         // ---- 2) 显式 allow_delete=true：删除必须真的生效 ----
         // 证明护栏只是把「默认」改成安全值，没有把删除能力关死。
-        crate::db::save_accounts_with_conn(&mut conn, "[]", Some(true))
-            .expect("显式删除账号失败");
+        crate::db::save_accounts_with_conn(&mut conn, "[]", Some(true)).expect("显式删除账号失败");
         let account_count_after: i64 = conn
             .query_row("SELECT COUNT(*) FROM accounts", [], |row| row.get(0))
             .unwrap_or(0);
@@ -736,8 +744,7 @@ mod tests {
             "allow_delete=true 时账号未被删除，说明删除路径失效"
         );
 
-        crate::db::save_raids_with_conn(&mut conn, "[]", Some(true))
-            .expect("显式删除副本失败");
+        crate::db::save_raids_with_conn(&mut conn, "[]", Some(true)).expect("显式删除副本失败");
         let raid_count_after: i64 = conn
             .query_row("SELECT COUNT(*) FROM raids", [], |row| row.get(0))
             .unwrap_or(0);
@@ -748,8 +755,7 @@ mod tests {
 
         // ---- 3) 传非空列表：新增/更新必须生效 ----
         let accounts_json = r#"[{"id":"acc-new","accountName":"新账号","type":"OWN","roles":[]}]"#;
-        crate::db::save_accounts_with_conn(&mut conn, accounts_json, None)
-            .expect("新增账号失败");
+        crate::db::save_accounts_with_conn(&mut conn, accounts_json, None).expect("新增账号失败");
         let new_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM accounts WHERE id = 'acc-new'",

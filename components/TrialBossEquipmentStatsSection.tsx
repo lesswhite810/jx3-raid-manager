@@ -3,6 +3,7 @@ import { TrialBossEquipmentStats } from '../types';
 
 interface TrialBossEquipmentStatsSectionProps {
   stats: TrialBossEquipmentStats[];
+  equipmentReviewedRecords: number;
 }
 
 const formatBossSequence = (bosses: [string, string, string]) => {
@@ -23,7 +24,10 @@ const formatPositionSummary = (stat: TrialBossEquipmentStats) => {
     .join(' / ');
 };
 
-export const TrialBossEquipmentStatsSection: React.FC<TrialBossEquipmentStatsSectionProps> = ({ stats }) => {
+export const TrialBossEquipmentStatsSection: React.FC<TrialBossEquipmentStatsSectionProps> = ({
+  stats,
+  equipmentReviewedRecords,
+}) => {
   return (
     <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
       <div className="mb-4">
@@ -33,14 +37,16 @@ export const TrialBossEquipmentStatsSection: React.FC<TrialBossEquipmentStatsSec
 
       {stats.length === 0 ? (
         <div className="rounded-xl border border-dashed border-base px-4 py-8 text-center">
-          <p className="text-muted">暂无 Boss 出装备统计</p>
+          <p className="text-muted">
+            {equipmentReviewedRecords === 0 ? '装备待补录' : '暂无已确认的 Boss 出装备数据'}
+          </p>
         </div>
       ) : (
         <>
           <div className="hidden overflow-hidden rounded-xl border border-base md:block">
             <div className="grid grid-cols-[minmax(220px,1fr)_80px_88px_110px_minmax(170px,1fr)] bg-base/50 text-xs font-medium text-muted">
               <div className="px-4 py-3">Boss 顺序</div>
-              <div className="px-4 py-3">记录数</div>
+              <div className="px-4 py-3">完整核对</div>
               <div className="px-4 py-3">出装备</div>
               <div className="px-4 py-3">高发位置</div>
               <div className="px-4 py-3">位置分布</div>
@@ -67,7 +73,7 @@ export const TrialBossEquipmentStatsSection: React.FC<TrialBossEquipmentStatsSec
                 <div className="font-medium text-main break-words">{formatBossSequence(stat.bosses)}</div>
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   <div className="rounded-lg bg-base/40 px-3 py-2">
-                    <div className="text-[11px] text-muted">记录数</div>
+                    <div className="text-[11px] text-muted">完整核对</div>
                     <div className="mt-1 font-semibold text-main">{stat.totalRecords}</div>
                   </div>
                   <div className="rounded-lg bg-base/40 px-3 py-2">

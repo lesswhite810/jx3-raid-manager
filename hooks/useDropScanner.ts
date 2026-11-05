@@ -107,7 +107,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
       setLastScanAt(Date.now());
       setLastError(null);
 
-      if (totalScanned > 0) {
+      if (totalScanned > 0 || scanResults.some(result => result.trialDrawsChanged)) {
         onRecordsUpdatedRef.current?.(totalScanned);
       }
 
@@ -194,7 +194,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
       setLastScanAt(Date.now());
       setLastError(null);
 
-      if (totalScanned > 0) {
+      if (totalScanned > 0 || scanResults.some(result => result.trialDrawsChanged)) {
         onRecordsUpdatedRef.current?.(totalScanned);
       }
 
@@ -300,7 +300,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
                 totalAccounts += sessionSuccess;
                 totalFailed += sessionFailed;
 
-                if (sessionScanned > 0) {
+                if (sessionScanned > 0 || scanResults.some(result => result.trialDrawsChanged)) {
                   onRecordsUpdatedRef.current?.(sessionScanned);
                 }
                 setLastScanAt(Date.now());
