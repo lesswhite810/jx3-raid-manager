@@ -139,11 +139,8 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 
     // 4. 移除 app_config 中的 item_cache_synced 标记（若存在）
     let now = chrono::Local::now().to_rfc3339();
-    conn.execute(
-        "DELETE FROM app_config WHERE key = 'item_cache_synced'",
-        [],
-    )
-    .ok();
+    conn.execute("DELETE FROM app_config WHERE key = 'item_cache_synced'", [])
+        .ok();
 
     // 5. 写入迁移完成标记
     conn.execute(

@@ -109,7 +109,9 @@ mod tests {
         .unwrap();
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM char_sync_rollback_marks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM char_sync_rollback_marks", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1);
     }

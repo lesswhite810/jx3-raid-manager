@@ -104,7 +104,9 @@ fn migrate_config_from_old_config(conn: &Connection, now: &str) -> Result<(), St
     }
 
     let old_value: Option<String> = conn
-        .query_row("SELECT value FROM config WHERE id = 1", [], |row| row.get(0))
+        .query_row("SELECT value FROM config WHERE id = 1", [], |row| {
+            row.get(0)
+        })
         .ok();
 
     let Some(json_str) = old_value else {
@@ -388,7 +390,9 @@ fn drop_raid_versions_table(conn: &Connection) -> Result<(), String> {
     if exists {
         conn.execute("DROP TABLE IF EXISTS raid_versions", [])
             .map_err(|e| e.to_string())?;
-        log::info!("V14 迁移：已删除冗余的 raid_versions 表，版本排序改用 game_versions.sort_order");
+        log::info!(
+            "V14 迁移：已删除冗余的 raid_versions 表，版本排序改用 game_versions.sort_order"
+        );
     } else {
         log::info!("V14 迁移：raid_versions 表不存在，跳过");
     }
@@ -552,7 +556,10 @@ mod tests {
         );
         // config_json 应已迁移（第二次运行时 config 表存在）
         let config_json = get_config_value(&conn, "config_json");
-        assert!(config_json.contains("gameDirectory"), "config_json 应包含旧 config 数据");
+        assert!(
+            config_json.contains("gameDirectory"),
+            "config_json 应包含旧 config 数据"
+        );
         // 旧 config 表应已删除
         let config_exists: bool = conn
             .query_row(
@@ -605,8 +612,14 @@ mod tests {
             )
             .unwrap()
         };
-        assert!(index_exists("idx_records_status"), "应有 idx_records_status 索引");
-        assert!(index_exists("idx_records_source"), "应有 idx_records_source 索引");
+        assert!(
+            index_exists("idx_records_status"),
+            "应有 idx_records_status 索引"
+        );
+        assert!(
+            index_exists("idx_records_source"),
+            "应有 idx_records_source 索引"
+        );
     }
 
     #[test]

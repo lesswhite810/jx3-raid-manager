@@ -143,7 +143,13 @@ fn rename_chiguo_raid(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
 
-        log::info!("[V17] 副本 id 重命名：{} → {}（name: {} → {}）", old_id, new_id, name, new_name);
+        log::info!(
+            "[V17] 副本 id 重命名：{} → {}（name: {} → {}）",
+            old_id,
+            new_id,
+            name,
+            new_name
+        );
 
         // 更新关联 records.data 中 json_extract 的 raidName 字段
         // records.data 是 JSON 字符串，需要更新其中 $.raidName 的值
@@ -169,7 +175,10 @@ fn rename_chiguo_raid(conn: &Connection) -> Result<(), String> {
             };
 
             if let Some(obj) = data.as_object_mut() {
-                obj.insert("raidName".to_string(), serde_json::Value::String(new_id.to_string()));
+                obj.insert(
+                    "raidName".to_string(),
+                    serde_json::Value::String(new_id.to_string()),
+                );
             }
 
             let new_data = match serde_json::to_string(&data) {
@@ -186,7 +195,12 @@ fn rename_chiguo_raid(conn: &Connection) -> Result<(), String> {
         }
 
         if updated_records > 0 {
-            log::info!("[V17] 更新 {} 条 records.data 的 raidName：{} → {}", updated_records, old_id, new_id);
+            log::info!(
+                "[V17] 更新 {} 条 records.data 的 raidName：{} → {}",
+                updated_records,
+                old_id,
+                new_id
+            );
         }
     }
 
@@ -343,14 +357,21 @@ mod tests {
         ).unwrap();
         conn.execute(
             "INSERT INTO records (id, data, raid_name) VALUES (?, ?, ?)",
-            params!["rec1", r#"{"raidName":"10人普通持国回忆录","bosses":[]}"#, "持国回忆录"],
-        ).unwrap();
+            params![
+                "rec1",
+                r#"{"raidName":"10人普通持国回忆录","bosses":[]}"#,
+                "持国回忆录"
+            ],
+        )
+        .unwrap();
 
         migrate(&conn).unwrap();
 
         // 验证 records.data 中的 raidName 已更新
         let data: String = conn
-            .query_row("SELECT data FROM records WHERE id = 'rec1'", [], |row| row.get(0))
+            .query_row("SELECT data FROM records WHERE id = 'rec1'", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&data).unwrap();
         assert_eq!(parsed["raidName"], "10人普通持国天王回忆录");
@@ -384,7 +405,11 @@ mod tests {
             "25人普通太原之战·逐虎驱狼",
         ] {
             let count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM raids WHERE id = ?1", params![id], |row| row.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM raids WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
                 .unwrap();
             assert_eq!(count, 0, "错误配置应被删除: {}", id);
         }

@@ -62,7 +62,10 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         .unwrap_or(0);
 
     if remaining_old > 0 {
-        log::info!("V11 迁移：保留 {} 条旧格式装备（无对应新格式）", remaining_old);
+        log::info!(
+            "V11 迁移：保留 {} 条旧格式装备（无对应新格式）",
+            remaining_old
+        );
     }
 
     log::info!("========== V11 迁移完成 ==========");
@@ -76,7 +79,7 @@ mod tests {
 
     fn setup_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        
+
         conn.execute(
             "CREATE TABLE equipments (
                 id TEXT PRIMARY KEY,
@@ -87,14 +90,14 @@ mod tests {
             [],
         )
         .unwrap();
-        
+
         conn
     }
 
     #[test]
     fn test_v11_migration_removes_duplicates() {
         let conn = setup_test_db();
-        
+
         conn.execute(
             "INSERT INTO equipments (id, name, icon_id, quality) VALUES 
             ('12345', '测试装备1', 100, 5),
@@ -149,7 +152,7 @@ mod tests {
     #[test]
     fn test_v11_migration_no_duplicates() {
         let conn = setup_test_db();
-        
+
         conn.execute(
             "INSERT INTO equipments (id, name, icon_id, quality) VALUES 
             ('12345', '测试装备1', 100, 5),

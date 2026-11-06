@@ -22,8 +22,10 @@ fn init_static_raids(conn: &Connection) -> Result<(), String> {
         serde_json::from_str(static_json).map_err(|e| format!("解析预制副本数据失败: {}", e))?;
 
     let mut inserted_count = 0;
-    let mut boss_inserted_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut version_inserted_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut boss_inserted_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut version_inserted_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     for raid in static_raids.iter() {
         let name = raid["name"].as_str().unwrap_or_default();

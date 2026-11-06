@@ -73,7 +73,9 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
         .prepare("SELECT id, name FROM game_versions")
         .map_err(error_to_string)?;
     let iter = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+        })
         .map_err(error_to_string)?;
     for r in iter.flatten() {
         version_id_map.insert(r.0, r.1);
@@ -85,7 +87,9 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
         .prepare("SELECT id, name FROM seasons")
         .map_err(error_to_string)?;
     let iter = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+        })
         .map_err(error_to_string)?;
     for r in iter.flatten() {
         season_id_map.insert(r.0, r.1);
@@ -117,7 +121,8 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
             params_vec.push(Box::new(version_orders[i]));
             params_vec.push(Box::new(timestamp.clone()));
         }
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, params_refs.as_slice())
             .map_err(error_to_string)?;
 
@@ -126,7 +131,9 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
             .prepare("SELECT id, name FROM game_versions")
             .map_err(error_to_string)?;
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
             .map_err(error_to_string)?;
         version_id_map.clear();
         for r in iter.flatten() {
@@ -163,7 +170,9 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
     // 批量插入赛季
     if !season_names.is_empty() {
         let count = season_names.len();
-        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string()).collect();
+        let placeholders: Vec<String> = (0..count)
+            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string())
+            .collect();
         let sql = format!(
             "INSERT INTO seasons (name, version_id, start_date, end_date, sort_order, trial_equip_level_min, trial_equip_level_max, created_at) VALUES {}",
             placeholders.join(", ")
@@ -180,7 +189,8 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
             params_vec.push(Box::new(season_trial_maxs[i]));
             params_vec.push(Box::new(timestamp.clone()));
         }
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, params_refs.as_slice())
             .map_err(error_to_string)?;
 
@@ -189,7 +199,9 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
             .prepare("SELECT id, name FROM seasons")
             .map_err(error_to_string)?;
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
             .map_err(error_to_string)?;
         season_id_map.clear();
         for r in iter.flatten() {
@@ -242,11 +254,12 @@ fn do_migrate(conn: &Connection) -> Result<(), String> {
 
         if let Some(season) = target_season {
             if let Some(&season_id) = season_id_map.get(&season) {
-                let rows = conn.execute(
-                    "UPDATE raids SET season_id = ? WHERE name = ? AND season_id IS NULL",
-                    params![season_id, raid_name],
-                )
-                .map_err(error_to_string)?;
+                let rows = conn
+                    .execute(
+                        "UPDATE raids SET season_id = ? WHERE name = ? AND season_id IS NULL",
+                        params![season_id, raid_name],
+                    )
+                    .map_err(error_to_string)?;
                 update_count += rows;
             }
         }

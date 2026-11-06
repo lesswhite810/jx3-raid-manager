@@ -191,11 +191,8 @@ mod tests {
     #[test]
     fn backfills_record_lookup_columns() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO records (id, data) VALUES (?1, ?2)",
             params![
@@ -230,11 +227,8 @@ mod tests {
     #[test]
     fn backfills_rfc3339_record_date() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO records (id, data) VALUES (?1, ?2)",
             params![
@@ -260,11 +254,8 @@ mod tests {
     #[test]
     fn handles_missing_optional_fields() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO records (id, data) VALUES (?1, ?2)",
             params![
@@ -294,11 +285,8 @@ mod tests {
     #[test]
     fn handles_invalid_json() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO records (id, data) VALUES (?1, ?2)",
             params!["record-1", r#"{"id":"record-1","invalid json"#],
@@ -330,11 +318,8 @@ mod tests {
     #[test]
     fn handles_explicit_type_field() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO records (id, data) VALUES (?1, ?2)",
             params![
@@ -360,11 +345,8 @@ mod tests {
     #[test]
     fn handles_mixed_records() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
 
         conn.execute_batch(
             r#"
@@ -391,7 +373,14 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(record1, ("25人英雄阕风悬城".to_string(), "account-1".to_string(), "role-1".to_string()));
+        assert_eq!(
+            record1,
+            (
+                "25人英雄阕风悬城".to_string(),
+                "account-1".to_string(),
+                "role-1".to_string()
+            )
+        );
 
         let record2: (String, String, Option<String>) = conn
             .query_row(
@@ -451,11 +440,8 @@ mod tests {
     #[test]
     fn batched_update_processes_all_records() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)",
-            [],
-        )
-        .unwrap();
+        conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, data TEXT)", [])
+            .unwrap();
 
         for i in 0..10 {
             conn.execute(
