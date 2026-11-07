@@ -9,6 +9,7 @@ import { toast } from '../utils/toastManager';
 import { SectIcon } from './SectIcon';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
 import { formatGold } from '../utils/goldFormat';
+import { getCardClass, getAddButtonClass, getViewButtonClass } from '../utils/cardStatusStyles';
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
@@ -208,20 +209,15 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                             // 百战每周1次：未清(0) / 完全清(1+)
                             const baizhanStatus: 'none' | 'complete' = stats.weeklyCount === 0 ? 'none' : 'complete';
 
-                            // 根据状态设置样式
-                            const getCardStyle = () => {
-                                if (baizhanStatus === 'complete') {
-                                    return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
-                                } else {
-                                    return 'bg-ds-success-soft dark:bg-ds-success-soft/10 border-ds-success-soft dark:border-ds-success-soft hover:border-ds-success';
-                                }
-                            };
+                            // 卡片 / 按钮样式统一由 utils/cardStatusStyles.ts 提供，
+                            // 与团队副本、试炼之地共用同一份映射。
+                            const getCardStyle = () => getCardClass(baizhanStatus);
 
                             const getIconStyle = () => {
                                 if (baizhanStatus === 'complete') {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                                            <Check className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-neutral-soft dark:bg-ds-neutral-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <Check className="w-3.5 h-3.5 text-ds-neutral dark:text-ds-neutral" />
                                         </div>
                                     );
                                 } else {
@@ -233,26 +229,16 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                 }
                             };
 
-                            const getButtonAddStyle = () => {
-                                if (baizhanStatus === 'complete') {
-                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                                } else {
-                                    return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                                }
-                            };
+                            // 实心按钮底色用 *-strong 档配 ds-fg-inverse。
+                            // 百战每周 1 次，已打完时「添加记录」禁用，由 disabled 参数统一处理。
+                            const getButtonAddStyle = () => getAddButtonClass(baizhanStatus, baizhanStatus === 'complete');
 
-                            const getButtonViewStyle = () => {
-                                if (baizhanStatus === 'complete') {
-                                    return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
-                                } else {
-                                    return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
-                                }
-                            };
+                            const getButtonViewStyle = () => getViewButtonClass(baizhanStatus);
 
                             return (
                                 <div
                                     key={role.id}
-                                    className={`p-4 rounded-xl border-2 transition-all duration-300 ${getCardStyle()}`}
+                                    className={`p-4 rounded-card border-2 transition-all duration-300 ${getCardStyle()}`}
                                 >
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2 flex-1 min-w-0">

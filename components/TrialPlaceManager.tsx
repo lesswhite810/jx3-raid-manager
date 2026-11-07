@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { TrialDraw, TrialPlaceRecord, Account, Config, Season } from '../types';
-import { Trophy, Check, Copy, Target, Search, X, BarChart3 } from 'lucide-react';
+import { Trophy, Check, Copy, Target, Search, X, BarChart3, Clock } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
 import { TrialFlipStatsModal } from './TrialFlipStatsModal';
@@ -11,8 +11,8 @@ import { filterRaidRoles } from '../utils/raidRoleUtils';
 import { SectIcon } from './SectIcon';
 import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 import { isConfirmedTrialRecord } from '../utils/trialRecordUtils';
-import { trialRecordNeedsReview } from '../utils/trialReviewState';
 import { getTrialWeeklyDrawProgress } from '../utils/trialWeeklyDrawProgress';
+import { getCardClass, getAddButtonClass, getViewButtonClass, SECONDARY_BUTTON_CLASS, CardStatus } from '../utils/cardStatusStyles';
 import {
     getTrialProgressPeriod,
     isTrialRecordInProgressPeriod,
@@ -124,7 +124,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
             weeklyDrawCount: number;
             /** 手工翻牌按父通关日期归属的次数，需要在卡片明确说明。 */
             manualDateFallbackDrawCount: number;
-            /** 该角色历史上仍待处理的通关轮次数。 */
+            /** 该角色本周内仍待处理的通关轮次数，按游戏周与大版本双窗口限定。 */
             pendingCount: number;
             maxLayer: number;
             lastRunDate?: string;
@@ -164,7 +164,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 weeklyCount: thisWeekRecords.length,
                 weeklyDrawCount: weeklyDrawProgress.drawCount,
                 manualDateFallbackDrawCount: weeklyDrawProgress.manualDateFallbackDrawCount,
-                pendingCount: allRoleRecords.filter(trialRecordNeedsReview).length,
+                pendingCount: weeklyDrawProgress.pendingRunCount,
                 maxLayer,
                 lastRunDate
             });
@@ -193,14 +193,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 weeklyCount: 0, weeklyDrawCount: 0, manualDateFallbackDrawCount: 0, pendingCount: 0, maxLayer: 0, lastRunDate: undefined,
             };
 
-            // 1. 三态排序：未清(0) > 部分清(1-2次) > 完全清(3次)
+            // 1. 三态排序：未清(0) > 部分清(1-2次) > 完全清(3次)，口径与卡片配色一致，均按本周翻牌次数
             const getStatus = (count: number): number => {
                 if (count === 0) return 0; // 未清
                 if (count >= 3) return 2; // 完全清
                 return 1; // 部分清
             };
-            const aStatus = getStatus(statsA.weeklyCount);
-            const bStatus = getStatus(statsB.weeklyCount);
+            const aStatus = getStatus(statsA.weeklyDrawCount);
+            const bStatus = getStatus(statsB.weeklyDrawCount);
             if (aStatus !== bStatus) return aStatus - bStatus;
 
             // 2. Equipment Score (Desc)
@@ -393,52 +393,45 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                 weeklyCount: 0, weeklyDrawCount: 0, manualDateFallbackDrawCount: 0, pendingCount: 0, maxLayer: 0, lastRunDate: undefined,
                             };
                             const pendingCount = stats.pendingCount;
-                            // 三态：未清(0) / 部分清(1-2) / 完全清(>=3)
+                            // 三态按「本周翻牌次数」判定：卡片上唯一展示的进度数字就是
+                            // 「本周翻牌 N 次」，若用通关次数判定会出现「显示 4 次却是未打满」
+                            // 的自我矛盾（一次通关内可翻多张牌）。
                             const getTrialStatus = (): 'none' | 'partial' | 'complete' => {
-                                if (stats.weeklyCount === 0) return 'none';
-                                if (stats.weeklyCount >= 3) return 'complete';
+                                if (stats.weeklyDrawCount === 0) return 'none';
+                                if (stats.weeklyDrawCount >= 3) return 'complete';
                                 return 'partial';
                             };
                             // 按钮禁用逻辑：不限制添加次数
                             const canAddTrial = true;
                             const trialStatus = getTrialStatus();
                             const pendingReviewDescription = pendingCount > 0
-                                ? `存在 ${pendingCount} 条待确认试炼记录`
+                                ? `本周存在 ${pendingCount} 条待确认试炼记录`
                                 : undefined;
 
-                            // 根据状态设置样式
-                            const getCardStyle = () => {
-                                // 待确认优先于通关进度：避免已通关记录看起来像已完全处理。
-                                if (pendingCount > 0) {
-                                    return 'bg-ds-warning-soft/40 border-ds-warning hover:border-ds-warning';
-                                }
-                                if (trialStatus === 'complete') {
-                                    return 'bg-slate-50 dark:bg-slate-900/10 border-slate-200 dark:border-slate-700';
-                                } else if (trialStatus === 'partial') {
-                                    return 'bg-surface border-base hover:border-ds-neutral';
-                                } else {
-                                    return 'bg-ds-success-soft dark:bg-ds-success-soft/10 border-ds-success-soft dark:border-ds-success-soft hover:border-ds-success';
-                                }
-                            };
+                            // 卡片 / 按钮样式统一由 utils/cardStatusStyles.ts 提供，
+                            // 与团队副本、百战共用同一份映射。
+                            // 待确认优先于通关进度：避免已通关记录看起来像已完全处理。
+                            const cardStatus: CardStatus = pendingCount > 0 ? 'pending' : trialStatus;
+                            const getCardStyle = () => getCardClass(cardStatus);
 
                             const getIconStyle = () => {
                                 if (pendingCount > 0) {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-ds-warning-soft flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-warning" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <Clock className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong" />
                                         </div>
                                     );
                                 }
                                 if (trialStatus === 'complete') {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                                            <Check className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-neutral-soft dark:bg-ds-neutral-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <Check className="w-3.5 h-3.5 text-ds-neutral dark:text-ds-neutral" />
                                         </div>
                                     );
                                 } else if (trialStatus === 'partial') {
                                     return (
-                                        <div className="w-6 h-6 rounded-full bg-base flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-neutral" />
+                                        <div className="w-6 h-6 rounded-full bg-ds-info-soft dark:bg-ds-info-soft/30 flex items-center justify-center flex-shrink-0">
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-info" />
                                         </div>
                                     );
                                 } else {
@@ -450,37 +443,17 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                 }
                             };
 
-                            const getButtonAddStyle = () => {
-                                if (pendingCount > 0) {
-                                    return 'bg-surface text-ds-warning-strong border border-ds-warning hover:bg-ds-warning-soft hover:border-ds-warning hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                                }
-                                if (trialStatus === 'complete') {
-                                    return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                                } else if (trialStatus === 'partial') {
-                                    return 'bg-surface text-main border border-base hover:bg-base hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                                } else {
-                                    return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                                }
-                            };
+                            // 实心按钮底色用 *-strong 档配 ds-fg-inverse，层级保持原设计：
+                            // 未清 / 完全清为实心主操作，部分清 / 待确认为描边。
+                            const getButtonAddStyle = () => getAddButtonClass(cardStatus, !canAddTrial);
 
-                            const getButtonViewStyle = () => {
-                                if (pendingCount > 0) {
-                                    return 'bg-surface text-ds-warning-strong border border-ds-warning hover:bg-ds-warning-soft hover:border-ds-warning';
-                                }
-                                if (trialStatus === 'complete') {
-                                    return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
-                                } else if (trialStatus === 'partial') {
-                                    return 'bg-surface text-main border border-base hover:bg-base hover:border-ds-neutral';
-                                } else {
-                                    return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
-                                }
-                            };
+                            const getButtonViewStyle = () => getViewButtonClass(cardStatus);
 
                             // RaidDetail-like Card Style
                             return (
                                 <div
                                     key={role.id}
-                                    className={`p-4 rounded-xl border-2 transition-all duration-300 ${getCardStyle()}`}
+                                    className={`p-4 rounded-card border-2 transition-all duration-300 ${getCardStyle()}`}
                                     role="group"
                                     aria-label={pendingReviewDescription}
                                     title={pendingReviewDescription}
@@ -517,7 +490,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                         <div className="flex flex-col items-end gap-0.5">
                                             <div className="flex items-baseline gap-1">
                                             <span className="text-xs text-muted">本周翻牌:</span>
-                                            <span className={`font-bold ${pendingCount > 0 ? 'text-ds-warning' : trialStatus === 'complete' ? 'text-slate-500' : trialStatus === 'partial' ? 'text-ds-neutral' : 'text-ds-success'}`}>
+                                            <span className={`font-bold ${pendingCount > 0 ? 'text-ds-warning-strong' : trialStatus === 'complete' ? 'text-ds-neutral' : trialStatus === 'partial' ? 'text-ds-info-strong' : 'text-ds-success-strong'}`}>
                                                 {stats.weeklyDrawCount}<span className="text-xs text-muted font-normal">次</span>
                                             </span>
                                             </div>
@@ -594,7 +567,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                         </button>
                                         <button
                                             onClick={() => handleOpenFlipStatsModal(role)}
-                                            className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 flex items-center justify-center gap-1"
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${SECONDARY_BUTTON_CLASS} flex items-center justify-center gap-1`}
                                         >
                                             <BarChart3 className="w-3.5 h-3.5" />
                                             翻牌统计

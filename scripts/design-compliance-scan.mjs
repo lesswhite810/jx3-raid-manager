@@ -43,9 +43,12 @@ const rules = [
   },
   {
     id: 'R2',
-    desc: '§卡片 禁用 linear-gradient / radial-gradient',
+    desc: '§卡片 禁用 linear-gradient / radial-gradient / bg-gradient-to-*',
     severity: 'high',
-    re: /\b(linear-gradient|radial-gradient)\b/g,
+    // 同时覆盖 CSS 原生渐变与 Tailwind 的 bg-gradient-to-{t,tr,r,br,b,bl,l,tl} 工具类。
+    // 团队副本（RaidDetail）与 RoleRecordsModal 的渐变已于 v2.2.8 迁移为单色，
+    // 此正则现为完全拦截状态，新增渐变会直接让 CI 变红。
+    re: /\b(linear-gradient|radial-gradient|bg-gradient-to-[a-z]+)\b/g,
     fix: '用单色 + shadow-ds-* 实现视觉层级',
   },
   {

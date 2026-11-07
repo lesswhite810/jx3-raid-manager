@@ -13,6 +13,7 @@ import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from '../uti
 import { SectIcon } from './SectIcon';
 import { getBaseServerName } from '../utils/serverUtils';
 import { getRecordScrapsValue } from '../utils/scrapsUtils';
+import { getCardClass, getAddButtonClass, getViewButtonClass } from '../utils/cardStatusStyles';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -588,7 +589,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               <span className="text-muted text-xs">未清</span>
             </div>
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-bold text-ds-warning">{partialClearedCount}</span>
+              <span className="font-bold text-ds-info">{partialClearedCount}</span>
               <span className="text-muted text-xs">部分清</span>
             </div>
             {pendingClearedCount > 0 && (
@@ -598,7 +599,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
               </div>
             )}
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="font-bold text-slate-500">{completeClearedCount}</span>
+              <span className="font-bold text-ds-neutral">{completeClearedCount}</span>
               <span className="text-muted text-xs">完全清</span>
             </div>
           </div>
@@ -658,36 +659,29 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
               const bossStatus = getBossClearStatus();
 
-              // 根据状态设置样式（仅用颜色区分：未清=emerald, 部分清=amber, 待确认=sky, 完全清=slate）
-              const getCardStyle = () => {
-                if (bossStatus === 'complete') {
-                  return 'bg-gradient-to-br from-slate-50 to-gray-50 dark:from-slate-900/10 dark:to-gray-900/10 border-slate-200 dark:border-slate-700 hover:shadow-ds-stack';
-                } else if (bossStatus === 'pending') {
-                  return 'bg-gradient-to-br from-sky-50 to-white dark:from-sky-900/10 dark:to-surface border-sky-300 dark:border-sky-700 hover:shadow-ds-stack';
-                } else if (bossStatus === 'partial') {
-                  return 'bg-gradient-to-br from-ds-warning-soft to-orange-50 dark:from-ds-warning-soft/10 dark:to-orange-900/10 border-ds-warning-soft dark:border-ds-warning hover:shadow-ds-stack hover:border-ds-warning';
-                } else {
-                  return 'bg-gradient-to-br from-ds-success-soft to-teal-50 dark:from-ds-success-soft/10 dark:to-teal-900/10 border-ds-success-soft dark:border-ds-success-soft hover:shadow-ds-stack hover:border-ds-success';
-                }
-              };
+              // 卡片 / 按钮样式统一由 utils/cardStatusStyles.ts 提供，
+              // 与试炼之地、百战共用同一份映射，避免三个模块各自手写后再分叉。
+              const getCardStyle = () => getCardClass(bossStatus);
 
+              // 图标与四态配色同步：完全清 = Check(neutral)、待确认 = Clock(warning)、
+              // 部分清 = 雾蓝实心点、未清 = 绿色脉冲点。与试炼、百战保持一致。
               const getIconStyle = () => {
                 if (bossStatus === 'complete') {
                   return (
-                    <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                      <Check className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                    <div className="w-6 h-6 rounded-full bg-ds-neutral-soft dark:bg-ds-neutral-soft/30 flex items-center justify-center flex-shrink-0">
+                      <Check className="w-3.5 h-3.5 text-ds-neutral dark:text-ds-neutral" />
                     </div>
                   );
                 } else if (bossStatus === 'pending') {
                   return (
-                    <div className="w-6 h-6 rounded-full bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center flex-shrink-0">
-                      <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                    <div className="w-6 h-6 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
+                      <Clock className="w-3.5 h-3.5 text-ds-warning-strong dark:text-ds-warning-strong" />
                     </div>
                   );
                 } else if (bossStatus === 'partial') {
                   return (
-                    <div className="w-6 h-6 rounded-full bg-ds-warning-soft dark:bg-ds-warning-soft/30 flex items-center justify-center flex-shrink-0">
-                      <div className="w-2.5 h-2.5 rounded-full bg-ds-warning" />
+                    <div className="w-6 h-6 rounded-full bg-ds-info-soft dark:bg-ds-info-soft/30 flex items-center justify-center flex-shrink-0">
+                      <div className="w-2.5 h-2.5 rounded-full bg-ds-info" />
                     </div>
                   );
                 } else {
@@ -699,37 +693,17 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 }
               };
 
-              const getButtonAddStyle = () => {
-                if (!role.canAddMore) {
-                  return 'bg-base text-muted cursor-not-allowed border border-base';
-                }
-                if (bossStatus === 'complete') {
-                  return 'bg-slate-500 text-white hover:bg-slate-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                } else if (bossStatus === 'pending') {
-                  return 'bg-sky-500 text-white hover:bg-sky-600 hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                } else if (bossStatus === 'partial') {
-                  return 'bg-ds-warning text-white hover:bg-ds-warning hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                } else {
-                  return 'bg-ds-success text-white hover:bg-ds-success hover:shadow-ds-stack transform hover:-translate-y-0.5';
-                }
-              };
+              // 实心按钮底色用 *-strong 档配 ds-fg-inverse，层级与试炼/百战一致：
+              // 未清、完全清为实心主操作，部分清、待确认为描边。
+              const getButtonAddStyle = () => getAddButtonClass(bossStatus, !role.canAddMore);
 
-              const getButtonViewStyle = () => {
-                if (bossStatus === 'complete') {
-                  return 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300';
-                } else if (bossStatus === 'pending') {
-                  return 'bg-white text-sky-700 border border-sky-300 hover:bg-sky-50 hover:border-sky-400';
-                } else if (bossStatus === 'partial') {
-                  return 'bg-white text-ds-warning-strong border border-ds-warning-soft hover:bg-ds-warning-soft hover:border-ds-warning';
-                } else {
-                  return 'bg-white text-ds-success-strong border border-ds-success-soft hover:bg-ds-success-soft hover:border-ds-success';
-                }
-              };
+              // 描边按钮底色用 bg-surface 而非写死的 bg-white，跟随主题变化。
+              const getButtonViewStyle = () => getViewButtonClass(bossStatus);
 
               return (
                 <div
                   key={role.id}
-                  className={`p-4 rounded-xl border-2 transition-all duration-300 ${getCardStyle()}`}
+                  className={`p-4 rounded-card border-2 transition-all duration-300 ${getCardStyle()}`}
                 >
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -741,7 +715,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                             <SectIcon sectName={role.martial} variant="image" size="sm" />
                           )}
                           {role.equipmentScore !== undefined && role.equipmentScore !== null && role.equipmentScore > 0 && (
-                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
+                            <span className="text-xs bg-ds-info-soft text-ds-info-strong px-2 py-1 rounded-md font-medium flex-shrink-0">
                               装分 {role.equipmentScore.toLocaleString()}
                             </span>
                           )}
@@ -758,7 +732,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         {role.lastRunDate ? (
                           <>
                             <div className="flex items-center gap-1.5 text-muted overflow-hidden">
-                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-sky-500' : bossStatus === 'partial' ? 'text-ds-warning-strong' : 'text-ds-success-strong'}`} />
+                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-ds-neutral' : bossStatus === 'pending' ? 'text-ds-warning-strong' : bossStatus === 'partial' ? 'text-ds-info-strong' : 'text-ds-success-strong'}`} />
                               <span className="text-[11px] whitespace-nowrap">{formatDate(role.lastRunDate)}</span>
                             </div>
                             {role.lastRunIncome !== undefined && role.lastRunIncome > 0 && (
@@ -775,7 +749,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                             )}
                             {role.lastRunScrapsValue !== undefined && role.lastRunScrapsValue > 0 && (
                               <div
-                                className="flex items-center gap-1 text-slate-500 ml-1"
+                                className="flex items-center gap-1 text-ds-fg-mute ml-1"
                                 title={role.lastRunIsScrapsBoss ? '散件估价（已计入统计）' : '散件估价（仅展示，未计入）'}
                               >
                                 <Boxes className="w-3 h-3 flex-shrink-0" />
@@ -787,7 +761,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                           </>
                         ) : (
                           <div className="flex items-center gap-1.5 text-muted">
-                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-slate-400' : bossStatus === 'pending' ? 'text-sky-400' : bossStatus === 'partial' ? 'text-ds-warning-strong' : 'text-ds-success-strong'}`} />
+                            <Calendar className={`w-3.5 h-3.5 flex-shrink-0 ${bossStatus === 'complete' ? 'text-ds-neutral' : bossStatus === 'pending' ? 'text-ds-warning-strong' : bossStatus === 'partial' ? 'text-ds-info-strong' : 'text-ds-success-strong'}`} />
                             <span className="text-[11px] whitespace-nowrap">暂无记录</span>
                           </div>
                         )}
@@ -925,7 +899,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       )}
 
       {successToast.visible && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-ds-success text-white px-6 py-3 rounded-xl shadow-ds-stack flex items-center gap-2 text-sm font-medium animate-in z-[9999]">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-ds-success-strong text-ds-fg-inverse px-6 py-3 rounded-xl shadow-ds-stack flex items-center gap-2 text-sm font-medium animate-in z-[9999]">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
           </svg>

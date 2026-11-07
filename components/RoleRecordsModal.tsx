@@ -365,7 +365,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                 return (
                 <div
                   key={record.id}
-                  className={`p-4 rounded-xl border-2 transition-all duration-200 hover:shadow-ds-stack ${
+                  className={`p-4 rounded-card border-2 transition-all duration-200 hover:shadow-ds-stack ${
                     deletingRecordId === record.id || pendingActionId === record.id ? 'opacity-50' : ''
                   } ${
                     isRejected
@@ -373,9 +373,9 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
                       : isScanning
                         ? 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/10'
                         : isPending
-                          ? 'border-ds-warning-soft dark:border-ds-warning-soft bg-gradient-to-br from-ds-warning-soft to-white dark:from-ds-warning-soft/10 dark:to-surface'
+                          ? 'border-ds-warning-soft dark:border-ds-warning-soft bg-ds-warning-soft dark:bg-ds-warning-soft/10'
                           : record.hasXuanjing
-                            ? 'border-ds-warning-soft dark:border-ds-warning-soft bg-gradient-to-br from-ds-warning-soft to-white dark:from-ds-warning-soft/20 dark:to-surface'
+                            ? 'border-ds-warning-soft dark:border-ds-warning-soft bg-ds-warning-soft dark:bg-ds-warning-soft/20'
                             : 'border-base bg-surface'
                   }`}
                 >
