@@ -27,6 +27,7 @@ import { ScrapsItemsEditor } from './ScrapsItemsEditor';
 import {
   hasUnreviewedIncomeCandidates,
   formatIncomeCandidateAmount,
+  selectableIncomeCandidates,
   sumIncomeCandidates,
   toggleIncomeCandidateSelection,
 } from '../utils/incomeCandidateUtils';
@@ -143,6 +144,12 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     return map;
   }, [accounts]);
 
+  // 编辑弹窗可选的收入候选：只保留整金（0 银 0 铜）入账
+  const editableIncomeCandidates = useMemo(
+    () => selectableIncomeCandidates(editingRecord?.incomeCandidates),
+    [editingRecord],
+  );
+
   const formatDate = useCallback((date: string | number) => {
     const d = new Date(date);
     return d.toLocaleDateString('zh-CN', {
@@ -208,7 +215,10 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       isScrapsBoss: record.isScrapsBoss || normalizedScraps.length > 0,
       // 归一化后的新数组，避免直接修改 record 引用导致 React state 异常
       scrapsItems: normalizedScraps,
-      incomeCandidateIds: record.selectedIncomeCandidateIds ?? [],
+      // 只回填仍可选的整金候选，旧数据里带银/铜的选中项不再保留
+      incomeCandidateIds: selectableIncomeCandidates(record.incomeCandidates)
+        .filter(candidate => (record.selectedIncomeCandidateIds ?? []).includes(candidate.id))
+        .map(candidate => candidate.id),
     });
   }, []);
 
@@ -527,7 +537,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 const scrapsExpense = getRecordScrapsExpense(record);
                 const bosses = record.bossNames?.filter(n => n) ?? [];
                 const isScanning = record.status === 'scanning';
-                const incomeCandidates = record.incomeCandidates ?? [];
+                const incomeCandidates = selectableIncomeCandidates(record.incomeCandidates);
 
                 return (
                   <div
@@ -741,8 +751,9 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 </div>
               </div>
 
-              {/* 收入候选：没有明确工资标记时保留多笔入账，避免静默取第一笔。 */}
-              {(editingRecord?.incomeCandidates?.length ?? 0) > 0 && (
+              {/* 收入候选：没有明确工资标记时保留多笔入账，避免静默取第一笔。
+                  只展示整金（0 银 0 铜）入账，零钱拾取不参与工资结算。 */}
+              {editableIncomeCandidates.length > 0 && (
                 <div className="rounded-lg border border-ds-warning-soft bg-ds-warning-soft/20 p-3">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
@@ -752,7 +763,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                     <span className="text-xs text-ds-warning-strong">待核对</span>
                   </div>
                   <div className="space-y-1.5">
-                    {editingRecord.incomeCandidates!.map(candidate => {
+                    {editableIncomeCandidates.map(candidate => {
                       const selected = editForm?.incomeCandidateIds.includes(candidate.id) ?? false;
                       return (
                         <button
@@ -766,7 +777,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                           onClick={() => {
                             if (!editForm) return;
                             const ids = toggleIncomeCandidateSelection(editForm.incomeCandidateIds, candidate.id);
-                            const total = sumIncomeCandidates(editingRecord.incomeCandidates!, ids);
+                            const total = sumIncomeCandidates(editableIncomeCandidates, ids);
                             setEditForm({ ...editForm, incomeCandidateIds: ids, goldIncome: total });
                           }}
                         >

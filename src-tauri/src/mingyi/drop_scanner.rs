@@ -3244,7 +3244,13 @@ fn collect_income_candidates(
                 return None;
             }
             let (gold, silver, copper) = parse_money_from_msg(&record.msg)?;
+            // 首领击杀奖励固定 10 金，不是可分配收入。
             if gold == BOSS_KILL_REWARD_GOLD && silver == 0 && copper == 0 {
+                return None;
+            }
+            // 待选收入只保留整金入账（0 银 0 铜）：带银/铜的金额是零钱拾取，
+            // 既不能作为工资结算，混进候选列表还会让用户误选。
+            if silver != 0 || copper != 0 {
                 return None;
             }
             let amount_copper = gold * 10_000 + silver * 100 + copper;
@@ -8902,18 +8908,37 @@ mod tests {
         let mut second = chat_rec("MSG_MONEY", "你获得：154000", 101);
         second.msg = r#"<Text text="1540" name="Text_Gold"/><Text text="0" name="Text_Silver"/><Text text="0" name="Text_Copper"/>"#.to_string();
         let candidates = collect_income_candidates(&[first, duplicate, second], 0, 200_000);
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0].gold, 27);
-        assert_eq!(candidates[0].silver, 70);
-        assert_eq!(candidates[0].copper, 11);
-        assert_eq!(candidates[0].amount_copper, 277_011);
-        assert!(candidates[0].id.starts_with("money-100-277011-"));
+        // 带银/铜的入账不是工资候选；整金入账保留，重复行仍去重
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].gold, 1540);
+        assert_eq!(candidates[0].silver, 0);
+        assert_eq!(candidates[0].copper, 0);
+        assert_eq!(candidates[0].amount_copper, 15_400_000);
+        assert!(candidates[0].id.starts_with("money-101-15400000-"));
         // 真实扫描中其他 UID/缺失 ChatInfo 的行仍可供 legacy 逻辑使用，
         // 但不能进入工资候选；这里用原始记录验证该隔离边界。
         let mut foreign = chat_rec("MSG_MONEY", "你获得：999", 103);
         foreign.identity_verified = false;
         let filtered = collect_income_candidates(&[foreign], 0, 200_000);
         assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn income_candidates_drop_non_whole_gold_amounts() {
+        // 27 金 70 银 11 铜：零钱拾取，不是工资候选
+        let mut loose = chat_rec("MSG_MONEY", "你获得：277011", 100);
+        loose.msg = r#"<Text text="27" name="Text_Gold"/><Text text="70" name="Text_Silver"/><Text text="11" name="Text_Copper"/>"#.to_string();
+        // 30 金 0 银 1 铜：铜不为 0，同样过滤
+        let mut copper_only = chat_rec("MSG_MONEY", "你获得：300001", 101);
+        copper_only.msg = r#"<Text text="30" name="Text_Gold"/><Text text="0" name="Text_Silver"/><Text text="1" name="Text_Copper"/>"#.to_string();
+        // 30 金 0 银 0 铜：整金入账，保留
+        let mut whole = chat_rec("MSG_MONEY", "你获得：300000", 102);
+        whole.msg = r#"<Text text="30" name="Text_Gold"/><Text text="0" name="Text_Silver"/><Text text="0" name="Text_Copper"/>"#.to_string();
+
+        let candidates = collect_income_candidates(&[loose, copper_only, whole], 0, 200_000);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].gold, 30);
+        assert_eq!(candidates[0].amount_copper, 300_000);
     }
 
     #[test]
