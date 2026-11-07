@@ -390,7 +390,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
             roleId: r.roleId,
             accountId: r.accountId
           }];
-        }), record.roleId, new Date(), true),
+        }), record.roleId),
         hasPendingRecord,
       });
 
@@ -444,7 +444,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
           lastRunScrapsValue: undefined,
           lastRunIsScrapsBoss: undefined,
           cooldownDays,
-          bossCooldowns: calculateBossCooldowns(raid, [], role.id, new Date(), true)
+          bossCooldowns: calculateBossCooldowns(raid, [], role.id)
         });
       });
     });

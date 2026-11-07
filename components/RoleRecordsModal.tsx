@@ -131,7 +131,7 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
         roleId: r.roleId,
         accountId: r.accountId
       }];
-    }), role.id, new Date(), true);
+    }), role.id);
   }, [raid, confirmedRoleRecords, role.id]);
 
   const canDeleteRecord = useCallback((record: RaidRecord): boolean => {

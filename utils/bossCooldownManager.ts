@@ -5,8 +5,7 @@ export const calculateBossCooldowns = (
   raid: Raid,
   bossRecords: BossRecord[],
   roleId: string,
-  now: Date = new Date(),
-  useFullWeek: boolean = false
+  now: Date = new Date()
 ): BossCooldownInfo[] => {
   const bosses = raid.bosses;
 
@@ -18,13 +17,13 @@ export const calculateBossCooldowns = (
   let windowStart: Date;
   let windowEnd: Date;
 
-  if (isTenPerson && !useFullWeek) {
-    // CD 判断：10人本使用半周周期（周一~周五 / 周五~下周一）
+  if (isTenPerson) {
+    // 10人本：周一 07:00 与周五 07:00 各刷新一次，按半周周期计算（周一~周五 / 周五~下周一）
     const cycle = getTenPersonCycle(now);
     windowStart = cycle.start;
     windowEnd = cycle.end;
   } else {
-    // 显示用或25人本：使用整周窗口（周一~下周一）
+    // 25人本：周一 07:00 ~ 下周一 07:00
     windowStart = getLastMonday(now);
     windowEnd = getNextMonday(now);
   }

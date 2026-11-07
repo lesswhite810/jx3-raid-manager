@@ -291,7 +291,7 @@ jx3-raid-manager/
 ## 关键业务逻辑
 
 - **副本 CD**：25 人本周一 7:00 刷新，10 人本周一/周五 7:00 刷新（`utils/cooldownManager.ts`）
-- **BOSS CD**：见 `utils/bossCooldownManager.ts` + `components/BossCooldownDisplay.tsx`
+- **BOSS CD**：见 `utils/bossCooldownManager.ts` + `components/BossCooldownDisplay.tsx`。窗口与上面一致：10 人本按半周周期（`getTenPersonCycle`，周一 7:00 / 周五 7:00 两次刷新），25 人本按整周周期；卡片状态、排序、「添加记录」可用性都依赖它，不能另用整周窗口覆盖。
 - **数据迁移**：启动时检查 localStorage 旧数据，迁移至 SQLite（`services/migration.ts` + 后端 `db_is_local_storage_migrated`）
 - **自动扫描**：polling 读取茗伊 chatlog → `src-tauri/src/mingyi/` + `services/dropScanner.ts` → `components/PendingRecordsPanel.tsx`
 - **历史遗留记录复核**：v2.1.52 起，每次扫描开始时复核「进行中」和「无掉落无工资的待确认」（`contexts/ActivePollerContext.tsx`）
