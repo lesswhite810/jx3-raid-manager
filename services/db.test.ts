@@ -171,4 +171,89 @@ describe('DatabaseService 失败路径', () => {
       expect(saveCall?.[1]).toMatchObject({ allowDelete: false });
     });
   });
+
+  describe('试炼记录：语义反转与并发冲突必须显式暴露', () => {
+    // getTrialRecords 曾是「失败返回 []」，会让「读取失败」伪装成「没有记录」，
+    // 用户会以为自己的试炼数据丢了。这里锁定新语义：失败必须抛出。
+    it('getTrialRecords 在 IPC 失败时必须抛出，不能降级为空数组', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation((cmd: string) => {
+        if (cmd === 'db_init') return Promise.resolve(undefined);
+        if (cmd === 'db_get_trial_records') return Promise.reject(makeError('查询试炼记录失败'));
+        return Promise.resolve(undefined);
+      });
+
+      await expect(db.getTrialRecords()).rejects.toThrow('查询试炼记录失败');
+    });
+
+    it('getTrialRecords 在返回非法 JSON 时必须抛出，不能吞掉解析错误', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation((cmd: string) => {
+        if (cmd === 'db_init') return Promise.resolve(undefined);
+        if (cmd === 'db_get_trial_records') return Promise.resolve('{ 这不是合法 JSON');
+        return Promise.resolve(undefined);
+      });
+
+      await expect(db.getTrialRecords()).rejects.toThrow();
+    });
+
+    it('getTrialRecords 成功时返回解析后的数组', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation((cmd: string) => {
+        if (cmd === 'db_init') return Promise.resolve(undefined);
+        if (cmd === 'db_get_trial_records') {
+          return Promise.resolve(JSON.stringify([{ id: 'trial-1', type: 'trial' }]));
+        }
+        return Promise.resolve(undefined);
+      });
+
+      await expect(db.getTrialRecords()).resolves.toEqual([{ id: 'trial-1', type: 'trial' }]);
+    });
+
+    // 该命令带 CAS 校验，冲突时后端会拒绝。若前端吞掉错误，界面会表现为
+    // 「点了确认但状态没变」，用户无法判断要不要刷新。
+    it('setTrialDrawEquipmentReviewed 在 CAS 冲突时必须 rethrow', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation((cmd: string) => {
+        if (cmd === 'db_init') return Promise.resolve(undefined);
+        if (cmd === 'db_set_trial_draw_equipment_reviewed') {
+          return Promise.reject(makeError('牌面已变化，请刷新后重试'));
+        }
+        return Promise.resolve(undefined);
+      });
+
+      await expect(
+        db.setTrialDrawEquipmentReviewed('draw-1', true, 1, ['a', 'b', 'c', 'd', 'e'])
+      ).rejects.toThrow('牌面已变化，请刷新后重试');
+    });
+
+    it('setTrialDrawEquipmentReviewed 成功时透传 CAS 期望值', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation(() => Promise.resolve(undefined));
+
+      await db.setTrialDrawEquipmentReviewed('draw-1', true, 2, ['甲', '乙', '丙', '丁', '戊']);
+
+      const call = invokeCommandMock.mock.calls.find(
+        ([cmd]) => cmd === 'db_set_trial_draw_equipment_reviewed'
+      );
+      expect(call).toBeDefined();
+      expect(call?.[1]).toMatchObject({
+        drawId: 'draw-1',
+        reviewed: true,
+        expectedFlippedIndex: 2,
+        expectedCards: ['甲', '乙', '丙', '丁', '戊'],
+      });
+    });
+
+    it('deleteTrialRecord 在 IPC 失败时 rethrow', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation((cmd: string) => {
+        if (cmd === 'db_init') return Promise.resolve(undefined);
+        if (cmd === 'db_delete_trial_record') return Promise.reject(makeError('记录不存在'));
+        return Promise.resolve(undefined);
+      });
+
+      await expect(db.deleteTrialRecord('trial-1')).rejects.toThrow('记录不存在');
+    });
+  });
 });
