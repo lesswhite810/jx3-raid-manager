@@ -186,6 +186,45 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'db_get_trial_records':
           result = JSON.stringify(MOCK_TRIAL_RECORDS);
           break;
+        case 'db_add_trial_record': {
+          // 与后端一致：`record` 是 JSON 字符串，整体写入试炼记录列表。
+          const raw = args?.record;
+          if (typeof raw !== 'string') {
+            reject(new Error('新增试炼记录的参数格式无效'));
+            return;
+          }
+          let parsed: TrialPlaceRecord;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            reject(new Error('新增试炼记录的数据无法解析'));
+            return;
+          }
+          if (!parsed?.id) {
+            reject(new Error('新增试炼记录缺少 id'));
+            return;
+          }
+          if (MOCK_TRIAL_RECORDS.some(row => row.id === parsed.id)) {
+            reject(new Error('试炼记录 id 已存在'));
+            return;
+          }
+          MOCK_TRIAL_RECORDS.push(parsed);
+          break;
+        }
+        case 'db_delete_trial_record': {
+          const id = args?.id;
+          if (typeof id !== 'string' || !id) {
+            reject(new Error('删除试炼记录缺少 id'));
+            return;
+          }
+          const index = MOCK_TRIAL_RECORDS.findIndex(row => row.id === id);
+          if (index < 0) {
+            reject(new Error('未找到要删除的试炼记录'));
+            return;
+          }
+          MOCK_TRIAL_RECORDS.splice(index, 1);
+          break;
+        }
         case 'db_update_trial_draw_flipped_index': {
           const record = MOCK_TRIAL_RECORDS.find(row => row.id === args?.recordId);
           const draw = record?.draws?.find(row => row.id === args?.drawId);
