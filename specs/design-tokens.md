@@ -17,8 +17,8 @@
 
 | 语义 | 亮色模式 | 暗色模式 | CSS 类 |
 |------|---------|---------|--------|
-| 收入 | `--success` `#5d8770` 苔绿 | `--success` `#87b29a` | `text-ds-success` |
-| 支出 | `--warning` `#a38246` 焦糖 | `--warning` `#c9a06b` | `text-ds-warning` |
+| 收入 | `--success` `#5d8770` 苔绿 | `--success` `#5eb085` 柔和灰绿 | `text-ds-success` |
+| 支出 | `--warning` `#a38246` 焦糖 | `--warning` `#e3b872` | `text-ds-warning` |
 | 净收入（正） | 同收入 | 同收入 | 同收入 |
 | 净收入（负） | 同支出 | 同支出 | 同支出 |
 
@@ -85,7 +85,7 @@
 
 | 状态 | 底色 | 描边 | 图标 | 依据 |
 |---|---|---|---|---|
-| 未清（可打） | `bg-ds-success-soft` | `border-ds-success-soft` | 绿脉冲圆点 | 速查表「可打状态 → ds-success」 |
+| 未清（可打） | `bg-ds-success-soft` | `border-ds-success-soft` | 实心绿点 | 速查表「可打状态 → ds-success」 |
 | 部分清（进行中） | `bg-ds-info-soft` | `border-ds-info-soft` | 雾蓝圆点 | `ds-info` = 信息/进行中 |
 | 待确认（需核对） | `bg-ds-warning-soft` | `border-ds-warning-soft` | `Clock` + `text-ds-warning-strong` | §1.4 `--warning` = 待确认/提醒 |
 | 完全清（已打完） | `bg-base` | `border-ds-neutral-soft` | `Check` + `text-ds-neutral` | §1.4 `--neutral` = 中性/已读 |
@@ -96,23 +96,23 @@
 
 **状态判定口径必须与卡片上展示的数字一致**：试炼之地的三态按**本周翻牌次数**判定（0 = 未清，1–2 = 部分清，≥3 = 完全清），因为卡片上唯一展示的进度数字是「本周翻牌 N 次」。不要改用「本周通关次数」——一次通关内可以翻多张牌，两者口径不同，会出现卡片写着「本周翻牌 4 次」却显示未打满的自相矛盾配色。排序权重同样必须跟随这套口径。
 
-**状态区分靠底色 + 图标两重维度**：四态底色两两 ΔE76 最低为 6.00（未清 `success-soft` vs 部分清 `info-soft`，色相差 72°），属于「可辨但偏弱」区间。因此每态必须配不同图标——未清为脉冲圆点、部分清为实心雾蓝点、待确认为 `Clock`、完全清为 `Check`——作为第二重区分维度弥补底色接近，不要只靠底色。
+**状态区分靠底色 + 图标两重维度**：四态底色两两 ΔE76 最低为 6.00（未清 `success-soft` vs 部分清 `info-soft`，色相差 72°），属于「可辨但偏弱」区间。因此每态必须配不同图标——未清为实心绿点、部分清为实心雾蓝点、待确认为 `Clock`、完全清为 `Check`——作为第二重区分维度弥补底色接近，不要只靠底色。绿点保持静态、不加呼吸动画，避免深色主题下闪烁刺眼。
 
 **为什么「完全清」用 `bg-base` 而不是 `ds-neutral-soft`**：`neutral-soft`(#ebe6db) 与 `warning-soft`(#f0e8d8) 的 ΔE 仅 2.92，会与「待确认」混淆。改用与页面同底的 `bg-base`，让已完成卡片视觉后退，与「部分清」的 `info-soft` 拉开 ΔE 9.0，四态最小 ΔE 提升到 6.00。此时描边需用 `neutral-soft` 收边（ΔE 6.7），否则卡片边界会与页面融为一体。
 
 **卡片文字**：卡片内小字（`text-xs` / `text-sm`）一律用 `*-strong` 派生（§1.4.2 决策树）；`ds-neutral` 无 `strong` 档，直接用 DEFAULT（在 `bg-base` 上 5.61:1，达标）。
 
-**实心按钮文字**：语义色实底按钮上的文字用 `text-ds-fg-inverse` 而非 `text-white`。深色主题下 `--fg-inverse` 为深色，`text-white` 在 `bg-ds-success` 上仅 1.92:1、在 `bg-ds-neutral` 上仅 2.56:1，均不合格。
+**实心按钮文字**：语义色实底按钮上的文字用 `text-ds-fg-inverse` 而非 `text-white`。深色主题下 `--fg-inverse` 为深色（`#17171a`），`text-white` 在实底语义色上对比不足，均不合格。
 
 **实心按钮底色用 `*-strong` 档，不要用 DEFAULT**：DEFAULT 语义色（`--success` 等）是为「文字/描边」设计的中等明度，直接拿来做实心底色时，`text-ds-fg-inverse` 压上去对比度不足——jianghu 主题实测 `success` 4.07:1、`info` 4.30:1、`warning` 3.60:1，均低于小字 AA 要求的 4.5:1。
 
-`*-strong` 的明度方向与 `--fg-inverse` 天然匹配（亮色主题更深、深色主题更浅），换用后三个主题全部达标，最差 5.02:1：
+`*-strong` 的明度方向与 `--fg-inverse` 天然匹配（亮色主题更深、深色主题更浅），换用后三个主题全部达标，最差 5.02:1（深色主题数值为 v2.2.8 二次调色后复测）：
 
 | 主题 | `fg-inverse` | success-strong | info-strong | warning-strong | neutral（无 strong） |
 |---|---|---|---|---|---|
 | original | `#ffffff` | 5.48 | 6.70 | 5.02 | 7.73 |
 | jianghu | `#ffffff` | 7.25 | 7.83 | 6.63 | 6.00 |
-| dark | `#18181b` | 11.62 | 9.82 | 12.29 | 6.91 |
+| dark | `#17171a` | 8.82 | 11.31 | 11.86 | 6.42 |
 
 `ds-neutral` 没有 `strong` 档，但 DEFAULT 在三主题下 6.00~7.73 均已达标，直接用即可。
 
@@ -134,34 +134,35 @@
 > 真实值的唯一来源：`index.css :root` 块（光主题）+ `[data-theme="dark"]` 块（暗主题）。
 > 命名约定：`--{role}` · 调色板以 `var(--xxx)` 在 `tailwind.config.js` 的 `extend.colors` 中二次暴露。
 > Tailwind 工具类前缀 `ds-`，避免与默认调色板（`neutral-* / amber-* / sky-*` 等）冲突。
+> 注意：下表「光」列取自 `jianghu`（江湖纸笺）主题、「暗」列取自 `dark`（深色）主题，均以 `index.css` 当前实现为准；§1.3–§1.4.1 里「沉香褐 / 苔绿 / 焦糖」描述的是光列的提案配色，深色主题用的是独立的中性锌灰 + 靛蓝体系，两列并非同一套渐进明暗，勿混用。`original` 主题另有取值，同样见 `index.css`。
 
 #### 1.1 表面层级（Surface）
 
 | Token | 光 | 暗 | Tailwind 工具类示例 |
 |---|---|---|---|
-| `--bg` | `#faf7f2` 暖米杏 | `#15110d` | `bg-ds-bg` |
-| `--surface-ds` | `#ffffff` | `#1f1a14` | `bg-ds-surface` |
-| `--surface-2` | `#f3efe8` | `#2a241c` | `bg-ds-surface-2` |
-| `--surface-3` | `#ede7dc` | `#352d22` | `bg-ds-surface-3` |
-| `--border-ds` | `#e3dccc` | `#3a3127` | `border-ds-border` |
-| `--border-strong` | `#d4c8b3` | `#4a3f31` | `border-ds-border-strong` |
+| `--bg` | `#faf7f2` 暖米杏 | `#17171a` | `bg-ds-bg` |
+| `--surface-ds` | `#ffffff` | `#1f1f23` | `bg-ds-surface` |
+| `--surface-2` | `#f3efe8` | `#28282d` | `bg-ds-surface-2` |
+| `--surface-3` | `#ede7dc` | `#32323a` | `bg-ds-surface-3` |
+| `--border-ds` | `#e3dccc` | `#33333a` | `border-ds-border` |
+| `--border-strong` | `#d4c8b3` | `#45454d` | `border-ds-border-strong` |
 
 #### 1.2 文本层级（Foreground）
 
 | Token | 光 | 暗 | Tailwind 工具类示例 |
 |---|---|---|---|
-| `--fg` | `#1f1a14` 黑棕 | `#f3ede2` | `text-ds-fg` |
-| `--fg-soft` | `#4a4339` | `#c9c0b0` | `text-ds-fg-soft` |
-| `--fg-mute` | `#8a7f70` | `#8a7f70` | `text-ds-fg-mute` |
-| `--fg-inverse` | `#ffffff` | `#15110d` | `text-ds-fg-inverse` |
+| `--fg` | `#1f1a14` 黑棕 | `#e8e8eb` | `text-ds-fg` |
+| `--fg-soft` | `#4a4339` | `#bdbdc4` | `text-ds-fg-soft` |
+| `--fg-mute` | `#8a7f70` | `#9d9da8` | `text-ds-fg-mute` |
+| `--fg-inverse` | `#ffffff` | `#17171a` | `text-ds-fg-inverse` |
 
 #### 1.3 主强调（Accent · 沉香褐 · 2026-08-23 由暖橙 `#c96442` 降饱和）
 
 | Token | 光 | 暗 | 备注 |
 |---|---|---|---|
-| `--accent` | `#a8633f` | `#c08566` | **单屏 ≤ 2 处**（主操作 + 1 状态点）；`bg-ds-accent` |
-| `--accent-soft` | `#f3e8df` | `#2e1d14` | hover / 选中底；不计 ≤2 限制；`bg-ds-accent-soft` |
-| `--accent-strong` | `#8a4f30` | `#d49b7c` | 按下态 / 焦点描边；`border-ds-accent-strong` |
+| `--accent` | `#a8633f` | `#a5b4fc` | **单屏 ≤ 2 处**（主操作 + 1 状态点）；`bg-ds-accent` |
+| `--accent-soft` | `#f3e8df` | `#262650` | hover / 选中底；不计 ≤2 限制；`bg-ds-accent-soft` |
+| `--accent-strong` | `#8a4f30` | `#c7d2fe` | 按下态 / 焦点描边；`border-ds-accent-strong` |
 
 **与现有 primary 的关系**：
 - 存量 `bg-primary` (= `--primary-base` = `#4f46e5` 靛蓝) 保留继续可用，不删除。
@@ -174,16 +175,16 @@
 
 | Token | 光 | 暗 | Tailwind 工具类 | 语义 |
 |---|---|---|---|---|
-| `--success` | `#5d8770` 苔绿 | `#87b29a` | `bg-ds-success` / `text-ds-success` | 完成 / 入账 |
-| `--success-soft` | `#e3ebe5` | `#1a2520` | `bg-ds-success-soft` | Tag 底 |
-| `--warning` | `#a38246` 焦糖 | `#c9a06b` | `bg-ds-warning` / `text-ds-warning` | 待确认 / 提醒 |
-| `--warning-soft` | `#f0e8d8` | `#2e261a` | `bg-ds-warning-soft` | Tag 底 |
-| `--danger-ds` | `#a55a52` 砖红 | `#c87872` | `bg-ds-danger` / `text-ds-danger` | 失败 / 删除 |
-| `--danger-soft` | `#ecdfdc` | `#2a1d1c` | `bg-ds-danger-soft` | Tag 底 |
-| `--info` | `#5e7e94` 雾蓝 | `#8eaabd` | `bg-ds-info` / `text-ds-info` | 链接 / 信息 |
-| `--info-soft` | `#dfe5ea` | `#1a2229` | `bg-ds-info-soft` | Tag 底 |
-| `--neutral` | `#6a6258` | `#a89e8c` | `bg-ds-neutral` | 中性 Tag / 已读 |
-| `--neutral-soft` | `#ebe6db` | `#2a2520` | `bg-ds-neutral-soft` | Tag 底 |
+| `--success` | `#5d8770` 苔绿 | `#5eb085` | `bg-ds-success` / `text-ds-success` | 完成 / 入账 |
+| `--success-soft` | `#e3ebe5` | `#16261f` | `bg-ds-success-soft` | Tag 底 |
+| `--warning` | `#a38246` 焦糖 | `#e3b872` | `bg-ds-warning` / `text-ds-warning` | 待确认 / 提醒 |
+| `--warning-soft` | `#f0e8d8` | `#2b2317` | `bg-ds-warning-soft` | Tag 底 |
+| `--danger-ds` | `#a55a52` 砖红 | `#e8938e` | `bg-ds-danger` / `text-ds-danger` | 失败 / 删除 |
+| `--danger-soft` | `#ecdfdc` | `#2c1c1c` | `bg-ds-danger-soft` | Tag 底 |
+| `--info` | `#5e7e94` 雾蓝 | `#8fb8f0` | `bg-ds-info` / `text-ds-info` | 链接 / 信息 |
+| `--info-soft` | `#dfe5ea` | `#1a2333` | `bg-ds-info-soft` | Tag 底 |
+| `--neutral` | `#6a6258` | `#9a9aa4` | `bg-ds-neutral` | 中性 Tag / 已读 |
+| `--neutral-soft` | `#ebe6db` | `#26262b` | `bg-ds-neutral-soft` | Tag 底 |
 
 **与旧 emerald/amber 调色板的关系**：
 - 颜色 **同色系**（success-绿 / warning-橙 / danger-红），**具体 hex 不同**：
@@ -220,9 +221,9 @@
 **色值**（暗主题）：
 
 ```css
---success-strong: #87b29a;  /* 浅一档,与光主题对称 */
---warning-strong: #c9a06b;
---info-strong:    #8eaabd;
+--success-strong: #86c3a3;  /* 浅一档,与光主题对称 */
+--warning-strong: #eccf94;
+--info-strong:    #b3d0f7;
 ```
 
 #### 1.4.2 何时用 strong 派生（决策树）

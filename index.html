@@ -5,13 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>剑网三副本管家</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // 首帧防闪：在主包执行前用同步缓存预设主题。
+      // 主题的真实来源是后端 SQLite（异步 invoke），这里只做镜像，避免深色用户每次启动先看到一屏亮色。
+      (function () {
+        try {
+          var theme = localStorage.getItem('jx3_theme_cache');
+          if (theme === 'dark' || theme === 'jianghu' || theme === 'original') {
+            document.documentElement.setAttribute('data-theme', theme);
+            if (theme === 'dark') {
+              document.documentElement.classList.add('dark');
+            }
+          }
+        } catch (error) {
+          // localStorage 不可用（隐私模式 / 权限受限）时静默跳过，仍由 ThemeContext 兜底
+        }
+      })();
+    </script>
     <style>
       :root {
         overscroll-behavior: none;
       }
+      /* index.css 加载前的底色兜底，与各主题 --bg-base 保持一致，避免白闪 */
+      html {
+        background-color: #fafafa;
+      }
+      html[data-theme="jianghu"] {
+        background-color: #faf7f2;
+      }
+      html[data-theme="dark"] {
+        background-color: #17171a;
+      }
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #f8fafc;
         -webkit-font-smoothing: antialiased;
         user-select: none;
         -webkit-user-select: none;

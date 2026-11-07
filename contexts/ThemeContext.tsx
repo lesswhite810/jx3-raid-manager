@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { loadThemeConfig, saveThemeConfig, ThemeType, DEFAULT_THEME } from '../services/themeStorage';
+import {
+    loadThemeConfig,
+    saveThemeConfig,
+    readCachedTheme,
+    writeCachedTheme,
+    ThemeType,
+    DEFAULT_THEME
+} from '../services/themeStorage';
 
 interface ThemeContextType {
     theme: ThemeType;
@@ -15,14 +22,19 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [theme, setThemeState] = useState<ThemeType>(DEFAULT_THEME);
+    // 首帧先用同步缓存里的主题启动，避免深色用户看到一屏亮色；
+    // 真实来源仍是后端 SQLite，异步读出来后再校正。
+    const [theme, setThemeState] = useState<ThemeType>(() => readCachedTheme());
     const [isInitialized, setIsInitialized] = useState(false);
 
     useEffect(() => {
         const initTheme = async () => {
+            // 先把缓存主题落到 <html> 上（内联脚本已试过一次，这里兜底浏览器/测试环境）
+            applyTheme(readCachedTheme());
             const config = await loadThemeConfig();
             setThemeState(config.theme);
             applyTheme(config.theme);
+            writeCachedTheme(config.theme);
             setIsInitialized(true);
         };
         initTheme();
@@ -41,6 +53,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const setTheme = (newTheme: ThemeType) => {
         setThemeState(newTheme);
         applyTheme(newTheme);
+        writeCachedTheme(newTheme);
         saveThemeConfig({ theme: newTheme });
     };
 

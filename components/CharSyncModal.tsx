@@ -349,7 +349,7 @@ export const CharSyncModal: React.FC<CharSyncModalProps> = ({
 
         <div className="flex-1 px-6 py-4 min-h-0 overflow-y-auto">
           {error && (
-            <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+            <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-sm text-red-700 dark:text-red-300">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <span>{error}</span>
             </div>
@@ -408,7 +408,7 @@ export const CharSyncModal: React.FC<CharSyncModalProps> = ({
             )}
             <button onClick={onClose} className="px-4 py-2 text-sm text-muted hover:text-main border border-base rounded-lg transition-colors" disabled={syncing || rolling}>{batchResults ? '关闭' : '取消'}</button>
             {!batchResults && (
-              <button onClick={handleBatchSync} disabled={!canSync} className="px-4 py-2 text-sm font-medium text-white bg-ds-success rounded-lg hover:bg-ds-success transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+              <button onClick={handleBatchSync} disabled={!canSync} className="px-4 py-2 text-sm font-medium text-ds-fg-inverse bg-ds-success rounded-lg hover:bg-ds-success transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
                 {syncing ? (
                   <><RefreshCw className="w-4 h-4 animate-spin" />同步中…</>
                 ) : (
@@ -729,7 +729,7 @@ const HistoryTabContent: React.FC<HistoryTabContentProps> = ({
               <span className="font-medium text-main truncate">{b.targetRole}</span>
               <span className="text-xs text-muted">· {formatTimestamp(b.timestamp)} · {b.fileCount} 文件</span>
               {rollbackAt && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-white bg-ds-success">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-ds-fg-inverse bg-ds-success">
                   <CheckCircle className="w-3 h-3" />
                   已回滚到此版本 · {new Date(rollbackAt).toLocaleString('zh-CN', { hour12: false })}
                 </span>
@@ -751,7 +751,7 @@ const HistoryTabContent: React.FC<HistoryTabContentProps> = ({
                   </>
                 ) : (
                   <button onClick={() => setConfirming(b.backupDir)} disabled={rolling}
-                    className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 border border-red-300 rounded hover:bg-red-50 transition-colors disabled:opacity-50">
+                    className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-900/60 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors disabled:opacity-50">
                     <Undo2 className="w-3 h-3" />{rollbackAt ? '再次回滚到此版本' : '回滚到此角色'}
                   </button>
                 )

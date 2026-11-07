@@ -269,7 +269,7 @@ export const ScrapsItemsEditor: React.FC<ScrapsItemsEditorProps> = ({
               type="button"
               onClick={addCustomEquipment}
               disabled={!customName.trim()}
-              className="px-2.5 py-1.5 rounded-md text-sm font-medium bg-ds-success text-white hover:bg-ds-success transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-2.5 py-1.5 rounded-md text-sm font-medium bg-ds-success text-ds-fg-inverse hover:bg-ds-success transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               添加
             </button>

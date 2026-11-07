@@ -51,9 +51,9 @@ export const ThemeSelector: React.FC = () => {
             icon: <Moon className="w-5 h-5" />,
             preview: (
                 <div className="flex items-center gap-1">
-                    <div className="w-3 h-3 rounded-tag" style={{ backgroundColor: '#818cf8' }} />
-                    <div className="w-3 h-3 rounded-tag" style={{ backgroundColor: '#18181b', border: '1px solid #3f3f46' }} />
-                    <div className="w-3 h-3 rounded-tag" style={{ backgroundColor: '#34d399' }} />
+                    <div className="w-3 h-3 rounded-tag" style={{ backgroundColor: '#a5b4fc' }} />
+                    <div className="w-3 h-3 rounded-tag" style={{ backgroundColor: '#17171a', border: '1px solid #45454d' }} />
+                    <div className="w-3 h-3 rounded-tag" style={{ backgroundColor: '#5eb085' }} />
                 </div>
             ),
         },

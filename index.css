@@ -35,6 +35,14 @@
         --dur-slow: 280ms;
         --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
 
+        /*
+         * 声明 color-scheme 让浏览器把「原生」控件也画成对应配色。
+         * 原生 <select> 展开的选项列表、<input type="date"> 的日历面板与图标、
+         * 数字输入框的上下箭头、checkbox/radio、滚动条，都不吃 CSS 变量，
+         * 只认 color-scheme。缺了它，深色主题下这些弹层仍按亮色渲染。
+         */
+        color-scheme: light;
+
         /* 默认（未匹配 data-theme 时兜底，与 original 一致） */
 
         --bg-base: 250 250 250;
@@ -143,43 +151,46 @@
     /* 主题 3：暗色模式 */
     [data-theme="dark"] {
 
-        --bg-base: 9 9 11;
-        --bg-surface: 24 24 27;
-        --text-main: 250 250 250;
-        --text-muted: 161 161 170;
-        --border-base: 39 39 42;
-        --primary-base: 99 102 241;
-        --primary-hover: 129 140 248;
+        /* 让原生控件（<select> 选项列表 / 日期面板 / 滚动条）跟随深色渲染 */
+        color-scheme: dark;
+
+        --bg-base: 23 23 26;
+        --bg-surface: 31 31 35;
+        --text-main: 232 232 235;
+        --text-muted: 157 157 168;
+        --border-base: 50 50 58;
+        --primary-base: 87 90 232;
+        --primary-hover: 95 98 238;
         --text-on-primary: 255 255 255;
-        --chart-income: 52 211 153;
-        --chart-expense: 251 191 36;
+        --chart-income: 89 165 125;
+        --chart-expense: 217 169 94;
         --radius: 0.5rem;
-        --bg: #18181b;
-        --surface-ds: #27272a;
-        --surface-2: #3f3f46;
-        --surface-3: #52525b;
-        --border-ds: #3f3f46;
-        --border-strong: #52525b;
-        --fg: #fafafa;
-        --fg-soft: #d4d4d8;
-        --fg-mute: #a1a1aa;
-        --fg-inverse: #18181b;
-        --accent: #818cf8;
-        --accent-soft: #312e81;
-        --accent-strong: #a5b4fc;
-        --success: #34d399;
-        --success-soft: #064e3b;
-        --success-strong: #6ee7b7;
-        --warning: #fbbf24;
-        --warning-soft: #78350f;
-        --warning-strong: #fcd34d;
-        --danger-ds: #f87171;
-        --danger-soft: #7f1d1d;
-        --info: #60a5fa;
-        --info-soft: #1e3a8a;
-        --info-strong: #93c5fd;
-        --neutral: #a1a1aa;
-        --neutral-soft: #27272a;
+        --bg: #17171a;
+        --surface-ds: #1f1f23;
+        --surface-2: #28282d;
+        --surface-3: #32323a;
+        --border-ds: #33333a;
+        --border-strong: #45454d;
+        --fg: #e8e8eb;
+        --fg-soft: #bdbdc4;
+        --fg-mute: #9d9da8;
+        --fg-inverse: #17171a;
+        --accent: #a5b4fc;
+        --accent-soft: #262650;
+        --accent-strong: #c7d2fe;
+        --success: #5eb085;
+        --success-soft: #16261f;
+        --success-strong: #86c3a3;
+        --warning: #e3b872;
+        --warning-soft: #2b2317;
+        --warning-strong: #eccf94;
+        --danger-ds: #e8938e;
+        --danger-soft: #2c1c1c;
+        --info: #8fb8f0;
+        --info-soft: #1a2333;
+        --info-strong: #b3d0f7;
+        --neutral: #9a9aa4;
+        --neutral-soft: #26262b;
         --shadow-flat: 0 1px 2px rgba(0, 0, 0, 0.20);
         --shadow-stack: 0 2px 6px rgba(0, 0, 0, 0.28);
         --shadow-modal: 0 6px 16px rgba(0, 0, 0, 0.36);
@@ -190,6 +201,19 @@
     body {
         @apply bg-base text-main transition-colors duration-200 antialiased;
         font-feature-settings: "rlig" 1, "calt" 1;
+    }
+
+    /*
+     * 原生 <select> 展开后的选项列表在 WebView2 / Windows 下由系统弹层绘制，
+     * 不吃根节点的 color-scheme：深色主题里 <option> 继承 <select> 的浅色文字，
+     * 弹层底色却仍是亮的，白字白底看不清（团队副本版本过滤等下拉框）。
+     * 显式指定 <option> / <optgroup> 的主题底色与文字色，三套主题的下拉列表
+     * 才有确定的对比度。放在 base 层，避免盖掉部分 option 上的 text-muted 工具类。
+     */
+    select option,
+    select optgroup {
+        background-color: rgb(var(--bg-surface));
+        color: rgb(var(--text-main));
     }
 
     *,
@@ -298,6 +322,21 @@ input::-ms-clear {
 
 .react-datepicker__time-container {
     @apply border-l border-base bg-surface !important;
+}
+
+/*
+ * react-datepicker 把时间列表的内层容器底色写死为 white，
+ * 仅覆盖外层 time-container 盖不住它，深色主题下右侧会露出一整条白底、
+ * 配浅色文字几乎看不清。这里连同滚动列表、今天按钮一起改成跟随主题的底色。
+ */
+.react-datepicker__time,
+.react-datepicker__time-box,
+.react-datepicker__time-list {
+    @apply bg-surface !important;
+}
+
+.react-datepicker__today-button {
+    @apply bg-surface border-t border-base !important;
 }
 
 .react-datepicker__time-list-item {

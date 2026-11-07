@@ -345,7 +345,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                           }}
                           className={`px-2 py-1 rounded-md text-xs font-medium border transition-all ${
                             isSelected
-                              ? 'bg-ds-success text-white border-ds-success hover:bg-ds-success'
+                              ? 'bg-ds-success text-ds-fg-inverse border-ds-success hover:bg-ds-success'
                               : 'bg-surface text-muted border-base hover:border-ds-success hover:text-ds-success-strong dark:hover:text-ds-success-strong hover:bg-ds-success-soft/50'
                           }`}
                         >

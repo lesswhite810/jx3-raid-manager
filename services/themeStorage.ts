@@ -21,6 +21,11 @@ export interface ThemeConfig {
 }
 
 const BROWSER_THEME_KEY = 'jx3_theme_config';
+/**
+ * 首帧主题镜像：index.html 的内联脚本会在主包执行前同步读取该 key，
+ * 用来避免深色用户每次启动先看到一屏亮色。真实来源仍是后端 SQLite。
+ */
+const THEME_CACHE_KEY = 'jx3_theme_cache';
 const DEFAULT_CONFIG: ThemeConfig = { theme: DEFAULT_THEME };
 
 const isTauriEnv = (): boolean => typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
@@ -33,6 +38,29 @@ const normalizeTheme = (raw: unknown): ThemeType => {
         return raw;
     }
     return DEFAULT_THEME;
+};
+
+/**
+ * 同步读取主题镜像缓存（首帧预设主题用）
+ */
+export const readCachedTheme = (): ThemeType => {
+    try {
+        return normalizeTheme(localStorage.getItem(THEME_CACHE_KEY));
+    } catch (error) {
+        console.error('Failed to read cached theme:', error);
+        return DEFAULT_THEME;
+    }
+};
+
+/**
+ * 写入主题镜像缓存（仅用于首帧防闪，不影响真实配置存储）
+ */
+export const writeCachedTheme = (theme: ThemeType): void => {
+    try {
+        localStorage.setItem(THEME_CACHE_KEY, theme);
+    } catch (error) {
+        console.error('Failed to cache theme:', error);
+    }
 };
 
 /**

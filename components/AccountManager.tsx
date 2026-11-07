@@ -1166,7 +1166,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   className={`px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all text-sm font-medium shadow-sm ${
                     selectedAccounts.size === 0
                       ? 'bg-surface text-muted/50 border border-base cursor-not-allowed opacity-50'
-                      : 'bg-surface text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 active:scale-[0.98]'
+                      : 'bg-surface text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 hover:bg-red-50 dark:hover:bg-red-950/40 hover:border-red-300 dark:hover:border-red-800 active:scale-[0.98]'
                   }`}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -1183,23 +1183,23 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* 无筛选结果提示 */}
       {
         filteredAccounts.length === 0 && dedupedAccounts.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center">
-            <Search className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-            <p className="text-slate-500 mb-2">未找到匹配的结果</p>
-            <p className="text-sm text-slate-400">
+          <div className="bg-surface rounded-xl shadow-sm border border-base p-8 text-center">
+            <Search className="w-12 h-12 text-muted/30 mx-auto mb-3" />
+            <p className="text-muted mb-2">未找到匹配的结果</p>
+            <p className="text-sm text-muted/80">
               {accountTypeFilter !== 'all' && (
                 <>
                   已筛选{accountTypeFilter === 'own' ? '本人' : '代清'}账号
                   {searchTerm && (
                     <>
-                      ，搜索 "<span className="font-medium text-slate-600">{searchTerm}</span>"
+                      ，搜索 "<span className="font-medium text-main">{searchTerm}</span>"
                     </>
                   )}
                 </>
               )}
               {accountTypeFilter === 'all' && searchTerm && (
                 <>
-                  搜索关键词: <span className="font-medium text-slate-600">"{searchTerm}"</span>
+                  搜索关键词: <span className="font-medium text-main">"{searchTerm}"</span>
                 </>
               )}
             </p>
@@ -1365,7 +1365,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                   </button>
                   <button
                     onClick={() => handleDeleteAccountClick(account.id)}
-                    className="p-2 rounded-xl text-muted hover:text-red-600 hover:bg-red-50 active:scale-95 transition-all duration-200"
+                    className="p-2 rounded-xl text-muted hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 active:scale-95 transition-all duration-200"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -1421,7 +1421,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                       <SectIcon sectName={role.martial} />
                                     )}
                                     {role.equipmentScore !== undefined && role.equipmentScore !== null && role.equipmentScore > 0 && (
-                                      <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md font-medium">
+                                      <span className="text-[11px] bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-900/60 px-2 py-0.5 rounded-md font-medium">
                                         装分 {role.equipmentScore.toLocaleString()}
                                       </span>
                                     )}
@@ -1477,7 +1477,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                                   </button>
                                   <button
                                     onClick={() => handleDeleteRoleClick(account.id, role.id)}
-                                    className="p-1.5 rounded-lg text-muted hover:text-red-600 hover:bg-red-50 active:scale-95 transition-all duration-200"
+                                    className="p-1.5 rounded-lg text-muted hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 active:scale-95 transition-all duration-200"
                                     title="删除角色"
                                   >
                                     <Trash2 size={15} />
@@ -1532,7 +1532,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
-              <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u9009\u4e2d\u7684 '}{selectedAccounts.size}{' \u4e2a\u8d26\u53f7\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
+              <p className="text-muted mb-4">{'\u786e\u8ba4\u5220\u9664\u9009\u4e2d\u7684 '}{selectedAccounts.size}{' \u4e2a\u8d26\u53f7\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
               <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
                 <input
                   type="checkbox"
@@ -1571,7 +1571,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
-              <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u8d26\u53f7\u201c'}{pendingDeleteAccount.accountName}{'\u201d\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
+              <p className="text-muted mb-4">{'\u786e\u8ba4\u5220\u9664\u8d26\u53f7\u201c'}{pendingDeleteAccount.accountName}{'\u201d\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
               <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
                 <input
                   type="checkbox"
@@ -1610,7 +1610,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
-              <p className="text-slate-600 mb-4">{'\u786e\u8ba4\u5220\u9664\u89d2\u8272\u201c'}{pendingDeleteRole.role.name}{'\u201d\uff1f\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u526f\u672c\u8bb0\u5f55\u3002'}</p>
+              <p className="text-muted mb-4">{'\u786e\u8ba4\u5220\u9664\u89d2\u8272\u201c'}{pendingDeleteRole.role.name}{'\u201d\uff1f\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u526f\u672c\u8bb0\u5f55\u3002'}</p>
               <label className="mb-6 flex items-start gap-3 rounded-lg border border-base bg-base/40 px-3 py-2 text-sm text-main">
                 <input
                   type="checkbox"
@@ -1682,7 +1682,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
                 <input
                   type="number"
                   min="0"
-                  className={`w-full px-3 py-2 border rounded-lg bg-base text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.equipmentScore ? 'border-red-300 bg-red-50' : 'border-base'
+                  className={`w-full px-3 py-2 border rounded-lg text-main focus:ring-1 focus:ring-primary focus:border-primary transition-all ${roleFormErrors.equipmentScore ? 'border-red-500 bg-surface dark:border-red-500 dark:bg-red-950/30' : 'border-base bg-base'
                     }`}
                   value={editRoleModal.equipmentScore === undefined ? '' : editRoleModal.equipmentScore}
                   onChange={(e) => handleEquipmentScoreChange(e.target.value)}

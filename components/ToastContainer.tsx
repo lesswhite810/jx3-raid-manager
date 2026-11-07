@@ -4,10 +4,14 @@ import { CheckCircle2, XCircle, AlertCircle, Info, X } from 'lucide-react';
 import { toast, TOAST_EVENT, TOAST_DISMISS_EVENT } from '../utils/toastManager';
 
 // Toast 配置映射
+// 注意：语义实心底（ds-success / ds-warning）上的文字必须用 text-ds-fg-inverse，
+// 不能用 text-white —— 深色主题下 --success / --warning 是浅色（#5eb085 / #e3b872），
+// 白字对比度不足，基本看不清。
+// 参考 specs/design-tokens.md §「实心按钮文字」。
 const TOAST_CONFIG = {
   success: {
     bgColor: 'bg-ds-success dark:bg-ds-success',
-    textColor: 'text-white',
+    textColor: 'text-ds-fg-inverse',
     icon: CheckCircle2
   },
   error: {
@@ -17,7 +21,7 @@ const TOAST_CONFIG = {
   },
   warning: {
     bgColor: 'bg-ds-warning dark:bg-ds-warning',
-    textColor: 'text-white',
+    textColor: 'text-ds-fg-inverse',
     icon: AlertCircle
   },
   info: {

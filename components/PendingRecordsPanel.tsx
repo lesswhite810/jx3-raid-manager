@@ -489,7 +489,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
           >
             <Clock className="w-4 h-4" />
             <span>待确认</span>
-            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-ds-warning text-white text-xs font-bold">
+            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-ds-warning text-ds-fg-inverse text-xs font-bold">
               {pendingRecords.length}
             </span>
           </button>
@@ -640,7 +640,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                         <button
                           onClick={() => handleDirectConfirm(record)}
                           disabled={pendingActionId === record.id}
-                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-white bg-ds-success hover:bg-ds-success transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium text-ds-fg-inverse bg-ds-success hover:bg-ds-success transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {pendingActionId === record.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -782,7 +782,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                           }}
                         >
                           <span className="flex items-center gap-2">
-                            <span className={`inline-flex h-4 w-4 items-center justify-center rounded border ${selected ? 'border-ds-success bg-ds-success text-white' : 'border-base'}`}>
+                            <span className={`inline-flex h-4 w-4 items-center justify-center rounded border ${selected ? 'border-ds-success bg-ds-success text-ds-fg-inverse' : 'border-base'}`}>
                               {selected && <Check className="h-3 w-3" />}
                             </span>
                             <span>{getIncomeCandidateDate(candidate)}</span>
@@ -990,7 +990,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
               </button>
               <button
                 onClick={continueAfterConflict}
-                className="px-4 py-2 text-sm font-medium text-white bg-ds-warning hover:bg-ds-warning rounded-lg transition-colors flex items-center gap-1.5"
+                className="px-4 py-2 text-sm font-medium text-ds-fg-inverse bg-ds-warning hover:bg-ds-warning rounded-lg transition-colors flex items-center gap-1.5"
               >
                 {cdConflictAction === 'edit' ? (
                   <>

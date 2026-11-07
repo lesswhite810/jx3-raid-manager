@@ -322,7 +322,7 @@ export const CrystalDetail: React.FC<CrystalDetailProps> = ({ records, accounts,
                 className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
                   active
                     ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft hover:border-ds-success dark:bg-ds-success-soft/20 dark:text-ds-success-strong dark:border-ds-success-soft/30'
-                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700/50'
+                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700/50 dark:hover:border-slate-600'
                 } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
                 title={disabled ? `${type}：暂无记录` : `${active ? '隐藏' : '显示'}${type}（共 ${count} 条）`}
               >

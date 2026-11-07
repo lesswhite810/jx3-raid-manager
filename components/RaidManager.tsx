@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Raid, Config } from '../types';
-import { Trash2, Shield, Filter, Power, Star } from 'lucide-react';
+import { Trash2, Shield, Power, Star } from 'lucide-react';
 import { getRaidKey } from '../utils/raidUtils';
 import { toast } from '../utils/toastManager';
 import { TrialPlaceManager } from './TrialPlaceManager';
 import { BaizhanManager } from './BaizhanManager';
+import { VersionSelect } from './VersionSelect';
 import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
 import { useCancellableEffect } from '../hooks/useCancellableEffect';
@@ -567,26 +568,19 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 onRefreshTrialRecords={onRefreshTrialRecords}
               />
               {versions.length > 0 && (
-                <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-lg border border-base shadow-sm">
-                  <Filter className="w-4 h-4 text-muted" />
-                  <select
-                    className="bg-transparent text-sm outline-none cursor-pointer text-main"
-                    value={selectedVersion}
-                    onChange={e => setSelectedVersion(e.target.value)}
-                  >
-                    {hasCollectionEntries && (
-                      <option value={FAVORITE_VIEW}>收藏</option>
-                    )}
-                    {versions.map(version => (
-                      <option key={version} value={version}>{version}</option>
-                    ))}
-                  </select>
-                </div>
+                <VersionSelect
+                  value={selectedVersion}
+                  onChange={setSelectedVersion}
+                  options={[
+                    ...(hasCollectionEntries ? [{ value: FAVORITE_VIEW, label: '收藏' }] : []),
+                    ...versions.map(version => ({ value: version, label: version })),
+                  ]}
+                />
               )}
             </div>
           </div>
 
-          <div className="bg-blue-50/50 border border-blue-100 rounded-lg p-3 text-center text-sm text-blue-600">
+          <div className="bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/60 rounded-lg p-3 text-center text-sm text-blue-600 dark:text-blue-300">
             右键难度框可单独禁用/启用
           </div>
 
@@ -744,7 +738,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                             }}
                             className={`transition-colors p-1 rounded-md ${isStatic
                               ? 'text-muted cursor-not-allowed opacity-50'
-                              : 'text-muted hover:text-red-500 hover:bg-red-50'
+                              : 'text-muted hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
                               }`}
                             title={isStatic ? '预制副本不能删除' : '删除'}
                           >
@@ -869,7 +863,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                 }}
                                 className={`transition-colors p-1 rounded-md ${isStatic
                                   ? 'text-muted cursor-not-allowed opacity-50'
-                                  : 'text-muted hover:text-red-500 hover:bg-red-50'
+                                  : 'text-muted hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
                                   }`}
                                 title={isStatic ? '预制副本不能删除' : '删除'}
                               >

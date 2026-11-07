@@ -223,7 +223,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                 } else {
                                     return (
                                         <div className="w-6 h-6 rounded-full bg-ds-success-soft dark:bg-ds-success-soft/30 flex items-center justify-center flex-shrink-0">
-                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-success animate-pulse" />
+                                            <div className="w-2.5 h-2.5 rounded-full bg-ds-success" />
                                         </div>
                                     );
                                 }
@@ -252,7 +252,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                                         <SectIcon sectName={role.martial} variant="image" size="sm" />
                                                     )}
                                                     {role.equipmentScore !== undefined && role.equipmentScore !== null && role.equipmentScore > 0 && (
-                                                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-medium flex-shrink-0">
+                                                        <span className="text-xs bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-md font-medium flex-shrink-0">
                                                             装分 {role.equipmentScore.toLocaleString()}
                                                         </span>
                                                     )}

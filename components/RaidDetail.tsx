@@ -687,7 +687,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                 } else {
                   return (
                     <div className="w-6 h-6 rounded-full bg-ds-success-soft dark:bg-ds-success-soft/30 flex items-center justify-center flex-shrink-0">
-                      <div className="w-2.5 h-2.5 rounded-full bg-ds-success animate-pulse" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-ds-success" />
                     </div>
                   );
                 }

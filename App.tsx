@@ -717,7 +717,7 @@ function App() {
   // AppConfig 加载中：显示 loading
   if (appConfigLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-base flex items-center justify-center">
         <LoadingSpinner size="lg" text="正在加载应用配置..." />
       </div>
     );
@@ -731,7 +731,7 @@ function App() {
 
   if (!isInitialized) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-base flex items-center justify-center">
         <LoadingSpinner size="lg" text="正在初始化数据库..." />
       </div>
     );

@@ -31,7 +31,7 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
             title={boss.hasRecord ? `${boss.bossName} - 已完成` : `${boss.bossName} - 可打`}
           >
             <span
-              className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-ds-success animate-pulse'
+              className={`w-2 h-2 rounded-full ${boss.hasRecord ? 'bg-gray-400' : 'bg-ds-success'
                 }`}
             />
             <span>{boss.bossName}</span>
@@ -67,7 +67,7 @@ export const BossCooldownDisplay: React.FC<BossCooldownDisplayProps> = ({
               <div
                 className={`w-3 h-3 rounded-full flex items-center justify-center ${boss.hasRecord
                     ? 'bg-gray-400'
-                    : 'bg-ds-success animate-pulse'
+                    : 'bg-ds-success'
                   }`}
               >
                 {boss.hasRecord && (

@@ -453,7 +453,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
                                   <SectIcon sectName={role.kungfuName || role.forceName || ''} variant="image" size="sm" />
                                 )}
                                 {role.equipmentScore > 0 && (
-                                  <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded-md font-medium shrink-0">
+                                  <span className="text-[11px] bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-900/60 px-1.5 py-0.5 rounded-md font-medium shrink-0">
                                     装分 {role.equipmentScore.toLocaleString()}
                                   </span>
                                 )}

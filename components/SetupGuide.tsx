@@ -347,7 +347,7 @@ export const SetupGuide: React.FC = () => {
 const StepBadge: React.FC<{ number: number; active: boolean; done: boolean }> = ({ number, active, done }) => {
   if (done) {
     return (
-      <span className="w-6 h-6 rounded-full bg-ds-success text-white text-xs font-bold flex items-center justify-center">
+      <span className="w-6 h-6 rounded-full bg-ds-success text-ds-fg-inverse text-xs font-bold flex items-center justify-center">
         <Check size={12} />
       </span>
     );

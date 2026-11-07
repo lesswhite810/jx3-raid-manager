@@ -931,7 +931,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
             <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
-            <p className="text-slate-600 mb-6">确认删除这条收支记录吗？此操作不可撤销。</p>
+            <p className="text-muted mb-6">确认删除这条收支记录吗？此操作不可撤销。</p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={handleCancelDelete}
