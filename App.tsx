@@ -361,6 +361,23 @@ function App() {
         if (versionInfo) {
           console.log(`数据库版本: V${versionInfo.schemaVersion}, 最新版本: V${versionInfo.currentVersion}`);
           console.log(`localStorage 迁移状态: ${versionInfo.localStorageMigrated ? '已完成' : '未完成'}`);
+
+          // 数据库版本高于应用版本 = 用户装回了旧版客户端。
+          // 后端此时只记录一条 warn 日志，用户看不到任何提示，但实际后果是：
+          // 旧版界面不渲染 trial_draws 明细（新版本编辑的牌面不可见），
+          // 旧版删除记录不写 tombstone（新版本自动扫描会把记录复活）。
+          // 因此必须在这里显式告知用户，而不是让它静默发生。
+          if (versionInfo.schemaVersion > versionInfo.currentVersion) {
+            console.warn(
+              `数据库版本 V${versionInfo.schemaVersion} 高于应用版本 V${versionInfo.currentVersion}，可能已降级`
+            );
+            toast.warning(
+              `数据库版本（V${versionInfo.schemaVersion}）高于当前应用版本（V${versionInfo.currentVersion}）。` +
+                '你可能安装了更旧版本的客户端：新版本中编辑的试炼翻牌明细将无法显示，' +
+                '在此版本中删除的试炼记录也可能被自动扫描重新识别。建议升级到最新版本。',
+              8000
+            );
+          }
         }
 
         // 检查是否需要执行 localStorage 迁移

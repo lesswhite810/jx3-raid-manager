@@ -6,6 +6,10 @@ use rusqlite::Connection;
 /// 历史自动识别或未知信息误称为人工完整核对。`equipment_id IS NULL` 是
 /// 有意义的人工清空，后续自动识别必须保留它。
 pub fn migrate(conn: &Connection) -> Result<(), String> {
+    // 显式建覆盖表：`ensure_trial_draws_table` 内部虽然会顺带创建它，但那是
+    // 一个隐式副作用。历史迁移的语义不能随 db.rs 的重构漂移，因此这里再调用
+    // 一次（`CREATE TABLE IF NOT EXISTS`，幂等、零风险）。
+    super::super::ensure_trial_draw_equipment_manual_overrides_table(conn)?;
     super::super::ensure_trial_draws_table(conn)
 }
 

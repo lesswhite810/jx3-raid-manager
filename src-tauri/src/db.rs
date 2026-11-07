@@ -853,23 +853,33 @@ pub fn init_db() -> Result<Connection, String> {
     }
 
     // 补救：确保 V14 的表结构变更已应用（开发期可能 schema_versions 标记为 V14 但表结构未更新）
-    ensure_raid_bosses_table(&conn)?;
-    ensure_records_columns(&conn)?;
-    ensure_jcl_cache_table(&conn)?;
-    ensure_drop_items_table(&conn)?;
-    ensure_critical_columns(&conn)?;
-    migration::init_static_raids(&conn)?;
-    ensure_equipment_columns(&conn)?;
-    ensure_app_config_table(&conn)?;
-    // V18 兜底：全新安装与「版本过高修复」路径都不走增量迁移，必须显式建表
-    ensure_char_sync_rollback_marks_table(&conn)?;
-    // V14 新增引导功能：历史用户已配置游戏目录且有账号数据时，自动标记引导完成
-    auto_complete_setup_for_legacy_users(&conn)?;
+    run_post_init_repairs(&conn)?;
 
     *initialized = true;
     log::info!("[INIT] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
 
     Ok(conn)
+}
+
+/// 升级 / 安装之后的统一收尾序列（生产与测试共用）。
+///
+/// 这些 `ensure_*` 是「schema_versions 已标记但物理结构未更新」的历史补救，
+/// 生产启动时必须执行。测试路径此前漏掉了它们，导致测试通过而真实启动仍
+/// 可能缺列/缺表。抽成公共函数后两条路径不会再分叉。
+fn run_post_init_repairs(conn: &Connection) -> Result<(), String> {
+    ensure_raid_bosses_table(conn)?;
+    ensure_records_columns(conn)?;
+    ensure_jcl_cache_table(conn)?;
+    ensure_drop_items_table(conn)?;
+    ensure_critical_columns(conn)?;
+    migration::init_static_raids(conn)?;
+    ensure_equipment_columns(conn)?;
+    ensure_app_config_table(conn)?;
+    // V18 兜底：全新安装与「版本过高修复」路径都不走增量迁移，必须显式建表
+    ensure_char_sync_rollback_marks_table(conn)?;
+    // V14 新增引导功能：历史用户已配置游戏目录且有账号数据时，自动标记引导完成
+    auto_complete_setup_for_legacy_users(conn)?;
+    Ok(())
 }
 
 /// 安装阶段预创建数据库（不触发数据目录迁移）
@@ -930,16 +940,7 @@ pub fn init_db_skip_migration() -> Result<Connection, String> {
         log::info!("[INIT] 已是最新版本 V{}，无需迁移", current_version);
     }
 
-    ensure_raid_bosses_table(&conn)?;
-    ensure_records_columns(&conn)?;
-    ensure_jcl_cache_table(&conn)?;
-    ensure_drop_items_table(&conn)?;
-    ensure_critical_columns(&conn)?;
-    migration::init_static_raids(&conn)?;
-    ensure_equipment_columns(&conn)?;
-    ensure_app_config_table(&conn)?;
-    ensure_char_sync_rollback_marks_table(&conn)?;
-    auto_complete_setup_for_legacy_users(&conn)?;
+    run_post_init_repairs(&conn)?;
 
     *initialized = true;
     log::info!("[INIT] 安装阶段数据库预创建完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
@@ -975,14 +976,23 @@ pub fn init_db_with_path(path: &std::path::Path) -> Result<Connection, String> {
 
     if !db_exists {
         install_fresh_db(&conn)?;
+    } else if current_version > CURRENT_SCHEMA_VERSION {
+        // 与生产 `init_db` 保持一致：应用降级后数据库版本过高时不能只告警，
+        // 必须执行表结构修复，否则后续命令会因缺列/缺表而失败。
+        log::warn!(
+            "[INIT_TEST] 数据库版本 V{} 高于应用版本 V{}，将执行表结构修复",
+            current_version, CURRENT_SCHEMA_VERSION
+        );
+        ensure_baseline_tables(&conn)?;
+        ensure_equipment_columns(&conn)?;
+        ensure_critical_columns(&conn)?;
     } else if current_version < CURRENT_SCHEMA_VERSION {
         upgrade_db(&conn, current_version)?;
     } else {
         log::info!("[INIT_TEST] 已是最新版本 V{}，无需迁移", current_version);
     }
 
-    migration::init_static_raids(&conn)?;
-    ensure_equipment_columns(&conn)?;
+    run_post_init_repairs(&conn)?;
 
     log::info!("[INIT_TEST] 数据库初始化完成，当前版本 V{}", CURRENT_SCHEMA_VERSION);
 
@@ -1028,6 +1038,66 @@ pub(crate) fn install_fresh_db_for_test(conn: &Connection) -> Result<(), String>
     install_fresh_db(conn)
 }
 
+/// 测试用入口：直接驱动真实的 `upgrade_db`。
+///
+/// 存在的意义是让测试与生产走**同一份**升级逻辑，而不是在测试里重写一遍
+/// 迁移循环。任何对 `upgrade_db` 的修改都会立刻被端到端测试覆盖。
+#[cfg(test)]
+pub(crate) fn upgrade_db_for_test(conn: &Connection, from_version: i32) -> Result<(), String> {
+    upgrade_db(conn, from_version)
+}
+
+/// 升级前自动快照：把当前数据库完整备份为 `<db>.pre-v{n}.bak`。
+///
+/// 设计取舍：
+/// - 使用 SQLite 在线备份 API 而不是文件复制：数据库运行在 WAL 模式下，
+///   直接复制 `.db` 会漏掉 `-wal` 中尚未落盘的事务，得到不一致的快照。
+/// - 备份失败**不阻断升级**：磁盘满或权限异常时仍然优先让用户能打开应用，
+///   失败仅记录告警（升级后仍可手动用 `db_backup` 命令补做）。
+/// - 只保留本次升级对应的那一份快照，不做多份轮转，避免用户目录无限增长。
+fn backup_before_upgrade(conn: &Connection, from_version: i32) {
+    let Some(db_path) = conn.path() else {
+        log::debug!("[BACKUP] 内存数据库，跳过升级前备份");
+        return;
+    };
+    let db_path = std::path::PathBuf::from(db_path);
+    if !db_path.exists() {
+        log::debug!("[BACKUP] 数据库文件不存在，跳过升级前备份");
+        return;
+    }
+
+    let backup_path = db_path.with_extension(format!("db.pre-v{}.bak", from_version));
+
+    let result = (|| -> Result<(), String> {
+        // 已存在的旧快照先移除，避免备份到已过期的副本
+        if backup_path.exists() {
+            std::fs::remove_file(&backup_path)
+                .map_err(|e| format!("清理旧快照失败: {}", e))?;
+        }
+        let mut dst =
+            Connection::open(&backup_path).map_err(|e| format!("创建快照文件失败: {}", e))?;
+        rusqlite::backup::Backup::new(conn, &mut dst)
+            .map_err(|e| format!("初始化快照失败: {}", e))?
+            .run_to_completion(100, std::time::Duration::from_millis(50), None)
+            .map_err(|e| format!("写入快照失败: {}", e))?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            let size = std::fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
+            log::info!(
+                "[BACKUP] 升级前快照已生成: {:?} ({} 字节)",
+                backup_path, size
+            );
+        }
+        Err(e) => {
+            log::warn!("[BACKUP] 升级前快照失败（升级继续）: {}", e);
+            let _ = std::fs::remove_file(&backup_path);
+        }
+    }
+}
+
 /// 升级路径：从当前版本升级到最新版本
 ///
 /// 流程：
@@ -1048,6 +1118,11 @@ fn upgrade_db(conn: &Connection, current_version: i32) -> Result<(), String> {
     }
 
     validate_pre_upgrade(conn, current_version)?;
+
+    // 迁移前快照：V19 起迁移会对 trial_records 做 ALTER + 全表 UPDATE，
+    // 一旦迁移中途失败或结果不符合预期，用户需要一份可回退的副本。
+    // 内存库（测试）没有可备份的物理文件，直接跳过。
+    backup_before_upgrade(conn, current_version);
 
     // 始终确保基线表存在（包括 records, config, cache, equipments）
     // 这样可以确保从任何版本升级时都有完整的表结构
@@ -1090,6 +1165,12 @@ fn validate_pre_upgrade(conn: &Connection, current_version: i32) -> Result<(), S
     log::info!("[VALIDATE] 升级前验证通过");
     Ok(())
 }
+
+/// 升级后必须存在的唯一索引：缺失即判定升级失败。
+///
+/// 唯一索引承担数据去重语义，缺失不会让升级「看起来失败」，而是让数据
+/// 在后续写入中静默出现重复，因此不能与普通索引一样只告警。
+const UNIQUE_INDEXES: [&str; 1] = ["idx_trial_records_source_key"];
 
 /// 升级后验证：检查数据库结构和数据完整性
 fn validate_post_upgrade(conn: &Connection) -> Result<(), String> {
@@ -1182,7 +1263,22 @@ fn validate_post_upgrade(conn: &Connection) -> Result<(), String> {
         }
     }
 
+    // 唯一索引缺失必须阻断：`idx_trial_records_source_key` 是「同一 source_key
+    // 不重复」的唯一保障，缺它时升级若仍报通过，去重语义会静默失效并伴随性能
+    // 退化。普通索引缺失只告警，唯一索引缺失直接失败。
     if !missing_indexes.is_empty() {
+        let missing_unique: Vec<&str> = missing_indexes
+            .iter()
+            .copied()
+            .filter(|name| UNIQUE_INDEXES.contains(name))
+            .collect();
+        if !missing_unique.is_empty() {
+            log::error!("[VALIDATE] 缺少唯一索引: {:?}", missing_unique);
+            return Err(format!(
+                "升级后验证失败：缺少唯一索引 {:?}",
+                missing_unique
+            ));
+        }
         log::warn!("[VALIDATE] 缺少预期索引: {:?}", missing_indexes);
     } else {
         log::debug!("[VALIDATE] 所有预期索引存在（{} 个）", expected_indexes.len());

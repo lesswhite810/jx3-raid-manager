@@ -124,6 +124,12 @@ pub fn get_app_config() -> Result<AppConfig, String> {
 /// 不再同步到 config_json。
 #[tauri::command]
 pub fn set_game_directory(path: String) -> Result<(), String> {
+    // 必须与 reset_setup / set_auto_scan_enabled 等命令持有同一把锁：
+    // 本命令会 clear 采集缓存并重建截图采集器，与并发切换开关的命令交错时
+    // 会出现「刚重建又被清空」的竞态，导致采集器状态与配置不一致。
+    let _capture_config_guard = TRIAL_CAPTURE_CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_GAME_DIRECTORY, &path)?;
     crate::mingyi::drop_scanner::live::clear();
