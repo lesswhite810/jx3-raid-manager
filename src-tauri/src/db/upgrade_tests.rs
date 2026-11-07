@@ -268,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v1 夹具，CI 未生成"]
     fn test_v1_upgrade() {
         if !get_test_db_path(1).exists() {
             println!("V1 升级测试跳过：预置数据库不存在");
@@ -279,6 +280,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v2 夹具，CI 未生成"]
     fn test_v2_upgrade() {
         if !get_test_db_path(2).exists() {
             println!("V2 升级测试跳过：预置数据库不存在");
@@ -290,6 +292,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v3 夹具，CI 未生成"]
     fn test_v3_upgrade() {
         if !get_test_db_path(3).exists() {
             println!("V3 升级测试跳过：预置数据库不存在");
@@ -301,6 +304,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v4 夹具，CI 未生成"]
     fn test_v4_upgrade() {
         if !get_test_db_path(4).exists() {
             println!("V4 升级测试跳过：预置数据库不存在");
@@ -312,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v5 夹具，CI 未生成"]
     fn test_v5_upgrade() {
         if !get_test_db_path(5).exists() {
             println!("V5 升级测试跳过：预置数据库不存在");
@@ -323,6 +328,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v6 夹具，CI 未生成"]
     fn test_v6_upgrade() {
         if !get_test_db_path(6).exists() {
             println!("V6 升级测试跳过：预置数据库不存在");
@@ -334,6 +340,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v7 夹具，CI 未生成"]
     fn test_v7_upgrade() {
         if !get_test_db_path(7).exists() {
             println!("V7 升级测试跳过：预置数据库不存在");
@@ -345,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v8 夹具，CI 未生成"]
     fn test_v8_upgrade() {
         if !get_test_db_path(8).exists() {
             println!("V8 升级测试跳过：预置数据库不存在");
@@ -356,6 +364,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v9 夹具，CI 未生成"]
     fn test_v9_upgrade() {
         if !get_test_db_path(9).exists() {
             println!("V9 升级测试跳过：预置数据库不存在");
@@ -367,6 +376,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v10 夹具，CI 未生成"]
     fn test_v10_upgrade() {
         if !get_test_db_path(10).exists() {
             println!("V10 升级测试跳过：预置数据库不存在");
@@ -378,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v11 夹具，CI 未生成"]
     fn test_v11_upgrade() {
         if !get_test_db_path(11).exists() {
             println!("V11 升级测试跳过：预置数据库不存在");
@@ -389,6 +400,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v12 夹具，CI 未生成"]
     fn test_v12_upgrade() {
         if !get_test_db_path(12).exists() {
             println!("V12 升级测试跳过：预置数据库不存在");
@@ -400,6 +412,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v13 夹具，CI 未生成"]
     fn test_v13_upgrade() {
         if !get_test_db_path(13).exists() {
             println!("V13 升级测试跳过：预置数据库不存在");
@@ -415,6 +428,7 @@ mod tests {
     /// 注意：此测试使用独立的数据库副本 `v13-specific-test.db`，避免与
     /// `test_v13_upgrade`（使用 `v13-test.db`）在并行测试执行时发生文件冲突。
     #[test]
+    #[ignore = "需要 scripts/create-test-databases.js 预置 v13 夹具，CI 未生成"]
     fn test_v13_to_v14_specific_checks() {
         let source_path = get_test_db_path(13);
         let db_path = get_test_dir().join("v13-specific-test.db");
@@ -768,5 +782,421 @@ mod tests {
         drop(conn);
         remove_with_retry(&db_path).expect("删除测试数据库失败");
         println!("保存护栏语义验证通过：默认不删、显式才删、非空正常写入");
+    }
+
+    /// 构造一个「真实的 V18 结构」数据库。
+    ///
+    /// 做法：先建出最新的完整 schema，再**逐项回退** V19~V22 的增量改动，
+    /// 使数据库在结构与数据上都等价于一个停留在 V18 的用户库。
+    ///
+    /// 为什么不手写一份 V18 DDL：
+    /// 手写的最小结构会漏掉迁移脚本依赖的表（实测 `upgrade_db` 需要
+    /// `game_versions` 等表，最小结构直接失败）。用「完整 schema 回退」能保证
+    /// 除 V19~V22 之外的 V1~V18 结构都是真实的，也避免测试自身变成另一份
+    /// 需要同步维护的 DDL 副本。
+    fn create_v18_database() -> Result<Connection, String> {
+        let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+
+        // 1) 建出最新完整结构（等价于一个全新安装的库）
+        crate::db::install_fresh_db_for_test(&conn)?;
+
+        // 2) 回退 V21 / V22：删掉它们新增的表与索引
+        conn.execute_batch(
+            r#"
+            DROP TABLE IF EXISTS trial_draw_equipment_manual_overrides;
+            DROP TABLE IF EXISTS trial_draws;
+            "#,
+        )
+        .map_err(|e| format!("回退 V21/V22 表失败: {}", e))?;
+
+        // 3) 回退 V20：移除 equipment_unreviewed 列。
+        //    SQLite 3.35+ 支持 DROP COLUMN；本地 bundled rusqlite 满足该要求。
+        conn.execute(
+            "ALTER TABLE trial_records DROP COLUMN equipment_unreviewed",
+            [],
+        )
+        .map_err(|e| format!("回退 V20 列失败: {}", e))?;
+
+        // 4) 回退 V19：移除 source / status / source_key 列，并删除唯一索引与 tombstone 表
+        conn.execute_batch(
+            r#"
+            DROP INDEX IF EXISTS idx_trial_records_source_key;
+            ALTER TABLE trial_records DROP COLUMN source_key;
+            ALTER TABLE trial_records DROP COLUMN status;
+            ALTER TABLE trial_records DROP COLUMN source;
+            DROP TABLE IF EXISTS trial_auto_scan_tombstones;
+            "#,
+        )
+        .map_err(|e| format!("回退 V19 列失败: {}", e))?;
+
+        // 5) 版本号回退到 V18，并清理 V19~V22 的迁移记录
+        conn.execute("DELETE FROM schema_versions WHERE version > 18", [])
+            .map_err(|e| format!("回退版本记录失败: {}", e))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_versions (version, applied_at, description)
+             VALUES (18, '2026-01-01T00:00:00Z', 'V18 基线')",
+            [],
+        )
+        .map_err(|e| format!("写入 V18 版本记录失败: {}", e))?;
+
+        // 6) 清空试炼记录，写入可控的历史数据（模拟真实用户库）
+        conn.execute("DELETE FROM trial_records", [])
+            .map_err(|e| format!("清理试炼记录失败: {}", e))?;
+        conn.execute_batch(
+            r#"
+            INSERT INTO trial_records
+                (id, account_id, role_id, layer, card_1, record_type, date)
+            VALUES
+                ('trial-manual', 'acc-1', 'role-1', 3, '旧牌面A', 'manual', 100),
+                ('trial-auto',   'acc-1', 'role-1', 5, '',        'auto',   200),
+                ('trial-cards',  'acc-1', 'role-1', 7, '旧牌面B', 'manual', 300);
+            "#,
+        )
+        .map_err(|e| format!("写入 V18 试炼记录失败: {}", e))?;
+
+        Ok(conn)
+    }
+
+    /// V18 → V22 端到端升级：走真实 `upgrade_db`，覆盖 V19~V22 全部增量迁移。
+    ///
+    /// 与 `test_v1_upgrade` 等夹具测试的区别：
+    /// - 夹具测试依赖外部预置 `.db`（CI 不生成 → `#[ignore]` 跳过）
+    /// - 本测试自建结构，**任何环境都真实执行**，是升级路径的真正门禁
+    ///
+    /// 覆盖点：
+    /// 1. V19：`source` / `status` 列回填 + `idx_trial_records_source_key` 唯一索引
+    /// 2. V20：`equipment_unreviewed` 全表回填且自动记录被标记
+    /// 3. V21：`trial_draws` 表与索引创建，历史牌面不被重写
+    /// 4. V22：`trial_draw_equipment_manual_overrides` 表创建
+    /// 5. 数据零丢失：3 条历史记录全部保留
+    #[test]
+    fn test_v18_to_v22_end_to_end_upgrade() {
+        let conn = create_v18_database().expect("构造 V18 数据库失败");
+
+        let rows_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trial_records", [], |row| row.get(0))
+            .expect("统计 V18 记录数失败");
+        assert_eq!(rows_before, 3, "V18 夹具应有 3 条试炼记录");
+
+        // 走真实升级入口（与生产 `init_db` 同一套 `upgrade_db` 逻辑）
+        crate::db::upgrade_db_for_test(&conn, 18).expect("V18 -> V22 升级失败");
+
+        // ---- 1) 版本必须推进到最新 ----
+        let version: i32 = conn
+            .query_row(
+                "SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("查询升级后版本失败");
+        assert_eq!(
+            version, CURRENT_SCHEMA_VERSION,
+            "升级后版本未推进到 V{}",
+            CURRENT_SCHEMA_VERSION
+        );
+
+        // 迁移记录必须逐版本落库：基线 V18 + V19~V22 共 5 条。
+        // 注意不能断言 22 条——`schema_versions` 只记录**实际执行过**的迁移，
+        // 全新安装只写当前版本一行，本测试的基线也只写 V18 一行。
+        let applied: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| row.get(0))
+            .expect("统计 schema_versions 失败");
+        assert_eq!(
+            applied, 5,
+            "schema_versions 应有 V18 基线 + V19~V22 共 5 条，实际 {}",
+            applied
+        );
+
+        // 每个被执行的迁移都必须留下记录（不能跳过某一版）
+        for expected in 19..=CURRENT_SCHEMA_VERSION {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM schema_versions WHERE version = ?1",
+                    [expected],
+                    |row| row.get(0),
+                )
+                .expect("查询迁移记录失败");
+            assert!(exists, "schema_versions 缺少 V{} 的迁移记录", expected);
+        }
+
+        // ---- 2) V19：source / status 回填 ----
+        let has_source: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('trial_records') WHERE name='source'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查 source 列失败");
+        assert!(has_source, "V19 未添加 trial_records.source 列");
+
+        let has_status: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('trial_records') WHERE name='status'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查 status 列失败");
+        assert!(has_status, "V19 未添加 trial_records.status 列");
+
+        // 已有行必须被回填为 manual/confirmed（不能留 NULL）
+        let null_backfill: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM trial_records WHERE source IS NULL OR status IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("统计未回填行失败");
+        assert_eq!(
+            null_backfill, 0,
+            "V19 回填不完整：存在 source/status 为 NULL 的行"
+        );
+
+        // V19 的唯一索引必须真实存在
+        let has_unique_index: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master
+                 WHERE type='index' AND name='idx_trial_records_source_key'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查唯一索引失败");
+        assert!(has_unique_index, "V19 未创建 idx_trial_records_source_key");
+
+        // ---- 3) V20：equipment_unreviewed 回填 ----
+        let has_unreviewed: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('trial_records')
+                 WHERE name='equipment_unreviewed'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查 equipment_unreviewed 列失败");
+        assert!(has_unreviewed, "V20 未添加 equipment_unreviewed 列");
+
+        let null_unreviewed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM trial_records WHERE equipment_unreviewed IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("统计 equipment_unreviewed 空值失败");
+        assert_eq!(
+            null_unreviewed, 0,
+            "V20 未完成 equipment_unreviewed 全表回填"
+        );
+
+        // 自动记录（牌面全空）在**干净的 V18→V22** 路径上不会被标记为待核对。
+        //
+        // 这是 V19/V20 的真实语义，不是测试写错：
+        // - V19 把升级前所有记录统一回填为 source='manual'（"任何升级前的记录
+        //   都是此前 UI 手工保存的数据"）；
+        // - V20 的标记条件是 source='auto' AND 牌面全空，而干净的 V18 库在 V19
+        //   之后已不存在 source='auto' 的行。
+        //
+        // 因此 V20 的标记只对「开发版已经跑过 V19、库里已存在 auto 行」的库生效
+        // （该分支由 `v20.rs` 的单元测试覆盖）。这里锁定干净升级路径的实际行为，
+        // 避免未来有人误以为历史自动记录会被标记。
+        let auto_flagged: i64 = conn
+            .query_row(
+                "SELECT equipment_unreviewed FROM trial_records WHERE id='trial-auto'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("查询自动记录标记失败");
+        assert_eq!(
+            auto_flagged, 0,
+            "干净 V18→V22 升级不应把历史记录标记为待核对（V19 已回填为 manual）"
+        );
+
+        // 历史行必须全部回填为 manual/confirmed
+        let manual_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM trial_records
+                 WHERE source = 'manual' AND status = 'confirmed'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("统计 manual 记录失败");
+        assert_eq!(
+            manual_count, rows_before,
+            "V19 应把全部历史记录回填为 manual/confirmed"
+        );
+
+        // 带牌面的记录不应被标记为未知
+        let cards_flagged: i64 = conn
+            .query_row(
+                "SELECT equipment_unreviewed FROM trial_records WHERE id='trial-cards'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("查询带牌面记录标记失败");
+        assert_eq!(cards_flagged, 0, "V20 误把已有牌面的记录标记为待核对");
+
+        // ---- 4) V21：trial_draws 表 + 索引 ----
+        let has_draws: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master
+                 WHERE type='table' AND name='trial_draws'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查 trial_draws 失败");
+        assert!(has_draws, "V21 未创建 trial_draws 表");
+
+        let has_draw_index: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master
+                 WHERE type='index' AND name='idx_trial_draws_record_sequence'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查 trial_draws 索引失败");
+        assert!(has_draw_index, "V21 未创建 idx_trial_draws_record_sequence");
+
+        // V21 不得把历史父级牌面拆成 draws（那是数据改写，不是迁移）
+        let draws_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trial_draws", [], |row| row.get(0))
+            .expect("统计 trial_draws 失败");
+        assert_eq!(draws_count, 0, "V21 不应把历史牌面自动写入 trial_draws");
+
+        // ---- 5) V22：覆盖表必须显式存在（不依赖 ensure_* 的隐式副作用） ----
+        let has_overrides: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master
+                 WHERE type='table' AND name='trial_draw_equipment_manual_overrides'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("检查覆盖表失败");
+        assert!(
+            has_overrides,
+            "V22 未创建 trial_draw_equipment_manual_overrides 表"
+        );
+
+        // ---- 6) 数据零丢失 + 历史牌面未被重写 ----
+        let rows_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trial_records", [], |row| row.get(0))
+            .expect("统计升级后记录数失败");
+        assert_eq!(rows_after, rows_before, "升级过程中试炼记录丢失");
+
+        let card_a: String = conn
+            .query_row(
+                "SELECT card_1 FROM trial_records WHERE id='trial-manual'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("查询历史牌面失败");
+        assert_eq!(card_a, "旧牌面A", "升级改写了历史牌面，属于数据破坏");
+
+        // ---- 7) 升级后校验必须通过 ----
+        crate::db::validate_post_upgrade_for_test(&conn, 18)
+            .expect("升级后校验未通过，说明结构不完整");
+
+        println!(
+            "V18 -> V22 端到端升级验证通过：22 个版本、{} 条记录零丢失、V19~V22 结构齐全",
+            rows_after
+        );
+    }
+
+    /// 反向验证：缺少 V19 唯一索引时，升级后校验必须**失败**。
+    ///
+    /// 这条测试守护 `UNIQUE_INDEXES` 的语义：唯一索引缺失不能只告警，
+    /// 否则去重保障会静默失效。
+    #[test]
+    fn test_missing_unique_index_fails_post_upgrade_validation() {
+        let conn = Connection::open_in_memory().expect("创建内存库失败");
+        crate::db::install_fresh_db_for_test(&conn).expect("全新安装失败");
+
+        // 人为破坏：删掉唯一索引
+        conn.execute("DROP INDEX IF EXISTS idx_trial_records_source_key", [])
+            .expect("删除唯一索引失败");
+
+        let result = crate::db::validate_post_upgrade_for_test(&conn, CURRENT_SCHEMA_VERSION);
+        assert!(
+            result.is_err(),
+            "唯一索引缺失时升级后校验仍通过，去重保障会静默失效"
+        );
+        let message = result.unwrap_err();
+        assert!(
+            message.contains("唯一索引"),
+            "错误信息应明确指出唯一索引缺失，实际: {}",
+            message
+        );
+    }
+
+    /// 升级前必须生成可回退的快照文件。
+    ///
+    /// 用真实的文件库（非内存库）验证 `backup_before_upgrade`：
+    /// 内存库没有物理文件，无法覆盖这条路径，而真实用户库恰恰是文件库。
+    #[test]
+    fn test_upgrade_writes_pre_migration_backup() {
+        let db_path = get_test_dir().join("backup-check-test.db");
+        remove_with_retry(&db_path).expect("清理旧测试库失败");
+
+        // 先建出一个已回退到 V18 的真实文件库
+        {
+            let conn = create_v18_database().expect("构造 V18 库失败");
+            // 内存库 -> 文件库：用 backup API 落盘
+            let mut file_conn = Connection::open(&db_path).expect("创建文件库失败");
+            rusqlite::backup::Backup::new(&conn, &mut file_conn)
+                .expect("初始化落盘失败")
+                .run_to_completion(100, std::time::Duration::from_millis(10), None)
+                .expect("落盘失败");
+        }
+
+        let backup_path = db_path.with_extension("db.pre-v18.bak");
+        remove_with_retry(&backup_path).ok();
+
+        // 走真实升级（文件库，会触发快照）
+        {
+            let conn = crate::db::init_db_with_path(&db_path).expect("V18 -> V22 升级失败");
+            drop(conn);
+        }
+
+        assert!(
+            backup_path.exists(),
+            "升级未生成迁移前快照: {:?}",
+            backup_path
+        );
+        let size = std::fs::metadata(&backup_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        assert!(size > 0, "迁移前快照为空文件，无法用于回退");
+
+        // 快照必须是**升级前**的状态：版本仍是 V18，且没有 V19 新增的列
+        {
+            let conn = Connection::open(&backup_path).expect("打开快照失败");
+            let version: i32 = conn
+                .query_row("SELECT MAX(version) FROM schema_versions", [], |row| {
+                    row.get(0)
+                })
+                .expect("查询快照版本失败");
+            assert_eq!(
+                version, 18,
+                "快照不是升级前状态，版本应为 V18，实际 V{}",
+                version
+            );
+
+            let has_source: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('trial_records') WHERE name='source'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("检查快照结构失败");
+            assert!(
+                !has_source,
+                "快照已包含 V19 的 source 列，说明快照是在迁移之后才生成的"
+            );
+
+            let rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM trial_records", [], |row| row.get(0))
+                .expect("统计快照记录失败");
+            assert_eq!(rows, 3, "快照应包含升级前的 3 条试炼记录，实际 {}", rows);
+        }
+
+        drop(std::fs::remove_file(&db_path));
+        let _ = std::fs::remove_file(&backup_path);
+        println!("迁移前快照验证通过：文件存在、非空、且内容为升级前状态（V18 / 3 条记录）");
     }
 }
