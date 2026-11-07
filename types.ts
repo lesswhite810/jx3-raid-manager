@@ -265,6 +265,8 @@ export interface Raid {
   difficulty: '普通' | '英雄' | '挑战';
   playerCount: 10 | 25;
   version?: string;
+  /** 所属赛季 id；历史数据可能为空，前端按「未知赛季」处理，不能当作本赛季 */
+  seasonId?: number;
   notes?: string;
   isActive: boolean;
   static?: boolean;

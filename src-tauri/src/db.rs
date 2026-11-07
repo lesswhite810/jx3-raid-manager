@@ -5668,7 +5668,7 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare("SELECT id, name, difficulty, player_count, version, notes, is_active, is_static FROM raids")
+        .prepare("SELECT id, name, difficulty, player_count, version, notes, is_active, is_static, season_id FROM raids")
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
 
@@ -5683,6 +5683,7 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
         let notes: Option<String> = row.get(5).map_err(|e| e.to_string())?;
         let is_active: i64 = row.get(6).map_err(|e| e.to_string())?;
         let is_static: i64 = row.get(7).map_err(|e| e.to_string())?;
+        let season_id: Option<i64> = row.get(8).map_err(|e| e.to_string())?;
 
         let mut raid = serde_json::json!({
             "name": name,
@@ -5691,6 +5692,12 @@ pub fn db_get_raids() -> Result<Vec<String>, String> {
             "isActive": is_active == 1,
             "static": is_static == 1
         });
+
+        // season_id 用于前端判断副本所属赛季（周常区域据此区分本赛季与历史赛季）。
+        // 历史数据可能为空，前端需按「未知赛季」处理，不能当作本赛季。
+        if let Some(sid) = season_id {
+            raid["seasonId"] = serde_json::json!(sid);
+        }
 
         if let Some(v) = &version {
             if !v.is_empty() {

@@ -143,6 +143,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
               difficulty: '普通',
               playerCount: 25,
               version: '丝路风雨',
+              seasonId: 5,
               isActive: true,
               static: true,
               bosses: [
@@ -156,6 +157,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
               difficulty: '英雄',
               playerCount: 25,
               version: '丝路风雨',
+              seasonId: 5,
               isActive: true,
               static: true,
               bosses: [

@@ -10,7 +10,7 @@ import { db } from '../services/db';
 import { useCancellableEffect } from '../hooks/useCancellableEffect';
 import { RaidDetail } from './RaidDetail';
 import { PendingRecordsPanel } from './PendingRecordsPanel';
-import { buildWeeklyRaidGroups, WeeklyRaidGroup } from '../utils/weeklyRaids';
+import { buildWeeklyRaidGroups, SeasonContext, WeeklyRaidGroup } from '../utils/weeklyRaids';
 
 interface RaidManagerProps {
   raids: Raid[];
@@ -114,6 +114,34 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const [favoriteRaids, setFavoriteRaids] = useState<Set<string>>(new Set());
   // 标记收藏是否已加载完成，避免在 selectedVersion 初始化时被空状态误导
   const favoritesLoadedRef = useRef(false);
+  // 当前赛季上下文：赛季 id 用于同版本内区分新旧赛季，大版本名用于兜底
+  // （早期预置副本只写了 version、库中 season_id 为 NULL，只能按大版本判断）。
+  const [seasonContext, setSeasonContext] = useState<SeasonContext>({
+    currentSeasonId: null,
+    currentVersionName: null,
+  });
+
+  useCancellableEffect((signal) => {
+    const loadSeasonContext = async () => {
+      try {
+        const season = await db.getCurrentSeason();
+        if (signal.cancelled) return;
+        const seasonId = Number.isInteger(season?.id) ? (season?.id ?? null) : null;
+
+        let versionName: string | null = null;
+        if (season && Number.isInteger(season.versionId)) {
+          const versions = await db.getGameVersions();
+          if (signal.cancelled) return;
+          versionName = versions.find(version => version.id === season.versionId)?.name ?? null;
+        }
+
+        setSeasonContext({ currentSeasonId: seasonId, currentVersionName: versionName });
+      } catch (err) {
+        console.error('Failed to load current season:', err);
+      }
+    };
+    loadSeasonContext();
+  }, []);
 
   // 加载收藏列表
   useCancellableEffect((signal) => {
@@ -230,8 +258,21 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     return !!raid.static;
   };
 
+  const weeklyRaidGroups = useMemo<WeeklyRaidGroup[]>(
+    () => buildWeeklyRaidGroups(raids, weeklyRaidNames, favoriteRaids, seasonContext),
+    [raids, weeklyRaidNames, favoriteRaids, seasonContext],
+  );
+
+  // 本周团队秘境区域已经展示过的难度（按副本难度 key）。
+  // 收藏区按 key 去重，而不是按副本名：历史赛季副本在本周区只展示 10 人难度，
+  // 其 25 人难度仍需留在收藏区，否则用户会失去这些难度的入口。
+  const weeklyCoveredRaidKeys = useMemo(
+    () => new Set(weeklyRaidGroups.flatMap(group => group.raids.map(getRaidKey))),
+    [weeklyRaidGroups],
+  );
+
   // 计算收藏的副本列表（只显示激活的难度）
-  // 顺序由后端按版本排序返回
+  // 顺序由后端按版本排序返回；已在本周团队秘境展示过的难度不再重复
   const favoriteMergedRaids = useMemo(() => {
     const favoriteList: MergedRaid[] = [];
 
@@ -240,6 +281,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     raids.forEach(raid => {
       // 只处理收藏的副本
       if (!favoriteRaids.has(raid.name)) return;
+      // 该难度已在本周团队秘境区域展示
+      if (weeklyCoveredRaidKeys.has(getRaidKey(raid))) return;
       // 只显示激活的难度
       if (!raid.isActive) return;
 
@@ -288,12 +331,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     });
 
     return favoriteList;
-  }, [raids, favoriteRaids]);
+  }, [raids, favoriteRaids, weeklyCoveredRaidKeys]);
 
-  const weeklyRaidGroups = useMemo<WeeklyRaidGroup[]>(
-    () => buildWeeklyRaidGroups(raids, weeklyRaidNames, favoriteRaids),
-    [raids, weeklyRaidNames, favoriteRaids],
-  );
   const hasCollectionEntries = favoriteMergedRaids.length > 0 || weeklyRaidGroups.length > 0 || weeklyRaidStatus !== 'success';
 
   // 初始化 / 校正 selectedVersion：等收藏与版本字典都加载完后再决定默认视图
@@ -551,7 +590,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             右键难度框可单独禁用/启用
           </div>
 
-          {/* 选中收藏视图且有收藏时显示收藏列表，否则按版本分组显示当前赛季 */}
+          {/* 选中收藏视图且有收藏时显示收藏列表，否则按版本分组显示当前赛季；本周名单内的已收藏副本优先显示在本周区域 */}
           {selectedVersion === FAVORITE_VIEW && hasCollectionEntries ? (
             <div className="space-y-4">
               {weeklyRaidStatus !== 'success' && (
@@ -570,24 +609,68 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                     <div className="h-px bg-ds-success-soft flex-1"></div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                    {weeklyRaidGroups.map(group => (
-                      <div key={`weekly-${group.name}`} className={`p-4 rounded-card border ${group.missingTenPlayerConfig ? 'border-ds-warning-soft bg-ds-warning-soft/30' : group.raids.every(raid => !raid.isActive) ? 'border-base bg-base opacity-70' : 'border-ds-success-soft bg-ds-success-soft/30'}`}>
-                        <div className="flex items-center gap-2 mb-3">
-                          <span className="p-1.5 rounded-tag bg-ds-success-soft text-ds-success-strong"><Shield size={16} /></span>
-                          <div>
-                            <h3 className="font-semibold text-sm text-main">{group.name}</h3>
-                            <p className="text-xs text-muted">{group.missingTenPlayerConfig ? '未找到10人配置' : group.raids.every(raid => !raid.isActive) ? '10人难度（已禁用）' : '10人难度'}</p>
+                    {weeklyRaidGroups.map(group => {
+                      const allDisabled = !group.missingConfig && group.raids.every(raid => !raid.isActive);
+                      const hasMultiplePlayerCounts = new Set(group.raids.map(raid => raid.playerCount)).size > 1;
+                      // 本赛季副本显示全部难度；历史赛季副本只显示 10 人难度
+                      const scopeLabel = group.missingTenPlayerConfig
+                        ? '未找到10人配置，已显示现有难度'
+                        : group.scope === 'history' ? '10人难度' : '全部难度';
+                      const subtitle = group.missingConfig
+                        ? '未找到副本配置'
+                        : [
+                          scopeLabel + (allDisabled ? '（已禁用）' : ''),
+                          group.isFavorite ? '已收藏' : null,
+                        ].filter(Boolean).join(' · ');
+                      return (
+                        <div key={`weekly-${group.name}`} className={`p-4 rounded-card border ${group.missingConfig || group.missingTenPlayerConfig ? 'border-ds-warning-soft bg-ds-warning-soft/30' : allDisabled ? 'border-base bg-base opacity-70' : 'border-ds-success-soft bg-ds-success-soft/30'}`}>
+                          <div className="flex items-start justify-between gap-2 mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`p-1.5 rounded-tag ${group.isFavorite ? 'bg-ds-warning-soft text-ds-warning-strong' : 'bg-ds-success-soft text-ds-success-strong'}`}>
+                                {group.isFavorite ? <Star size={16} fill="currentColor" /> : <Shield size={16} />}
+                              </span>
+                              <div>
+                                <h3 className="font-semibold text-sm text-main">{group.name}</h3>
+                                <p className="text-xs text-muted">{subtitle}</p>
+                              </div>
+                            </div>
+                            {!group.missingConfig && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleFavorite(group.name);
+                                }}
+                                className={`transition-all p-1 rounded-md ${group.isFavorite
+                                  ? 'text-ds-warning-strong hover:bg-ds-warning-soft'
+                                  : 'text-muted hover:text-ds-warning-strong hover:bg-ds-warning-soft/50'
+                                  }`}
+                                title={group.isFavorite ? '取消收藏' : '收藏此副本'}
+                              >
+                                <Star size={16} fill={group.isFavorite ? 'currentColor' : 'none'} />
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {group.raids.map(raid => {
+                              const label = hasMultiplePlayerCounts
+                                ? `${raid.playerCount}人${DIFFICULTY_LABELS[raid.difficulty]}`
+                                : DIFFICULTY_LABELS[raid.difficulty];
+                              return (
+                                <div
+                                  key={getRaidKey(raid)}
+                                  onClick={() => setSelectedRaid(raid)}
+                                  onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); toggleRaidDifficultyStatus(getRaidKey(raid)); }}
+                                  className={`px-2 py-1 text-xs font-medium rounded-tag border cursor-pointer ${raid.isActive ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft' : 'bg-base text-muted border-base'}`}
+                                  title={`${label} - ${raid.isActive ? '点击进入详情，右键禁用' : '已禁用，点击进入详情，右键启用'}`}
+                                >
+                                  {label}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {group.raids.map(raid => (
-                            <div key={getRaidKey(raid)} onClick={() => setSelectedRaid(raid)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); toggleRaidDifficultyStatus(getRaidKey(raid)); }} className={`px-2 py-1 text-xs font-medium rounded-tag border cursor-pointer ${raid.isActive ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft' : 'bg-base text-muted border-base'}`} title={`${raid.isActive ? '点击进入详情，右键禁用' : '已禁用，点击进入详情，右键启用'}`}>
-                              10人{DIFFICULTY_LABELS[raid.difficulty]}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}
