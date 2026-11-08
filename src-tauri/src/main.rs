@@ -195,6 +195,7 @@ fn main() {
     let builder = tauri::Builder::default()
         // 必须第一个注册：重复实例在初始化其他插件、窗口和应用数据之前退出。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            log::info!("[恢复窗口] 触发来源: 重复启动 exe (single-instance 回调)");
             desktop::restore_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
