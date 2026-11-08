@@ -29,8 +29,13 @@ FunctionEnd
     Push "$INSTDIR"
     Call un.DeleteManagedDataFilesInDir
 
-    Push "$PROFILE\.jx3-raid-manager"
-    Call un.DeleteManagedDataFilesInDir
+    ; 注意：不要在这里无条件删除 $PROFILE\.jx3-raid-manager。
+    ; 该目录是便携版的默认数据目录（对应 Rust get_home_app_dir() 返回的
+    ; ~/.jx3-raid-manager）；安装版的数据只会落在 $INSTDIR 或
+    ; data-dir-installer.ini 记录的自定义目录，两者必须严格隔离。
+    ; 卸载安装版时删这里会误删便携版的数据库与日志，故不再调用清理函数；
+    ; 下面 $0/$1 分支里的 != "$PROFILE\.jx3-raid-manager" 守卫作为第二道防线，
+    ; 即便旧版 ini 恰好指向该目录也会跳过。
 
     ${If} $0 != ""
     ${AndIf} $0 != "$INSTDIR"
