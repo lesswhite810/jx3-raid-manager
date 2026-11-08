@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
-import { Palette, Download, FolderOpen, RotateCcw, MessageCircle } from 'lucide-react';
+import { Palette, Download, FolderOpen, RotateCcw, MessageCircle, HandHeart } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { db } from '../services/db';
 import { appConfigService } from '../services/appConfig';
@@ -11,6 +11,7 @@ import { ConfigUpdatePanel } from './config-panels/ConfigUpdatePanel';
 import { ConfigGamePanel } from './config-panels/ConfigGamePanel';
 import { ConfigAdvancedPanel } from './config-panels/ConfigAdvancedPanel';
 import { ConfigFeedbackPanel } from './config-panels/ConfigFeedbackPanel';
+import { ConfigSupportPanel } from './config-panels/ConfigSupportPanel';
 
 interface ConfigManagerProps {
     updateRuntimeInfo: UpdateRuntimeInfo | null;
@@ -19,7 +20,7 @@ interface ConfigManagerProps {
     onCheckForUpdates: () => Promise<void>;
 }
 
-type ConfigCategoryId = 'theme' | 'update' | 'game' | 'advanced' | 'feedback';
+type ConfigCategoryId = 'theme' | 'update' | 'game' | 'advanced' | 'feedback' | 'support';
 
 interface ConfigCategoryDef {
     id: ConfigCategoryId;
@@ -33,6 +34,7 @@ const CONFIG_CATEGORIES: ConfigCategoryDef[] = [
     { id: 'game', label: '游戏配置', icon: <FolderOpen className="w-4 h-4" /> },
     { id: 'advanced', label: '自定义配置', icon: <RotateCcw className="w-4 h-4" /> },
     { id: 'feedback', label: '问题反馈', icon: <MessageCircle className="w-4 h-4" /> },
+    { id: 'support', label: '赞赏', icon: <HandHeart className="w-4 h-4" /> },
 ];
 
 export const ConfigManager: React.FC<ConfigManagerProps> = ({
@@ -157,6 +159,8 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                 );
             case 'feedback':
                 return <ConfigFeedbackPanel />;
+            case 'support':
+                return <ConfigSupportPanel />;
         }
     };
 
