@@ -26,7 +26,7 @@ describe('ConfigSupportPanel', () => {
         const markup = renderPanel();
         expect(markup).toContain('完全免费');
         expect(markup).toContain('自愿');
-        expect(markup).toContain('全部功能始终免费');
+        expect(markup).toContain('扫码不解锁任何功能');
     });
 
     it('默认不渲染放大层，仅提供放大入口', () => {

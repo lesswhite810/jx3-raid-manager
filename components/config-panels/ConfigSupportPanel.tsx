@@ -9,10 +9,12 @@ import { HandHeart, X } from 'lucide-react';
  * - 完全自愿，与功能解锁无关，扫码不产生任何权益
  * - 不自动弹出，仅用户主动打开配置的该分类时才出现
  * - 图片走 public/ 静态资源，不联网拉取，也不会被远端替换
- * - 原图是整张赞赏卡（含底部文案与横幅），小程序码圆环只占画面约 43%，
- *   所以默认尺寸之外额外提供点击放大，放大后圆环直径接近 240px，保证可扫
+ * - 原图是整张赞赏卡，小程序码圆环只占画面约 43%，因此点击可弹出放大层扫码
  *
- * 引导语保持在 20 字以内，避免变成软性募捐话术。
+ * 布局说明：配置弹窗是固定 h-[640px] + max-h-[90vh]，内容区高度有限，
+ * 所以外层用 h-full + flex-1 min-h-0 铺满，图片尺寸取
+ * min(300px, calc(90vh - 290px))（290px 为标题、内边距、两行文案等占位），
+ * 窗口较小时图片跟着缩小，任何高度下都不会顶出滚动条。
  */
 export const ConfigSupportPanel: React.FC = () => {
     const [isZoomed, setIsZoomed] = useState(false);
@@ -46,32 +48,34 @@ export const ConfigSupportPanel: React.FC = () => {
     }, [closeZoom, isZoomed]);
 
     return (
-        <div className="bg-surface p-6 rounded-xl shadow-sm border border-base">
-            <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-                    <HandHeart className="w-5 h-5" />
+        <div className="bg-surface p-5 rounded-xl shadow-sm border border-base h-full flex flex-col min-h-0">
+            <div className="flex items-center gap-3 mb-3 flex-shrink-0">
+                <div className="w-9 h-9 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+                    <HandHeart className="w-4 h-4" />
                 </div>
-                <h3 className="text-lg font-bold text-main">赞赏</h3>
+                <h3 className="text-base font-bold text-main">赞赏</h3>
             </div>
 
-            <div className="flex flex-col items-center bg-base/30 rounded-lg px-4 py-6">
+            <div className="flex-1 min-h-0 flex flex-col items-center justify-center bg-base/30 rounded-lg px-4 py-4">
                 <button
                     ref={triggerRef}
                     type="button"
                     onClick={() => setIsZoomed(true)}
                     aria-haspopup="dialog"
                     aria-label="放大查看微信赞赏码"
-                    className="w-[320px] max-w-full rounded-lg overflow-hidden border border-base bg-white transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    className="group relative inline-flex max-w-full cursor-zoom-in rounded-lg overflow-hidden border border-base bg-white transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                     <img
                         src="/wechat-reward-qr.png"
                         alt="微信赞赏码"
-                        className="w-full h-auto block"
+                        className="block h-[min(300px,calc(90vh_-_290px))] w-[min(300px,calc(90vh_-_290px))] max-w-full object-contain"
                     />
+                    <span className="absolute bottom-2 right-2 rounded-md bg-black/55 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                        点击放大
+                    </span>
                 </button>
-                <p className="text-sm text-main mt-4">完全免费，赞赏纯属自愿</p>
-                <p className="text-xs text-muted mt-1.5">全部功能始终免费，扫码不会解锁任何额外功能</p>
-                <p className="text-xs text-muted mt-1">点击图片可放大，方便手机扫码</p>
+                <p className="text-sm text-main mt-3 flex-shrink-0">完全免费，赞赏纯属自愿</p>
+                <p className="text-xs text-muted mt-1 flex-shrink-0">点击图片可放大，扫码不解锁任何功能</p>
             </div>
 
             {isZoomed && createPortal(
