@@ -35,7 +35,11 @@ export default {
     extend: {
       colors: {
         // 既有 token（保留，向后兼容 · 桌面工具型 chrome）
-        base: "rgb(var(--bg-base) / <alpha-value>)",
+        // 此处刻意不定义名为 base 的颜色键：它与内建的 1rem 字号类名相同，
+        // 会额外派生一条同名文字颜色规则并造成冲突。相关的背景色 / 描边色 /
+        // 焦点环色 / 焦点环偏移色由下方各用途配置键分别显式提供（分色线默认
+        // 继承描边色），因此无需在此登记。
+        // 注：本文件本身也在 content 扫描范围内，注释请勿写出形如工具类的字符串。
         surface: "rgb(var(--bg-surface) / <alpha-value>)",
         main: "rgb(var(--text-main) / <alpha-value>)",
         muted: "rgb(var(--text-muted) / <alpha-value>)",
@@ -115,6 +119,15 @@ export default {
         'ds-border-strong': dsColor('--border-strong'),
         'ds-accent': dsColor('--accent'),
         'ds-accent-strong': dsColor('--accent-strong'),
+      },
+      // 上节移除该颜色键后，默认回退（继承颜色表）不再含名为 base 的项，
+      // 焦点环相关用途需显式补齐，否则组件层 @apply 用到的对应类名会编译失败。
+      // 取值沿用原先的 --bg-base 变量，保持渲染一致。
+      ringColor: {
+        base: "rgb(var(--bg-base) / <alpha-value>)",
+      },
+      ringOffsetColor: {
+        base: "rgb(var(--bg-base) / <alpha-value>)",
       },
       borderRadius: {
         lg: "var(--radius)",                         // 既有 · 保留 = 8px（back-compat）

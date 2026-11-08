@@ -253,10 +253,10 @@ jx3-raid-manager/
 
 ## ⚠️ 重要注意事项
 
-### Tailwind CSS 自定义颜色冲突
-`tailwind.config.js` 中定义了 `colors.base` 等自定义颜色，这会导致 Tailwind 生成 `text-base` 颜色工具类，**覆盖**内置的 `text-base`（font-size: 1rem）。
+### Tailwind CSS 自定义颜色冲突（已修复）
+历史上 `tailwind.config.js` 的 `colors.base` 会生成 `text-base` 颜色工具类，**覆盖**内置的 `text-base`（font-size: 1rem）。该问题已于 2026-11-08 在配置层修复：移除 `colors.base`，改由显式的 `backgroundColor.base` / `borderColor.base` / `ringColor.base` / `ringOffsetColor.base` 提供各色系 `base` 工具类（`divideColor` 继承 `borderColor`）。
 
-**规则**：当需要 1rem 字号时，使用 `text-[1rem]` 而非 `text-base`。
+**规则**：`text-base` 已恢复为纯字号语义（1rem），可正常使用；`text-[1rem]` 为撞名时期的历史绕行写法，等价且保留即可。切勿再把 `base` 放回 `theme.extend.colors`。
 
 ### 设计规范
 收入/支出的图标与颜色已有统一规范（v2.2.0 沉香褐基调），详见 `specs/design-tokens.md`。

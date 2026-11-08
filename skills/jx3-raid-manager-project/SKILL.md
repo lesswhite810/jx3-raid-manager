@@ -29,7 +29,7 @@ Repository-specific workflow for JX3 Raid Manager. Use it to stay aligned with t
 - `ds-*` colors **do** support opacity modifiers (`bg-ds-success-soft/30`) since 2026-09-11, implemented via `color-mix()` in `tailwind.config.js`. Keep this in mind before "fixing" such classes as broken; they render as authored. Requires Chromium 111+ / WebView2.
 - **Never put two unprefixed `bg-*` classes on one element expecting them to stack.** `background-color` is a single property, so the class appearing later in the generated stylesheet wins regardless of source order — `bg-surface bg-ds-warning-soft/30` silently loses the tint. To layer a tint over a base color, use `background-image`, which does stack over `background-color`: `bg-surface bg-gradient-to-b from-ds-warning-soft/30 to-ds-warning-soft/30 dark:from-ds-warning-soft/10 dark:to-ds-warning-soft/10` (identical from/to = flat tint). The repo already uses this idiom in `RoleRecordsModal.tsx` and `RaidDetail.tsx`.
 - Prefer semantic Tailwind classes such as `bg-surface`, `border-base`, and `text-muted`.
-- When 1rem text is needed, prefer `text-[1rem]` because this repo has a `text-base` naming collision risk.
+- `text-base` is the normal 1rem font-size utility (the old `colors.base` collision was fixed 2026-11-08 by removing `colors.base` and adding explicit `ringColor`/`ringOffsetColor` `base` keys). Existing `text-[1rem]` usages are equivalent historical workarounds; keep them, no bulk rewrite needed. Never add `base` back to `theme.extend.colors`.
 
 ## Version And Release Checklist
 

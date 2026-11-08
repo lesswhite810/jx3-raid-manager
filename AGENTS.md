@@ -118,8 +118,9 @@ npm run version:prepare -- --next-patch-from 2.1.19
 
 ### 5.7 已知样式注意事项
 
-- 如果项目 `tailwind.config.js` 中存在自定义 `base` 颜色同名冲突，需要警惕 `text-base` 被覆盖问题。
-- 当需要明确 1rem 字号且项目確实存在这类冲突时，优先使用 `text-[1rem]` 而不是 `text-base`。
+- 历史上 `tailwind.config.js` 的 `colors.base` 会生成 `.text-base { color }`，与内建 `text-base`（font-size: 1rem）撞名，导致 `text-base` 单独使用时被误染色。该问题已于 2026-11-08 在配置层修复：移除 `colors.base`，并由显式的 `backgroundColor.base` / `borderColor.base` / `ringColor.base` / `ringOffsetColor.base` 提供各色系的 `base` 工具类（`divideColor` 继承 `borderColor`）。**`text-base` 现已恢复为纯字号语义，可正常使用。**
+- 修改 `tailwind.config.js` 的颜色键时，切勿再把 `base` 放回 `theme.extend.colors`；如需 `*-base` 颜色类，请改用对应的按用途配置键（如 `backgroundColor.base`）。
+- 仓库中现存的 `text-[1rem]` 写法是撞名时期的历史绕行，等价于 `text-base`，保留即可，无需批量回改。
 
 ## 6. 数据与错误处理
 
