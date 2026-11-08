@@ -111,3 +111,7 @@ docs/
 
 # AI 会话与记忆数据（不入版本控制）
 .workbuddy/
+
+# 视频抽帧/裁剪产物（AI 视频分析临时文件）
+.video_crops/
+.video_frames/
