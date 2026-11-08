@@ -263,7 +263,7 @@ export const ImportRolesModal: React.FC<ImportRolesModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ds-scrim backdrop-blur-sm overflow-hidden"
       onClick={onClose}
     >
       <div

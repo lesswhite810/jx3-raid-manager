@@ -499,11 +499,11 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       {/* 记录列表 Modal */}
       {isModalOpen && createPortal(
         <div
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
+          className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[100] p-4"
           onClick={() => setIsModalOpen(false)}
         >
           <div
-            className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col animate-in"
+            className="bg-surface border border-base rounded-2xl shadow-ds-modal w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col animate-in"
             onClick={e => e.stopPropagation()}
           >
             {/* 标题栏 */}
@@ -679,11 +679,11 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       {/* 编辑弹窗 */}
       {editingRecord && editForm && createPortal(
         <div
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-ds-scrim backdrop-blur-sm z-[110] flex items-center justify-center p-4"
           onClick={closeEditModal}
         >
           <div
-            className="bg-surface rounded-xl shadow-ds-modal w-full max-w-lg overflow-hidden animate-in"
+            className="bg-surface border border-base rounded-xl shadow-ds-modal w-full max-w-lg overflow-hidden animate-in"
             onClick={e => e.stopPropagation()}
           >
             {/* 标题栏 */}
@@ -958,11 +958,11 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       {/* CD 冲突确认弹窗 */}
       {cdConflictRecord && createPortal(
         <div
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[120] p-4"
+          className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[120] p-4"
           onClick={() => setCdConflictRecord(null)}
         >
           <div
-            className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-sm p-6 animate-in"
+            className="bg-surface border border-base rounded-2xl shadow-ds-modal w-full max-w-sm p-6 animate-in"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-4">

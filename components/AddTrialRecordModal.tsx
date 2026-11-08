@@ -803,7 +803,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     const isTradable = flippedEquip && (flippedEquip.BindType === 1 || flippedEquip.BindType === 2);
 
     return createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ds-scrim backdrop-blur-sm overflow-hidden">
             <div className="bg-surface w-full max-w-3xl rounded-xl shadow-ds-modal border border-base overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[95vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-base bg-base/50">
@@ -1170,7 +1170,7 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
 
             {/* Equipment Selector - Modal */}
             {showEquipSelector && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setShowEquipSelector(false)}>
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-ds-scrim p-4 backdrop-blur-sm" onClick={() => setShowEquipSelector(false)}>
                     <div className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded-card border border-base bg-surface shadow-ds-modal" onClick={event => event.stopPropagation()}>
                         <div className="flex items-center justify-between border-b border-base bg-base/50 px-4 py-3">
                             <h3 className="flex items-center gap-2 text-[1rem] font-bold text-main">

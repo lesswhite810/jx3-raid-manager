@@ -195,7 +195,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
             {showResetConfirm && (
                 <>
                     <div
-                        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]"
+                        className="fixed inset-0 bg-ds-scrim backdrop-blur-sm z-[120]"
                         onClick={() => !resetting && setShowResetConfirm(false)}
                     />
                     <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
@@ -217,7 +217,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
 
             {showPathError && (
                 <>
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]" onClick={() => setShowPathError(false)} />
+                    <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm z-[120]" onClick={() => setShowPathError(false)} />
                     <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
                         <div className="bg-surface rounded-xl border border-base shadow-ds-stack p-6 max-w-sm w-full pointer-events-auto">
                             <h3 className="text-base font-bold text-main mb-2">游戏目录无效</h3>
@@ -246,7 +246,7 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
 
             {pendingDirConflict && (
                 <>
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]" onClick={() => !switchingDir && setPendingDirConflict(null)} />
+                    <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm z-[120]" onClick={() => !switchingDir && setPendingDirConflict(null)} />
                     <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
                         <div className="bg-surface rounded-xl border border-base shadow-ds-stack p-6 max-w-md w-full pointer-events-auto">
                             <div className="flex items-start gap-3 mb-3">

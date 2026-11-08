@@ -283,8 +283,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
-      <div className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
+    <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
+      <div className="bg-surface border border-base rounded-2xl shadow-ds-modal w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col animate-in">
         <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
           <div>
             <h2 className="text-lg font-bold text-main">副本记录详情</h2>
@@ -594,8 +594,8 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       </div>
 
       {showConfirmDialog && recordToDelete && (
-        <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-[110] animate-in fade-in duration-200">
-          <div className="bg-surface p-6 rounded-2xl shadow-ds-modal max-w-sm w-full mx-4 animate-in">
+        <div className="fixed inset-0 bg-ds-scrim flex items-center justify-center z-[110] animate-in fade-in duration-200">
+          <div className="bg-surface p-6 border border-base rounded-2xl shadow-ds-modal max-w-sm w-full mx-4 animate-in">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center flex-shrink-0">
                 <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
@@ -642,11 +642,11 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       {/* CD 冲突确认弹窗 */}
       {cdConflictRecord && (
         <div
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[120] p-4"
+          className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[120] p-4"
           onClick={() => setCdConflictRecord(null)}
         >
           <div
-            className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-sm p-6 animate-in"
+            className="bg-surface border border-base rounded-2xl shadow-ds-modal w-full max-w-sm p-6 animate-in"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 mb-4">

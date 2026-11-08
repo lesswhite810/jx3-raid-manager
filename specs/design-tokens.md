@@ -146,6 +146,7 @@
 | `--surface-3` | `#ede7dc` | `#32323a` | `bg-ds-surface-3` |
 | `--border-ds` | `#e3dccc` | `#33333a` | `border-ds-border` |
 | `--border-strong` | `#d4c8b3` | `#45454d` | `border-ds-border-strong` |
+| `--scrim` | `rgba(15, 23, 42, 0.45)` | `rgba(0, 0, 0, 0.6)` | `bg-ds-scrim` |
 
 #### 1.2 文本层级（Foreground）
 
@@ -315,6 +316,8 @@ className 字号判断
 | `shadow-ds-modal` | `0 6px 16px / 8%` | Toast / 抽屉 |
 
 暗主题下透明度自动加深到 20% / 28% / 36%（避免「浮不起」）。
+
+**2026-11-08 补充（弹窗遮罩 / 描边 / 图表浮层）**：弹窗遮罩统一使用 `--scrim`（`bg-ds-scrim`），光列为冷深灰半透明、暗列为纯黑半透明——深色主题的遮罩必须比页面底更暗才压得住，此前 `bg-slate-900/60` 在深色里反而比页面亮。纯黑阴影在深色里不可见，因此弹窗容器一律补 `border border-base` 收边；recharts 浮层的 `boxShadow` 由写死的 10% 黑改为 `var(--shadow-stack)` 跟随主题。
 
 **保留**（向后兼容）：`shadow-sm` / `shadow-md` / `shadow-lg` / `shadow-xl` / `shadow-2xl` 仍可用，但与 `AGENTS.md §5.3`「禁止重阴影（`shadow-lg`、`shadow-xl`）」存在冲突 —— **新组件优先使用 `shadow-ds-*`**。
 

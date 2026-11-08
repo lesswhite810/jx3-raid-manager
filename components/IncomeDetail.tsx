@@ -476,7 +476,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                       backgroundColor: 'rgb(var(--bg-surface))',
                       borderColor: 'rgb(var(--border-base))',
                       borderRadius: '0.5rem',
-                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                      boxShadow: 'var(--shadow-stack, 0 4px 6px -1px rgb(0 0 0 / 0.1))',
                       color: 'rgb(var(--text-main))'
                     }}
                     itemStyle={{ color: 'rgb(var(--text-main))' }}
@@ -527,7 +527,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                       backgroundColor: 'rgb(var(--bg-surface))',
                       borderColor: 'rgb(var(--border-base))',
                       borderRadius: '0.5rem',
-                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                      boxShadow: 'var(--shadow-stack, 0 4px 6px -1px rgb(0 0 0 / 0.1))',
                       color: 'rgb(var(--text-main))'
                     }}
                     itemStyle={{ color: 'rgb(var(--text-main))' }}
@@ -928,7 +928,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirmRecordId && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
             <h3 className="text-lg font-semibold text-main mb-4">确认删除</h3>
             <p className="text-muted mb-6">确认删除这条收支记录吗？此操作不可撤销。</p>

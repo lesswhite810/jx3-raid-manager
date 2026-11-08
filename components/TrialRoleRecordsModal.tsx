@@ -370,8 +370,8 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     if (!isOpen) return null;
 
     return createPortal(
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
-            <div role="dialog" aria-modal="true" aria-labelledby="trial-records-title" className="bg-surface rounded-2xl shadow-ds-modal w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-hidden">
+            <div role="dialog" aria-modal="true" aria-labelledby="trial-records-title" className="bg-surface border border-base rounded-2xl shadow-ds-modal w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
                 {/* Header - 对齐团本风格 */}
                 <div className="px-6 py-4 border-b border-base flex items-center justify-between bg-surface/50 backdrop-blur-sm flex-shrink-0">
                     <div className="min-w-0">
@@ -826,7 +826,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
             {/* Delete Confirmation Dialog */}
             {showConfirmDialog && (
                 <div
-                    className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center z-[110] animate-in fade-in duration-200"
+                    className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[110] animate-in fade-in duration-200"
                     onClick={() => {
                         setShowConfirmDialog(false);
                         setRecordToDelete(null);

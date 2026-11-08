@@ -255,7 +255,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-hidden animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ds-scrim backdrop-blur-sm overflow-hidden animate-in fade-in duration-200"
       onClick={handleBackdropClick}
       data-od-id="add-record-modal-backdrop"
     >

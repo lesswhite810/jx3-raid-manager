@@ -1529,7 +1529,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Batch Delete Confirmation Dialog */}
       {
         showBatchDeleteConfirm && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
               <p className="text-muted mb-4">{'\u786e\u8ba4\u5220\u9664\u9009\u4e2d\u7684 '}{selectedAccounts.size}{' \u4e2a\u8d26\u53f7\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
@@ -1568,7 +1568,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Single Account Delete Confirmation Dialog */}
       {
         pendingDeleteAccount && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
               <p className="text-muted mb-4">{'\u786e\u8ba4\u5220\u9664\u8d26\u53f7\u201c'}{pendingDeleteAccount.accountName}{'\u201d\uff1f\u5173\u8054\u7684\u89d2\u8272\u548c\u526f\u672c\u8bb0\u5f55\u4e0d\u4f1a\u88ab\u5220\u9664\u3002'}</p>
@@ -1607,7 +1607,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Single Role Delete Confirmation Dialog */}
       {
         pendingDeleteRole && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-surface p-6 rounded-lg shadow-ds-modal border border-base max-w-sm w-full mx-4">
               <h3 className="text-lg font-semibold text-main mb-4">{'\u786e\u8ba4\u5220\u9664'}</h3>
               <p className="text-muted mb-4">{'\u786e\u8ba4\u5220\u9664\u89d2\u8272\u201c'}{pendingDeleteRole.role.name}{'\u201d\uff1f\u8be5\u64cd\u4f5c\u4e0d\u4f1a\u5220\u9664\u526f\u672c\u8bb0\u5f55\u3002'}</p>
@@ -1646,7 +1646,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Edit Role Info Modal */}
       {editRoleModal && editRoleModal.open && createPortal(
         <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] overflow-hidden"
+          className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[100] overflow-hidden"
           onClick={handleCloseEditRoleModal}
         >
           <div
@@ -1718,7 +1718,7 @@ export const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAcc
       {/* Edit Account Info Modal */}
       {editAccountModal && editAccountModal.open && createPortal(
         <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] overflow-hidden"
+          className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[100] overflow-hidden"
           onClick={handleCloseEditAccountModal}
         >
           <div

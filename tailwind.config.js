@@ -82,6 +82,7 @@ export default {
           soft: dsColor('--info-soft'),
           strong: dsColor('--info-strong'),
         },
+        'ds-scrim': dsColor('--scrim'),
         'ds-neutral': {
           DEFAULT: dsColor('--neutral'),
           soft: dsColor('--neutral-soft'),
@@ -105,6 +106,7 @@ export default {
         'ds-surface-3': dsColor('--surface-3'),
         'ds-accent': dsColor('--accent'),
         'ds-accent-soft': dsColor('--accent-soft'),
+        'ds-scrim': dsColor('--scrim'),
       },
       borderColor: {
         base: "rgb(var(--border-base) / <alpha-value>)",

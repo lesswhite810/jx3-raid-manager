@@ -42,6 +42,8 @@
          * 只认 color-scheme。缺了它，深色主题下这些弹层仍按亮色渲染。
          */
         color-scheme: light;
+        /* 弹窗遮罩：浅色主题用冷深灰半透明压暗背景；深色主题块覆盖为纯黑半透明。 */
+        --scrim: rgba(15, 23, 42, 0.45);
 
         /* 默认（未匹配 data-theme 时兜底，与 original 一致） */
 
@@ -194,6 +196,8 @@
         --shadow-flat: 0 1px 2px rgba(0, 0, 0, 0.20);
         --shadow-stack: 0 2px 6px rgba(0, 0, 0, 0.28);
         --shadow-modal: 0 6px 16px rgba(0, 0, 0, 0.36);
+        /* 深色遮罩必须比页面底更暗，纯黑半透明才压得住；slate-900 系反而比页面亮。 */
+        --scrim: rgba(0, 0, 0, 0.6);
 
     }
 

@@ -37,7 +37,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
 
   return createPortal(
     <>
-      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120]" onClick={isBusy ? undefined : onClose} />
+      <div className="fixed inset-0 bg-ds-scrim backdrop-blur-sm z-[120]" onClick={isBusy ? undefined : onClose} />
       <div className="fixed inset-0 z-[121] flex items-center justify-center p-4 pointer-events-none">
         <div className="w-full max-w-xl bg-surface border border-base rounded-xl shadow-ds-modal overflow-hidden pointer-events-auto">
           <div className="px-6 py-4 border-b border-base flex items-center justify-between">

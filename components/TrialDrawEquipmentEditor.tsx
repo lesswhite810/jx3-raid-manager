@@ -169,7 +169,7 @@ export const TrialDrawEquipmentEditor: React.FC<TrialDrawEquipmentEditorProps> =
                 </button>
             </div>
             {isOpen && createPortal(
-                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={closeEditor}>
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-ds-scrim p-4 backdrop-blur-sm" onClick={closeEditor}>
                     <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={`trial-draw-equipment-title-${draw.id}`} className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded-card border border-base bg-surface shadow-ds-modal" onClick={event => event.stopPropagation()}>
                         <div className="flex items-center justify-between border-b border-base bg-base/50 px-4 py-3">
                             <h3 id={`trial-draw-equipment-title-${draw.id}`} className="flex items-center gap-2 text-[1rem] font-bold text-main">
