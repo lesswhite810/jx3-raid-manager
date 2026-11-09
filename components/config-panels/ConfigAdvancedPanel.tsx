@@ -5,6 +5,8 @@ import { toast } from '../../utils/toastManager';
 import { db } from '../../services/db';
 import { dropScannerService } from '../../services/dropScanner';
 import { useDebug } from '../../contexts/DebugContext';
+import { useAppConfig } from '../../contexts/AppConfigContext';
+import type { CloseBehavior } from '../../types';
 
 export interface ConfigAdvancedPanelProps {
     /** 由 ConfigManager 控制"重新初始化"确认弹窗（统一处理） */
@@ -12,16 +14,25 @@ export interface ConfigAdvancedPanelProps {
     resetting: boolean;
 }
 
+/** 关闭按钮行为选项：值、标签与说明 */
+const CLOSE_BEHAVIOR_OPTIONS: Array<{ value: CloseBehavior; label: string; description: string }> = [
+    { value: 'ask', label: '每次询问', description: '点击关闭时询问最小化到托盘还是直接退出' },
+    { value: 'minimize', label: '最小化到托盘', description: '点击关闭时隐藏到托盘，后台继续运行' },
+    { value: 'exit', label: '直接退出', description: '点击关闭时结束程序' },
+];
+
 /**
  * 系统配置 · 自定义配置
  *
- * 包含：数据目录切换、调试模式（仅 debug 模式可见）、JCL 缓存清理、重新初始化。
+ * 包含：数据目录切换、关闭按钮行为、调试模式（仅 debug 模式可见）、JCL 缓存清理、重新初始化。
  */
 export const ConfigAdvancedPanel: React.FC<ConfigAdvancedPanelProps> = ({
     onRequestReset,
     resetting,
 }) => {
     const { debugEnabled, setDebugEnabled } = useDebug();
+    const { appConfig, setCloseBehavior } = useAppConfig();
+    const [savingCloseBehavior, setSavingCloseBehavior] = useState(false);
 
     const [dataDirInfo, setDataDirInfo] = useState<{
         currentPath: string;
@@ -116,6 +127,22 @@ export const ConfigAdvancedPanel: React.FC<ConfigAdvancedPanelProps> = ({
         }
     };
 
+    /**
+     * 更新关闭按钮行为：写入配置后立即生效，无需重启
+     */
+    const handleCloseBehaviorChange = async (behavior: CloseBehavior) => {
+        if (appConfig?.closeBehavior === behavior || savingCloseBehavior) return;
+        setSavingCloseBehavior(true);
+        try {
+            await setCloseBehavior(behavior);
+            toast.success(`关闭按钮行为已改为「${CLOSE_BEHAVIOR_OPTIONS.find(item => item.value === behavior)?.label ?? behavior}」`);
+        } catch (error) {
+            console.error('设置关闭按钮行为失败:', error);
+        } finally {
+            setSavingCloseBehavior(false);
+        }
+    };
+
     // 委托给父组件弹窗
     const handleRequestReset = () => {
         onRequestReset();
@@ -192,6 +219,37 @@ export const ConfigAdvancedPanel: React.FC<ConfigAdvancedPanelProps> = ({
                         </div>
                     </div>
                 )}
+
+                {/* 关闭按钮行为 */}
+                <div className="flex items-center gap-4 pt-4 border-t border-base">
+                    <label className="text-sm font-medium text-muted whitespace-nowrap w-20">关闭按钮</label>
+                    <div className="flex-1 flex items-center justify-between gap-4">
+                        <p className="text-xs text-muted">
+                            {CLOSE_BEHAVIOR_OPTIONS.find(item => item.value === (appConfig?.closeBehavior ?? 'ask'))?.description
+                                ?? '点击关闭按钮时的行为'}
+                        </p>
+                        <div className="inline-flex rounded-card border border-ds-border overflow-hidden flex-shrink-0">
+                            {CLOSE_BEHAVIOR_OPTIONS.map(option => {
+                                const active = (appConfig?.closeBehavior ?? 'ask') === option.value;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        onClick={() => handleCloseBehaviorChange(option.value)}
+                                        disabled={savingCloseBehavior}
+                                        aria-pressed={active}
+                                        className={`px-3 py-1.5 text-xs transition-colors disabled:opacity-50 ${active
+                                            ? 'bg-ds-success-soft text-ds-success-strong'
+                                            : 'bg-ds-surface text-muted hover:bg-ds-surface-2 hover:text-main'
+                                            }`}
+                                    >
+                                        {option.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
 
                 {/* 重新初始化 */}
                 <div className="flex items-center gap-4 pt-4 border-t border-base">

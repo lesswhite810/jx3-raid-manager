@@ -9,11 +9,14 @@ const isTauriEnv = (): boolean =>
   typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
 
 /**
- * 自定义标题栏的窗口控制按钮（最小化到托盘 / 最大化 / 关闭）。
+ * 自定义标题栏的窗口控制按钮（最小化 / 最大化 / 关闭）。
  *
  * 仅在 Tauri 环境下显示（浏览器/PWA 模式返回 null）。
  * 样式贴近 Windows 原生标题栏按钮：占满标题栏高度、紧密排列、无圆角。
  * 关闭按钮悬停仅图标变红 + 轻微红色底色，不使用实心色块。
+ *
+ * 最小化是普通最小化，窗口收进任务栏；点击关闭是否隐藏到托盘
+ * 由用户设置的关闭按钮行为决定（在 App 层统一拦截）。
  */
 export const WindowControls: React.FC = () => {
   if (!isTauriEnv()) return null;
@@ -22,7 +25,7 @@ export const WindowControls: React.FC = () => {
 
   const handleMinimize = async () => {
     try {
-      await invokeCommand('minimize_to_tray');
+      await invokeCommand('minimize_main_window');
     } catch (error) {
       console.error('最小化失败:', error);
       toast.error('最小化失败，请重试');
@@ -46,7 +49,7 @@ export const WindowControls: React.FC = () => {
     <div className="flex items-stretch h-full app-region-no-drag border-l border-border">
       <button
         onClick={handleMinimize}
-        title="最小化到托盘"
+        title="最小化"
         className="w-11 h-full flex items-center justify-center text-muted hover:bg-base hover:text-main transition-colors"
       >
         <Minus size={15} />

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import type { AppConfig } from '../types';
+import type { AppConfig, CloseBehavior } from '../types';
 import { appConfigService } from '../services/appConfig';
 import { toast } from '../utils/toastManager';
 
@@ -18,6 +18,8 @@ interface AppConfigContextType {
   setTrialScreenshotRecognitionEnabled: (enabled: boolean) => Promise<void>;
   /** 设置启动刷新装分开关 */
   setAutoRefreshEquipScoreEnabled: (enabled: boolean) => Promise<void>;
+  /** 设置关闭按钮行为（ask 每次询问 / minimize 最小化到托盘 / exit 直接退出） */
+  setCloseBehavior: (behavior: CloseBehavior) => Promise<void>;
 }
 
 const AppConfigContext = createContext<AppConfigContextType | undefined>(undefined);
@@ -29,6 +31,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   autoScanEnabled: false,
   trialScreenshotRecognitionEnabled: false,
   autoRefreshEquipScore: true,
+  closeBehavior: 'ask',
 };
 
 export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -41,11 +44,12 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const config = await appConfigService.get();
         if (!cancelled) {
-          // 新增字段在旧的本地配置中可能缺失，保持截图识别默认关闭。
+          // 新增字段在旧的本地配置中可能缺失，保持截图识别默认关闭、关闭行为默认每次询问。
           setAppConfig({
             ...DEFAULT_APP_CONFIG,
             ...config,
             trialScreenshotRecognitionEnabled: config.trialScreenshotRecognitionEnabled ?? false,
+            closeBehavior: config.closeBehavior ?? 'ask',
           });
         }
       } catch (error) {
@@ -138,6 +142,17 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  const setCloseBehavior = useCallback(async (behavior: CloseBehavior) => {
+    try {
+      await appConfigService.setCloseBehavior(behavior);
+      setAppConfig(prev => (prev ? { ...prev, closeBehavior: behavior } : { ...DEFAULT_APP_CONFIG, closeBehavior: behavior }));
+    } catch (error) {
+      console.error('[AppConfig] 设置关闭按钮行为失败:', error);
+      toast.error('保存关闭按钮行为失败');
+      throw error;
+    }
+  }, []);
+
   return (
     <AppConfigContext.Provider
       value={{
@@ -149,6 +164,7 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setAutoScanEnabled,
         setTrialScreenshotRecognitionEnabled,
         setAutoRefreshEquipScoreEnabled,
+        setCloseBehavior,
       }}
     >
       {children}

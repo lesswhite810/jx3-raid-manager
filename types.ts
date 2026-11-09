@@ -493,6 +493,9 @@ export interface BatchActiveResult {
   processSessions: ProcessSession[];
 }
 
+/** 关闭主窗口时的行为：每次询问 / 最小化到托盘 / 直接退出 */
+export type CloseBehavior = 'ask' | 'minimize' | 'exit';
+
 /** 应用配置（来自 app_config 表） */
 export interface AppConfig {
   gameDirectory: string | null;
@@ -502,4 +505,6 @@ export interface AppConfig {
   /** 是否在自动扫描的试炼结算流程中识别已选翻牌位，默认关闭。 */
   trialScreenshotRecognitionEnabled: boolean;
   autoRefreshEquipScore: boolean;
+  /** 点击关闭按钮时的行为，默认每次询问。 */
+  closeBehavior: CloseBehavior;
 }

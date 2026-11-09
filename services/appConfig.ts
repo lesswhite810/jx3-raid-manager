@@ -1,6 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { mockInvoke } from './mockInvoke';
-import type { AppConfig } from '../types';
+import type { AppConfig, CloseBehavior } from '../types';
 
 // 环境检测：纯浏览器环境使用 mock（与 db.ts 保持一致）
 const isBrowserEnv = !window.__TAURI_INTERNALS__ && typeof window !== 'undefined';
@@ -39,5 +39,10 @@ export const appConfigService = {
 
   async setAutoRefreshEquipScoreEnabled(enabled: boolean): Promise<void> {
     await invoke('set_auto_refresh_equip_score_enabled', { enabled });
+  },
+
+  /** 保存关闭按钮行为，下次点击关闭时不再重复询问（设为 ask 则恢复每次询问） */
+  async setCloseBehavior(behavior: CloseBehavior): Promise<void> {
+    await invoke('set_close_behavior', { behavior });
   },
 };

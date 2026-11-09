@@ -1,28 +1,13 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, UserAttentionType, WindowEvent,
+    Manager, UserAttentionType,
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ID: &str = "main-tray";
 const RESTORE_MENU_ID: &str = "restore-main-window";
 const EXIT_MENU_ID: &str = "exit-app";
-static MINIMIZE_CHECK_PENDING: AtomicBool = AtomicBool::new(false);
-
-/// 「最小化到托盘」检查的抑制截止时刻（进程启动后的毫秒数）。
-///
-/// 恢复动作本身会触发 WM_SIZE，进而产生 `WindowEvent::Resized`；这些事件可能在恢复
-/// 返回之后才被派发，而此时 `IsIconic()` 仍可能短暂读到旧值。若排队的检查在抑制窗口内
-/// 执行，就会把刚恢复的窗口再次 `hide()` 回托盘，表现为「点了恢复但窗口闪一下又没了」。
-/// 采用「截止时刻」而不是布尔标志，是因为事件派发是异步的，布尔标志在函数返回时就会失效。
-static RESTORE_SUPPRESS_UNTIL_MILLIS: AtomicU64 = AtomicU64::new(0);
-static PROCESS_START: OnceLock<std::time::Instant> = OnceLock::new();
-
-/// 抑制窗口长度：需覆盖恢复后的 WM_SIZE / Resized 派发与最小化状态提交延迟。
-const RESTORE_SUPPRESS_MILLIS: u64 = 1200;
 
 /// 抢前台焦点失败时临时置顶的持续时间。
 ///
@@ -30,34 +15,20 @@ const RESTORE_SUPPRESS_MILLIS: u64 = 1200;
 /// 导致试炼采集因 `client_area_is_unobscured()` 不成立而停止采帧。
 const TEMPORARY_TOPMOST_MILLIS: u64 = 1200;
 
-fn now_millis() -> u64 {
-    PROCESS_START
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u64
-}
-
-fn restore_suppression_active() -> bool {
-    now_millis() < RESTORE_SUPPRESS_UNTIL_MILLIS.load(Ordering::Acquire)
-}
-
-fn begin_restore_suppression() {
-    RESTORE_SUPPRESS_UNTIL_MILLIS.store(now_millis() + RESTORE_SUPPRESS_MILLIS, Ordering::Release);
-}
-
 /// 真实 HWND 状态，用于区分「tao 内部标志已更新」与「窗口真的显示出来了」。
 #[derive(Debug, Clone, Copy)]
 struct NativeWindowState {
     visible: bool,
     minimized: bool,
+    maximized: bool,
     foreground: bool,
 }
 
 impl NativeWindowState {
     fn describe(&self) -> String {
         format!(
-            "native(visible={} minimized={} foreground={})",
-            self.visible, self.minimized, self.foreground
+            "native(visible={} minimized={} maximized={} foreground={})",
+            self.visible, self.minimized, self.maximized, self.foreground
         )
     }
 
@@ -76,6 +47,27 @@ fn format_window_state<T: std::fmt::Debug>(visible: T, minimized: T, focused: T)
     )
 }
 
+/// 读取主窗口当前是否处于最大化。
+///
+/// 必须在调用 tao 的 `show()` 之前读取：一旦窗口被还原成普通尺寸，再读就只能看到
+/// 「没最大化」，无法还原用户原本的窗口形态。
+#[cfg(windows)]
+fn native_is_maximized(window: &tauri::WebviewWindow) -> Option<bool> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsZoomed;
+
+    let hwnd = window.hwnd().ok()?.0;
+    if hwnd.is_null() {
+        return None;
+    }
+    // SAFETY: hwnd 取自当前进程持有的主窗口，IsZoomed 只读取窗口样式位，不改变任何状态。
+    Some(unsafe { IsZoomed(hwnd) } != 0)
+}
+
+#[cfg(not(windows))]
+fn native_is_maximized(_window: &tauri::WebviewWindow) -> Option<bool> {
+    None
+}
+
 /// Win32 兜底恢复：同步完成「还原最小化 + 显示隐藏窗口 + 抢前台焦点」。
 ///
 /// 之所以不只用 tauri/tao 的 `unminimize()` + `show()`：
@@ -83,13 +75,20 @@ fn format_window_state<T: std::fmt::Debug>(visible: T, minimized: T, focused: T)
 /// - tao 的 `set_visible` / `set_minimized` 都是通过 `execute_in_thread` 异步投递，
 ///   返回时窗口状态可能尚未改变，紧接着的检查会读到旧状态；
 /// - tao 的 `set_focus()` 读内部 `WindowFlags` 而非真实 HWND，标志陈旧会整段 NO-OP。
+///
+/// `prefer_maximized` 是调用方在显示窗口之前读到的最大化状态。Win32 语义里
+/// `SW_RESTORE` 对「处于最大化」的窗口等于「还原」，所以这里不能一律用 `SW_RESTORE`：
+/// 否则「最大化 → 收进托盘 → 托盘恢复」会让窗口掉回配置文件里的默认尺寸。
 #[cfg(windows)]
-fn native_restore_and_focus(window: &tauri::WebviewWindow) -> Result<NativeWindowState, String> {
+fn native_restore_and_focus(
+    window: &tauri::WebviewWindow,
+    prefer_maximized: bool,
+) -> Result<NativeWindowState, String> {
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AllowSetForegroundWindow, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-        IsWindowVisible, SetForegroundWindow, SetWindowPos, ShowWindow, ASFW_ANY, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
+        IsWindowVisible, IsZoomed, SetForegroundWindow, SetWindowPos, ShowWindow, ASFW_ANY,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE, SW_SHOWMAXIMIZED,
     };
 
     let hwnd = window
@@ -102,8 +101,19 @@ fn native_restore_and_focus(window: &tauri::WebviewWindow) -> Result<NativeWindo
     // SAFETY: hwnd 取自当前进程持有的主窗口，调用只改变该窗口的显示、层级与前台状态，
     // 不涉及内存释放或跨进程数据传递；返回值仅用于判定成败，失败不会造成未定义行为。
     unsafe {
-        // SW_RESTORE 同时覆盖「已最小化」与「被 SW_HIDE 隐藏」两种状态并激活窗口。
-        ShowWindow(hwnd, SW_RESTORE);
+        // 同时覆盖「已最小化」「被 SW_HIDE 隐藏」「仍处于最大化」三种状态：
+        // - SW_SHOWMAXIMIZED：显示并保持最大化，不会把最大化窗口还原成普通尺寸；
+        // - SW_RESTORE：显示并还原到普通尺寸，仅在窗口原本不是最大化时使用。
+        // IsZoomed 作为兜底，覆盖调用方读取状态与实际显示之间窗口又被换过形态的情况。
+        let keep_maximized = prefer_maximized || IsZoomed(hwnd) != 0;
+        ShowWindow(
+            hwnd,
+            if keep_maximized {
+                SW_SHOWMAXIMIZED
+            } else {
+                SW_RESTORE
+            },
+        );
         // 回到非置顶层级的最上方，避免被普通窗口压在下面。
         SetWindowPos(
             hwnd,
@@ -138,13 +148,17 @@ fn native_restore_and_focus(window: &tauri::WebviewWindow) -> Result<NativeWindo
         Ok(NativeWindowState {
             visible: IsWindowVisible(hwnd) != 0,
             minimized: IsIconic(hwnd) != 0,
+            maximized: IsZoomed(hwnd) != 0,
             foreground: GetForegroundWindow() == hwnd,
         })
     }
 }
 
 #[cfg(not(windows))]
-fn native_restore_and_focus(_window: &tauri::WebviewWindow) -> Result<NativeWindowState, String> {
+fn native_restore_and_focus(
+    _window: &tauri::WebviewWindow,
+    _prefer_maximized: bool,
+) -> Result<NativeWindowState, String> {
     Err("当前平台不支持 Win32 兜底恢复".to_string())
 }
 
@@ -248,7 +262,7 @@ pub fn initialize_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error
 
 /// 托盘菜单、托盘点击与重复启动共用同一恢复路径。
 ///
-/// 顺序固定为：抑制最小化检查 → 同步 tao 状态 → Win32 兜底恢复并抢焦点 →
+/// 顺序固定为：记录最大化状态 → 同步 tao 状态 → Win32 兜底恢复并抢焦点 →
 /// 抢不到焦点则临时置顶重试并请求用户注意 → 到期撤销置顶。
 pub fn restore_main_window(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
@@ -256,7 +270,6 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
         log::warn!("[恢复窗口] 未找到主窗口，可能仍处于冷启动阶段，恢复跳过");
         return;
     };
-    begin_restore_suppression();
     let state = || {
         format_window_state(
             window.is_visible(),
@@ -264,7 +277,16 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
             window.is_focused(),
         )
     };
-    log::info!("[恢复窗口] 开始，恢复前状态: {}", state());
+    // 必须在 show() 之前读取：窗口一旦被还原成普通尺寸，就无法判断用户原本是否最大化。
+    // 两个来源要取「或」而不是「先真后假」：窗口被隐藏、或被 hide 前的 unminimize 清掉
+    // WS_MAXIMIZE 之后，IsZoomed 会返回 false，此时只有 tao 内部标志还留着最大化意图。
+    let restore_maximized = native_is_maximized(&window).unwrap_or(false)
+        || window.is_maximized().unwrap_or(false);
+    log::info!(
+        "[恢复窗口] 开始，恢复前状态: {} maximized={}",
+        state(),
+        restore_maximized
+    );
 
     // 1. 同步 tao 内部标志，避免后续 tao 调用因标志陈旧而 NO-OP。
     //    这两步是异步投递的，结果不足以作为判定依据，真正的判定交给第 2 步。
@@ -277,7 +299,7 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
     log::info!("[恢复窗口] tao 状态同步完成，当前状态: {}", state());
 
     // 2. Win32 兜底：同步还原最小化、显示隐藏窗口并抢前台焦点。
-    let mut native = match native_restore_and_focus(&window) {
+    let mut native = match native_restore_and_focus(&window, restore_maximized) {
         Ok(result) => {
             log::info!("[恢复窗口] Win32 兜底完成，{}", result.describe());
             Some(result)
@@ -296,7 +318,7 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
         match native_set_topmost(&window, true) {
             Ok(()) => {
                 schedule_topmost_release(window.clone());
-                match native_restore_and_focus(&window) {
+                match native_restore_and_focus(&window, restore_maximized) {
                     Ok(result) => {
                         log::info!("[恢复窗口] 置顶后重试抢焦点，{}", result.describe());
                         native = Some(result);
@@ -334,97 +356,65 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// 最小化主窗口到任务栏（Tauri 命令）。
+///
+/// 最小化按钮的语义是「普通最小化」：窗口收进任务栏，进程与后台扫描继续运行。
+/// 只有关闭按钮才会按用户选择的关闭行为决定是否隐藏到托盘。
 #[tauri::command]
-pub fn minimize_to_tray(window: tauri::Window) -> Result<(), String> {
-    if window.label() == MAIN_WINDOW_LABEL && window.app_handle().tray_by_id(TRAY_ID).is_some() {
-        match window.hide() {
-            Ok(()) => {
-                log::info!(
-                    "[最小化到托盘] 命令触发 hide 成功，当前状态: {}",
-                    format_window_state(
-                        window.is_visible(),
-                        window.is_minimized(),
-                        window.is_focused()
-                    )
-                );
-                return Ok(());
-            }
-            Err(error) => log::warn!("隐藏到托盘失败，将使用任务栏最小化: {}", error),
-        }
-    }
+pub fn minimize_main_window(window: tauri::Window) -> Result<(), String> {
     window
         .minimize()
-        .map_err(|error| format!("最小化失败: {}", error))
+        .map_err(|error| format!("最小化失败: {}", error))?;
+    log::info!(
+        "[最小化] 窗口已最小化到任务栏，当前状态: {}",
+        format_window_state(
+            window.is_visible(),
+            window.is_minimized(),
+            window.is_focused()
+        )
+    );
+    Ok(())
 }
 
-fn hide_minimized_window(window: &tauri::Window) {
-    // 托盘创建失败时保留任务栏入口，避免隐藏后无法恢复。
+/// 隐藏主窗口到系统托盘（Tauri 命令）。
+///
+/// 仅在用户明确选择「最小化到托盘」时调用；托盘创建失败时保持窗口可见，
+/// 否则隐藏后用户将没有任何恢复入口。
+#[tauri::command]
+pub fn hide_main_window(window: tauri::Window) -> Result<(), String> {
     if window.app_handle().tray_by_id(TRAY_ID).is_none() {
-        return;
+        log::warn!("[最小化到托盘] 系统托盘不可用，保持窗口在任务栏");
+        return window
+            .minimize()
+            .map_err(|error| format!("最小化失败: {}", error));
     }
-    // 恢复流程进行中（含恢复后短暂延迟）时读到的最小化状态可能是尚未提交的旧值，必须跳过，
-    // 否则会把刚刚恢复显示的窗口立刻再次隐藏回托盘。
-    if restore_suppression_active() {
-        log::info!(
-            "[最小化检查] 处于恢复抑制窗口内，跳过隐藏，当前状态: {}",
-            format_window_state(
-                window.is_visible(),
-                window.is_minimized(),
-                window.is_focused()
-            )
-        );
-        return;
+    // hide() 走 tao 的 VISIBLE 分支时，若窗口仍带着最小化位，tao 会刻意跳过
+    // WS_VISIBLE 样式写入，只执行 ShowWindow(SW_HIDE)，HWND 会停在「隐藏 + 仍最小化」
+    // 的组合态；这种状态恢复时 DWM 只能提交残帧，表现为「点托盘但窗口出不来画面」。
+    // 仍可能走到这里的场景：窗口先被最小化到任务栏，用户再从任务栏缩略图关闭它。
+    // 先清掉最小化位，让窗口回到正常的隐藏窗口状态；正常可见状态下这两步都是空操作。
+    if let Err(error) = window.unminimize() {
+        log::warn!("[最小化到托盘] 清除最小化状态失败: {}", error);
     }
-    match window.is_minimized() {
-        Ok(true) => {
-            if let Err(error) = window.hide() {
-                log::error!("最小化到托盘失败，窗口保留在任务栏: {}", error);
-            } else {
-                log::info!(
-                    "主窗口已最小化到托盘，当前状态: {}",
-                    format_window_state(
-                        window.is_visible(),
-                        window.is_minimized(),
-                        window.is_focused()
-                    )
-                );
-            }
-        }
-        Ok(false) => {
-            log::info!(
-                "[最小化检查] 窗口未处于最小化状态，跳过隐藏，当前状态: {}",
-                format_window_state(
-                    window.is_visible(),
-                    window.is_minimized(),
-                    window.is_focused()
-                )
-            );
-        }
-        Err(error) => log::warn!("读取窗口最小化状态失败: {}", error),
-    }
+    window
+        .hide()
+        .map_err(|error| format!("隐藏到托盘失败: {}", error))?;
+    log::info!(
+        "[最小化到托盘] 窗口已隐藏到托盘，当前状态: {}",
+        format_window_state(
+            window.is_visible(),
+            window.is_minimized(),
+            window.is_focused()
+        )
+    );
+    Ok(())
 }
 
-pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
-    if window.label() != MAIN_WINDOW_LABEL
-        || !matches!(event, WindowEvent::Resized(_))
-        || window.app_handle().tray_by_id(TRAY_ID).is_none()
-        || restore_suppression_active()
-        || MINIMIZE_CHECK_PENDING.swap(true, Ordering::AcqRel)
-    {
-        return;
-    }
-
-    // WM_SIZE 回调可能早于 Windows 提交最小化状态。从工作线程排队回主循环，
-    // 在当前原生消息结束后检查；连续缩放仅保留一次待执行检查，不启动轮询。
-    let dispatch_window = window.clone();
-    tauri::async_runtime::spawn(async move {
-        let check_window = dispatch_window.clone();
-        if let Err(error) = dispatch_window.run_on_main_thread(move || {
-            hide_minimized_window(&check_window);
-            MINIMIZE_CHECK_PENDING.store(false, Ordering::Release);
-        }) {
-            MINIMIZE_CHECK_PENDING.store(false, Ordering::Release);
-            log::warn!("安排窗口最小化检查失败: {}", error);
-        }
-    });
+/// 退出应用（Tauri 命令）。
+///
+/// 与托盘菜单「退出应用」共用同一条退出路径，确保清理逻辑一致。
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    log::info!("[退出] 收到退出请求，应用即将结束");
+    app.exit(0);
 }

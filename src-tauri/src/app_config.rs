@@ -4,6 +4,45 @@ use std::sync::Mutex;
 
 use crate::db;
 
+/// 关闭主窗口时的行为。
+///
+/// - `Ask`：每次关闭都弹窗询问（默认，兼容历史用户与首次使用）
+/// - `Minimize`：直接隐藏到系统托盘，进程继续运行
+/// - `Exit`：直接退出应用
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CloseBehavior {
+    Ask,
+    Minimize,
+    Exit,
+}
+
+impl CloseBehavior {
+    /// 存入 app_config 表的字符串值
+    fn as_str(self) -> &'static str {
+        match self {
+            CloseBehavior::Ask => "ask",
+            CloseBehavior::Minimize => "minimize",
+            CloseBehavior::Exit => "exit",
+        }
+    }
+
+    /// 解析存储值；缺失或非法值一律回落到「每次询问」，避免旧配置把用户锁死在某个行为上。
+    fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "minimize" => CloseBehavior::Minimize,
+            "exit" => CloseBehavior::Exit,
+            _ => CloseBehavior::Ask,
+        }
+    }
+}
+
+impl Default for CloseBehavior {
+    fn default() -> Self {
+        CloseBehavior::Ask
+    }
+}
+
 /// 应用配置（key-value 存储的封装视图）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +54,8 @@ pub struct AppConfig {
     /// 试炼结算截图识别独立于常规 JCL 自动扫描，旧配置默认关闭。
     pub trial_screenshot_recognition_enabled: bool,
     pub auto_refresh_equip_score: bool,
+    /// 关闭主窗口时的行为，旧配置默认每次询问。
+    pub close_behavior: CloseBehavior,
 }
 
 const KEY_GAME_DIRECTORY: &str = "game_directory";
@@ -23,6 +64,7 @@ const KEY_LAST_SCAN_MINGYI_AT: &str = "last_scan_mingyi_at";
 const KEY_AUTO_SCAN_ENABLED: &str = "auto_scan_enabled";
 const KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED: &str = "trial_screenshot_recognition_enabled";
 const KEY_AUTO_REFRESH_EQUIP_SCORE: &str = "auto_refresh_equip_score";
+const KEY_CLOSE_BEHAVIOR: &str = "close_behavior";
 const KEY_THEME: &str = "theme";
 
 // 两个开关可能由前端并发切换。将“写入 -> 读取组合状态 -> 发布给采集线程”串行化，
@@ -77,6 +119,10 @@ fn read_app_config(conn: &rusqlite::Connection) -> Result<AppConfig, String> {
     // 未配置时默认开启（兼容历史用户与首次启动）
     let auto_refresh_equip_score = auto_refresh_equip_score_str.is_empty()
         || auto_refresh_equip_score_str.eq_ignore_ascii_case("true");
+    // 关闭行为是新增配置项：缺少该 key 的历史配置回落到「每次询问」。
+    let close_behavior = read_value(conn, KEY_CLOSE_BEHAVIOR)?
+        .map(|raw| CloseBehavior::parse(&raw))
+        .unwrap_or_default();
 
     Ok(AppConfig {
         game_directory,
@@ -85,6 +131,7 @@ fn read_app_config(conn: &rusqlite::Connection) -> Result<AppConfig, String> {
         auto_scan_enabled,
         trial_screenshot_recognition_enabled,
         auto_refresh_equip_score,
+        close_behavior,
     })
 }
 
@@ -160,6 +207,7 @@ pub fn reset_setup() -> Result<(), String> {
     upsert_value(&conn, KEY_SETUP_COMPLETED, "false")?;
     upsert_value(&conn, KEY_LAST_SCAN_MINGYI_AT, "")?;
     upsert_value(&conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED, "false")?;
+    upsert_value(&conn, KEY_CLOSE_BEHAVIOR, CloseBehavior::Ask.as_str())?;
     refresh_trial_screenshot_capture(&conn)?;
     log::info!("[AppConfig] 应用配置已重置，将回到引导界面");
     Ok(())
@@ -221,6 +269,27 @@ pub fn set_auto_refresh_equip_score_enabled(enabled: bool) -> Result<(), String>
         "[AppConfig] 启动刷新装分已{}",
         if enabled { "开启" } else { "关闭" }
     );
+    Ok(())
+}
+
+/// 设置关闭按钮行为（Tauri 命令）
+///
+/// 取值 ask / minimize / exit；非法值会被拒绝，避免前端拼错后静默变成默认行为。
+#[tauri::command]
+pub fn set_close_behavior(behavior: String) -> Result<(), String> {
+    let parsed = match behavior.trim().to_ascii_lowercase().as_str() {
+        "ask" => CloseBehavior::Ask,
+        "minimize" => CloseBehavior::Minimize,
+        "exit" => CloseBehavior::Exit,
+        _ => {
+            let msg = format!("[AppConfig] invalid close behavior: {}", behavior);
+            log::warn!("{}", msg);
+            return Err(msg);
+        }
+    };
+    let conn = db::init_db()?;
+    upsert_value(&conn, KEY_CLOSE_BEHAVIOR, parsed.as_str())?;
+    log::info!("[AppConfig] 关闭按钮行为已设置为: {}", parsed.as_str());
     Ok(())
 }
 
@@ -384,8 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn trial_capture_requires_both_master_and_its_own_switch() {
-        let mut config = read_app_config(&setup_test_db()).unwrap();
+    fn trial_capture_requires_both_master_and_its_own_switch() {        let mut config = read_app_config(&setup_test_db()).unwrap();
         config.auto_scan_enabled = true;
         config.trial_screenshot_recognition_enabled = false;
         assert!(!is_trial_screenshot_capture_enabled(&config));
@@ -396,5 +464,57 @@ mod tests {
 
         config.auto_scan_enabled = true;
         assert!(is_trial_screenshot_capture_enabled(&config));
+    }
+
+    #[test]
+    fn close_behavior_defaults_to_ask_when_missing() {
+        let conn = setup_test_db();
+        let config = read_app_config(&conn).unwrap();
+        assert_eq!(config.close_behavior, CloseBehavior::Ask);
+    }
+
+    #[test]
+    fn close_behavior_parses_known_values_and_falls_back_on_garbage() {
+        assert_eq!(CloseBehavior::parse("ask"), CloseBehavior::Ask);
+        assert_eq!(CloseBehavior::parse("minimize"), CloseBehavior::Minimize);
+        assert_eq!(CloseBehavior::parse("exit"), CloseBehavior::Exit);
+        assert_eq!(CloseBehavior::parse(" EXIT "), CloseBehavior::Exit);
+        assert_eq!(CloseBehavior::parse(""), CloseBehavior::Ask);
+        assert_eq!(CloseBehavior::parse("whatever"), CloseBehavior::Ask);
+    }
+
+    #[test]
+    fn close_behavior_is_persisted_across_reopen() {
+        let path =
+            std::env::temp_dir().join(format!("jx3-close-behavior-{}.sqlite", uuid::Uuid::new_v4()));
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            create_app_config_table(&conn);
+            upsert_value(&conn, KEY_CLOSE_BEHAVIOR, CloseBehavior::Minimize.as_str()).unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let config = read_app_config(&conn).unwrap();
+            assert_eq!(config.close_behavior, CloseBehavior::Minimize);
+            // 用户改回「每次询问」后必须真的回到询问，而不是继续沿用旧选择。
+            upsert_value(&conn, KEY_CLOSE_BEHAVIOR, CloseBehavior::Ask.as_str()).unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let config = read_app_config(&conn).unwrap();
+            assert_eq!(config.close_behavior, CloseBehavior::Ask);
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn close_behavior_does_not_disturb_other_switches() {
+        let conn = setup_test_db();
+        upsert_value(&conn, KEY_AUTO_SCAN_ENABLED, "true").unwrap();
+        upsert_value(&conn, KEY_CLOSE_BEHAVIOR, CloseBehavior::Exit.as_str()).unwrap();
+        let config = read_app_config(&conn).unwrap();
+        assert_eq!(config.close_behavior, CloseBehavior::Exit);
+        assert!(config.auto_scan_enabled);
+        assert!(!config.trial_screenshot_recognition_enabled);
     }
 }

@@ -220,9 +220,10 @@ fn main() {
 
     builder
         .setup(initialize_primary_instance)
-        .on_window_event(desktop::handle_window_event)
         .invoke_handler(tauri::generate_handler![
-            desktop::minimize_to_tray,
+            desktop::minimize_main_window,
+            desktop::hide_main_window,
+            desktop::quit_app,
             gkp_parser::parse_binary_gkp,
             game_directory::scan_game_directory,
             game_directory::auto_parse_game_directory,
@@ -281,6 +282,7 @@ fn main() {
             app_config::set_auto_scan_enabled,
             app_config::set_trial_screenshot_recognition_enabled,
             app_config::set_auto_refresh_equip_score_enabled,
+            app_config::set_close_behavior,
             app_config::get_theme,
             app_config::set_theme,
             // JX3 进程检测（C 阶段）

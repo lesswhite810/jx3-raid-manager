@@ -1,4 +1,4 @@
-import type { TrialPlaceRecord } from '../types';
+import type { AppConfig, TrialPlaceRecord } from '../types';
 
 // 简单的 mock 拦截器，当由于没有 Tauri 后端导致 API 调用失败时使用。
 // 这里硬编码一些初始的基础测试数据。
@@ -74,13 +74,14 @@ const MOCK_TRIAL_RECORDS: TrialPlaceRecord[] = [
 
 const mockCache = new Map<string, [string, string]>();
 
-const MOCK_APP_CONFIG = {
+const MOCK_APP_CONFIG: AppConfig = {
   gameDirectory: 'mock://browser-preview',
   setupCompleted: true,
   lastScanMingyiAt: null,
   autoScanEnabled: false,
   trialScreenshotRecognitionEnabled: false,
   autoRefreshEquipScore: true,
+  closeBehavior: 'ask',
 };
 
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -312,6 +313,12 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'set_trial_screenshot_recognition_enabled':
           if (typeof args?.enabled === 'boolean') {
             MOCK_APP_CONFIG.trialScreenshotRecognitionEnabled = args.enabled;
+          }
+          result = null;
+          break;
+        case 'set_close_behavior':
+          if (args?.behavior === 'ask' || args?.behavior === 'minimize' || args?.behavior === 'exit') {
+            MOCK_APP_CONFIG.closeBehavior = args.behavior;
           }
           result = null;
           break;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { LayoutDashboard, Users, Download, Shield, Settings } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppConfig } from './contexts/AppConfigContext';
 import { Dashboard } from './components/Dashboard';
 import { IncomeDetail } from './components/IncomeDetail';
@@ -18,6 +19,7 @@ import { LoadingSpinner } from './components/LoadingSpinner';
 import { AddRecordModal } from './components/AddRecordModal';
 import { AddBaizhanRecordModal } from './components/AddBaizhanRecordModal';
 import { WindowControls } from './components/WindowControls';
+import { CloseConfirmDialog } from './components/CloseConfirmDialog';
 import { useDropScanner } from './hooks/useDropScanner';
 import {
   Account,
@@ -31,7 +33,8 @@ import {
   UpdateCheckResult,
   UpdateProgressPayload,
   UpdateRuntimeInfo,
-  UpdateStatus
+  UpdateStatus,
+  CloseBehavior
 } from './types';
 import {
   DEFAULT_CONFIG
@@ -40,7 +43,7 @@ import { injectDefaultBossesForRaids } from './data/raidBosses';
 import { sortAccounts, preserveRoleOrder } from './utils/accountUtils';
 import { focusPageSearchInput, isPageFindShortcut } from './utils/pageSearchUtils';
 import { db } from './services/db';
-import { isTauriRuntime } from './services/invoke';
+import { isTauriRuntime, invokeCommand } from './services/invoke';
 import { analyzeRoles } from './services/gameDirectoryScanner';
 import { checkLocalStorageData, migrateLocalStorageData } from './services/migration';
 import { updaterService } from './services/updater';
@@ -69,8 +72,12 @@ function App() {
   const updaterInitializedRef = useRef(false);
   const equipRefreshStartedRef = useRef(false);
 
+  // 关闭按钮行为：是否正在展示关闭确认弹窗、是否正在提交选择
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
+  const [isCloseConfirmSubmitting, setIsCloseConfirmSubmitting] = useState(false);
+
   // 应用配置（引导流程与活跃检测依赖）
-  const { appConfig, isLoading: appConfigLoading } = useAppConfig();
+  const { appConfig, isLoading: appConfigLoading, setCloseBehavior } = useAppConfig();
 
   // 用于跟踪是否是初始加载，避免首次加载数据时触发保存
   const initialSaveSkipped = useRef({
@@ -252,6 +259,76 @@ function App() {
       void unlisten?.();
     };
   }, [reloadTrialRecords]);
+
+  // 关闭按钮行为：默认 ask（每次询问），用户可在设置中固定为最小化到托盘或直接退出。
+  // 用 ref 保存最新值，避免事件回调因闭包捕获旧配置而给出过期行为。
+  const closeBehaviorRef = useRef<CloseBehavior>('ask');
+  useEffect(() => {
+    closeBehaviorRef.current = appConfig?.closeBehavior ?? 'ask';
+  }, [appConfig?.closeBehavior]);
+
+  // 拦截窗口关闭请求：由前端决定隐藏到托盘、弹窗询问还是真正退出。
+  // 浏览器预览没有 Tauri 窗口事件，跳过注册以保持 mock 可用。
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void getCurrentWindow().onCloseRequested(async event => {
+      if (disposed) return;
+      const behavior = closeBehaviorRef.current;
+
+      // 先拦截系统默认关闭，再按用户配置决定后续动作
+      event.preventDefault();
+
+      if (behavior === 'exit') {
+        await invokeCommand('quit_app');
+        return;
+      }
+
+      if (behavior === 'minimize') {
+        await invokeCommand('hide_main_window');
+        return;
+      }
+
+      setIsCloseConfirmOpen(true);
+    }).then(listener => {
+      if (disposed) {
+        void listener();
+      } else {
+        unlisten = listener;
+      }
+    }).catch(error => {
+      console.warn('注册窗口关闭监听失败:', error);
+    });
+
+    return () => {
+      disposed = true;
+      void unlisten?.();
+    };
+  }, []);
+
+  // 关闭确认弹窗的确认动作：按选择隐藏到托盘或退出，按需记住选择
+  const handleCloseConfirm = useCallback(async (behavior: 'minimize' | 'exit', remember: boolean) => {
+    setIsCloseConfirmSubmitting(true);
+    try {
+      if (remember) {
+        await setCloseBehavior(behavior);
+      }
+      setIsCloseConfirmOpen(false);
+      if (behavior === 'minimize') {
+        await invokeCommand('hide_main_window');
+      } else {
+        await invokeCommand('quit_app');
+      }
+    } catch (error) {
+      console.error('处理关闭操作失败:', error);
+      toast.error('处理关闭操作失败，请重试');
+    } finally {
+      setIsCloseConfirmSubmitting(false);
+    }
+  }, [setCloseBehavior]);
 
   // 重新从数据库加载百战记录
   const reloadBaizhanRecords = useCallback(async () => {
@@ -714,11 +791,24 @@ function App() {
     setEditingRecord(null);
   };
 
+  // 关闭确认弹窗需要在所有渲染分支中都可用：
+  // 引导页与加载页没有自定义标题栏，但用户仍可能用 Alt+F4 关闭窗口，
+  // 事件已被拦截，若此时不渲染弹窗就会变成无法关闭。
+  const closeConfirmDialog = (
+    <CloseConfirmDialog
+      isOpen={isCloseConfirmOpen}
+      submitting={isCloseConfirmSubmitting}
+      onConfirm={handleCloseConfirm}
+      onCancel={() => setIsCloseConfirmOpen(false)}
+    />
+  );
+
   // AppConfig 加载中：显示 loading
   if (appConfigLoading) {
     return (
       <div className="min-h-screen bg-base flex items-center justify-center">
         <LoadingSpinner size="lg" text="正在加载应用配置..." />
+        {closeConfirmDialog}
       </div>
     );
   }
@@ -726,13 +816,19 @@ function App() {
   // 引导未完成：显示 SetupGuide
   // 注意：仅当 setupCompleted=false 或 gameDirectory 为空时显示
   if (appConfig && (!appConfig.setupCompleted || !appConfig.gameDirectory)) {
-    return <SetupGuide />;
+    return (
+      <>
+        <SetupGuide />
+        {closeConfirmDialog}
+      </>
+    );
   }
 
   if (!isInitialized) {
     return (
       <div className="min-h-screen bg-base flex items-center justify-center">
         <LoadingSpinner size="lg" text="正在初始化数据库..." />
+        {closeConfirmDialog}
       </div>
     );
   }
@@ -970,6 +1066,9 @@ function App() {
           onCheckForUpdates={() => handleCheckForUpdates(false)}
         />
       </Suspense>
+
+      {/* 关闭确认：首次点击关闭时询问最小化到托盘还是直接退出 */}
+      {closeConfirmDialog}
 
       {/* Toast Container */}
       <ToastContainer />
