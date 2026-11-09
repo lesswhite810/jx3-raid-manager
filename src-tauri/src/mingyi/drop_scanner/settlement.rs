@@ -254,17 +254,20 @@ fn has_ambiguous_attempt_boundary(
         }
         if let Some(analysis) = jcl_analyses.get(&jcl.file_name) {
             // 已配置 JCL 直接复用本轮分析出的战斗边界，避免重复读大文件。
-            if analysis.fight_start_ms <= 0 || analysis.fight_end_ms < analysis.fight_start_ms {
-                return true;
-            }
-            if (analysis.fight_end_ms - candidate_end_ms).abs() <= RECEIPT_WINDOW_SECS * 1000
-                || (analysis.fight_start_ms < settlement_end_ms
-                    && analysis.fight_end_ms
-                        > candidate_end_ms.saturating_sub(RECEIPT_WINDOW_SECS * 1000))
+            if analysis.fight_start_ms > 0
+                && analysis.fight_end_ms >= analysis.fight_start_ms
             {
-                return true;
+                if (analysis.fight_end_ms - candidate_end_ms).abs() <= RECEIPT_WINDOW_SECS * 1000
+                    || (analysis.fight_start_ms < settlement_end_ms
+                        && analysis.fight_end_ms
+                            > candidate_end_ms.saturating_sub(RECEIPT_WINDOW_SECS * 1000))
+                {
+                    return true;
+                }
+                continue;
             }
-            continue;
+            // 分析结果缺少结束边界（掉线、切场景或客户端异常退出）时不能直接判定
+            // 歧义，改为读文件的结束锚：同类中断日志的末事件时间同样能定界。
         }
         // 未配置日志没有缓存边界；仅检查同会话附近文件，兼顾轮询成本与“较早开始、结算期仍在打”的歧义。
         let Some(ends) =
@@ -532,6 +535,156 @@ mod tests {
     }
 
     #[test]
+    fn cached_unclosed_neighbor_falls_back_to_file_anchors() {
+        // 已配置但分析结果没有结束边界（田承嗣式中途重开）的邻居，必须改用文件的
+        // 结束锚判定，而不能凭 fight_end=0 一刀切成歧义。
+        let candidate = SettlementCandidate {
+            file_name: "target.jcl".to_owned(),
+            end_sec: 100,
+        };
+        let dir = temp_jcl_dir("settlement-cached-unclosed");
+        fs::create_dir_all(&dir).unwrap();
+        let stale = "unclosed-old.jcl";
+        let stale_content =
+            "crc\t1\t40\t0\t1\t{true,\"realm::U123456/1\",0,835}\ncrc\t2\t60\t0\t18\t{\"某条系统消息。\",\"MSG_SYS\"}\n";
+        let (encoded, _, _) = encoding_rs::GBK.encode(stale_content);
+        fs::write(dir.join(stale), encoded.as_ref()).unwrap();
+        let neighbor = |name: &str| JclFileInfo {
+            file_name: name.to_owned(),
+            timestamp: 40_000,
+            raid_display_name: "其他副本".to_owned(),
+            raid_id: 1,
+            boss_name: "其他首领".to_owned(),
+            boss_id: 1,
+        };
+        let unclosed = HashMap::from([(
+            stale.to_owned(),
+            JclAnalysis {
+                boss_name: Some("其他首领".to_owned()),
+                fight_start_ms: 40_000,
+                fight_end_ms: 0,
+                is_kill: false,
+            },
+        )]);
+        assert!(
+            !has_ambiguous_attempt_boundary(
+                &candidate,
+                &[neighbor(stale)],
+                &unclosed,
+                &dir,
+                "123456",
+                200_000,
+            ),
+            "末事件远早于候选窗口时，未闭合邻居不得判歧义"
+        );
+        let live = "unclosed-live.jcl";
+        let live_content =
+            "crc\t1\t40\t0\t1\t{true,\"realm::U123456/1\",0,835}\ncrc\t2\t95\t0\t18\t{\"某条系统消息。\",\"MSG_SYS\"}\n";
+        let (encoded, _, _) = encoding_rs::GBK.encode(live_content);
+        fs::write(dir.join(live), encoded.as_ref()).unwrap();
+        let live_analysis = HashMap::from([(
+            live.to_owned(),
+            JclAnalysis {
+                boss_name: Some("其他首领".to_owned()),
+                fight_start_ms: 40_000,
+                fight_end_ms: 0,
+                is_kill: false,
+            },
+        )]);
+        assert!(
+            has_ambiguous_attempt_boundary(
+                &candidate,
+                &[neighbor(live)],
+                &live_analysis,
+                &dir,
+                "123456",
+                200_000,
+            ),
+            "末事件落在候选结束前 30 秒内仍须判歧义"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settlement_promotion_survives_interrupted_neighbor_without_end_row() {
+        // 掉线/切场景中断的邻居 JCL 没有 type=1 false，但它的最后一条事件远早于
+        // 候选结束点，不构成「结算窗口内仍在打」的歧义，不得毒化补强。
+        let path = temp_db_path("settlement-interrupted-neighbor");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE ChatInfo(key TEXT, value TEXT); CREATE TABLE ChatLog(type TEXT, text TEXT, msg TEXT, time INTEGER);") .unwrap();
+        conn.execute(
+            "INSERT INTO ChatInfo VALUES ('user_global_id', '123456')",
+            [],
+        )
+        .unwrap();
+        let money = "<text text=\"10\" name=\"Text_Gold\"/><text text=\"0\" name=\"Text_Silver\"/><text text=\"0\" name=\"Text_Copper\"/>";
+        conn.execute(
+            "INSERT INTO ChatLog VALUES ('MSG_MONEY', '你获得：10金。', ?1, 110)",
+            [money],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ChatLog VALUES ('MSG_ITEM', ?1, '', 110)",
+            [format!("{TREASURE_RECEIPT}\n")],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO ChatLog VALUES ('MSG_ITEM', '分配者将：[苍黎衣·丐帮]分配给队友。', '', 120)", []).unwrap();
+        drop(conn);
+        let (dir, jcl_path) = write_target_jcl("promotion-interrupted-neighbor");
+        let file_name = jcl_path.file_name().unwrap().to_string_lossy().into_owned();
+        let write_neighbor = |name: &str, last_event: i64| {
+            let content = format!(
+                "crc\t1\t40\t0\t1\t{{true,\"realm::U123456/1\",0,835}}\ncrc\t2\t{}\t0\t18\t{{\"某条系统消息。\",\"MSG_SYS\"}}\n",
+                last_event
+            );
+            let (encoded, _, _) = encoding_rs::GBK.encode(&content);
+            fs::write(dir.join(name), encoded.as_ref()).unwrap();
+            JclFileInfo {
+                file_name: name.to_owned(),
+                timestamp: 40_000,
+                raid_display_name: "其他副本".to_owned(),
+                raid_id: 1,
+                boss_name: "其他首领".to_owned(),
+                boss_id: 1,
+            }
+        };
+        // 末事件 60 秒，远早于候选结束点（105-30=75 秒），不构成歧义。
+        let stale_neighbor = write_neighbor("interrupted-old.jcl", 60);
+        assert_eq!(
+            select_settlement_promotions(
+                &[path.clone()],
+                "123456",
+                &[target_jcl(&file_name), stale_neighbor],
+                &target_analyses(&file_name),
+                &target_raids(),
+                &dir,
+                130_000,
+                None,
+            ),
+            HashSet::from([file_name.clone()]),
+            "中断邻居的末事件早于候选窗口时不得阻断补强"
+        );
+        // 末事件 104 秒落在候选结束前的 30 秒内，仍必须判歧义。
+        let live_neighbor = write_neighbor("interrupted-live.jcl", 104);
+        assert!(
+            select_settlement_promotions(
+                &[path.clone()],
+                "123456",
+                &[target_jcl(&file_name), live_neighbor],
+                &target_analyses(&file_name),
+                &target_raids(),
+                &dir,
+                130_000,
+                None,
+            )
+            .is_empty(),
+            "末事件落在候选结束前 30 秒内仍须视为歧义"
+        );
+        fs::remove_file(path).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn settlement_rejects_non_native_loot_message_even_with_verified_identity() {
         let path = temp_db_path("settlement-negative");
         let conn = Connection::open(&path).unwrap();
@@ -763,15 +916,19 @@ mod tests {
                 .as_nanos()
         ))
     }
-    fn write_target_jcl(label: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
+
+    fn temp_jcl_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
             "jx3-{label}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
+        ))
+    }
+    fn write_target_jcl(label: &str) -> (PathBuf, PathBuf) {
+        let dir = temp_jcl_dir(label);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("target.jcl");
         let content = "crc\t1\t100\t0\t1\t{true,\"realm::U123456/1\",0,835}\ncrc\t2\t101\t0\t8\t{9,\"史朝义\",139312}\ncrc\t3\t102\t0\t9\t{9,true,100,100}\ncrc\t4\t103\t0\t21\t{1,9,0,0,0,0,0,0,{[13]=1,[14]=0}}\ncrc\t5\t104\t0\t9\t{9,false,100,100}\ncrc\t6\t105\t0\t1\t{false,\"realm::U123456/1\",0,835}\n";

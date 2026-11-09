@@ -118,6 +118,29 @@ fn collect_trial_receipt_times_ms(
     .collect()
 }
 
+/// 迟到对账专用：在标准窗口关闭后（封存式落盘超过 15 分钟）重新查询聊天库。
+///
+/// 与 [`collect_trial_draws`] 完全一致，仅把查询上界从 `terminal+15min` 放宽到
+/// `terminal+window_ms`（仍受下一可信事件硬上界约束），并强制走全量文件枚举
+/// （等价 Historical 搜索，不受实时 mtime 过滤影响）。只允许扩大，不允许缩小：
+/// 传入更短窗口时仍按标准窗口查询，保证不改变已有行为。
+pub(super) fn collect_trial_draws_late(
+    account_dir: &Path,
+    expected_uid: &str,
+    terminal_at_ms: i64,
+    next_trusted_event_at_ms: Option<i64>,
+    window_ms: i64,
+) -> Vec<TrialDrawEvidence> {
+    collect_trial_draws_with_window(
+        account_dir,
+        expected_uid,
+        terminal_at_ms,
+        next_trusted_event_at_ms,
+        TrialReceiptSearch::Historical,
+        window_ms,
+    )
+}
+
 /// 从角色身份已核验的 ChatLog 解析终局后的每一次翻牌。
 ///
 /// ChatLog 的主键是 `(time, hash)`，所以同秒不同消息不能仅按秒去重。仅当同秒
@@ -130,8 +153,26 @@ pub(super) fn collect_trial_draws(
     next_trusted_event_at_ms: Option<i64>,
     search: TrialReceiptSearch,
 ) -> Vec<TrialDrawEvidence> {
+    collect_trial_draws_with_window(
+        account_dir,
+        expected_uid,
+        terminal_at_ms,
+        next_trusted_event_at_ms,
+        search,
+        RECEIPT_WINDOW_MS,
+    )
+}
+
+fn collect_trial_draws_with_window(
+    account_dir: &Path,
+    expected_uid: &str,
+    terminal_at_ms: i64,
+    next_trusted_event_at_ms: Option<i64>,
+    search: TrialReceiptSearch,
+    window_ms: i64,
+) -> Vec<TrialDrawEvidence> {
     let Some((start_sec, end_sec)) =
-        receipt_window_seconds(terminal_at_ms, next_trusted_event_at_ms)
+        receipt_window_seconds(terminal_at_ms, next_trusted_event_at_ms, window_ms)
     else {
         return Vec::new();
     };
@@ -187,11 +228,12 @@ pub(super) fn collect_trial_draws(
 fn receipt_window_seconds(
     terminal_at_ms: i64,
     next_trusted_event_at_ms: Option<i64>,
+    window_ms: i64,
 ) -> Option<(i64, i64)> {
     if terminal_at_ms <= 0 {
         return None;
     }
-    let upper_ms = terminal_at_ms.saturating_add(RECEIPT_WINDOW_MS).min(
+    let upper_ms = terminal_at_ms.saturating_add(window_ms).min(
         next_trusted_event_at_ms
             .filter(|time| *time > terminal_at_ms)
             .unwrap_or(i64::MAX),
@@ -314,9 +356,9 @@ fn chatlog_files(
     search: TrialReceiptSearch,
 ) -> Vec<PathBuf> {
     let account_dir = account_dir.to_path_buf();
-    super::find_chatlog_files(&account_dir)
-        .unwrap_or_default()
-        .into_iter()
+    let all_files = super::find_chatlog_files(&account_dir).unwrap_or_default();
+    let files: Vec<PathBuf> = all_files
+        .iter()
         .filter(|entry| match search {
             TrialReceiptSearch::Historical => true,
             TrialReceiptSearch::Realtime => fs::metadata(entry)
@@ -325,7 +367,19 @@ fn chatlog_files(
                 .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
                 .is_some_and(|duration| duration.as_millis() as i64 >= earliest_mtime_ms),
         })
-        .collect()
+        .cloned()
+        .collect();
+    // 诊断：实时窗口按 mtime 过滤掉所有聊天库时明确记录。茗伊封存式落盘
+    // 会让活跃库长期不动，导致实时窗口一个文件都查不到，这是"迟到回执"
+    // 场景下最容易被忽视的静默失败点。
+    if search == TrialReceiptSearch::Realtime && files.len() < all_files.len() {
+        log::info!(
+            "[TrialReceipt] 实时 mtime 过滤: {} 个聊天库中仅 {} 个满足最近落盘要求 (earliest_mtime_ms={earliest_mtime_ms})",
+            all_files.len(),
+            files.len()
+        );
+    }
+    files
 }
 
 fn chatlog_uid(conn: &Connection) -> Option<String> {

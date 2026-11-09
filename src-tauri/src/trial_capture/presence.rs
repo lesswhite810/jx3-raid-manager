@@ -149,6 +149,7 @@ impl CapturePresence {
                 .as_ref()
                 .is_some_and(|(_, previous)| terminal < *previous)
         {
+            self.log_rejection("终局", target, terminal, now);
             return false;
         }
         if self
@@ -181,9 +182,38 @@ impl CapturePresence {
             || receipt < terminal
             || receipt > terminal.saturating_add(super::MAX_RECEIPT_DELAY_MS)
         {
+            self.log_rejection("翻牌回执", target, receipt, now);
             return false;
         }
         self.admit_event(target, receipt, now, false)
+    }
+
+    /// 统一的准入拒绝诊断。只记录事件级失败（终局/翻牌回执被拒），
+    /// 不用于逐帧轮询（`allows` 每 tick 调用，避免日志风暴）。
+    fn log_rejection(&self, kind: &str, target: &Target, event_at: i64, now: i64) {
+        if !self.eligible(target, now) {
+            let reason = if self.process_start == 0 {
+                "未知游戏进程"
+            } else if self.uid.as_deref() != Some(target.uid.as_str()) {
+                "角色不匹配"
+            } else if !self.scene.is_some_and(|(_, trial)| trial) {
+                "当前不在试炼场景"
+            } else {
+                "活动租约过期(>90s)"
+            };
+            log::info!(
+                "[TrialCapture] {kind}准入被拒({reason}): event_at={event_at}, now={now}, uid={}",
+                target.uid
+            );
+            return;
+        }
+        if !(now.saturating_sub(EVENT_LEASE_MS)..=now).contains(&event_at) {
+            log::info!(
+                "[TrialCapture] {kind}事件时间超出 90 秒租约被拒: event_at={event_at}, now={now}, 延迟 {}ms, uid={}",
+                now.saturating_sub(event_at),
+                target.uid
+            );
+        }
     }
 
     fn eligible(&self, target: &Target, now: i64) -> bool {

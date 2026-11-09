@@ -1956,6 +1956,48 @@ fn ensure_critical_columns(conn: &Connection) -> Result<(), String> {
         ensure_trial_draws_table(conn)?;
     }
 
+    ensure_trial_capture_tables(conn)?;
+
+    Ok(())
+}
+
+/// 试炼截图观测持久化表。截图识别出的翻牌牌位与装备提示必须在 ChatLog
+/// 之前落库，否则封存式落盘（可能分钟级甚至下次登录才可见）会让已捕获的
+/// 帧在 5 分钟内存保留期后永久丢失。这里只存结构化观测，绝不存像素。
+///
+/// `run_key` 由采集端与回执端共同计算（`uid:map:terminal`），是两边的
+/// 唯一关联键；`at_ms` 为帧时间戳，与 run_key 共同保证幂等。
+pub(crate) fn ensure_trial_capture_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS trial_capture_runs (
+            run_key TEXT PRIMARY KEY,
+            uid TEXT NOT NULL,
+            map_id INTEGER NOT NULL,
+            terminal_ms INTEGER NOT NULL,
+            frame_count INTEGER NOT NULL DEFAULT 0,
+            reconciled INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_trial_capture_runs_pending
+            ON trial_capture_runs(reconciled, terminal_ms);
+
+        CREATE TABLE IF NOT EXISTS trial_capture_observations (
+            run_key TEXT NOT NULL,
+            at_ms INTEGER NOT NULL,
+            pid INTEGER NOT NULL,
+            slot INTEGER NOT NULL,
+            reset_visible INTEGER NOT NULL,
+            equipment_slot INTEGER NOT NULL DEFAULT 0,
+            equipment_name TEXT NOT NULL DEFAULT '',
+            equipment_level INTEGER NOT NULL DEFAULT 0,
+            equipment_bind TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (run_key, at_ms, pid, slot, reset_visible, equipment_slot, equipment_name, equipment_level, equipment_bind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_trial_capture_observations_run
+            ON trial_capture_observations(run_key, at_ms);",
+    )
+    .map_err(|e| format!("创建试炼截图观测持久化表失败: {}", e))?;
     Ok(())
 }
 
@@ -2384,6 +2426,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     ensure_trial_draws_table(conn)?;
+    ensure_trial_capture_tables(conn)?;
 
     // V14: 插入 app_config 默认值（与迁移脚本保持一致）
     let now = chrono::Local::now().to_rfc3339();
@@ -4160,6 +4203,183 @@ pub fn db_apply_auto_trial_draw_equipment_with_connection(
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(TrialAutoEquipmentUpdateOutcome::Updated)
+}
+
+/// 一次试炼采集会话（一个终局）的持久化元数据。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrialCaptureRun {
+    pub run_key: String,
+    pub uid: String,
+    pub map_id: i64,
+    pub terminal_ms: i64,
+    pub frame_count: i64,
+    pub reconciled: bool,
+}
+
+/// 一帧试炼面板的结构化截图观测（不含任何像素数据）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrialCaptureObservation {
+    pub run_key: String,
+    pub at_ms: i64,
+    pub pid: i64,
+    pub slot: i64,
+    pub reset_visible: bool,
+    pub equipment_slot: i64,
+    pub equipment_name: String,
+    pub equipment_level: i64,
+    pub equipment_bind: String,
+}
+
+/// 记录/更新一轮试炼采集会话。`created_at` 只在首次插入时写入。
+pub fn db_upsert_trial_capture_run_with_connection(
+    conn: &Connection,
+    run: &TrialCaptureRun,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO trial_capture_runs (run_key, uid, map_id, terminal_ms, frame_count, reconciled, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now', 'localtime'))
+         ON CONFLICT(run_key) DO UPDATE SET
+            frame_count = MAX(frame_count, excluded.frame_count),
+            reconciled = MAX(reconciled, excluded.reconciled),
+            updated_at = datetime('now', 'localtime')",
+        rusqlite::params![
+            run.run_key,
+            run.uid,
+            run.map_id,
+            run.terminal_ms,
+            run.frame_count,
+            i64::from(run.reconciled),
+        ],
+    )
+    .map_err(|e| format!("写入试炼采集会话失败: {e}"))?;
+    Ok(())
+}
+
+/// 将一帧截图观测写入持久化存储。重复写入同一帧由主键幂等吸收。
+pub fn db_insert_trial_capture_observation_with_connection(
+    conn: &Connection,
+    observation: &TrialCaptureObservation,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR IGNORE INTO trial_capture_observations (
+            run_key, at_ms, pid, slot, reset_visible,
+            equipment_slot, equipment_name, equipment_level, equipment_bind
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            observation.run_key,
+            observation.at_ms,
+            observation.pid,
+            observation.slot,
+            i64::from(observation.reset_visible),
+            observation.equipment_slot,
+            observation.equipment_name,
+            observation.equipment_level,
+            observation.equipment_bind,
+        ],
+    )
+    .map_err(|e| format!("写入试炼截图观测失败: {e}"))?;
+    Ok(())
+}
+
+/// 读取一轮采集会话的全部结构化观测，按帧时间排序。
+pub fn db_load_trial_capture_observations_with_connection(
+    conn: &Connection,
+    run_key: &str,
+) -> Result<Vec<TrialCaptureObservation>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT run_key, at_ms, pid, slot, reset_visible,
+                    equipment_slot, equipment_name, equipment_level, equipment_bind
+             FROM trial_capture_observations
+             WHERE run_key = ?1
+             ORDER BY at_ms, pid, slot",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([run_key], |row| {
+            Ok(TrialCaptureObservation {
+                run_key: row.get(0)?,
+                at_ms: row.get(1)?,
+                pid: row.get(2)?,
+                slot: row.get(3)?,
+                reset_visible: row.get::<_, i64>(4)? != 0,
+                equipment_slot: row.get(5)?,
+                equipment_name: row.get(6)?,
+                equipment_level: row.get(7)?,
+                equipment_bind: row.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// 找出仍未对账（`reconciled = 0`）且终局时间落在给定窗口内的采集会话，
+/// 供扫描侧在 ChatLog 封存落盘后补查迟到回执。
+pub fn db_pending_trial_capture_runs_with_connection(
+    conn: &Connection,
+    from_ms: i64,
+    to_ms: i64,
+) -> Result<Vec<TrialCaptureRun>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT run_key, uid, map_id, terminal_ms, frame_count, reconciled
+             FROM trial_capture_runs
+             WHERE reconciled = 0 AND terminal_ms >= ?1 AND terminal_ms <= ?2
+             ORDER BY terminal_ms",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map(rusqlite::params![from_ms, to_ms], |row| {
+            Ok(TrialCaptureRun {
+                run_key: row.get(0)?,
+                uid: row.get(1)?,
+                map_id: row.get(2)?,
+                terminal_ms: row.get(3)?,
+                frame_count: row.get(4)?,
+                reconciled: row.get::<_, i64>(5)? != 0,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// 标记一轮采集会话已完成对账（回执已补录或判定无回执可补）。
+pub fn db_mark_trial_capture_run_reconciled_with_connection(
+    conn: &Connection,
+    run_key: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE trial_capture_runs
+         SET reconciled = 1, updated_at = datetime('now', 'localtime')
+         WHERE run_key = ?1",
+        [run_key],
+    )
+    .map_err(|e| format!("标记试炼采集会话已对账失败: {e}"))?;
+    Ok(())
+}
+
+/// 按账号与终局时间反查已落库的试炼父记录 source_key。
+///
+/// 采集端（截图 worker）只知道账号 UUID，而 `trial_draws.source_key` 必须与
+/// `trial_records.source_key`（JCL 角色全局 ID 推导的稳定键）一致。迟到对账
+/// 路径用它把持久化的采集会话重新绑定到正确的父记录。找不到时返回 `None`，
+/// 调用方应跳过补录，避免为已删除的记录凭空造子笔。
+pub fn db_find_trial_record_source_key_with_connection(
+    conn: &Connection,
+    account_id: &str,
+    date_ms: i64,
+) -> Option<String> {
+    conn.query_row(
+        "SELECT source_key FROM trial_records
+         WHERE account_id = ?1 AND date = ?2 AND record_type = 'trial'
+         ORDER BY (source_key IS NULL) ASC, id ASC
+         LIMIT 1",
+        rusqlite::params![account_id, date_ms],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .filter(|key| !key.trim().is_empty())
 }
 
 /// Stores one canonical equipment id in an empty automatic trial card slot.

@@ -327,10 +327,6 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-pub fn is_recent_completion(terminal: i64, now: i64) -> bool {
-    (now.saturating_sub(RETENTION_MS)..=now).contains(&terminal)
-}
-
 fn send(message: Message) {
     if let Some(sender) = SENDER.get() {
         let _ = sender.send(message);
@@ -385,6 +381,12 @@ pub fn cleared(uid: &str, map: i64, at: i64) {
             },
             at,
         ));
+    } else {
+        log::info!(
+            "[TrialCapture] 终局未开启取帧: 终局时间 {} 距当前 {} 超出 15 分钟窗口 (uid={uid}, map={map})",
+            at,
+            now - at
+        );
     }
 }
 
@@ -402,13 +404,25 @@ pub fn finished_draw(
     next_boundary: Option<i64>,
 ) {
     let now = chrono::Utc::now().timestamp_millis();
-    if is_recent_completion(receipt, now)
-        && (terminal..=terminal + MAX_RECEIPT_DELAY_MS).contains(&receipt)
+    if run_key.trim().is_empty() || draw_key.trim().is_empty() {
+        log::info!(
+            "[TrialCapture] 翻牌回执缺少稳定来源键，无法关联截图 (terminal={terminal}, receipt={receipt})"
+        );
+        return;
+    }
+    // 新鲜度只看回执是否落在终局归属窗口（terminal..terminal+15min）以及
+    // 是否早于下一边界，绝不与扫描时的墙钟比较。茗伊封存式落盘会让回执
+    // 的消息时间远远早于扫描时间，按 now 判定新鲜度会把所有迟到回执丢掉。
+    if (terminal..=terminal + MAX_RECEIPT_DELAY_MS).contains(&receipt)
         && next_boundary.is_none_or(|boundary| receipt < boundary)
         && receipt <= now
     {
-        if run_key.trim().is_empty() || draw_key.trim().is_empty() {
-            return;
+        let delay = now.saturating_sub(receipt);
+        if delay > MAX_RECEIPT_DELAY_MS {
+            log::info!(
+                "[TrialCapture] 接受迟到回执（封存式落盘延迟 {}ms）: terminal={terminal}, receipt={receipt} (draw_key={draw_key})",
+                delay
+            );
         }
         send(Message::Finished(Completion {
             target: Target {
@@ -422,7 +436,121 @@ pub fn finished_draw(
             next_boundary,
             retry_after: 0,
         }));
+        return;
     }
+    // 诊断：明确指出是哪一道门禁拒绝了本次回执。
+    if receipt < terminal || receipt > terminal + MAX_RECEIPT_DELAY_MS {
+        log::info!(
+            "[TrialCapture] 回执不在终局归属窗口内: terminal={terminal}, receipt={receipt} (draw_key={draw_key})"
+        );
+    } else if next_boundary.is_some_and(|boundary| receipt >= boundary) {
+        log::info!(
+            "[TrialCapture] 回执晚于下一边界被丢弃: receipt={receipt}, next_boundary={} (draw_key={draw_key})",
+            next_boundary.unwrap_or_default()
+        );
+    } else {
+        log::info!(
+            "[TrialCapture] 回执时间异常（晚于当前时间）: receipt={receipt}, now={now} (draw_key={draw_key})"
+        );
+    }
+}
+
+/// 采集端与回执端共用的持久化主键：同 uid + 副本 + 终局时间唯一标识一轮翻牌。
+/// 注意与扫描器的 `dedupe_key`（JCL 角色全局 ID）无关，只在本模块内保持一致。
+fn capture_run_key(target: &Target, terminal: i64) -> String {
+    format!("{}:{}:{}", target.uid, target.map, terminal)
+}
+
+/// 从持久化观测还原内存样本。返回 `None` 表示该行不含有效面板信息。
+fn sample_from_observation(
+    observation: &crate::db::TrialCaptureObservation,
+    target: &Target,
+) -> Option<Sample> {
+    let selected = (observation.pid >= 0
+        && (1..=5).contains(&observation.slot))
+    .then_some((observation.pid as u32, observation.slot as u8));
+    let equipment = ((1..=5).contains(&observation.equipment_slot)
+        && !observation.equipment_name.trim().is_empty())
+    .then(|| {
+        (
+            observation.equipment_slot as u8,
+            catalog::TooltipEvidence {
+                name: observation.equipment_name.clone(),
+                level: observation.equipment_level,
+                bind: match observation.equipment_bind.as_str() {
+                    "tradable" => catalog::TooltipBind::Tradable,
+                    "bound" => catalog::TooltipBind::Bound,
+                    _ => catalog::TooltipBind::Unknown,
+                },
+            },
+        )
+    });
+    let has_content = selected.is_some() || equipment.is_some() || observation.reset_visible;
+    has_content.then(|| Sample {
+        target: target.clone(),
+        at: observation.at_ms,
+        selected,
+        reset_visible: observation.reset_visible,
+        equipment,
+    })
+}
+
+/// 迟到回执到达时把持久化帧回灌进内存样本队列。按 (at, pid, slot) 去重，
+/// 已在内存中的帧保持原样，随后按时间排序保证分段逻辑可用。
+fn rehydrate_samples(
+    session: &mut Session,
+    finish: &Completion,
+    conn: &rusqlite::Connection,
+) -> usize {
+    let run_key = capture_run_key(&finish.target, finish.terminal);
+    let observations = match crate::db::db_load_trial_capture_observations_with_connection(
+        conn,
+        &run_key,
+    ) {
+        Ok(observations) => observations,
+        Err(error) => {
+            log::warn!("[TrialCapture] 读取持久化截图观测失败 (run_key={run_key}): {error}");
+            return 0;
+        }
+    };
+    if observations.is_empty() {
+        return 0;
+    }
+    let existing: std::collections::HashSet<(i64, i64, i64)> = session
+        .samples
+        .iter()
+        .map(|sample| {
+            let (pid, slot) = sample
+                .selected
+                .map_or((-1, 0), |(pid, slot)| (i64::from(pid), i64::from(slot)));
+            (sample.at, pid, slot)
+        })
+        .collect();
+    let mut restored = 0usize;
+    for observation in &observations {
+        let Some(sample) = sample_from_observation(observation, &finish.target) else {
+            continue;
+        };
+        let (pid, slot) = sample
+            .selected
+            .map_or((-1, 0), |(pid, slot)| (i64::from(pid), i64::from(slot)));
+        if existing.contains(&(sample.at, pid, slot)) {
+            continue;
+        }
+        session.samples.push_back(sample);
+        restored += 1;
+    }
+    if restored > 0 {
+        let mut samples: Vec<_> = session.samples.drain(..).collect();
+        samples.sort_by_key(|sample| sample.at);
+        session.samples.extend(samples);
+        log::info!(
+            "[TrialCapture] 迟到回执回灌 {} 帧持久化观测 (run_key={run_key}, 共 {} 帧)",
+            restored,
+            observations.len()
+        );
+    }
+    restored
 }
 
 #[derive(Default)]
@@ -747,16 +875,27 @@ impl Session {
     }
 
     fn prune(&mut self, now: i64) {
+        // 茗伊 ChatLog 是封存式落盘，迟到回执的 receipt 远远早于当前墙钟。
+        // 保留水位必须以"当前正在等待的工作"里最早的终局时间为准，否则
+        // 迟到回执会被立即裁掉、永远等不到解析。
+        let active_floor = self
+            .pending
+            .iter()
+            .chain(self.equipment_reviews.iter().map(|review| &review.finish))
+            .map(|finish| finish.terminal)
+            .min()
+            .map_or(now, |terminal| now.min(terminal));
+        let floor = active_floor.saturating_sub(RETENTION_MS);
         // 保留最后一次观察的时间水位。扫描器会反复看到同一关，过期信号不能再打开截图。
-        self.samples
-            .retain(|sample| sample.at >= now - RETENTION_MS);
+        self.samples.retain(|sample| sample.at >= floor);
         self.handled
-            .retain(|finish| finish.receipt >= now - RETENTION_MS);
-        self.filled.retain(|(_, at)| *at >= now - RETENTION_MS);
+            .retain(|finish| finish.receipt >= floor || finish.terminal >= floor);
+        self.filled.retain(|(_, at)| *at >= floor);
         self.pending
-            .retain(|finish| finish.receipt >= now - RETENTION_MS);
-        self.equipment_reviews
-            .retain(|review| review.finish.receipt >= now - RETENTION_MS);
+            .retain(|finish| finish.receipt >= floor || finish.terminal >= floor);
+        self.equipment_reviews.retain(|review| {
+            review.finish.receipt >= floor || review.finish.terminal >= floor
+        });
     }
 }
 
@@ -841,7 +980,28 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                         .as_ref()
                         .is_none_or(|watch| watch.target != target || watch.at != at);
                     if presence.cleared(&target, at, now) {
-                        session.watch(target, at, at + WATCH_MS);
+                        session.watch(target.clone(), at, at + WATCH_MS);
+                        // 注册本轮采集会话，供扫描侧在 ChatLog 封存落盘后补查迟到回执。
+                        match crate::db::init_db() {
+                            Ok(conn) => {
+                                let run = crate::db::TrialCaptureRun {
+                                    run_key: capture_run_key(&target, at),
+                                    uid: target.uid.clone(),
+                                    map_id: target.map,
+                                    terminal_ms: at,
+                                    frame_count: 0,
+                                    reconciled: false,
+                                };
+                                if let Err(error) =
+                                    crate::db::db_upsert_trial_capture_run_with_connection(&conn, &run)
+                                {
+                                    log::warn!("[TrialCapture] 登记采集会话失败: {error}");
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("[TrialCapture] 打开数据库登记采集会话失败: {error}")
+                            }
+                        }
                         if new_terminal {
                             next_tick = Instant::now();
                         }
@@ -853,6 +1013,16 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                     }
                     let allow_watch =
                         presence.draw(&finish.target, finish.terminal, finish.receipt, now);
+                    // 迟到回执（封存式 ChatLog 落盘后）会把内存帧早已裁掉，
+                    // 必须先回灌持久化观测再入队，本 tick 的 apply 才有证据可用。
+                    match crate::db::init_db() {
+                        Ok(conn) => {
+                            rehydrate_samples(&mut session, &finish, &conn);
+                        }
+                        Err(error) => {
+                            log::warn!("[TrialCapture] 回灌持久化观测时打开数据库失败: {error}")
+                        }
+                    }
                     // 停止后仍可用已取得的帧补齐迟到奖励，不能因旧回执重新采集。
                     session.finished_with_watch(finish, allow_watch);
                 }
@@ -944,6 +1114,48 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                 .is_some_and(|(_, _, _, _, _, selector)| selector.is_none());
             let (selected, equipment, _, tooltip_needed, reset_visible, selector) =
                 observation.unwrap_or((None, None, false, false, false, None));
+            // 结构化观测当场落库（无像素），封存式 ChatLog 落盘后仍可回灌补录。
+            // 有牌位或装备信息才值得写库，纯空帧由内存队列承担。
+            let persist_observation = selected.is_some() || equipment.is_some();
+            if persist_observation {
+                let run_key = capture_run_key(&watch.target, watch.at);
+                let (equipment_slot, equipment_name, equipment_level, equipment_bind) =
+                    equipment
+                        .as_ref()
+                        .map_or((0, String::new(), 0, String::new()), |(slot, evidence)| {
+                            (
+                                i64::from(*slot),
+                                evidence.name.clone(),
+                                evidence.level,
+                                match evidence.bind {
+                                    catalog::TooltipBind::Tradable => "tradable".to_owned(),
+                                    catalog::TooltipBind::Bound => "bound".to_owned(),
+                                    catalog::TooltipBind::Unknown => "unknown".to_owned(),
+                                },
+                            )
+                        });
+                let observation = crate::db::TrialCaptureObservation {
+                    run_key,
+                    at_ms: sample_at,
+                    pid: selected.map_or(-1, |(pid, _)| i64::from(pid)),
+                    slot: selected.map_or(0, |(_, slot)| i64::from(slot)),
+                    reset_visible,
+                    equipment_slot,
+                    equipment_name,
+                    equipment_level,
+                    equipment_bind,
+                };
+                match crate::db::init_db() {
+                    Ok(conn) => {
+                        if let Err(error) = crate::db::db_insert_trial_capture_observation_with_connection(&conn, &observation) {
+                            log::warn!("[TrialCapture] 持久化截图观测失败: {error}");
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("[TrialCapture] 持久化截图观测时打开数据库失败: {error}")
+                    }
+                }
+            }
             schedule.observed(sample_at, selector == Some(true), tooltip_needed);
             if visual_uncertain {
                 schedule.recheck_uncertain_frame(sample_at);
@@ -1359,6 +1571,34 @@ mod tests {
                 (later.draw_key, 3),
             ]
         );
+    }
+
+    #[test]
+    fn late_receipt_survives_prune_while_pending_and_rehydrates_persisted_frames() {
+        let f = completion();
+        let mut s = Session::default();
+        sample(&mut s, "1234", 27_500, Some((208, 2)));
+        sample(&mut s, "1234", 28_000, Some((208, 2)));
+        s.finished(f.clone());
+        // 封存式落盘：回执已等了很久才被扫描到，期间 prune 会用 now 裁剪旧样本。
+        // 挂起的终局必须把保留水位压到自己的终局时间，绝不能裁掉 pending。
+        s.prune(1_800_000);
+        assert!(!s.pending.is_empty(), "迟到回执不得被 prune 丢弃");
+        assert_eq!(s.selected_slot(&f, s.evidence_window(&f).unwrap()), Some((208, 2)));
+        let mut saved = Vec::new();
+        apply_completions(&mut s, 1_800_000, |key, slot, _| {
+            saved.push((key.to_string(), slot));
+            Ok(())
+        });
+        assert_eq!(saved, vec![(f.draw_key, 2)]);
+    }
+
+    #[test]
+    fn prune_drops_everything_after_active_work_is_settled() {
+        let mut s = Session::default();
+        sample(&mut s, "1234", 27_500, Some((208, 2)));
+        s.prune(1_800_000);
+        assert!(s.samples.is_empty(), "没有挂起工作时样本仍按墙钟裁剪");
     }
 
     /// 用外部提供的去标题栏 BGRA 原图回放识别与写库，不接触游戏进程或用户数据库。

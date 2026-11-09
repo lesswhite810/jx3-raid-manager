@@ -91,6 +91,137 @@ fn trial_candidates_for_scan(
     }
 }
 
+/// 迟到回执对账窗口：超过标准 15 分钟回执窗口后仍允许补查的上限。
+/// 茗伊封存式落盘的时刻不可预测，可能在几分钟到数小时之后。
+const TRIAL_LATE_RECONCILE_WINDOW_MS: i64 = 2 * 60 * 60_000;
+
+/// 补查截图采集端登记的未对账终局的迟到翻牌回执。
+///
+/// 每次自动/手动扫描都会调用：从 `trial_capture_runs` 找出本账号 `reconciled=0`
+/// 的终局，用放宽窗口（下一登记终局或 2 小时）重新走全量聊天库查询。找到回执
+/// 后按普通路径入库并通知截图端；随后无论是否找到都标记已对账，避免每 30 秒
+/// 轮询反复全量枚举聊天库。历史手动扫描同样受益：游戏关闭后 ChatLog 才封存
+/// 落盘的终局能在下一次"扫描本周"时补齐。
+fn reconcile_pending_trial_capture_runs(
+    conn: &mut rusqlite::Connection,
+    account_dir: &Path,
+    account_id: &str,
+    live_trial_capture: bool,
+    changed_draws: &mut usize,
+) {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let pending = match db::db_pending_trial_capture_runs_with_connection(
+        conn,
+        now_ms - TRIAL_LATE_RECONCILE_WINDOW_MS,
+        now_ms,
+    ) {
+        Ok(pending) => pending,
+        Err(error) => {
+            log::warn!("[DropScanner] 读取未对账试炼采集会话失败: {error}");
+            return;
+        }
+    };
+    let pending: Vec<_> = pending
+        .into_iter()
+        .filter(|run| run.uid == account_id)
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    log::info!(
+        "[DropScanner] 账号 {} 对账 {} 轮未补齐翻牌的试炼采集（迟到回执补查）",
+        account_id,
+        pending.len()
+    );
+    for (index, run) in pending.iter().enumerate() {
+        // 下一登记终局是本轮回执的硬上界，避免快速连打时把下一轮的入包误归本轮。
+        let next_terminal_ms = pending
+            .iter()
+            .skip(index + 1)
+            .find(|next| next.terminal_ms > run.terminal_ms)
+            .map(|next| next.terminal_ms);
+        // trial_draws 的 source_key 必须与 trial_records.source_key 一致
+        // （trial:{JCL角色全局ID}:{map}:{terminal_ms}）。采集端只知道账号 UUID，
+        // 这里按 (账号, 终局时间) 反查已落库的父记录键。父记录不存在（例如用户
+        // 已手动删除该记录）时跳过补录，避免为已删除的记录凭空造子笔。
+        let source_key = db::db_find_trial_record_source_key_with_connection(
+            conn,
+            account_id,
+            run.terminal_ms,
+        );
+        let Some(source_key) = source_key else {
+            log::info!(
+                "[DropScanner] 账号 {} 的试炼终局 {} 无对应通关记录，跳过迟到翻牌补查",
+                account_id,
+                run.terminal_ms
+            );
+            if let Err(error) = db::db_mark_trial_capture_run_reconciled_with_connection(
+                conn,
+                &run.run_key,
+            ) {
+                log::warn!(
+                    "[DropScanner] 标记试炼采集会话已对账失败（run_key={}）: {}",
+                    run.run_key,
+                    error
+                );
+            }
+            continue;
+        };
+        let draws = trial_receipt::collect_trial_draws_late(
+            account_dir,
+            account_id,
+            run.terminal_ms,
+            next_terminal_ms,
+            TRIAL_LATE_RECONCILE_WINDOW_MS,
+        );
+        for draw in &draws {
+            let auto_draws = vec![draw.to_auto_trial_draw()];
+            match db::db_upsert_auto_trial_draws_with_connection(conn, &source_key, &auto_draws) {
+                Ok(changed) => {
+                    *changed_draws += changed;
+                    if live_trial_capture && changed > 0 {
+                        trial_capture::finished_draw(
+                            account_id,
+                            run.map_id,
+                            run.terminal_ms,
+                            &source_key,
+                            &draw.draw_key,
+                            draw.receipt_at_ms,
+                            next_terminal_ms,
+                        );
+                    }
+                }
+                Err(error) => {
+                    log::warn!(
+                        "[DropScanner] 账号 {} 迟到翻牌入库失败（terminal={}）: {}",
+                        account_id,
+                        run.terminal_ms,
+                        error
+                    );
+                }
+            }
+        }
+        if let Err(error) = db::db_mark_trial_capture_run_reconciled_with_connection(
+            conn,
+            &run.run_key,
+        ) {
+            log::warn!(
+                "[DropScanner] 标记试炼采集会话已对账失败（run_key={}）: {}",
+                run.run_key,
+                error
+            );
+        }
+        if !draws.is_empty() {
+            log::info!(
+                "[DropScanner] 账号 {} 迟到补录 {} 笔试炼翻牌（终局 {}）",
+                account_id,
+                draws.len(),
+                run.terminal_ms
+            );
+        }
+    }
+}
+
 // === 正则表达式预编译 ===
 
 // parse_jcl_filename 用
@@ -680,6 +811,9 @@ fn parse_jcl_filename(file_name: &str) -> Option<JclFileInfo> {
 }
 
 /// 旧扫描接口仅供回归/诊断测试复用；生产入口统一走带试炼上下文的单次枚举。
+///
+/// 这里把两个列表合并返回，保持测试夹具「一次拿到全部 JCL」的历史行为；
+/// 生产路径必须显式区分常规窗口与试炼上下文，不得复用本函数。
 #[cfg(test)]
 fn scan_jcl_files(
     account_dir: &PathBuf,
@@ -687,8 +821,10 @@ fn scan_jcl_files(
     start_ms: i64,
     end_ms: i64,
 ) -> Result<Vec<JclFileInfo>, String> {
-    let (jcl_files, _, _) =
+    let (mut jcl_files, trial_jcl_files, _) =
         scan_jcl_files_with_trial_context(account_dir, since_ms, start_ms, end_ms, 0)?;
+    jcl_files.extend(trial_jcl_files);
+    jcl_files.sort_by_key(|file| file.timestamp);
     Ok(jcl_files)
 }
 
@@ -697,6 +833,9 @@ fn scan_jcl_files(
 /// 常规团本仍完全遵守原有的 `since_ms`（文件 mtime）及 `start_ms/end_ms`（文件名
 /// 时间）限制；只有文件名明确为试炼之地的 JCL 可以越过 `since_ms`，供跨进程续打
 /// 恢复前序关卡。终局是否输出由调用方传给试炼解析器的独立范围控制。
+///
+/// 两个返回列表互斥：试炼之地的 JCL 只会出现在 `trial_jcl_files`，绝不进入
+/// `regular_jcl_files`。需要「任意下一场战斗（含试炼）」的调用方自行合并两个列表。
 fn scan_jcl_files_with_trial_context(
     account_dir: &PathBuf,
     since_ms: i64,
@@ -790,16 +929,21 @@ fn scan_jcl_files_with_trial_context(
         } else {
             true
         };
+        let is_trial_log = info.raid_display_name == TRIAL_DISPLAY_NAME;
         let regular_session_eligible = !in_regular_range || session_eligible;
         let trial_session_eligible = in_trial_context && session_eligible;
-        if info.raid_display_name == TRIAL_DISPLAY_NAME && trial_session_eligible {
+        if is_trial_log && trial_session_eligible {
             has_current_session_trial = true;
         }
-        if regular_session_eligible && in_regular_range {
-            regular_jcl_files.push(info.clone());
-        } else if !regular_session_eligible {
-            skipped_old += 1;
+        // 试炼之地不属于团本统计：它只进入试炼上下文列表，绝不混入常规窗口。
+        // 一旦混入，会连带污染结算补强窗口的截断点、歧义邻居扫描与团本聚类。
+        if !is_trial_log {
+            if regular_session_eligible && in_regular_range {
+                regular_jcl_files.push(info.clone());
+            } else if !regular_session_eligible {
+                skipped_old += 1;
             }
+        }
 
         if in_trial_context {
             trial_jcl_files.push(info);
@@ -2463,12 +2607,18 @@ fn jcl_uuid_matches_uid(jcl_uuid: &str, expected_uid: &str) -> bool {
 /// 收集本轮每份 JCL 中同角色的全部 type=1 结束时间，以排除外部奖励归属不明的尝试。
 /// 它不判首领、不写缓存；任一文件损坏时调用方必须禁用补漏，不能把该文件附近的
 /// 10 金借给别的候选。
+///
+/// 掉线、切场景或客户端异常退出会让 JCL 缺少 type=1 的 `false` 行。实测 388 份
+/// 真实日志中，有结束行的 386 份其「最后一条事件时间」与最后一条 `false` 完全同秒，
+/// 因此缺少结束行时改用最后一条事件时间兜底，避免把「读不到结束行」误判成
+/// 「战斗还没结束」而让同窗口内后续候选永久失格。
 fn collect_type1_end_anchors(jcl_path: &Path, expected_uid: &str) -> Option<Vec<i64>> {
     use std::io::BufRead;
     let file = std::fs::File::open(jcl_path).ok()?;
     let reader = std::io::BufReader::new(file);
     let gbk = encoding_rs::GBK;
     let mut ends = Vec::new();
+    let mut last_event_ms = 0i64;
     for line in reader.split(b'\n') {
         let line = line.ok()?;
         if line.is_empty() {
@@ -2477,6 +2627,12 @@ fn collect_type1_end_anchors(jcl_path: &Path, expected_uid: &str) -> Option<Vec<
         let parts: Vec<&[u8]> = line.splitn(6, |byte| *byte == b'\t').collect();
         if parts.len() < 6 {
             return None;
+        }
+        // 末事件时间只做事后兜底，解析失败不影响主判定，也不放宽 type=1 的严格校验。
+        if let Ok(raw) = std::str::from_utf8(parts[2]) {
+            if let Ok(ms) = raw.parse::<i64>() {
+                last_event_ms = ms.saturating_mul(1000);
+            }
         }
         let event_type = std::str::from_utf8(parts[4]).ok()?.parse::<u8>().ok()?;
         if event_type != 1 {
@@ -2504,6 +2660,9 @@ fn collect_type1_end_anchors(jcl_path: &Path, expected_uid: &str) -> Option<Vec<
             "false" => {}
             _ => return None,
         }
+    }
+    if ends.is_empty() && last_event_ms > 0 {
+        ends.push(last_event_ms);
     }
     Some(ends)
 }
@@ -4182,12 +4341,23 @@ pub fn scan_raid_drops_with_raids(
             end_ms,
             trial_context_start_ms,
         )?;
+    // 常规窗口已剔除试炼之地，但有两处语义刻意要求「任意下一场战斗（不限试炼）」：
+    // 实时场景广播与试炼翻牌窗口上界。这里合并一次，避免它们各自重建列表。
+    let all_session_jcl_files: Vec<JclFileInfo> = {
+        let mut merged: Vec<JclFileInfo> = jcl_files
+            .iter()
+            .chain(trial_jcl_files.iter())
+            .cloned()
+            .collect();
+        merged.sort_by_key(|file| file.timestamp);
+        merged
+    };
     // 只在真实运行中的进程会话广播该弱场景信号。历史复核和范围扫描传入
     // `jx3_running=false`，不会在此处修改实时截图状态。没有本会话 JCL 时发送
     // `at_ms=0` 的未知重置，绝不伪造一个会压过迟到试炼日志的“当前非试炼”时间。
     if realtime_trial_session {
         let (scene_at_ms, is_trial) =
-            latest_current_session_scene(&jcl_files).unwrap_or((0, false));
+            latest_current_session_scene(&all_session_jcl_files).unwrap_or((0, false));
         trial_capture::observe_scene(account_id, scene_at_ms, is_trial);
     }
     let cached_trial_candidates = if realtime_trial_session {
@@ -4206,9 +4376,11 @@ pub fn scan_raid_drops_with_raids(
     }
 
     log::info!(
-        "[DropScanner] 账号 {} 扫描到 {} 个 JCL 文件",
+        "[DropScanner] 账号 {} 扫描到 {} 个 JCL 文件（常规 {}，试炼 {}）",
         account_id,
-        jcl_files.len()
+        jcl_files.len() + trial_jcl_files.len(),
+        jcl_files.len(),
+        trial_jcl_files.len()
     );
 
     // 1.5 先处理试炼之地。它不属于 raids 表，不能跟团本一起过滤掉。
@@ -4396,7 +4568,7 @@ pub fn scan_raid_drops_with_raids(
                     });
                 // 下一场同角色战斗（不限试炼）同样会切断旧终局的翻牌窗口。当前
                 // 目录单次枚举已带回其 JCL 起始时间，无需为每笔翻牌再次遍历目录。
-                let next_battle_at_ms = jcl_files
+                let next_battle_at_ms = all_session_jcl_files
                     .iter()
                     .filter(|jcl| jcl.timestamp > candidate.completed_at_ms)
                     .map(|jcl| jcl.timestamp)
@@ -4463,6 +4635,17 @@ pub fn scan_raid_drops_with_raids(
                     }
                 }
             }
+            // 迟到对账：截图采集端把每轮终局登记在 trial_capture_runs（reconciled=0）。
+            // 茗伊封存式落盘会让回执在任何时刻才可见，超过 16 分钟重试缓存后旧的
+            // 候选已被丢弃。这里按持久化登记重查这些终局的迟到回执：窗口放宽到
+            // 下一登记终局或 2 小时，且不受实时 mtime 过滤影响。
+            reconcile_pending_trial_capture_runs(
+                &mut conn,
+                &account_dir,
+                account_id,
+                live_trial_capture,
+                &mut changed_draws,
+            );
             if changed_draws > 0 {
                 mark_trial_draws_changed();
                 log::info!(
@@ -6416,7 +6599,7 @@ mod tests {
             .expect("regular fixture should be written");
 
         // 让旧文件的 mtime 严格早于模拟的新进程启动时间；随后创建的两份试炼日志
-        // 必须仍能进入常规会话窗口，而首关只允许作为试炼上下文。
+        // 只进入试炼上下文，永远不进常规团本窗口，首关同样只作为试炼上下文。
         std::thread::sleep(std::time::Duration::from_millis(25));
         let process_start_mtime_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6453,10 +6636,9 @@ mod tests {
                 week_start,
             )
             .expect("single directory scan should succeed");
-        assert_eq!(
-            regular_files.len(),
-            2,
-            "旧试炼和旧团本都不得进入常规会话窗口"
+        assert!(
+            regular_files.is_empty(),
+            "试炼之地 JCL 一律不得进入常规团本窗口，即使由本进程写入"
         );
         assert_eq!(
             trial_files.len(),
@@ -6465,8 +6647,15 @@ mod tests {
         );
         assert!(has_current_session_trial, "本进程第二、三关应触发试炼解析");
 
+        // 只喂本进程写入的迟到日志（第 2、3 关），复现「续打中途还没有终局」的判定。
+        let late_files: Vec<JclFileInfo> = trial_files
+            .iter()
+            .filter(|file| file.timestamp >= second_time * 1_000)
+            .cloned()
+            .collect();
+        assert_eq!(late_files.len(), 2, "迟到会话只含本进程写入的两关");
         let late_only_records = trial::scan_trial_records(
-            &regular_files,
+            &late_files,
             &temp_dir,
             uid,
             second_time * 1_000,
@@ -8824,6 +9013,40 @@ mod tests {
             collect_type1_end_anchors(&jcl_path, "123456"),
             Some(vec![1_700_000_010_000, 1_700_000_030_000]),
             "同文件多次 type1 false 都必须成为金额争用锚"
+        );
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+    }
+
+    #[test]
+    fn test_type1_end_anchors_fall_back_to_last_event_without_end_row() {
+        // 掉线/切场景中断的日志只有开战行，没有任何 type=1 false。
+        let contents = concat!(
+            "crc\t1\t1700000000\t0\t1\t{true,\"fixture::U123456/1\",0}\n",
+            "crc\t2\t1700000010\t0\t21\t{123,456,789,1}\n",
+            "crc\t3\t1700000044\t0\t18\t{\"某条系统消息。\",\"MSG_SYS\"}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture("interrupted-single-attempt.jcl", contents);
+        assert_eq!(
+            collect_type1_end_anchors(&jcl_path, "123456"),
+            Some(vec![1_700_000_044_000]),
+            "缺少 type=1 false 时必须以最后一条事件时间兜底，不能返回空锚"
+        );
+        fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
+    }
+
+    #[test]
+    fn test_type1_end_anchors_prefer_end_row_over_last_event() {
+        // 正常日志中末事件时间与最后一条 false 同秒；有结束行时必须只认结束行。
+        let contents = concat!(
+            "crc\t1\t1700000000\t0\t1\t{true,\"fixture::U123456/1\",0}\n",
+            "crc\t2\t1700000010\t0\t1\t{false,\"fixture::U123456/1\",10}\n",
+            "crc\t3\t1700000012\t0\t18\t{\"战斗结束后的系统消息。\",\"MSG_SYS\"}\n",
+        );
+        let (temp_dir, jcl_path) = write_gbk_jcl_fixture("finished-then-notice.jcl", contents);
+        assert_eq!(
+            collect_type1_end_anchors(&jcl_path, "123456"),
+            Some(vec![1_700_000_010_000]),
+            "已有 type=1 false 时末事件兜底不得参与"
         );
         fs::remove_dir_all(temp_dir).expect("临时 JCL 目录应可删除");
     }
