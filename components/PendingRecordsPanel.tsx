@@ -44,6 +44,11 @@ interface PendingRecordsPanelProps {
   accounts: Account[];
   onRefreshRecords?: () => void;
   onRefreshTrialRecords?: () => void;
+  /**
+   * 外部请求打开待确认弹窗的信号：每次递增即打开一次。
+   * 用于 CD 概览表中点击「待确认」单元格时直接进入确认流程。
+   */
+  openSignal?: number;
 }
 
 interface RoleInfo {
@@ -89,6 +94,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   accounts,
   onRefreshRecords,
   onRefreshTrialRecords,
+  openSignal,
 }) => {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [cdConflictRecord, setCdConflictRecord] = useState<RaidRecord | null>(null);
@@ -128,6 +134,17 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       setIsModalOpen(false);
     }
   }, [pendingRecords.length, isModalOpen]);
+
+  // 外部（如 CD 概览表的「待确认」单元格）请求打开弹窗：只在信号递增时响应一次
+  const lastOpenSignalRef = useRef<number | undefined>(openSignal);
+  useEffect(() => {
+    if (openSignal === undefined) return;
+    if (lastOpenSignalRef.current === openSignal) return;
+    lastOpenSignalRef.current = openSignal;
+    if (pendingRecords.length > 0) {
+      setIsModalOpen(true);
+    }
+  }, [openSignal, pendingRecords.length]);
 
   // 构建 roleId -> role 信息映射
   const roleMap = useMemo(() => {

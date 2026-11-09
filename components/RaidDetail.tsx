@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, Raid, RaidRecord, BossCooldownInfo, AccountType } from '../types';
-import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Copy, Check, Ban, Power, Search, X, FileText, Boxes } from 'lucide-react';
+import { Shield, Calendar, TrendingUp, TrendingDown, RefreshCw, Clock, Check, Ban, Power, Search, X, FileText, Boxes } from 'lucide-react';
 import { AddRecordModal } from './AddRecordModal';
 import { RoleRecordsModal } from './RoleRecordsModal';
 import { BossCooldownSummary } from './BossCooldownDisplay';
@@ -122,7 +122,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
   const [selectedRoleForModal, setSelectedRoleForModal] = useState<RoleWithStatus | null>(null);
   const [successToast, setSuccessToast] = useState<{ visible: boolean; message: string }>({ visible: false, message: '' });
 
-  const [copiedField, setCopiedField] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const [roleSearchTerm, setRoleSearchTerm] = useState('');
 
@@ -192,21 +191,6 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
       setSuccessToast(prev => ({ ...prev, visible: false }));
       toastTimerRef.current = null;
     }, duration);
-  };
-
-  const copyToClipboard = async (text: string, fieldId: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(fieldId);
-      setTimeout(() => setCopiedField(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  };
-
-  const getMaskedPassword = (password: string | undefined) => {
-    if (!password) return '••••••';
-    return '••••••';
   };
 
   const handleAddRecordClick = (role: RoleWithStatus) => {
@@ -775,28 +759,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                     </div>
                   </div>
 
-                  <div className="mt-3 pt-3 border-t border-base space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs text-muted flex-shrink-0">账号</div>
-                      <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                        <span className="text-xs text-main truncate flex-1">{role.accountName}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyToClipboard(role.accountName, `account-${role.id}`);
-                          }}
-                          className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `account-${role.id}`
-                            ? 'text-ds-success'
-                            : 'text-muted hover:text-main hover:bg-surface'
-                            }`}
-                          title={copiedField === `account-${role.id}` ? '已复制!' : '复制账号'}
-                        >
-                          {copiedField === `account-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                        </button>
-                      </div>
-                    </div>
-
-                    {role.accountNote && (
+                  {role.accountNote && (
+                    <div className="mt-3 pt-3 border-t border-base">
                       <div className="flex items-start gap-2">
                         <div className="text-xs text-muted flex-shrink-0 pt-1">备注</div>
                         <div className="flex items-start gap-1.5 flex-1 min-w-0 bg-ds-success-soft border border-ds-success-soft rounded px-2 py-1.5">
@@ -804,36 +768,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                           <span className="text-xs text-ds-success-strong-soft break-all">{role.accountNote}</span>
                         </div>
                       </div>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs text-muted flex-shrink-0">密码</div>
-                      {role.password ? (
-                        <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                          <span className="text-xs text-main font-mono truncate flex-1">
-                            {getMaskedPassword(role.password)}
-                          </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyToClipboard(role.password!, `password-${role.id}`);
-                            }}
-                            className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
-                              ? 'text-ds-success'
-                              : 'text-muted hover:text-main hover:bg-surface'
-                              }`}
-                            title="复制密码"
-                          >
-                            {copiedField === `password-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex-1 min-w-0 bg-base rounded px-2 py-1">
-                          <span className="text-xs text-muted truncate flex-1">该账户未配置密码</span>
-                        </div>
-                      )}
                     </div>
-                  </div>
+                  )}
 
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     <button

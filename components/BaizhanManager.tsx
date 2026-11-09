@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { BaizhanRecord, Account } from '../types';
-import { Swords, Check, Copy, Search, X } from 'lucide-react';
+import { Swords, Check, Search, X } from 'lucide-react';
 import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
 import { getLastMonday } from '../utils/cooldownManager';
@@ -144,24 +144,6 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
         }
     }, [onRefreshRecords]);
 
-    // State for copy feedback
-    const [copiedField, setCopiedField] = useState<string | null>(null);
-
-    const copyToClipboard = async (text: string, fieldId: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopiedField(fieldId);
-            setTimeout(() => setCopiedField(null), 2000);
-        } catch (err) {
-            console.error('Failed to copy:', err);
-        }
-    };
-
-    const getMaskedPassword = (password: string | undefined) => {
-        if (!password) return '••••••';
-        return '••••••';
-    };
-
     return (
         <div className="space-y-8 animate-in fade-in duration-300">
             {/* Header / Role Grid */}
@@ -267,57 +249,6 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                             <span className={`font-bold font-mono ${stats.weeklyIncome > 0 ? 'text-ds-success' : 'text-main'}`}>
                                                 {stats.weeklyIncome > 0 ? `+${formatGold(stats.weeklyIncome)}` : '-'}
                                             </span>
-                                        </div>
-                                    </div>
-
-                                    {/* Account Info Section */}
-                                    <div className="mt-3 pt-3 border-t border-base space-y-2">
-                                        <div className="flex items-center gap-2">
-                                            <div className="text-xs text-muted flex-shrink-0">账号</div>
-                                            <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                                                <span className="text-xs text-main truncate flex-1">{role.accountName}</span>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        copyToClipboard(role.accountName, `baizhan-account-${role.id}`);
-                                                    }}
-                                                    className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `baizhan-account-${role.id}`
-                                                        ? 'text-ds-success'
-                                                        : 'text-muted hover:text-main hover:bg-surface'
-                                                        }`}
-                                                    title={copiedField === `baizhan-account-${role.id}` ? '已复制!' : '复制账号'}
-                                                >
-                                                    {copiedField === `baizhan-account-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                            <div className="text-xs text-muted flex-shrink-0">密码</div>
-                                            {role.password ? (
-                                                <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                                                    <span className="text-xs text-main font-mono truncate flex-1">
-                                                        {getMaskedPassword(role.password)}
-                                                    </span>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            copyToClipboard(role.password ?? '', `baizhan-password-${role.id}`);
-                                                        }}
-                                                        className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `baizhan-password-${role.id}`
-                                                            ? 'text-ds-success'
-                                                            : 'text-muted hover:text-main hover:bg-surface'
-                                                            }`}
-                                                        title="复制密码"
-                                                    >
-                                                        {copiedField === `baizhan-password-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                                    </button>
-                                                </div>
-                                            ) : (
-                                                <div className="flex-1 min-w-0 bg-base rounded px-2 py-1">
-                                                    <span className="text-xs text-muted truncate flex-1">未配置密码</span>
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
 

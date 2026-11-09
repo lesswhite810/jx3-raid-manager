@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { TrialDraw, TrialPlaceRecord, Account, Config, Season } from '../types';
-import { Trophy, Check, Copy, Target, Search, X, BarChart3, Clock } from 'lucide-react';
+import { Trophy, Check, Target, Search, X, BarChart3, Clock } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
 import { TrialFlipStatsModal } from './TrialFlipStatsModal';
@@ -318,24 +318,6 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         }
     }, [onRefreshRecords]);
 
-    // State for copy feedback
-    const [copiedField, setCopiedField] = useState<string | null>(null);
-
-    const copyToClipboard = async (text: string, fieldId: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopiedField(fieldId);
-            setTimeout(() => setCopiedField(null), 2000);
-        } catch (err) {
-            console.error('Failed to copy:', err);
-        }
-    };
-
-    const getMaskedPassword = (password: string | undefined) => {
-        if (!password) return '••••••';
-        return '••••••';
-    };
-
     return (
         <div className="space-y-8 animate-in fade-in duration-300">
             {/* Header / Role Grid */}
@@ -498,57 +480,6 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                                 <span className="text-[11px] text-muted">
                                                     含手工 {stats.manualDateFallbackDrawCount} 次按通关日期计入
                                                 </span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Account Info Section (Clean Copy from RaidDetail) */}
-                                    <div className="mt-3 pt-3 border-t border-base space-y-2">
-                                        <div className="flex items-center gap-2">
-                                            <div className="text-xs text-muted flex-shrink-0">账号</div>
-                                            <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                                                <span className="text-xs text-main truncate flex-1">{role.accountName}</span>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation(); // Although no parent click logic yet, good practice
-                                                        copyToClipboard(role.accountName, `account-${role.id}`);
-                                                    }}
-                                                    className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `account-${role.id}`
-                                                        ? 'text-ds-success'
-                                                        : 'text-muted hover:text-main hover:bg-surface'
-                                                        }`}
-                                                    title={copiedField === `account-${role.id}` ? '已复制!' : '复制账号'}
-                                                >
-                                                    {copiedField === `account-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                            <div className="text-xs text-muted flex-shrink-0">密码</div>
-                                            {role.password ? (
-                                                <div className="flex items-center gap-1 flex-1 min-w-0 bg-base rounded px-2 py-1">
-                                                    <span className="text-xs text-main font-mono truncate flex-1">
-                                                        {getMaskedPassword(role.password)}
-                                                    </span>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            copyToClipboard(role.password ?? '', `password-${role.id}`);
-                                                        }}
-                                                        className={`flex-shrink-0 p-1 rounded transition-colors ${copiedField === `password-${role.id}`
-                                                            ? 'text-ds-success'
-                                                            : 'text-muted hover:text-main hover:bg-surface'
-                                                            }`}
-                                                        title="复制密码"
-                                                    >
-                                                        {copiedField === `password-${role.id}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                                    </button>
-                                                </div>
-                                            ) : (
-                                                <div className="flex-1 min-w-0 bg-base rounded px-2 py-1">
-                                                    <span className="text-xs text-muted truncate flex-1">未配置密码</span>
-                                                </div>
                                             )}
                                         </div>
                                     </div>

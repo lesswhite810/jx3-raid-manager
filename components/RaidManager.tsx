@@ -6,11 +6,20 @@ import { toast } from '../utils/toastManager';
 import { TrialPlaceManager } from './TrialPlaceManager';
 import { BaizhanManager } from './BaizhanManager';
 import { VersionSelect } from './VersionSelect';
-import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
+import { TrialDraw, TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
 import { useCancellableEffect } from '../hooks/useCancellableEffect';
 import { RaidDetail } from './RaidDetail';
+import { RaidCdOverview } from './RaidCdOverview';
 import { PendingRecordsPanel } from './PendingRecordsPanel';
+import { AddRecordModal } from './AddRecordModal';
+import { RoleRecordsModal } from './RoleRecordsModal';
+import { AddTrialRecordModal } from './AddTrialRecordModal';
+import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
+import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
+import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
+import { useTrialSeasonProgress } from '../hooks/useTrialSeasonProgress';
+import { CdCellStatus, CdOverviewRow } from '../utils/raidCdOverview';
 import { buildWeeklyRaidGroups, SeasonContext, WeeklyRaidGroup } from '../utils/weeklyRaids';
 
 interface RaidManagerProps {
@@ -43,6 +52,19 @@ interface MergedRaid {
   difficultyLabels: { [key: string]: string };
 }
 
+/** CD 概览里副本单元格的点击目标：mode 决定弹的是「添加记录」还是「记录详情」 */
+interface RaidCellAction {
+  mode: 'add' | 'view';
+  raid: Raid;
+  row: CdOverviewRow;
+}
+
+/** 试炼之地 / 百战单元格的点击目标 */
+interface ActivityCellAction {
+  mode: 'add' | 'view';
+  row: CdOverviewRow;
+}
+
 const DIFFICULTY_LABELS: Record<string, string> = {
   '普通': '普通',
   '英雄': '英雄',
@@ -55,8 +77,9 @@ const DIFFICULTY_COLORS: Record<string, string> = {
   '挑战': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
 };
 
-// 用于在下拉框中标识"收藏"视图，避免与真实赛季名冲突
-const FAVORITE_VIEW = '__favorite__';
+// 用于在下拉框中标识「概览」视图，避免与真实赛季名冲突。
+// 概览 = CD 概览表；其余版本值仍按赛季展示副本卡片。
+const OVERVIEW_VIEW = '__favorite__';
 
 
 
@@ -79,8 +102,17 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   weeklyRaidNames,
   weeklyRaidStatus = 'success'
 }) => {
+  // 当前页面：概览（含 CD 概览表与赛季副本卡片）/ 试炼之地 / 百战 / 单个副本详情由 selectedRaid 控制。
+  // 试炼之地与百战不再占据顶部页签，只通过 CD 概览表的列头进入。
   const [activeTab, setActiveTab] = useState<'raid' | 'trial' | 'baizhan'>('raid');
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
+  // 点击 CD 概览里的「待确认」单元格时递增，用于命令式打开待确认弹窗
+  const [pendingPanelOpenSignal, setPendingPanelOpenSignal] = useState(0);
+
+  // CD 概览单元格点击目标：未清/部分清 → 添加记录，已清 → 查看该角色在该副本的记录
+  const [raidCellAction, setRaidCellAction] = useState<RaidCellAction | null>(null);
+  const [trialCellAction, setTrialCellAction] = useState<ActivityCellAction | null>(null);
+  const [baizhanCellAction, setBaizhanCellAction] = useState<ActivityCellAction | null>(null);
 
   // 检查是否有角色启用了试炼之地 / 百战
   const { hasTrialEnabled, hasBaizhanEnabled } = useMemo(() => {
@@ -99,7 +131,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     return { hasTrialEnabled: trial, hasBaizhanEnabled: baizhan };
   }, [accounts]);
 
-  // 当当前页签因没有启用角色而被隐藏时，自动切回团队副本
+  // 当前页面因没有启用角色而不可用时，自动切回概览
   useEffect(() => {
     if (activeTab === 'trial' && !hasTrialEnabled) {
       setActiveTab('raid');
@@ -107,6 +139,9 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
       setActiveTab('raid');
     }
   }, [hasTrialEnabled, hasBaizhanEnabled, activeTab]);
+
+  // 试炼进度周期与试炼之地页共用同一份数据，避免两处次数不一致
+  const { trialProgressPeriod } = useTrialSeasonProgress();
 
   const [versionOrderMap, setVersionOrderMap] = useState<Record<string, number>>({});
   const [isOrderLoaded, setIsOrderLoaded] = useState(false);
@@ -343,20 +378,20 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     }
 
     setSelectedVersion((prev) => {
-      // 收藏视图但收藏已清空：回退到最新版本
-      if (prev === FAVORITE_VIEW && !hasCollectionEntries) {
+      // 概览视图但已无任何可展示内容：回退到最新版本
+      if (prev === OVERVIEW_VIEW && !hasCollectionEntries) {
         return versions[0];
       }
-      // 收藏视图且有收藏：保留
-      if (prev === FAVORITE_VIEW) {
+      // 概览视图且有内容：保留
+      if (prev === OVERVIEW_VIEW) {
         return prev;
       }
       // 用户已主动选择一个真实赛季：保留
       if (versions.includes(prev)) {
         return prev;
       }
-      // 初始值 'all' 或不在现存列表里：有收藏则默认进入收藏视图，否则推到数组首位（最新版本）
-      return hasCollectionEntries ? FAVORITE_VIEW : versions[0];
+      // 初始值 'all' 或不在现存列表里：有内容则默认进入概览视图，否则推到数组首位（最新版本）
+      return hasCollectionEntries ? OVERVIEW_VIEW : versions[0];
     });
   }, [versions, isOrderLoaded, favoriteMergedRaids, hasCollectionEntries]);
 
@@ -491,59 +526,167 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     }
   };
 
+  // ==== CD 概览单元格点击：未清/部分清去补记录，已清去看记录 ====
+
+  const handleRaidCellClick = (raid: Raid, row: CdOverviewRow, status: CdCellStatus) => {
+    setRaidCellAction({ mode: status === 'complete' ? 'view' : 'add', raid, row });
+  };
+
+  const handleTrialCellClick = (row: CdOverviewRow, status: CdCellStatus) => {
+    if (status === 'na') return;
+    // 试炼记录要挂在某个大版本的进度周期下，周期没就绪时先不让补录，避免记到错误赛季
+    if (status !== 'complete' && trialProgressPeriod === undefined) {
+      toast.info('试炼进度数据正在加载，请稍后再试');
+      return;
+    }
+    if (status !== 'complete' && trialProgressPeriod === null) {
+      toast.error('无法确定当前试炼大版本，请检查赛季配置后重试');
+      return;
+    }
+    setTrialCellAction({ mode: status === 'complete' ? 'view' : 'add', row });
+  };
+
+  const handleBaizhanCellClick = (row: CdOverviewRow, status: CdCellStatus) => {
+    setBaizhanCellAction({ mode: status === 'complete' ? 'view' : 'add', row });
+  };
+
+  const handleAddRaidRecord = async (recordData: Partial<RaidRecord>) => {
+    try {
+      await db.addRecord(recordData as RaidRecord);
+      onRefreshRecords?.();
+      toast.success('记录添加成功');
+    } catch (error) {
+      console.error('添加记录失败:', error);
+      toast.error('添加记录失败，请重试');
+    }
+  };
+
+  const handleAddTrialRecord = async (
+    record: TrialPlaceRecord,
+    options?: { preserveFlippedIndex?: boolean }
+  ) => {
+    try {
+      await db.addTrialRecord(record, options?.preserveFlippedIndex);
+      onRefreshTrialRecords?.();
+    } catch (error) {
+      console.error('添加试炼记录失败:', error);
+      toast.error('添加试炼记录失败，请重试');
+    }
+  };
+
+  const handleAddBaizhanRecord = async (record: BaizhanRecord) => {
+    try {
+      await db.addBaizhanRecord(record);
+      onRefreshBaizhanRecords?.();
+    } catch (error) {
+      console.error('添加百战记录失败:', error);
+      toast.error('添加百战记录失败，请重试');
+    }
+  };
+
+  const handleDeleteTrialRecord = async (recordId: string) => {
+    try {
+      await db.deleteTrialRecord(recordId);
+      onRefreshTrialRecords?.();
+      toast.success('删除试炼记录成功');
+    } catch (error) {
+      console.error('删除试炼记录失败:', error);
+      toast.error('删除试炼记录失败');
+    }
+  };
+
+  const handleDeleteBaizhanRecord = async (recordId: string) => {
+    try {
+      await db.deleteBaizhanRecord(recordId);
+      onRefreshBaizhanRecords?.();
+      toast.success('删除百战记录成功');
+    } catch (error) {
+      console.error('删除百战记录失败:', error);
+      toast.error('删除百战记录失败');
+    }
+  };
+
+  const handleUpdateTrialDrawFlippedIndex = async (
+    _recordId: string,
+    drawId: string,
+    flippedIndex: number | null
+  ) => {
+    try {
+      await db.updateTrialDrawFlippedIndex(_recordId, drawId, flippedIndex);
+      onRefreshTrialRecords?.();
+    } catch (error) {
+      console.error('更新翻牌牌位失败:', error);
+      toast.error('更新翻牌牌位失败');
+    }
+  };
+
+  const handleUpdateTrialDrawEquipment = async (
+    _recordId: string,
+    drawId: string,
+    cardIndex: number,
+    equipmentId: string | null
+  ) => {
+    try {
+      await db.updateTrialDrawEquipment(drawId, cardIndex, equipmentId);
+      onRefreshTrialRecords?.();
+    } catch (error) {
+      console.error('更新翻牌装备失败:', error);
+      toast.error('更新翻牌装备失败');
+    }
+  };
+
+  const handleUpdateTrialDrawEquipmentReview = async (
+    _recordId: string,
+    draw: TrialDraw,
+    reviewed: boolean
+  ) => {
+    try {
+      await db.setTrialDrawEquipmentReviewed(draw.id, reviewed, draw.flippedIndex, [
+        draw.card1, draw.card2, draw.card3, draw.card4, draw.card5,
+      ]);
+    } catch (error) {
+      console.error('更新翻牌核对状态失败:', error);
+      toast.error('更新翻牌核对状态失败');
+    } finally {
+      // 冲突时也刷新，避免用户重复按旧画面确认。
+      onRefreshTrialRecords?.();
+    }
+  };
+
   return (
     <div className="flex flex-col h-full gap-4">
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-base pb-1 flex-shrink-0">
-        <button
-          onClick={() => { setActiveTab('raid'); setSelectedRaid(null); }}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'raid'
-            ? 'bg-base text-primary border border-base border-b-transparent'
-            : 'text-muted hover:text-main hover:bg-base/50'
-            }`}
-        >
-          团队副本
-        </button>
-        {hasTrialEnabled && (
-          <button
-            onClick={() => { setActiveTab('trial'); setSelectedRaid(null); }}
-            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'trial'
-              ? 'bg-base text-primary border border-base border-b-transparent'
-              : 'text-muted hover:text-main hover:bg-base/50'
-              }`}
-          >
-            试炼之地
-          </button>
-        )}
-        {hasBaizhanEnabled && (
-          <button
-            onClick={() => { setActiveTab('baizhan'); setSelectedRaid(null); }}
-            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'baizhan'
-              ? 'bg-base text-primary border border-base border-b-transparent'
-              : 'text-muted hover:text-main hover:bg-base/50'
-              }`}
-          >
-            百战
-          </button>
-        )}
-      </div>
-
       <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-6">
       {activeTab === 'baizhan' ? (
-        <BaizhanManager
-          records={baizhanRecords}
-          accounts={accounts}
-          onEditRecord={onEditBaizhanRecord}
-          onRefreshRecords={onRefreshBaizhanRecords}
-        />
+        <div className="space-y-4">
+          <button
+            onClick={() => setActiveTab('raid')}
+            className="flex items-center gap-2 text-sm text-muted hover:text-main transition-colors"
+          >
+            ← 返回概览
+          </button>
+          <BaizhanManager
+            records={baizhanRecords}
+            accounts={accounts}
+            onEditRecord={onEditBaizhanRecord}
+            onRefreshRecords={onRefreshBaizhanRecords}
+          />
+        </div>
       ) : activeTab === 'trial' ? (
-        <TrialPlaceManager
-          records={trialRecords}
-          accounts={accounts}
-          config={config}
-          onRefreshRecords={onRefreshTrialRecords}
-          onConfigChange={onConfigChange}
-        />
+        <div className="space-y-4">
+          <button
+            onClick={() => setActiveTab('raid')}
+            className="flex items-center gap-2 text-sm text-muted hover:text-main transition-colors"
+          >
+            ← 返回概览
+          </button>
+          <TrialPlaceManager
+            records={trialRecords}
+            accounts={accounts}
+            config={config}
+            onRefreshRecords={onRefreshTrialRecords}
+            onConfigChange={onConfigChange}
+          />
+        </div>
       ) : selectedRaid ? (
         <RaidDetail
           key={`raidDetail-${getRaidKey(selectedRaid)}`}
@@ -566,13 +709,14 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 accounts={accounts}
                 onRefreshRecords={onRefreshRecords}
                 onRefreshTrialRecords={onRefreshTrialRecords}
+                openSignal={pendingPanelOpenSignal}
               />
               {versions.length > 0 && (
                 <VersionSelect
                   value={selectedVersion}
                   onChange={setSelectedVersion}
                   options={[
-                    ...(hasCollectionEntries ? [{ value: FAVORITE_VIEW, label: '收藏' }] : []),
+                    ...(hasCollectionEntries ? [{ value: OVERVIEW_VIEW, label: '概览' }] : []),
                     ...versions.map(version => ({ value: version, label: version })),
                   ]}
                 />
@@ -580,199 +724,37 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             </div>
           </div>
 
-          <div className="bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/60 rounded-lg p-3 text-center text-sm text-blue-600 dark:text-blue-300">
-            右键难度框可单独禁用/启用
-          </div>
+          {/* CD 概览：一眼看出各角色在本周团队秘境、收藏副本、试炼之地与百战的进度，无需逐个点进详情。
+              表头可直接跳转副本详情、试炼之地与百战页面。仅「概览」视图展示，切到赛季时回到副本卡片。 */}
+          {selectedVersion === OVERVIEW_VIEW && (
+            <RaidCdOverview
+              raids={raids}
+              accounts={accounts}
+              records={records}
+              trialRecords={trialRecords}
+              baizhanRecords={baizhanRecords}
+              trialProgressPeriod={trialProgressPeriod}
+              weeklyRaidNames={weeklyRaidNames}
+              favoriteRaids={favoriteRaids}
+              seasonContext={seasonContext}
+              versionOrder={versionOrderMap}
+              onOpenRaid={setSelectedRaid}
+              onOpenTrial={() => setActiveTab('trial')}
+              onOpenBaizhan={() => setActiveTab('baizhan')}
+              onRequestConfirm={() => setPendingPanelOpenSignal(prev => prev + 1)}
+              onOpenRaidCell={handleRaidCellClick}
+              onOpenTrialCell={handleTrialCellClick}
+              onOpenBaizhanCell={handleBaizhanCellClick}
+            />
+          )}
 
-          {/* 选中收藏视图且有收藏时显示收藏列表，否则按版本分组显示当前赛季；本周名单内的已收藏副本优先显示在本周区域 */}
-          {selectedVersion === FAVORITE_VIEW && hasCollectionEntries ? (
-            <div className="space-y-4">
-              {weeklyRaidStatus !== 'success' && (
-                <div className="rounded-card border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-sm text-ds-warning-strong">
-                  {weeklyRaidStatus === 'loading' ? '正在获取本周团队秘境…' : '本周团队秘境获取失败，以下仅显示已收藏副本。'}
-                </div>
-              )}
-              {weeklyRaidGroups.length > 0 && (
-                <>
-                  <div className="flex items-center gap-3">
-                    <div className="h-px bg-ds-success-soft flex-1"></div>
-                    <h3 className="text-sm font-bold text-ds-success-strong uppercase tracking-wider bg-ds-success-soft px-3 py-1 rounded-tag border border-ds-success-soft flex items-center gap-1.5">
-                      <Shield size={14} />
-                      本周团队秘境
-                    </h3>
-                    <div className="h-px bg-ds-success-soft flex-1"></div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                    {weeklyRaidGroups.map(group => {
-                      const allDisabled = !group.missingConfig && group.raids.every(raid => !raid.isActive);
-                      const hasMultiplePlayerCounts = new Set(group.raids.map(raid => raid.playerCount)).size > 1;
-                      // 本赛季副本显示全部难度；历史赛季副本只显示 10 人难度
-                      const scopeLabel = group.missingTenPlayerConfig
-                        ? '未找到10人配置，已显示现有难度'
-                        : group.scope === 'history' ? '10人难度' : '全部难度';
-                      const subtitle = group.missingConfig
-                        ? '未找到副本配置'
-                        : [
-                          scopeLabel + (allDisabled ? '（已禁用）' : ''),
-                          group.isFavorite ? '已收藏' : null,
-                        ].filter(Boolean).join(' · ');
-                      return (
-                        <div key={`weekly-${group.name}`} className={`p-4 rounded-card border ${group.missingConfig || group.missingTenPlayerConfig ? 'border-ds-warning-soft bg-ds-warning-soft/30' : allDisabled ? 'border-base bg-base opacity-70' : 'border-ds-success-soft bg-ds-success-soft/30'}`}>
-                          <div className="flex items-start justify-between gap-2 mb-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`p-1.5 rounded-tag ${group.isFavorite ? 'bg-ds-warning-soft text-ds-warning-strong' : 'bg-ds-success-soft text-ds-success-strong'}`}>
-                                {group.isFavorite ? <Star size={16} fill="currentColor" /> : <Shield size={16} />}
-                              </span>
-                              <div>
-                                <h3 className="font-semibold text-sm text-main">{group.name}</h3>
-                                <p className="text-xs text-muted">{subtitle}</p>
-                              </div>
-                            </div>
-                            {!group.missingConfig && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleFavorite(group.name);
-                                }}
-                                className={`transition-all p-1 rounded-md ${group.isFavorite
-                                  ? 'text-ds-warning-strong hover:bg-ds-warning-soft'
-                                  : 'text-muted hover:text-ds-warning-strong hover:bg-ds-warning-soft/50'
-                                  }`}
-                                title={group.isFavorite ? '取消收藏' : '收藏此副本'}
-                              >
-                                <Star size={16} fill={group.isFavorite ? 'currentColor' : 'none'} />
-                              </button>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {group.raids.map(raid => {
-                              const label = hasMultiplePlayerCounts
-                                ? `${raid.playerCount}人${DIFFICULTY_LABELS[raid.difficulty]}`
-                                : DIFFICULTY_LABELS[raid.difficulty];
-                              return (
-                                <div
-                                  key={getRaidKey(raid)}
-                                  onClick={() => setSelectedRaid(raid)}
-                                  onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); toggleRaidDifficultyStatus(getRaidKey(raid)); }}
-                                  className={`px-2 py-1 text-xs font-medium rounded-tag border cursor-pointer ${raid.isActive ? 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft' : 'bg-base text-muted border-base'}`}
-                                  title={`${label} - ${raid.isActive ? '点击进入详情，右键禁用' : '已禁用，点击进入详情，右键启用'}`}
-                                >
-                                  {label}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-              {favoriteMergedRaids.length > 0 && <div className="flex items-center gap-3">
-                <div className="h-px bg-ds-warning-soft flex-1"></div>
-                <h3 className="text-sm font-bold text-ds-warning-strong uppercase tracking-wider bg-ds-warning-soft px-3 py-1 rounded-full border border-ds-warning-soft flex items-center gap-1.5">
-                  <Star size={14} fill="currentColor" />
-                  收藏
-                </h3>
-                <div className="h-px bg-ds-warning-soft flex-1"></div>
-              </div>}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                {favoriteMergedRaids.map(mergedRaid => {
-                  const isStatic = mergedRaid.raids.some(r => isStaticRaid(r));
-                  return (
-                    <div
-                      key={`favorite-${mergedRaid.name}`}
-                      className="p-4 rounded-xl border transition-all duration-200 relative group bg-ds-warning-soft/30 border-ds-warning-soft hover:border-ds-warning hover:shadow-sm"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="p-1.5 rounded-lg bg-ds-warning-soft text-ds-warning-strong">
-                            <Shield size={16} />
-                          </span>
-                          <div>
-                            <h3 className="font-semibold text-sm text-main">{mergedRaid.name}</h3>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleFavorite(mergedRaid.name);
-                            }}
-                            className="transition-all p-1 rounded-md text-ds-warning-strong hover:text-ds-warning-strong hover:bg-ds-warning-soft"
-                            title="取消收藏"
-                          >
-                            <Star size={16} fill="currentColor" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleRaidStatus(mergedRaid.name);
-                            }}
-                            className="transition-all p-1 rounded-md text-ds-success-strong hover:text-ds-success-strong hover:bg-ds-success-soft"
-                            title="禁用此副本（所有难度）"
-                          >
-                            <Power size={16} />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (isStatic) {
-                                alert('预制副本不能删除，只能禁用');
-                                return;
-                              }
-                              if (confirm('确认删除此副本？')) {
-                                // 先落库再改 UI：自动保存默认不删行，必须显式调用删除命令
-                                mergedRaid.raids.forEach(raid => {
-                                  const key = getRaidKey(raid);
-                                  db.deleteRaidStructured(key)
-                                    .then(() => {
-                                      setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
-                                    })
-                                    .catch(error => {
-                                      console.error('删除副本失败:', error);
-                                      alert('删除副本失败，请重试');
-                                    });
-                                });
-                              }
-                            }}
-                            className={`transition-colors p-1 rounded-md ${isStatic
-                              ? 'text-muted cursor-not-allowed opacity-50'
-                              : 'text-muted hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
-                              }`}
-                            title={isStatic ? '预制副本不能删除' : '删除'}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 mb-3 flex-wrap justify-center sm:justify-start">
-                        {mergedRaid.raids.map(raid => {
-                          const label = mergedRaid.difficultyLabels[getRaidKey(raid)] || DIFFICULTY_LABELS[raid.difficulty];
-                          return (
-                            <div
-                              key={getRaidKey(raid)}
-                              onClick={() => setSelectedRaid(raid)}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                toggleRaidDifficultyStatus(getRaidKey(raid));
-                              }}
-                              className={`relative px-2 py-1 text-xs font-medium rounded border cursor-pointer transition-all hover:scale-105 min-w-[60px] text-center ${DIFFICULTY_COLORS[raid.difficulty]}`}
-                              title={`${label} - 点击进入详情，右键切换状态`}
-                            >
-                              {label}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+          {selectedVersion === OVERVIEW_VIEW && weeklyRaidStatus !== 'success' && (
+            <div className="rounded-card border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-sm text-ds-warning-strong">
+              {weeklyRaidStatus === 'loading' ? '正在获取本周团队秘境…' : '本周团队秘境获取失败，CD 概览仅包含已收藏副本。'}
             </div>
-          ) : Object.keys(mergedGroupedRaids).length > 0 ? (
+          )}
+
+          {selectedVersion !== OVERVIEW_VIEW && (Object.keys(mergedGroupedRaids).length > 0 ? (
             versions.map(version => {
               const versionRaids = mergedGroupedRaids[version];
               if (!versionRaids) return null;
@@ -908,10 +890,130 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
               <Shield className="w-12 h-12 mx-auto mb-2 opacity-20" />
               <p>暂无副本数据</p>
             </div>
-          )}
+          ))}
         </>
       )}
       </div>
+
+      {/* CD 概览单元格点击后弹出的记录弹窗：未清/部分清 → 添加记录，已清 → 该角色在该副本的记录明细 */}
+      {raidCellAction && raidCellAction.mode === 'add' && (
+        <AddRecordModal
+          isOpen
+          onClose={() => setRaidCellAction(null)}
+          onSubmit={handleAddRaidRecord}
+          raid={raidCellAction.raid}
+          role={{
+            id: raidCellAction.row.roleId,
+            name: raidCellAction.row.roleName,
+            server: raidCellAction.row.server,
+            region: raidCellAction.row.region,
+            sect: raidCellAction.row.sect,
+            accountId: raidCellAction.row.accountId,
+            accountName: raidCellAction.row.accountName,
+            bossCooldowns: raidCellAction.row.cells[getRaidKey(raidCellAction.raid)]?.bossCooldowns,
+          }}
+        />
+      )}
+
+      {raidCellAction && raidCellAction.mode === 'view' && (
+        <RoleRecordsModal
+          isOpen
+          onClose={() => setRaidCellAction(null)}
+          role={{
+            id: raidCellAction.row.roleId,
+            name: raidCellAction.row.roleName,
+            server: raidCellAction.row.server,
+            region: raidCellAction.row.region,
+            sect: raidCellAction.row.sect,
+            accountId: raidCellAction.row.accountId,
+            accountName: raidCellAction.row.accountName,
+          }}
+          records={records}
+          raid={raidCellAction.raid}
+          setRecords={setRecords}
+          isAdmin={true}
+          onEditRecord={onEditRecord}
+          onRefreshRecords={onRefreshRecords}
+        />
+      )}
+
+      {trialCellAction && trialCellAction.mode === 'add' && (
+        <AddTrialRecordModal
+          isOpen
+          onClose={() => setTrialCellAction(null)}
+          onSubmit={handleAddTrialRecord}
+          accounts={accounts}
+          initialRole={{
+            id: trialCellAction.row.roleId,
+            name: trialCellAction.row.roleName,
+            server: trialCellAction.row.server,
+            region: trialCellAction.row.region,
+            accountId: trialCellAction.row.accountId,
+            accountName: trialCellAction.row.accountName,
+            sect: trialCellAction.row.sect ?? '',
+          }}
+          autoFillEnabled={config?.trial?.autoFillEnabled ?? false}
+          records={trialRecords}
+          trialProgressPeriod={trialProgressPeriod}
+        />
+      )}
+
+      {trialCellAction && trialCellAction.mode === 'view' && (
+        <TrialRoleRecordsModal
+          isOpen
+          onClose={() => setTrialCellAction(null)}
+          role={{
+            id: trialCellAction.row.roleId,
+            name: trialCellAction.row.roleName,
+            server: trialCellAction.row.server,
+            sect: trialCellAction.row.sect,
+            martial: trialCellAction.row.martial,
+            accountName: trialCellAction.row.accountName,
+          }}
+          records={trialRecords}
+          onDeleteRecord={handleDeleteTrialRecord}
+          onUpdateDrawFlippedIndex={handleUpdateTrialDrawFlippedIndex}
+          onUpdateDrawEquipment={handleUpdateTrialDrawEquipment}
+          onUpdateDrawEquipmentReview={handleUpdateTrialDrawEquipmentReview}
+        />
+      )}
+
+      {baizhanCellAction && baizhanCellAction.mode === 'add' && (
+        <AddBaizhanRecordModal
+          isOpen
+          onClose={() => setBaizhanCellAction(null)}
+          onSubmit={handleAddBaizhanRecord}
+          accounts={accounts}
+          initialRole={{
+            id: baizhanCellAction.row.roleId,
+            name: baizhanCellAction.row.roleName,
+            server: baizhanCellAction.row.server,
+            region: baizhanCellAction.row.region,
+            accountId: baizhanCellAction.row.accountId,
+            accountName: baizhanCellAction.row.accountName,
+            sect: baizhanCellAction.row.sect ?? '',
+            equipmentScore: baizhanCellAction.row.equipmentScore,
+          }}
+        />
+      )}
+
+      {baizhanCellAction && baizhanCellAction.mode === 'view' && (
+        <BaizhanRoleRecordsModal
+          isOpen
+          onClose={() => setBaizhanCellAction(null)}
+          role={{
+            id: baizhanCellAction.row.roleId,
+            name: baizhanCellAction.row.roleName,
+            server: baizhanCellAction.row.server,
+            sect: baizhanCellAction.row.sect,
+            martial: baizhanCellAction.row.martial,
+            accountName: baizhanCellAction.row.accountName,
+          }}
+          records={baizhanRecords}
+          onDeleteRecord={handleDeleteBaizhanRecord}
+          onEditRecord={onEditBaizhanRecord}
+        />
+      )}
     </div>
   );
 };
