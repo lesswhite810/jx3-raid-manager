@@ -43,7 +43,6 @@ mod tests {
                 card_1 TEXT NOT NULL DEFAULT '', card_2 TEXT NOT NULL DEFAULT '',
                 card_3 TEXT NOT NULL DEFAULT '', card_4 TEXT NOT NULL DEFAULT '',
                 card_5 TEXT NOT NULL DEFAULT '',
-                equipment_unreviewed INTEGER NOT NULL DEFAULT 1,
                 source TEXT NOT NULL DEFAULT 'auto', updated_at TEXT
              );
              INSERT INTO trial_records VALUES ('record');",
@@ -52,8 +51,8 @@ mod tests {
         conn.execute(
             "INSERT INTO trial_draws (
                 id, trial_record_id, source_key, sequence, receipt_time,
-                card_1, equipment_unreviewed
-             ) VALUES ('draw', 'record', 'v21-source', 1, 1, 'old-card', 0)",
+                card_1
+             ) VALUES ('draw', 'record', 'v21-source', 1, 1, 'old-card')",
             [],
         )
         .unwrap();
@@ -61,11 +60,11 @@ mod tests {
         migrate(&conn).unwrap();
         migrate(&conn).unwrap();
 
-        let saved: (String, i64) = conn
+        let saved: String = conn
             .query_row(
-                "SELECT card_1, equipment_unreviewed FROM trial_draws WHERE id = 'draw'",
+                "SELECT card_1 FROM trial_draws WHERE id = 'draw'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .unwrap();
         let override_count: i64 = conn
@@ -75,7 +74,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(saved, ("old-card".to_string(), 0));
+        assert_eq!(saved, "old-card".to_string());
         assert_eq!(override_count, 0, "V21 牌面不能被推断为人工证据");
     }
 }
