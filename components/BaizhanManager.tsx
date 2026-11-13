@@ -10,6 +10,8 @@ import { SectIcon } from './SectIcon';
 import { filterRaidRoles } from '../utils/raidRoleUtils';
 import { formatGold } from '../utils/goldFormat';
 import { getCardClass, getAddButtonClass, getViewButtonClass } from '../utils/cardStatusStyles';
+import { RoleCredentialInfo } from './RoleCredentialInfo';
+import { useAppConfig } from '../contexts/AppConfigContext';
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
@@ -24,6 +26,10 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     onEditRecord,
     onRefreshRecords
 }) => {
+    // 旧版模式保留角色卡片上的账号与密码展示 / 复制；新版把入口收敛到 CD 概览表的操作列
+    const { appConfig } = useAppConfig();
+    const isHistoryMode = (appConfig?.raidViewMode ?? 'current') === 'history';
+
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
     const [roleSearchTerm, setRoleSearchTerm] = useState('');
@@ -251,6 +257,14 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                             </span>
                                         </div>
                                     </div>
+
+                                    {/* 旧版模式下保留账号与密码复制入口 */}
+                                    {isHistoryMode && (
+                                        <RoleCredentialInfo
+                                            accountName={role.accountName}
+                                            password={role.password}
+                                        />
+                                    )}
 
                                     {/* Action Buttons */}
                                     <div className="mt-3 grid grid-cols-2 gap-2">

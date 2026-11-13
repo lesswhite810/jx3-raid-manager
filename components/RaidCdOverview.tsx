@@ -1,11 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { Copy, KeyRound, Star } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Copy, KeyRound, Star, X } from 'lucide-react';
 import { Account, BaizhanRecord, Raid, RaidRecord, TrialPlaceRecord } from '../types';
-import { CdActivityCell, CdCell, CdCellStatus, CdOverviewRow, buildRaidCdOverview } from '../utils/raidCdOverview';
+import { CdActivityCell, CdCell, CdCellStatus, CdOverviewRow, buildRaidCdOverview, resolveCdCellClickTarget } from '../utils/raidCdOverview';
 import { SeasonContext } from '../utils/weeklyRaids';
 import { getBaseServerName } from '../utils/serverUtils';
 import { TrialProgressPeriod } from '../utils/trialProgress';
 import { toast } from '../utils/toastManager';
+import { SectIcon } from './SectIcon';
+import { FilterSelect, FilterSelectOption } from './FilterSelect';
 
 interface RaidCdOverviewProps {
   raids: Raid[];
@@ -20,19 +22,25 @@ interface RaidCdOverviewProps {
   seasonContext: SeasonContext;
   /** 大版本名 → 新旧排名（0 最新），用于把周常副本列按离现在最近的赛季排序 */
   versionOrder?: Record<string, number>;
+  /** 是否展示周常副本列（默认 true）。关闭时周常列仅保留当前赛季副本，收藏列不受影响 */
+  showWeeklyRaids?: boolean;
+  /** 当前版本等级上限（null/undefined 表示未配置，不做等级过滤） */
+  levelCap?: number | null;
+  /** 是否隐藏非满级角色（默认 false）。开启时等级已知且未达上限的角色不进入概览 */
+  hideNonMaxLevelRoles?: boolean;
   /** 点击副本列头时进入对应副本详情 */
   onOpenRaid: (raid: Raid) => void;
   /** 点击「试炼之地」列头时切换到试炼之地页面 */
   onOpenTrial: () => void;
   /** 点击「百战」列头时切换到百战页面 */
   onOpenBaizhan: () => void;
-  /** 点击「待确认」单元格时打开待确认记录确认框 */
-  onRequestConfirm: () => void;
+  /** 点击团队副本的「待确认」单元格时打开该角色该副本的待确认记录确认框 */
+  onRequestConfirmRaid: (scope: { roleId: string; raid: Raid }) => void;
   /** 点击副本单元格：未清 / 部分清 → 添加记录，已清 → 查看该角色该副本的记录 */
   onOpenRaidCell: (raid: Raid, row: CdOverviewRow, status: CdCellStatus) => void;
-  /** 点击试炼单元格：未清 / 部分清 → 添加记录，已清 → 查看该角色的试炼记录 */
+  /** 点击试炼单元格：待确认 / 已清 → 查看该角色的试炼记录，其余 → 添加记录 */
   onOpenTrialCell: (row: CdOverviewRow, status: CdCellStatus) => void;
-  /** 点击百战单元格：未清 → 添加记录，已清 → 查看该角色的百战记录 */
+  /** 点击百战单元格：待确认 / 已清 → 查看该角色的百战记录，其余 → 添加记录 */
   onOpenBaizhanCell: (row: CdOverviewRow, status: CdCellStatus) => void;
 }
 
@@ -121,15 +129,21 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
   favoriteRaids,
   seasonContext,
   versionOrder,
+  showWeeklyRaids,
+  levelCap,
+  hideNonMaxLevelRoles,
   onOpenRaid,
   onOpenTrial,
   onOpenBaizhan,
-  onRequestConfirm,
+  onRequestConfirmRaid,
   onOpenRaidCell,
   onOpenTrialCell,
   onOpenBaizhanCell,
 }) => {
   const [onlyUncleared, setOnlyUncleared] = useState(false);
+  // 心法 / 账号过滤：空字符串 = 不过滤（全部）。选项由当前行数据去重推导，不展示已无角色的心法或账号
+  const [martialFilter, setMartialFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState('');
 
   const overview = useMemo(
     () => buildRaidCdOverview({
@@ -143,6 +157,9 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       favoriteRaids,
       seasonContext,
       versionOrder,
+      showWeeklyRaids,
+      levelCap,
+      hideNonMaxLevelRoles,
     }),
     [
       raids,
@@ -155,6 +172,9 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       favoriteRaids,
       seasonContext,
       versionOrder,
+      showWeeklyRaids,
+      levelCap,
+      hideNonMaxLevelRoles,
     ],
   );
 
@@ -170,12 +190,50 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
     [overview.rows, columns, hasTrialParticipants, hasBaizhanParticipants],
   );
 
-  const visibleRows = useMemo(
-    () => (onlyUncleared
-      ? rows.filter(row => row.noneClearedCount > 0 || row.partialClearedCount > 0 || row.pendingClearedCount > 0)
-      : rows),
-    [rows, onlyUncleared],
-  );
+  // 心法 / 账号过滤选项：从当前行数据推导去重，保持行顺序，确保只展示实际存在的心法与账号
+  const martialOptions = useMemo(() => {
+    const seen = new Set<string>();
+    rows.forEach(row => {
+      if (row.martial) seen.add(row.martial);
+    });
+    return Array.from(seen);
+  }, [rows]);
+
+  const accountOptions = useMemo(() => {
+    const seen = new Set<string>();
+    rows.forEach(row => {
+      if (row.accountName) seen.add(row.accountName);
+    });
+    return Array.from(seen);
+  }, [rows]);
+
+  // 过滤条件变化时，若所选心法 / 账号已不存在于数据中则自动重置，避免筛选永远为空
+  const martialFilterValid = martialFilter === '' || martialOptions.includes(martialFilter);
+  const accountFilterValid = accountFilter === '' || accountOptions.includes(accountFilter);
+  useEffect(() => {
+    if (!martialFilterValid) setMartialFilter('');
+  }, [martialFilterValid]);
+  useEffect(() => {
+    if (!accountFilterValid) setAccountFilter('');
+  }, [accountFilterValid]);
+
+  const visibleRows = useMemo(() => {
+    let filtered = rows;
+    if (martialFilter) {
+      filtered = filtered.filter(row => row.martial === martialFilter);
+    }
+    if (accountFilter) {
+      filtered = filtered.filter(row => row.accountName === accountFilter);
+    }
+    if (onlyUncleared) {
+      filtered = filtered.filter(
+        row => row.noneClearedCount > 0 || row.partialClearedCount > 0 || row.pendingClearedCount > 0,
+      );
+    }
+    return filtered;
+  }, [rows, martialFilter, accountFilter, onlyUncleared]);
+
+  const hasActiveFilters = martialFilter !== '' || accountFilter !== '';
 
   const totals = useMemo(() => {
     let none = 0;
@@ -201,8 +259,43 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
     }
   };
 
-  // 没有任何可展示的副本难度时不占用页面空间
+  // 三类单元格统一按「所在模块 + 状态」分发，避免把试炼/百战的待确认错送到团队副本待确认面板
+  const handleCellClick = (
+    module: 'raid' | 'trial' | 'baizhan',
+    status: CdCellStatus,
+    row: CdOverviewRow,
+    raid?: Raid,
+  ) => {
+    const target = resolveCdCellClickTarget(module, status);
+    switch (target.kind) {
+      case 'raid-confirm':
+        if (raid) onRequestConfirmRaid({ roleId: row.roleId, raid });
+        break;
+      case 'raid-cell':
+        if (raid) onOpenRaidCell(raid, row, status);
+        break;
+      case 'trial-cell':
+        onOpenTrialCell(row, status);
+        break;
+      case 'baizhan-cell':
+        onOpenBaizhanCell(row, status);
+        break;
+      case 'none':
+        break;
+    }
+  };
+
+  // 没有任何可展示的副本难度时不占用页面空间；行数为 0 仍需渲染（可能是筛选结果为空，需要给出提示）
   if (columns.length === 0 || rows.length === 0) return null;
+
+  const buildFilterOptions = (values: string[], allLabel: string, withIcon: boolean): FilterSelectOption[] => [
+    { value: '', label: allLabel },
+    ...values.map(value => ({
+      value,
+      label: value,
+      ...(withIcon ? { leading: <SectIcon sectName={value} variant="image" size="xs" /> } : {}),
+    })),
+  ];
 
   return (
     <section className="rounded-card border border-base bg-surface">
@@ -222,18 +315,54 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       <div className="px-4 pb-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-ds-xs text-muted">
-            绿=本周未清，雾蓝=部分清，棕=待确认，灰=已清；列头 0/7 为该副本本周已清角色数。点击列头进入详情，点击「待确认」直接处理待确认记录。
+            绿=本周未清，雾蓝=部分清，棕=待确认，灰=已清；列头 0/7 为该副本本周已清角色数。点击列头进入详情，点击「待确认」按所在模块分别处理对应记录。
           </p>
-          <label className="flex items-center gap-1.5 text-ds-xs text-muted shrink-0 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={onlyUncleared}
-              onChange={event => setOnlyUncleared(event.target.checked)}
-              className="accent-current"
-            />
-            只看未清
-          </label>
+          <div className="flex items-center gap-2 shrink-0">
+            {martialOptions.length > 0 && (
+              <FilterSelect
+                value={martialFilter}
+                onChange={setMartialFilter}
+                options={buildFilterOptions(martialOptions, '全部心法', true)}
+                ariaLabel="按心法过滤角色"
+              />
+            )}
+            {accountOptions.length > 0 && (
+              <FilterSelect
+                value={accountFilter}
+                onChange={setAccountFilter}
+                options={buildFilterOptions(accountOptions, '全部账号', false)}
+                ariaLabel="按账号过滤角色"
+              />
+            )}
+            <label className="flex items-center gap-1.5 text-ds-xs text-muted cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={onlyUncleared}
+                onChange={event => setOnlyUncleared(event.target.checked)}
+                className="accent-current"
+              />
+              只看未清
+            </label>
+          </div>
         </div>
+
+        {hasActiveFilters && visibleRows.length > 0 && (
+          <div className="flex items-center gap-2 text-ds-xs text-muted">
+            <span>当前筛选：{[martialFilter, accountFilter].filter(Boolean).join(' · ')}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setMartialFilter('');
+                setAccountFilter('');
+              }}
+              className="inline-flex items-center gap-0.5 text-muted hover:text-main transition-colors"
+              title="清除全部筛选"
+            >
+              <X size={12} />
+              清除
+            </button>
+          </div>
+        )}
 
         <div className="overflow-x-auto border border-base rounded-card">
           <table className="w-full border-collapse text-ds-sm">
@@ -326,8 +455,18 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
                     scope="row"
                     className="sticky left-0 z-10 bg-surface hover:bg-ds-surface-2 text-left font-normal px-3 py-2 border-b border-base min-w-[8rem]"
                   >
-                    <div className="text-ds-sm text-main truncate">
-                      {cleanRoleName(row.roleName)}·{getBaseServerName(row.server)}
+                    <div className="flex items-center gap-1.5 text-ds-sm text-main">
+                      {row.martial && (
+                        <SectIcon
+                          sectName={row.martial}
+                          variant="image"
+                          size="xs"
+                          className="shrink-0"
+                        />
+                      )}
+                      <span className="truncate">
+                        {cleanRoleName(row.roleName)}·{getBaseServerName(row.server)}
+                      </span>
                     </div>
                   </th>
                   <td className="text-right px-3 py-2 border-b border-l border-base text-ds-xs font-mono text-muted whitespace-nowrap">
@@ -341,18 +480,11 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
                       <td key={column.key} className="border-b border-l border-base p-0.5 text-center">
                         <button
                           type="button"
-                          onClick={() => {
-                            if (isPending) {
-                              onRequestConfirm();
-                              return;
-                            }
-                            if (status === 'na') return;
-                            onOpenRaidCell(column.raid, row, status);
-                          }}
+                          onClick={() => handleCellClick('raid', status, row, column.raid)}
                           disabled={status === 'na'}
                           className={`w-full min-w-[3.2rem] px-1 py-1 rounded-tag border text-ds-xs font-mono transition-colors duration-ds-fast ${CELL_CLASS[status]} ${CELL_HOVER_CLASS[status]} ${status === 'na' ? 'cursor-default' : ''}`}
                           title={isPending
-                            ? `${cleanRoleName(row.roleName)} · ${column.raidName} ${column.raid.playerCount}人${column.raid.difficulty}（点击处理待确认记录）`
+                            ? `${cleanRoleName(row.roleName)} · ${column.raidName} ${column.raid.playerCount}人${column.raid.difficulty}（点击处理该角色该副本的待确认记录）`
                             : status === 'na'
                               ? `${cleanRoleName(row.roleName)} · ${column.raidName} ${column.raid.playerCount}人${column.raid.difficulty}（不适用）`
                               : `${cleanRoleName(row.roleName)} · ${column.raidName} ${column.raid.playerCount}人${column.raid.difficulty}（${cellActionHint(status)}）`}
@@ -366,20 +498,13 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
                     <td className="border-b border-l border-base p-0.5 text-center bg-ds-surface-2/20">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (row.trial.status === 'na') return;
-                          if (row.trial.status === 'pending') {
-                            onRequestConfirm();
-                            return;
-                          }
-                          onOpenTrialCell(row, row.trial.status);
-                        }}
+                        onClick={() => handleCellClick('trial', row.trial.status, row)}
                         disabled={row.trial.status === 'na'}
                         className={`w-full min-w-[3.2rem] px-1 py-1 rounded-tag border text-ds-xs font-mono transition-colors duration-ds-fast ${CELL_CLASS[row.trial.status]} ${CELL_HOVER_CLASS[row.trial.status]} ${row.trial.status === 'na' ? 'cursor-default' : ''}`}
                         title={row.trial.status === 'na'
                           ? `${cleanRoleName(row.roleName)} 未参与试炼之地`
                           : row.trial.status === 'pending'
-                            ? `${cleanRoleName(row.roleName)} · 试炼之地有记录待确认（点击处理）`
+                            ? `${cleanRoleName(row.roleName)} · 试炼之地有记录待确认（点击查看并确认）`
                             : `${cleanRoleName(row.roleName)} · 试炼之地本周翻牌 ${row.trial.clearedCount}/${row.trial.totalCount}（${cellActionHint(row.trial.status)}）`}
                       >
                         {renderActivityText(row.trial)}
@@ -390,20 +515,13 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
                     <td className="border-b border-l border-base p-0.5 text-center bg-ds-surface-2/20">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (row.baizhan.status === 'na') return;
-                          if (row.baizhan.status === 'pending') {
-                            onRequestConfirm();
-                            return;
-                          }
-                          onOpenBaizhanCell(row, row.baizhan.status);
-                        }}
+                        onClick={() => handleCellClick('baizhan', row.baizhan.status, row)}
                         disabled={row.baizhan.status === 'na'}
                         className={`w-full min-w-[3.2rem] px-1 py-1 rounded-tag border text-ds-xs font-mono transition-colors duration-ds-fast ${CELL_CLASS[row.baizhan.status]} ${CELL_HOVER_CLASS[row.baizhan.status]} ${row.baizhan.status === 'na' ? 'cursor-default' : ''}`}
                         title={row.baizhan.status === 'na'
                           ? `${cleanRoleName(row.roleName)} 未参与百战`
                           : row.baizhan.status === 'pending'
-                            ? `${cleanRoleName(row.roleName)} · 百战有记录待确认（点击处理）`
+                            ? `${cleanRoleName(row.roleName)} · 百战有记录待确认（点击查看记录）`
                             : `${cleanRoleName(row.roleName)} · 百战本周 ${row.baizhan.clearedCount}/${row.baizhan.totalCount}（${cellActionHint(row.baizhan.status)}）`}
                       >
                         {renderActivityText(row.baizhan)}
@@ -441,7 +559,24 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
         </div>
 
         {visibleRows.length === 0 && (
-          <p className="text-ds-xs text-muted text-center py-2">所有角色本周都已清完。</p>
+          hasActiveFilters ? (
+            <div className="flex items-center justify-center gap-2 text-ds-xs text-muted py-2">
+              <span>当前筛选条件下没有角色。</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setMartialFilter('');
+                  setAccountFilter('');
+                }}
+                className="inline-flex items-center gap-0.5 text-muted hover:text-main transition-colors"
+              >
+                <X size={12} />
+                清除筛选
+              </button>
+            </div>
+          ) : (
+            <p className="text-ds-xs text-muted text-center py-2">所有角色本周都已清完。</p>
+          )
         )}
         {overview.disabledColumnCount > 0 && (
           <p className="text-ds-xs text-muted">

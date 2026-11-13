@@ -64,9 +64,8 @@ function makeTrialRecord(overrides: Partial<TrialPlaceRecord> = {}): TrialPlaceR
     date: new Date().getTime(),
     layer: 1,
     bosses: [],
-    // 已知牌位且装备已核对，否则该轮会计入「待确认」而掩盖本次要断言的三态
+    // 已知牌位，否则该轮会计入「待确认」而掩盖本次要断言的三态
     flippedIndex: 1,
-    equipmentUnreviewed: false,
     type: 'trial',
     ...overrides,
   } as TrialPlaceRecord;
@@ -87,6 +86,7 @@ function makeBaizhanRecord(overrides: Partial<BaizhanRecord> = {}): BaizhanRecor
 }
 
 const noop = () => undefined;
+const noopConfirmRaid = (_scope: { roleId: string; raid: Raid }) => undefined;
 
 interface RenderOptions {
   records?: RaidRecord[];
@@ -120,7 +120,7 @@ const renderOverview = ({
       onOpenRaid={noop}
       onOpenTrial={noop}
       onOpenBaizhan={noop}
-      onRequestConfirm={noop}
+      onRequestConfirmRaid={noopConfirmRaid}
       onOpenRaidCell={noop}
       onOpenTrialCell={noop}
       onOpenBaizhanCell={noop}
@@ -273,6 +273,35 @@ describe('RaidCdOverview', () => {
   it('待确认单元格提示点击处理，不再提示添加或查看', () => {
     const markup = renderOverview({ records: [makeRecord({ source: 'auto', status: 'pending' })] });
 
-    expect(markup).toContain('点击处理待确认记录');
+    expect(markup).toContain('点击处理');
+  });
+
+  it('试炼之地待确认走本模块的查看并确认，不再复用团队副本待确认入口', () => {
+    const markup = renderOverview({
+      trialRecords: [makeTrialRecord({ status: 'pending' })],
+    });
+
+    // 试炼待确认有独立的入口文案
+    expect(markup).toContain('试炼之地有记录待确认（点击查看并确认）');
+    // 没有团队副本待确认记录时，不应出现团队副本专用的处理文案
+    expect(markup).not.toContain('点击处理');
+  });
+
+  it('团队副本待确认仍走团队副本的处理入口，不出现试炼的确认文案', () => {
+    const markup = renderOverview({
+      records: [makeRecord({ source: 'auto', status: 'pending' })],
+    });
+
+    expect(markup).toContain('点击处理');
+    expect(markup).not.toContain('点击查看并确认');
+  });
+
+  it('团队副本待确认单元格的提示点明只处理该角色该副本的记录', () => {
+    const markup = renderOverview({
+      records: [makeRecord({ source: 'auto', status: 'pending' })],
+    });
+
+    // 用户要求：点某角色某副本的「待确认」，弹窗只显示对应角色对应副本的记录
+    expect(markup).toContain('（点击处理该角色该副本的待确认记录）');
   });
 });

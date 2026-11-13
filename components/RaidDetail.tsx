@@ -14,6 +14,8 @@ import { SectIcon } from './SectIcon';
 import { getBaseServerName } from '../utils/serverUtils';
 import { getRecordScrapsValue } from '../utils/scrapsUtils';
 import { getCardClass, getAddButtonClass, getViewButtonClass } from '../utils/cardStatusStyles';
+import { RoleCredentialInfo } from './RoleCredentialInfo';
+import { useAppConfig } from '../contexts/AppConfigContext';
 
 interface RaidDetailProps {
   raid: Raid;
@@ -116,6 +118,10 @@ const RaidRefreshCountdown: React.FC<RaidRefreshCountdownProps> = ({ raid }) => 
 };
 
 export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records, onBack, setRecords, onEditRecord, onRefreshRecords }) => {
+
+  // 旧版模式保留角色卡片上的账号与密码展示 / 复制；新版把入口收敛到 CD 概览表的操作列
+  const { appConfig } = useAppConfig();
+  const isHistoryMode = (appConfig?.raidViewMode ?? 'current') === 'history';
 
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [showRoleRecordsModal, setShowRoleRecordsModal] = useState(false);
@@ -759,7 +765,13 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                     </div>
                   </div>
 
-                  {role.accountNote && (
+                  {isHistoryMode ? (
+                    <RoleCredentialInfo
+                      accountName={role.accountName}
+                      password={role.password}
+                      accountNote={role.accountNote}
+                    />
+                  ) : role.accountNote ? (
                     <div className="mt-3 pt-3 border-t border-base">
                       <div className="flex items-start gap-2">
                         <div className="text-xs text-muted flex-shrink-0 pt-1">备注</div>
@@ -769,7 +781,7 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
                         </div>
                       </div>
                     </div>
-                  )}
+                  ) : null}
 
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     <button

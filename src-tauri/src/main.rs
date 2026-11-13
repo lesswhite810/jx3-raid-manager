@@ -283,6 +283,9 @@ fn main() {
             app_config::set_trial_screenshot_recognition_enabled,
             app_config::set_auto_refresh_equip_score_enabled,
             app_config::set_close_behavior,
+    app_config::set_raid_view_mode,
+    app_config::set_show_weekly_raids_enabled,
+    app_config::set_hide_non_max_level_roles_enabled,
             app_config::get_theme,
             app_config::set_theme,
             // JX3 进程检测（C 阶段）
@@ -317,7 +320,6 @@ fn main() {
             db::db_get_trial_records,
             db::db_update_trial_draw_flipped_index,
             db::db_update_trial_draw_equipment,
-            db::db_set_trial_draw_equipment_reviewed,
             db::db_delete_trial_record,
             // 百战记录
             db::db_add_baizhan_record,

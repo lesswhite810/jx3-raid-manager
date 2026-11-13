@@ -41,6 +41,8 @@ export default tseslint.config(
       // 依赖与本地缓存
       'node_modules/**',
       '**/*.tsbuildinfo',
+      // 本机浏览器调试 profile（含浏览器扩展产物，非仓库代码）
+      '.jx3-edge-cdp-profile/**',
       // 本地一次性排查脚本与临时产物
       'tmp/**',
       'scripts/**',

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import type { AppConfig, CloseBehavior } from '../types';
+import type { AppConfig, CloseBehavior, RaidViewMode } from '../types';
 import { appConfigService } from '../services/appConfig';
 import { toast } from '../utils/toastManager';
 
@@ -20,6 +20,12 @@ interface AppConfigContextType {
   setAutoRefreshEquipScoreEnabled: (enabled: boolean) => Promise<void>;
   /** 设置关闭按钮行为（ask 每次询问 / minimize 最小化到托盘 / exit 直接退出） */
   setCloseBehavior: (behavior: CloseBehavior) => Promise<void>;
+  /** 设置副本管理显示模式（current 当前模式 CD 概览 / history 历史模式 页签 + 收藏界面） */
+  setRaidViewMode: (mode: RaidViewMode) => Promise<void>;
+  /** 设置 CD 概览展示周常开关（关闭时仅展示当前赛季副本） */
+  setShowWeeklyRaidsEnabled: (enabled: boolean) => Promise<void>;
+  /** 设置副本管理隐藏非满级角色开关（开启时界面仅显示等级达到当前版本上限的角色） */
+  setHideNonMaxLevelRolesEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const AppConfigContext = createContext<AppConfigContextType | undefined>(undefined);
@@ -32,6 +38,9 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   trialScreenshotRecognitionEnabled: false,
   autoRefreshEquipScore: true,
   closeBehavior: 'ask',
+  raidViewMode: 'current',
+  showWeeklyRaids: true,
+  hideNonMaxLevelRoles: false,
 };
 
 export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -50,6 +59,9 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             ...config,
             trialScreenshotRecognitionEnabled: config.trialScreenshotRecognitionEnabled ?? false,
             closeBehavior: config.closeBehavior ?? 'ask',
+            raidViewMode: config.raidViewMode ?? 'current',
+            showWeeklyRaids: config.showWeeklyRaids ?? true,
+            hideNonMaxLevelRoles: config.hideNonMaxLevelRoles ?? false,
           });
         }
       } catch (error) {
@@ -153,6 +165,39 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  const setRaidViewMode = useCallback(async (mode: RaidViewMode) => {
+    try {
+      await appConfigService.setRaidViewMode(mode);
+      setAppConfig(prev => (prev ? { ...prev, raidViewMode: mode } : { ...DEFAULT_APP_CONFIG, raidViewMode: mode }));
+    } catch (error) {
+      console.error('[AppConfig] 设置副本管理显示模式失败:', error);
+      toast.error('保存副本管理显示模式失败');
+      throw error;
+    }
+  }, []);
+
+  const setShowWeeklyRaidsEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      await appConfigService.setShowWeeklyRaidsEnabled(enabled);
+      setAppConfig(prev => (prev ? { ...prev, showWeeklyRaids: enabled } : { ...DEFAULT_APP_CONFIG, showWeeklyRaids: enabled }));
+    } catch (error) {
+      console.error('[AppConfig] 设置展示周常开关失败:', error);
+      toast.error('保存展示周常设置失败');
+      throw error;
+    }
+  }, []);
+
+  const setHideNonMaxLevelRolesEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      await appConfigService.setHideNonMaxLevelRolesEnabled(enabled);
+      setAppConfig(prev => (prev ? { ...prev, hideNonMaxLevelRoles: enabled } : { ...DEFAULT_APP_CONFIG, hideNonMaxLevelRoles: enabled }));
+    } catch (error) {
+      console.error('[AppConfig] 设置隐藏非满级角色开关失败:', error);
+      toast.error('保存隐藏非满级角色设置失败');
+      throw error;
+    }
+  }, []);
+
   return (
     <AppConfigContext.Provider
       value={{
@@ -165,6 +210,9 @@ export const AppConfigProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTrialScreenshotRecognitionEnabled,
         setAutoRefreshEquipScoreEnabled,
         setCloseBehavior,
+        setRaidViewMode,
+        setShowWeeklyRaidsEnabled,
+        setHideNonMaxLevelRolesEnabled,
       }}
     >
       {children}

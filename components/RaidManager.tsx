@@ -6,7 +6,7 @@ import { toast } from '../utils/toastManager';
 import { TrialPlaceManager } from './TrialPlaceManager';
 import { BaizhanManager } from './BaizhanManager';
 import { VersionSelect } from './VersionSelect';
-import { TrialDraw, TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
+import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
 import { useCancellableEffect } from '../hooks/useCancellableEffect';
 import { RaidDetail } from './RaidDetail';
@@ -19,8 +19,12 @@ import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
 import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
 import { useTrialSeasonProgress } from '../hooks/useTrialSeasonProgress';
-import { CdCellStatus, CdOverviewRow } from '../utils/raidCdOverview';
+import { CdCellStatus, CdOverviewRow, PendingRecordScope, resolveActivityCellMode } from '../utils/raidCdOverview';
 import { buildWeeklyRaidGroups, SeasonContext, WeeklyRaidGroup } from '../utils/weeklyRaids';
+import { getCurrentVersionLevelCap, shouldShowRoleByLevel } from '../utils/roleLevelFilter';
+import { DIFFICULTY_COLORS, DIFFICULTY_LABELS, MergedRaid, isStaticRaid } from '../utils/raidDisplay';
+import { RaidCollectionView } from './RaidCollectionView';
+import { useAppConfig } from '../contexts/AppConfigContext';
 
 interface RaidManagerProps {
   raids: Raid[];
@@ -43,39 +47,18 @@ interface RaidManagerProps {
   weeklyRaidStatus?: 'loading' | 'success' | 'error';
 }
 
-interface MergedRaid {
-  name: string;
-  version: string;
-  raids: Raid[];
-  isActive: boolean;
-  disabled: boolean;
-  difficultyLabels: { [key: string]: string };
-}
-
-/** CD 概览里副本单元格的点击目标：mode 决定弹的是「添加记录」还是「记录详情」 */
 interface RaidCellAction {
   mode: 'add' | 'view';
   raid: Raid;
   row: CdOverviewRow;
 }
 
-/** 试炼之地 / 百战单元格的点击目标 */
+/** 试炼之地 / 百战单元格的点击目标；record 存在时表示正打开某条待确认记录的确认表单 */
 interface ActivityCellAction {
   mode: 'add' | 'view';
   row: CdOverviewRow;
+  record?: TrialPlaceRecord;
 }
-
-const DIFFICULTY_LABELS: Record<string, string> = {
-  '普通': '普通',
-  '英雄': '英雄',
-  '挑战': '挑战'
-};
-
-const DIFFICULTY_COLORS: Record<string, string> = {
-  '普通': 'bg-ds-success-soft text-ds-success-strong border-ds-success-soft dark:bg-ds-success-soft/30 dark:text-ds-success-strong dark:border-ds-success-soft',
-  '英雄': 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800',
-  '挑战': 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800'
-};
 
 // 用于在下拉框中标识「概览」视图，避免与真实赛季名冲突。
 // 概览 = CD 概览表；其余版本值仍按赛季展示副本卡片。
@@ -108,6 +91,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const [selectedRaid, setSelectedRaid] = useState<Raid | null>(null);
   // 点击 CD 概览里的「待确认」单元格时递增，用于命令式打开待确认弹窗
   const [pendingPanelOpenSignal, setPendingPanelOpenSignal] = useState(0);
+  // 打开待确认弹窗时附带的目标范围（某角色某副本）：弹窗只显示范围内的记录
+  const [pendingPanelOpenScope, setPendingPanelOpenScope] = useState<PendingRecordScope | null>(null);
 
   // CD 概览单元格点击目标：未清/部分清 → 添加记录，已清 → 查看该角色在该副本的记录
   const [raidCellAction, setRaidCellAction] = useState<RaidCellAction | null>(null);
@@ -115,6 +100,11 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   const [baizhanCellAction, setBaizhanCellAction] = useState<ActivityCellAction | null>(null);
 
   // 检查是否有角色启用了试炼之地 / 百战
+  // 「隐藏非满级角色」开关开启时，等级已知且未达当前版本上限的角色不计入
+  const { appConfig } = useAppConfig();
+  const hideNonMaxLevelRoles = appConfig?.hideNonMaxLevelRoles ?? false;
+  // 当前版本等级上限（sortOrder 最大版本的 levelCap；null 表示未配置，不做等级过滤）
+  const [currentLevelCap, setCurrentLevelCap] = useState<number | null>(null);
   const { hasTrialEnabled, hasBaizhanEnabled } = useMemo(() => {
     let trial = false;
     let baizhan = false;
@@ -122,6 +112,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
       if (acc.disabled) continue;
       for (const role of acc.roles) {
         if (role.disabled || role.isClient) continue;
+        if (!shouldShowRoleByLevel(role, currentLevelCap, hideNonMaxLevelRoles)) continue;
         if (role.visibility?.trial !== false) trial = true;
         if (role.visibility?.baizhan !== false) baizhan = true;
         if (trial && baizhan) break;
@@ -129,7 +120,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
       if (trial && baizhan) break;
     }
     return { hasTrialEnabled: trial, hasBaizhanEnabled: baizhan };
-  }, [accounts]);
+  }, [accounts, currentLevelCap, hideNonMaxLevelRoles]);
 
   // 当前页面因没有启用角色而不可用时，自动切回概览
   useEffect(() => {
@@ -142,6 +133,10 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
   // 试炼进度周期与试炼之地页共用同一份数据，避免两处次数不一致
   const { trialProgressPeriod } = useTrialSeasonProgress();
+
+  // 副本管理显示模式：current = 直接 CD 概览（无页签）；history = 旧版三页签 + 收藏界面
+  const raidViewMode = appConfig?.raidViewMode ?? 'current';
+  const isHistoryMode = raidViewMode === 'history';
 
   const [versionOrderMap, setVersionOrderMap] = useState<Record<string, number>>({});
   const [isOrderLoaded, setIsOrderLoaded] = useState(false);
@@ -272,6 +267,21 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     fetchVersions();
   }, []);
 
+  // 加载版本字典（GameVersion[]，含 levelCap），推导当前版本等级上限用于「隐藏非满级角色」过滤
+  useCancellableEffect((signal) => {
+    const loadLevelCap = async () => {
+      try {
+        const gameVersions = await db.getGameVersions();
+        if (signal.cancelled) return;
+        setCurrentLevelCap(getCurrentVersionLevelCap(gameVersions));
+      } catch (err) {
+        console.error('Failed to load game versions for level cap:', err);
+        if (!signal.cancelled) setCurrentLevelCap(null);
+      }
+    };
+    loadLevelCap();
+  }, []);
+
   const versions = useMemo(() => {
     const versionSet = new Set<string>();
     raids.forEach(raid => {
@@ -289,10 +299,6 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
 
   // 默认选择最新版本（由于需要等待后端字典加载完毕，故初始化为空/降级值，随后通过效应重置）
   const [selectedVersion, setSelectedVersion] = useState<string>('all');
-
-  const isStaticRaid = (raid: Raid) => {
-    return !!raid.static;
-  };
 
   const weeklyRaidGroups = useMemo<WeeklyRaidGroup[]>(
     () => buildWeeklyRaidGroups(raids, weeklyRaidNames, favoriteRaids, seasonContext),
@@ -533,21 +539,32 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   };
 
   const handleTrialCellClick = (row: CdOverviewRow, status: CdCellStatus) => {
-    if (status === 'na') return;
-    // 试炼记录要挂在某个大版本的进度周期下，周期没就绪时先不让补录，避免记到错误赛季
-    if (status !== 'complete' && trialProgressPeriod === undefined) {
-      toast.info('试炼进度数据正在加载，请稍后再试');
-      return;
+    const mode = resolveActivityCellMode(status);
+    if (mode === null) return;
+    // 待确认 / 已清都进记录列表：待确认要在列表里选中记录再确认，不能当成一次新增直接补录
+    if (mode === 'add') {
+      // 试炼记录要挂在某个大版本的进度周期下，周期没就绪时先不让补录，避免记到错误赛季
+      if (trialProgressPeriod === undefined) {
+        toast.info('试炼进度数据正在加载，请稍后再试');
+        return;
+      }
+      if (trialProgressPeriod === null) {
+        toast.error('无法确定当前试炼大版本，请检查赛季配置后重试');
+        return;
+      }
     }
-    if (status !== 'complete' && trialProgressPeriod === null) {
-      toast.error('无法确定当前试炼大版本，请检查赛季配置后重试');
-      return;
-    }
-    setTrialCellAction({ mode: status === 'complete' ? 'view' : 'add', row });
+    setTrialCellAction({ mode, row });
   };
 
   const handleBaizhanCellClick = (row: CdOverviewRow, status: CdCellStatus) => {
-    setBaizhanCellAction({ mode: status === 'complete' ? 'view' : 'add', row });
+    const mode = resolveActivityCellMode(status);
+    if (mode === null) return;
+    setBaizhanCellAction({ mode, row });
+  };
+
+  // 在试炼记录列表里点「补录确认」等按钮：复用新增弹窗的 initialRecord 确认流程
+  const handleConfirmTrialRecord = (record: TrialPlaceRecord) => {
+    setTrialCellAction(prev => (prev ? { mode: 'add', row: prev.row, record } : null));
   };
 
   const handleAddRaidRecord = async (recordData: Partial<RaidRecord>) => {
@@ -635,35 +652,46 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     }
   };
 
-  const handleUpdateTrialDrawEquipmentReview = async (
-    _recordId: string,
-    draw: TrialDraw,
-    reviewed: boolean
-  ) => {
-    try {
-      await db.setTrialDrawEquipmentReviewed(draw.id, reviewed, draw.flippedIndex, [
-        draw.card1, draw.card2, draw.card3, draw.card4, draw.card5,
-      ]);
-    } catch (error) {
-      console.error('更新翻牌核对状态失败:', error);
-      toast.error('更新翻牌核对状态失败');
-    } finally {
-      // 冲突时也刷新，避免用户重复按旧画面确认。
-      onRefreshTrialRecords?.();
-    }
-  };
-
   return (
     <div className="flex flex-col h-full gap-4">
+      {/* 历史模式还原旧版页签；当前模式无页签，试炼之地与百战从 CD 概览表头进入 */}
+      {isHistoryMode && (
+        <div className="flex gap-2 border-b border-base pb-1 flex-shrink-0">
+          <button
+            onClick={() => { setActiveTab('raid'); setSelectedRaid(null); }}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'raid' ? 'bg-base text-primary border border-base border-b-transparent' : 'text-muted hover:text-main hover:bg-base/50'}`}
+          >
+            团队副本
+          </button>
+          {hasTrialEnabled && (
+            <button
+              onClick={() => { setActiveTab('trial'); setSelectedRaid(null); }}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'trial' ? 'bg-base text-primary border border-base border-b-transparent' : 'text-muted hover:text-main hover:bg-base/50'}`}
+            >
+              试炼之地
+            </button>
+          )}
+          {hasBaizhanEnabled && (
+            <button
+              onClick={() => { setActiveTab('baizhan'); setSelectedRaid(null); }}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${activeTab === 'baizhan' ? 'bg-base text-primary border border-base border-b-transparent' : 'text-muted hover:text-main hover:bg-base/50'}`}
+            >
+              百战
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-6">
       {activeTab === 'baizhan' ? (
         <div className="space-y-4">
-          <button
-            onClick={() => setActiveTab('raid')}
-            className="flex items-center gap-2 text-sm text-muted hover:text-main transition-colors"
-          >
-            ← 返回概览
-          </button>
+          {!isHistoryMode && (
+            <button
+              onClick={() => setActiveTab('raid')}
+              className="flex items-center gap-2 text-sm text-muted hover:text-main transition-colors"
+            >
+              ← 返回概览
+            </button>
+          )}
           <BaizhanManager
             records={baizhanRecords}
             accounts={accounts}
@@ -673,12 +701,14 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         </div>
       ) : activeTab === 'trial' ? (
         <div className="space-y-4">
-          <button
-            onClick={() => setActiveTab('raid')}
-            className="flex items-center gap-2 text-sm text-muted hover:text-main transition-colors"
-          >
-            ← 返回概览
-          </button>
+          {!isHistoryMode && (
+            <button
+              onClick={() => setActiveTab('raid')}
+              className="flex items-center gap-2 text-sm text-muted hover:text-main transition-colors"
+            >
+              ← 返回概览
+            </button>
+          )}
           <TrialPlaceManager
             records={trialRecords}
             accounts={accounts}
@@ -710,13 +740,16 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 onRefreshRecords={onRefreshRecords}
                 onRefreshTrialRecords={onRefreshTrialRecords}
                 openSignal={pendingPanelOpenSignal}
+                openScope={pendingPanelOpenScope}
               />
               {versions.length > 0 && (
                 <VersionSelect
                   value={selectedVersion}
                   onChange={setSelectedVersion}
                   options={[
-                    ...(hasCollectionEntries ? [{ value: OVERVIEW_VIEW, label: '概览' }] : []),
+                    ...(hasCollectionEntries
+                      ? [{ value: OVERVIEW_VIEW, label: isHistoryMode ? '收藏' : '概览' }]
+                      : []),
                     ...versions.map(version => ({ value: version, label: version })),
                   ]}
                 />
@@ -724,33 +757,66 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             </div>
           </div>
 
-          {/* CD 概览：一眼看出各角色在本周团队秘境、收藏副本、试炼之地与百战的进度，无需逐个点进详情。
-              表头可直接跳转副本详情、试炼之地与百战页面。仅「概览」视图展示，切到赛季时回到副本卡片。 */}
-          {selectedVersion === OVERVIEW_VIEW && (
-            <RaidCdOverview
-              raids={raids}
-              accounts={accounts}
-              records={records}
-              trialRecords={trialRecords}
-              baizhanRecords={baizhanRecords}
-              trialProgressPeriod={trialProgressPeriod}
-              weeklyRaidNames={weeklyRaidNames}
-              favoriteRaids={favoriteRaids}
-              seasonContext={seasonContext}
-              versionOrder={versionOrderMap}
-              onOpenRaid={setSelectedRaid}
-              onOpenTrial={() => setActiveTab('trial')}
-              onOpenBaizhan={() => setActiveTab('baizhan')}
-              onRequestConfirm={() => setPendingPanelOpenSignal(prev => prev + 1)}
-              onOpenRaidCell={handleRaidCellClick}
-              onOpenTrialCell={handleTrialCellClick}
-              onOpenBaizhanCell={handleBaizhanCellClick}
-            />
+          {/* 历史模式沿用旧版的右键提示条；当前模式用概览表内的说明文字代替 */}
+          {isHistoryMode && (
+            <div className="bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/60 rounded-lg p-3 text-center text-sm text-blue-600 dark:text-blue-300">
+              右键难度框可单独禁用/启用
+            </div>
+          )}
+
+          {/* 历史模式：团队副本页保持旧版收藏界面（本周末团队秘境 + 收藏副本卡片）。
+              当前模式：CD 概览，一眼看出各角色在本周团队秘境、收藏副本、试炼之地与百战的进度。 */}
+          {isHistoryMode ? (
+            selectedVersion === OVERVIEW_VIEW && (
+              <RaidCollectionView
+                weeklyRaidGroups={weeklyRaidGroups}
+                weeklyRaidStatus={weeklyRaidStatus}
+                favoriteMergedRaids={favoriteMergedRaids}
+                favoriteRaids={favoriteRaids}
+                onToggleFavorite={toggleFavorite}
+                onToggleRaidStatus={toggleRaidStatus}
+                onToggleRaidDifficultyStatus={toggleRaidDifficultyStatus}
+                onSelectRaid={setSelectedRaid}
+                setRaids={setRaids}
+              />
+            )
+          ) : (
+            selectedVersion === OVERVIEW_VIEW && (
+              <RaidCdOverview
+                raids={raids}
+                accounts={accounts}
+                records={records}
+                trialRecords={trialRecords}
+                baizhanRecords={baizhanRecords}
+                trialProgressPeriod={trialProgressPeriod}
+                weeklyRaidNames={weeklyRaidNames}
+                favoriteRaids={favoriteRaids}
+                seasonContext={seasonContext}
+                versionOrder={versionOrderMap}
+                showWeeklyRaids={appConfig?.showWeeklyRaids ?? true}
+                levelCap={currentLevelCap}
+                hideNonMaxLevelRoles={hideNonMaxLevelRoles}
+                onOpenRaid={setSelectedRaid}
+                onOpenTrial={() => setActiveTab('trial')}
+                onOpenBaizhan={() => setActiveTab('baizhan')}
+                onRequestConfirmRaid={scope => {
+                  setPendingPanelOpenScope(scope);
+                  setPendingPanelOpenSignal(prev => prev + 1);
+                }}
+                onOpenRaidCell={handleRaidCellClick}
+                onOpenTrialCell={handleTrialCellClick}
+                onOpenBaizhanCell={handleBaizhanCellClick}
+              />
+            )
           )}
 
           {selectedVersion === OVERVIEW_VIEW && weeklyRaidStatus !== 'success' && (
             <div className="rounded-card border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-sm text-ds-warning-strong">
-              {weeklyRaidStatus === 'loading' ? '正在获取本周团队秘境…' : '本周团队秘境获取失败，CD 概览仅包含已收藏副本。'}
+              {weeklyRaidStatus === 'loading'
+                ? '正在获取本周团队秘境…'
+                : isHistoryMode
+                  ? '本周团队秘境获取失败，以下仅显示已收藏副本。'
+                  : '本周团队秘境获取失败，CD 概览仅包含已收藏副本。'}
             </div>
           )}
 
@@ -955,6 +1021,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           autoFillEnabled={config?.trial?.autoFillEnabled ?? false}
           records={trialRecords}
           trialProgressPeriod={trialProgressPeriod}
+          initialRecord={trialCellAction.record}
         />
       )}
 
@@ -971,10 +1038,10 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             accountName: trialCellAction.row.accountName,
           }}
           records={trialRecords}
+          onConfirmRecord={handleConfirmTrialRecord}
           onDeleteRecord={handleDeleteTrialRecord}
           onUpdateDrawFlippedIndex={handleUpdateTrialDrawFlippedIndex}
           onUpdateDrawEquipment={handleUpdateTrialDrawEquipment}
-          onUpdateDrawEquipmentReview={handleUpdateTrialDrawEquipmentReview}
         />
       )}
 

@@ -37,6 +37,7 @@ import {
   isPendingRecordBossSelected,
   togglePendingRecordBossSelection,
 } from '../utils/pendingRecordBossSelection';
+import { PendingRecordScope, matchesPendingRecordScope } from '../utils/raidCdOverview';
 
 interface PendingRecordsPanelProps {
   records: RaidRecord[];
@@ -49,6 +50,11 @@ interface PendingRecordsPanelProps {
    * 用于 CD 概览表中点击「待确认」单元格时直接进入确认流程。
    */
   openSignal?: number;
+  /**
+   * 打开信号附带的目标范围：只显示该角色该副本的待确认记录。
+   * 不传或为 null 时展示全部待确认记录（如点击面板上的常驻按钮）。
+   */
+  openScope?: PendingRecordScope | null;
 }
 
 interface RoleInfo {
@@ -95,6 +101,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   onRefreshRecords,
   onRefreshTrialRecords,
   openSignal,
+  openScope = null,
 }) => {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [cdConflictRecord, setCdConflictRecord] = useState<RaidRecord | null>(null);
@@ -128,23 +135,47 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     );
   }, [records]);
 
-  // 待确认记录变空时自动关闭 modal，避免 modal 显示「待确认记录 (0)」然后被卸载
-  useEffect(() => {
-    if (pendingRecords.length === 0 && isModalOpen) {
-      setIsModalOpen(false);
-    }
-  }, [pendingRecords.length, isModalOpen]);
+  // 关闭弹窗时清除范围，让常驻按钮回到全量列表
+  const closeModal = useCallback(() => {
+    setIsModalOpen(false);
+    setActiveScope(null);
+  }, []);
 
-  // 外部（如 CD 概览表的「待确认」单元格）请求打开弹窗：只在信号递增时响应一次
+  // 当前打开范围（某角色某副本）：从 CD 概览格子点进来时限定弹窗只显示范围内的记录
+  const [activeScope, setActiveScope] = useState<PendingRecordScope | null>(null);
+
+  // 弹窗内展示的记录：有待确认范围时只显示该角色该副本的记录
+  const modalRecords = useMemo(() => {
+    if (!activeScope) return pendingRecords;
+    return pendingRecords.filter(record => matchesPendingRecordScope(record, activeScope));
+  }, [pendingRecords, activeScope]);
+
+  // 待确认记录变空时自动关闭 modal，避免 modal 显示「待确认记录 (0)」然后被卸载。
+  // 有范围（从 CD 概览格子点进来）时按范围内记录数判定：该角色该副本确认完后立即关闭；
+  // 无范围（常驻按钮进入）时保持原来的全量判定。
+  useEffect(() => {
+    if (!isModalOpen) return;
+    if (activeScope ? modalRecords.length === 0 : pendingRecords.length === 0) {
+      closeModal();
+    }
+  }, [activeScope, modalRecords.length, pendingRecords.length, isModalOpen, closeModal]);
+
+  // 外部（如 CD 概览表的「待确认」单元格）请求打开弹窗：只在信号递增时响应一次，
+  // 同时记住这次打开的范围（某角色某副本），弹窗只展示范围内的记录。
+  // 范围内已经没有待确认记录时不打开，避免弹出「待确认记录 (0)」的空弹窗。
   const lastOpenSignalRef = useRef<number | undefined>(openSignal);
   useEffect(() => {
     if (openSignal === undefined) return;
     if (lastOpenSignalRef.current === openSignal) return;
     lastOpenSignalRef.current = openSignal;
-    if (pendingRecords.length > 0) {
+    setActiveScope(openScope);
+    const scopedCount = openScope
+      ? pendingRecords.filter(record => matchesPendingRecordScope(record, openScope)).length
+      : pendingRecords.length;
+    if (scopedCount > 0) {
       setIsModalOpen(true);
     }
-  }, [openSignal, pendingRecords.length]);
+  }, [openSignal, pendingRecords, openScope]);
 
   // 构建 roleId -> role 信息映射
   const roleMap = useMemo(() => {
@@ -160,6 +191,15 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     });
     return map;
   }, [accounts]);
+
+  // 范围提示里的角色名：优先用账号数据里的角色名，取不到再退回记录上的快照
+  const pendingScopeRoleName = useMemo(() => {
+    if (!activeScope) return '';
+    const roleInfo = roleMap.get(activeScope.roleId);
+    if (roleInfo) return roleInfo.name;
+    const sample = pendingRecords.find(record => record.roleId === activeScope.roleId);
+    return sample?.roleName ?? '该角色';
+  }, [activeScope, roleMap, pendingRecords]);
 
   // 编辑弹窗可选的收入候选：只保留整金（0 银 0 铜）入账
   const editableIncomeCandidates = useMemo(
@@ -284,7 +324,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       return;
     }
     doDirectConfirm(record);
-  }, [checkCdConflict, doDirectConfirm]);
+  }, [checkCdConflict, doDirectConfirm, openEditModal]);
 
   const closeEditModal = useCallback(() => {
     setEditingRecord(null);
@@ -500,7 +540,10 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
         {/* 待确认按钮：仅在有待确认记录时显示 */}
         {pendingRecords.length > 0 && (
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              setActiveScope(null);
+              setIsModalOpen(true);
+            }}
             className="relative flex items-center gap-2 px-3 py-1.5 rounded-lg border border-ds-warning-soft dark:border-ds-warning-soft bg-ds-warning-soft dark:bg-ds-warning-soft/20 text-ds-warning-strong dark:text-ds-warning-strong hover:bg-ds-warning-soft dark:hover:bg-ds-warning-soft/30 transition-colors text-sm font-medium"
             title="查看自动扫描的待确认记录"
           >
@@ -517,7 +560,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       {isModalOpen && createPortal(
         <div
           className="fixed inset-0 bg-ds-scrim backdrop-blur-sm flex items-center justify-center z-[100] p-4"
-          onClick={() => setIsModalOpen(false)}
+          onClick={closeModal}
         >
           <div
             className="bg-surface border border-base rounded-2xl shadow-ds-modal w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col animate-in"
@@ -529,11 +572,16 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
                 <Clock className="w-5 h-5 text-ds-warning dark:text-ds-warning" />
                 <h2 className="text-lg font-bold text-main">
                   待确认记录
-                  <span className="ml-2 text-ds-warning dark:text-ds-warning">({pendingRecords.length})</span>
+                  <span className="ml-2 text-ds-warning dark:text-ds-warning">({modalRecords.length})</span>
                 </h2>
+                {activeScope && (
+                  <span className="text-xs text-muted">
+                    仅显示 {pendingScopeRoleName} · {activeScope.raid.name} 的记录
+                  </span>
+                )}
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={closeModal}
                 className="text-muted hover:text-main transition-colors p-2 rounded-lg hover:bg-base/50"
                 aria-label="关闭"
               >
@@ -543,7 +591,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
 
             {/* 记录列表 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {pendingRecords.map(record => {
+              {modalRecords.map(record => {
                 const roleInfo = roleMap.get(record.roleId);
                 const roleName = roleInfo?.name ?? record.roleName ?? '未知角色';
                 const server = roleInfo?.server ?? record.server ?? '';

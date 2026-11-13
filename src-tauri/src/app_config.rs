@@ -43,6 +43,41 @@ impl Default for CloseBehavior {
     }
 }
 
+/// 副本管理的显示模式。
+///
+/// - `Current`：当前模式，进入副本管理直接显示 CD 概览表（默认，新用户与升级用户一致）
+/// - `History`：历史模式，还原页签结构（团队副本 / 试炼之地 / 百战），团队副本默认落在收藏界面
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RaidViewMode {
+    Current,
+    History,
+}
+
+impl RaidViewMode {
+    /// 存入 app_config 表的字符串值
+    fn as_str(self) -> &'static str {
+        match self {
+            RaidViewMode::Current => "current",
+            RaidViewMode::History => "history",
+        }
+    }
+
+    /// 解析存储值；缺失或非法值一律回落到「当前模式」，避免旧配置把用户锁在旧界面上。
+    fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "history" => RaidViewMode::History,
+            _ => RaidViewMode::Current,
+        }
+    }
+}
+
+impl Default for RaidViewMode {
+    fn default() -> Self {
+        RaidViewMode::Current
+    }
+}
+
 /// 应用配置（key-value 存储的封装视图）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +91,12 @@ pub struct AppConfig {
     pub auto_refresh_equip_score: bool,
     /// 关闭主窗口时的行为，旧配置默认每次询问。
     pub close_behavior: CloseBehavior,
+    /// 副本管理的显示模式，旧配置默认当前模式（CD 概览）。
+    pub raid_view_mode: RaidViewMode,
+    /// 是否在 CD 概览中展示周常副本列，旧配置默认开启。
+    pub show_weekly_raids: bool,
+    /// 是否自动隐藏非满级角色，旧配置默认关闭。
+    pub hide_non_max_level_roles: bool,
 }
 
 const KEY_GAME_DIRECTORY: &str = "game_directory";
@@ -65,6 +106,9 @@ const KEY_AUTO_SCAN_ENABLED: &str = "auto_scan_enabled";
 const KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED: &str = "trial_screenshot_recognition_enabled";
 const KEY_AUTO_REFRESH_EQUIP_SCORE: &str = "auto_refresh_equip_score";
 const KEY_CLOSE_BEHAVIOR: &str = "close_behavior";
+const KEY_RAID_VIEW_MODE: &str = "raid_view_mode";
+const KEY_SHOW_WEEKLY_RAIDS: &str = "show_weekly_raids";
+const KEY_HIDE_NON_MAX_LEVEL_ROLES: &str = "hide_non_max_level_roles";
 const KEY_THEME: &str = "theme";
 
 // 两个开关可能由前端并发切换。将“写入 -> 读取组合状态 -> 发布给采集线程”串行化，
@@ -123,6 +167,19 @@ fn read_app_config(conn: &rusqlite::Connection) -> Result<AppConfig, String> {
     let close_behavior = read_value(conn, KEY_CLOSE_BEHAVIOR)?
         .map(|raw| CloseBehavior::parse(&raw))
         .unwrap_or_default();
+    // 副本管理显示模式同为新增配置项：缺少该 key 的历史配置回落到「当前模式」。
+    let raid_view_mode = read_value(conn, KEY_RAID_VIEW_MODE)?
+        .map(|raw| RaidViewMode::parse(&raw))
+        .unwrap_or_default();
+    // 展示周常是新增配置项：未配置时默认开启（兼容历史用户与首次启动）。
+    let show_weekly_raids_str = read_value(conn, KEY_SHOW_WEEKLY_RAIDS)?.unwrap_or_default();
+    let show_weekly_raids =
+        show_weekly_raids_str.is_empty() || show_weekly_raids_str.eq_ignore_ascii_case("true");
+    // 自动隐藏非满级角色是新增配置项：缺少该 key 的历史配置必须保持关闭。
+    let hide_non_max_level_roles =
+        read_value(conn, KEY_HIDE_NON_MAX_LEVEL_ROLES)?
+            .unwrap_or_default()
+            .eq_ignore_ascii_case("true");
 
     Ok(AppConfig {
         game_directory,
@@ -132,6 +189,9 @@ fn read_app_config(conn: &rusqlite::Connection) -> Result<AppConfig, String> {
         trial_screenshot_recognition_enabled,
         auto_refresh_equip_score,
         close_behavior,
+        raid_view_mode,
+        show_weekly_raids,
+        hide_non_max_level_roles,
     })
 }
 
@@ -208,6 +268,9 @@ pub fn reset_setup() -> Result<(), String> {
     upsert_value(&conn, KEY_LAST_SCAN_MINGYI_AT, "")?;
     upsert_value(&conn, KEY_TRIAL_SCREENSHOT_RECOGNITION_ENABLED, "false")?;
     upsert_value(&conn, KEY_CLOSE_BEHAVIOR, CloseBehavior::Ask.as_str())?;
+    upsert_value(&conn, KEY_RAID_VIEW_MODE, RaidViewMode::Current.as_str())?;
+    upsert_value(&conn, KEY_SHOW_WEEKLY_RAIDS, "true")?;
+    upsert_value(&conn, KEY_HIDE_NON_MAX_LEVEL_ROLES, "false")?;
     refresh_trial_screenshot_capture(&conn)?;
     log::info!("[AppConfig] 应用配置已重置，将回到引导界面");
     Ok(())
@@ -290,6 +353,60 @@ pub fn set_close_behavior(behavior: String) -> Result<(), String> {
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_CLOSE_BEHAVIOR, parsed.as_str())?;
     log::info!("[AppConfig] 关闭按钮行为已设置为: {}", parsed.as_str());
+    Ok(())
+}
+
+/// 设置副本管理显示模式（Tauri 命令）
+///
+/// 取值 current / history；非法值会被拒绝，避免前端拼错后静默变成默认模式。
+#[tauri::command]
+pub fn set_raid_view_mode(mode: String) -> Result<(), String> {
+    let parsed = match mode.trim().to_ascii_lowercase().as_str() {
+        "current" => RaidViewMode::Current,
+        "history" => RaidViewMode::History,
+        _ => {
+            let msg = format!("[AppConfig] invalid raid view mode: {}", mode);
+            log::warn!("{}", msg);
+            return Err(msg);
+        }
+    };
+    let conn = db::init_db()?;
+    upsert_value(&conn, KEY_RAID_VIEW_MODE, parsed.as_str())?;
+    log::info!("[AppConfig] 副本管理显示模式已设置为: {}", parsed.as_str());
+    Ok(())
+}
+
+/// 设置 CD 概览展示周常开关（Tauri 命令）
+#[tauri::command]
+pub fn set_show_weekly_raids_enabled(enabled: bool) -> Result<(), String> {
+    let conn = db::init_db()?;
+    upsert_value(
+        &conn,
+        KEY_SHOW_WEEKLY_RAIDS,
+        if enabled { "true" } else { "false" },
+    )?;
+
+    log::info!(
+        "[AppConfig] 展示周常已{}",
+        if enabled { "开启" } else { "关闭" }
+    );
+    Ok(())
+}
+
+/// 设置自动隐藏非满级角色开关（Tauri 命令）
+#[tauri::command]
+pub fn set_hide_non_max_level_roles_enabled(enabled: bool) -> Result<(), String> {
+    let conn = db::init_db()?;
+    upsert_value(
+        &conn,
+        KEY_HIDE_NON_MAX_LEVEL_ROLES,
+        if enabled { "true" } else { "false" },
+    )?;
+
+    log::info!(
+        "[AppConfig] 自动隐藏非满级角色已{}",
+        if enabled { "开启" } else { "关闭" }
+    );
     Ok(())
 }
 
@@ -516,5 +633,41 @@ mod tests {
         assert_eq!(config.close_behavior, CloseBehavior::Exit);
         assert!(config.auto_scan_enabled);
         assert!(!config.trial_screenshot_recognition_enabled);
+    }
+
+    #[test]
+    fn hide_non_max_level_roles_defaults_to_disabled_for_legacy_config() {
+        let conn = setup_test_db();
+        let config = read_app_config(&conn).unwrap();
+        assert!(
+            !config.hide_non_max_level_roles,
+            "缺少 hide_non_max_level_roles 配置时（历史用户/首次启动）应默认关闭"
+        );
+    }
+
+    #[test]
+    fn hide_non_max_level_roles_is_persisted_across_reopen() {
+        let path =
+            std::env::temp_dir().join(format!("jx3-hide-non-max-{}.sqlite", uuid::Uuid::new_v4()));
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            create_app_config_table(&conn);
+            let config = read_app_config(&conn).unwrap();
+            assert!(!config.hide_non_max_level_roles);
+            // 模拟 set_hide_non_max_level_roles_enabled(true) 的持久化写入
+            upsert_value(&conn, KEY_HIDE_NON_MAX_LEVEL_ROLES, "true").unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let config = read_app_config(&conn).unwrap();
+            assert!(config.hide_non_max_level_roles, "重新打开后应保持开启");
+            upsert_value(&conn, KEY_HIDE_NON_MAX_LEVEL_ROLES, "false").unwrap();
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let config = read_app_config(&conn).unwrap();
+            assert!(!config.hide_non_max_level_roles, "关闭后应保持关闭");
+        }
+        std::fs::remove_file(&path).unwrap();
     }
 }

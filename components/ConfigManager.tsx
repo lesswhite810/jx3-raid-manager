@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { UpdateCheckResult, UpdateRuntimeInfo, UpdateStatus, Season } from '../types';
-import { Palette, Download, FolderOpen, RotateCcw, MessageCircle, HandHeart } from 'lucide-react';
+import { Palette, Download, FolderOpen, MessageCircle, HandHeart } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { db } from '../services/db';
 import { appConfigService } from '../services/appConfig';
@@ -8,8 +8,7 @@ import { toast } from '../utils/toastManager';
 import { charSyncService } from '../services/charSync';
 import { ConfigThemePanel } from './config-panels/ConfigThemePanel';
 import { ConfigUpdatePanel } from './config-panels/ConfigUpdatePanel';
-import { ConfigGamePanel } from './config-panels/ConfigGamePanel';
-import { ConfigAdvancedPanel } from './config-panels/ConfigAdvancedPanel';
+import { ConfigGameAppPanel } from './config-panels/ConfigGameAppPanel';
 import { ConfigFeedbackPanel } from './config-panels/ConfigFeedbackPanel';
 import { ConfigSupportPanel } from './config-panels/ConfigSupportPanel';
 
@@ -20,7 +19,7 @@ interface ConfigManagerProps {
     onCheckForUpdates: () => Promise<void>;
 }
 
-type ConfigCategoryId = 'theme' | 'update' | 'game' | 'advanced' | 'feedback' | 'support';
+type ConfigCategoryId = 'theme' | 'update' | 'game' | 'feedback' | 'support';
 
 interface ConfigCategoryDef {
     id: ConfigCategoryId;
@@ -28,11 +27,17 @@ interface ConfigCategoryDef {
     icon: React.ReactNode;
 }
 
+/**
+ * 分类顺序按使用频率排：外观最先（最常改），其次是影响日常记录行为的
+ * 「游戏与应用」，更新与反馈靠后。
+ *
+ * 原「游戏配置」与「自定义配置」已合并为「游戏与应用」——两者都在讲这台
+ * 机器上的运行环境与应用自身行为，拆开反而让用户分不清某个开关该去哪找。
+ */
 const CONFIG_CATEGORIES: ConfigCategoryDef[] = [
     { id: 'theme', label: '主题与外观', icon: <Palette className="w-4 h-4" /> },
+    { id: 'game', label: '游戏与应用', icon: <FolderOpen className="w-4 h-4" /> },
     { id: 'update', label: '版本与更新', icon: <Download className="w-4 h-4" /> },
-    { id: 'game', label: '游戏配置', icon: <FolderOpen className="w-4 h-4" /> },
-    { id: 'advanced', label: '自定义配置', icon: <RotateCcw className="w-4 h-4" /> },
     { id: 'feedback', label: '问题反馈', icon: <MessageCircle className="w-4 h-4" /> },
     { id: 'support', label: '赞赏', icon: <HandHeart className="w-4 h-4" /> },
 ];
@@ -144,15 +149,10 @@ export const ConfigManager: React.FC<ConfigManagerProps> = ({
                 );
             case 'game':
                 return (
-                    <ConfigGamePanel
+                    <ConfigGameAppPanel
                         currentSeason={currentSeason}
                         seasonLoaded={seasonLoaded}
                         onShowPathError={handleShowPathError}
-                    />
-                );
-            case 'advanced':
-                return (
-                    <ConfigAdvancedPanel
                         onRequestReset={() => setShowResetConfirm(true)}
                         resetting={resetting}
                     />

@@ -62,14 +62,16 @@ JX3 Raid Manager (剑网三副本管家) 是一个专为《剑网三》玩家设
 
 8. **玄晶统计 (Crystal Detail)** —— `components/CrystalDetail.tsx`
 
-9. **配置 (Configuration)** —— `components/ConfigManagerModal.tsx` + `components/config-panels/`（6 个分类面板）
-   - 游戏路径设置（`ConfigGamePanel`）
+9. **配置 (Configuration)** —— `components/ConfigManagerModal.tsx` + `components/config-panels/`（5 个分类面板）
    - 主题切换：经典 / 江湖纸笺 / 暗色（`ConfigThemePanel`，主题名常量见 `services/themeStorage.ts`）
-   - 数据目录切换与迁移状态（`ConfigAdvancedPanel`）
+   - 游戏与应用（`ConfigGameAppPanel`，内部按「游戏 / 应用行为 / 界面 / 数据与维护」四组分段）
+     - 游戏路径设置与当前赛季
+     - 自动扫描 polling、试炼截图识别、启动刷新装分
+     - 副本管理显示模式（新版 / 旧版）与关闭按钮行为
+     - 数据目录切换与迁移状态、重新初始化
    - 自动更新（`ConfigUpdatePanel` + `UpdateDialog.tsx`）
    - 意见反馈（`ConfigFeedbackPanel`）
    - 赞赏：单张本地打包的微信赞赏码（`ConfigSupportPanel`），完全自愿、不解锁任何功能
-   - 自动扫描 polling 与启动刷新装分配置
 
 10. **待确认记录** —— `components/PendingRecordsPanel.tsx`
     - 自动扫描产物 · 待团长手动确认
@@ -103,7 +105,7 @@ jx3-raid-manager/
 ├── constants.ts                 # 全局常量
 ├── types.ts                     # TypeScript 类型定义（共享）
 │
-├── components/                  # 40 个 React 组件 + config-panels/ 6 个
+├── components/                  # 40 个 React 组件 + config-panels/ 7 个
 │   ├── Dashboard.tsx
 │   ├── AccountManager.tsx       # 1852 行 · 全仓最大组件
 │   ├── AddAccountModal.tsx
@@ -117,9 +119,10 @@ jx3-raid-manager/
 │   ├── CharSyncModal.tsx        # 跨角色设置同步（v2.2.2）
 │   ├── ConfigManager.tsx
 │   ├── ConfigManagerModal.tsx   # 设置弹窗外壳（分类导航）
-│   ├── config-panels/           # ConfigGamePanel / ConfigThemePanel /
-│   │                            # ConfigUpdatePanel / ConfigAdvancedPanel /
-│   │                            # ConfigFeedbackPanel / ConfigSupportPanel
+│   ├── config-panels/           # ConfigGameAppPanel / ConfigThemePanel /
+│   │                            # ConfigUpdatePanel / ConfigFeedbackPanel /
+│   │                            # ConfigSupportPanel；ConfigSection + configPanelStyles
+│   │                            # 提供「分组标题 + 卡片行」的统一骨架
 │   ├── CrystalDetail.tsx
 │   ├── DateTimePicker.tsx
 │   ├── DualRangeSlider.tsx
