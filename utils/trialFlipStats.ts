@@ -75,7 +75,7 @@ export const calculateTrialFlipStats = (records: TrialPlaceRecord[]): TrialFlipS
     getTrialRecordFlipSamples(record).map(sample => ({ record, sample }))
   ));
   const knownPositionSamples = flipSamples.filter(({ sample }) => hasRecordedTrialFlipSample(sample));
-  let equipmentReviewedRecords = 0;
+  const equipmentReviewedRecords = knownPositionSamples.length;
 
   knownPositionSamples.forEach(({ record, sample }) => {
     const flippedStats = statsMap.get(sample.flippedIndex);
@@ -83,13 +83,11 @@ export const calculateTrialFlipStats = (records: TrialPlaceRecord[]): TrialFlipS
       flippedStats.flipCount += 1;
     }
 
-    // 只看到“翻中有装备”无法观测“翻中无装备”。把它并入概率分母会系统性
-    // 抬高出装率，所以翻中率与位置/Boss 统计共用完整核对的无偏样本。
+    // 未确认牌位的样本不计入装备统计（当前不存在待确认态，此守卫保留给历史数据）。
     if (!isTrialFlipSampleEquipmentAppearanceReviewed(sample)) {
       return;
     }
 
-    equipmentReviewedRecords += 1;
     if (flippedStats) {
       flippedStats.equipmentReviewCount += 1;
       if (getTrialCardEquipmentId(sample, sample.flippedIndex)) {

@@ -59,7 +59,7 @@ describe('试炼本周翻牌进度', () => {
     expect(getLastMonday(afterReset).getTime()).toBe(afterReset.getTime());
     const receipts = [0, 20, 22, 27].map((seconds, index) => createDraw({
       id: `receipt-${index}`, sequence: index + 1, receiptTime: new Date(2026, 10, 3, 23, 11, seconds).getTime(),
-      flippedIndex: index === 0 ? 2 : 0, equipmentUnreviewed: true,
+      flippedIndex: index === 0 ? 2 : 0,
     }));
     const result = getTrialWeeklyDrawProgress([createRecord({ date: new Date(2026, 10, 3, 23, 10, 59).getTime(), draws: receipts })], {
       weekStart: getLastMonday(new Date(2026, 10, 5)), progressPeriod: PERIOD,
@@ -126,7 +126,7 @@ describe('试炼本周翻牌进度', () => {
         id: 'pending-auto',
         status: 'pending',
         draws: [
-          createDraw({ id: 'unknown', flippedIndex: 0, equipmentUnreviewed: true }),
+          createDraw({ id: 'unknown', flippedIndex: 0 }),
           createDraw({ id: 'known', sequence: 2, receiptTime: WEEK_START + 2_000, flippedIndex: 5 }),
         ],
       }),
@@ -157,7 +157,7 @@ describe('试炼本周翻牌进度', () => {
   it('旧无子笔记录仅在父牌位已知时兼容一笔，且不改变输入记录', () => {
     const records = [
       createRecord({ id: 'legacy-known', flippedIndex: 4, draws: undefined }),
-      createRecord({ id: 'legacy-unknown', flippedIndex: 0, draws: undefined, equipmentUnreviewed: true }),
+      createRecord({ id: 'legacy-unknown', flippedIndex: 0, draws: undefined }),
       createRecord({ id: 'pending-without-draw', flippedIndex: 0, status: 'pending', draws: undefined }),
     ];
     const snapshot = JSON.parse(JSON.stringify(records));

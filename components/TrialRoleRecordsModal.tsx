@@ -34,8 +34,6 @@ interface TrialRoleRecordsModalProps {
     onUpdateDrawFlippedIndex?: (recordId: string, drawId: string, flippedIndex: number | null) => Promise<void> | void;
     /** 仅补录指定翻牌子笔的一张牌，不推断其他牌或核对状态。 */
     onUpdateDrawEquipment?: (recordId: string, drawId: string, cardIndex: number, equipmentId: string | null) => Promise<void> | void;
-    /** 显式确认或撤销本次五张牌面的核对状态。 */
-    onUpdateDrawEquipmentReview?: (recordId: string, draw: TrialDraw, reviewed: boolean) => Promise<void> | void;
 }
 
 const formatDate = (dateString: string | number) => {
@@ -167,7 +165,6 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
     onConfirmRecord,
     onUpdateDrawFlippedIndex,
     onUpdateDrawEquipment,
-    onUpdateDrawEquipmentReview,
 }) => {
     const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
     // 时间范围切换：'week' 仅本周（默认，性能优先），'all' 全部历史记录
@@ -520,7 +517,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                                 ? 'border-primary bg-primary text-primary-foreground hover:bg-primary-hover dark:bg-ds-accent dark:text-ds-fg-inverse dark:hover:brightness-110'
                                                                 : 'border-base bg-surface text-main hover:bg-base'}`}
                                                         >
-                                                            {canEditManualDraws ? '编辑手工记录' : hasDraws ? (isPending ? '补录通关信息' : '编辑通关信息') : (isPending ? '补录确认' : '编辑补录')}
+                                                            {canEditManualDraws ? '编辑手工记录' : hasDraws ? (isPending ? '补录通关信息' : '编辑通关信息') : (isPending ? '补录翻牌' : '补录翻牌')}
                                                         </button>
                                                     )}
                                                     {onDeleteRecord && (
@@ -603,9 +600,6 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                                         {knownPosition ? `第 ${draw.flippedIndex} 张` : '牌位未知'}
                                                                     </span>
                                                                     <span className="text-xs text-ds-fg-soft">{staminaText}</span>
-                                                                    {draw.equipmentUnreviewed && (
-                                                                        <span className="rounded border border-ds-warning-soft bg-ds-warning-soft px-2 py-0.5 text-xs font-medium text-ds-warning-strong">装备待确认</span>
-                                                                    )}
                                                                     {onUpdateDrawFlippedIndex && (
                                                                         <button
                                                                             type="button"
@@ -638,7 +632,6 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                                         onUpdateEquipment={(cardIndex, equipmentId) => (
                                                                             onUpdateDrawEquipment(record.id, draw.id, cardIndex, equipmentId)
                                                                         )}
-                                                                        onUpdateEquipmentReview={onUpdateDrawEquipmentReview ? (reviewed => onUpdateDrawEquipmentReview(record.id, draw, reviewed)) : undefined}
                                                                     />
                                                                 )}
                                                                 {!onUpdateDrawEquipment && cardEntries.length > 0 && (
@@ -684,7 +677,13 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                             )}
 
                                             {/* Line 3: Cards Info (Equipment) */}
-                                            {!hasDraws && <div className="text-xs">
+                                            {!hasDraws && <div className="text-xs space-y-2">
+                                                {/* 零子笔的自动记录：引导用户在编辑弹窗补录手工翻牌 */}
+                                                {record.source === 'auto' && (
+                                                    <div className="flex items-center gap-2 rounded-lg border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-ds-warning-strong">
+                                                        <span className="flex-1">离线扫描未从日志找到翻牌明细。点击「补录翻牌」可直接补记每次翻牌的牌位与装备。</span>
+                                                    </div>
+                                                )}
                                                 {/* Dropped Equipment */}
                                                 {(() => {
                                                     const recordedEquipmentEntries = getTrialRecordEquipmentEntries(record)
@@ -702,9 +701,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
 
                                                     if (recordedEquipmentEntries.length === 0) return (
                                                         <div className="flex items-center gap-2 text-muted px-3 py-2 bg-base/30 rounded-lg border border-base/50 italic">
-                                                            {record.equipmentUnreviewed
-                                                                ? '尚未识别到装备，不能据此判断本轮无装备'
-                                                                : '未获得有效装备/物品'}
+                                                            未获得有效装备/物品
                                                         </div>
                                                     );
 
@@ -712,11 +709,6 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
 
                                                     return (
                                                         <div className="space-y-2">
-                                                            {record.equipmentUnreviewed && (
-                                                                <div className="flex items-center gap-2 text-ds-warning-strong px-3 py-2 bg-ds-warning-soft rounded-lg border border-ds-warning-soft">
-                                                                    已显示画面识别到的装备。未观察的牌仍待核对，不计入翻中率、位置出现率或 Boss 出装备统计。
-                                                                </div>
-                                                            )}
                                                             {missingEquipmentEntries.map(entry => (
                                                                 <div key={`${record.id}-missing-${entry.cardIndex}`} className="flex items-center gap-2 rounded-lg border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-xs text-ds-warning-strong">
                                                                     卡 {entry.cardIndex} 已记录装备 ID「{entry.equipId}」，{equipmentCatalogState === 'loading'
@@ -763,9 +755,7 @@ export const TrialRoleRecordsModal: React.FC<TrialRoleRecordsModalProps> = ({
                                                                                     }`}>
                                                                                     {isFlipped
                                                                                         ? '已翻到'
-                                                                                        : record.equipmentUnreviewed
-                                                                                            ? '画面识别到'
-                                                                                            : '未翻到'}
+                                                                                        : '未翻到'}
                                                                                 </span>
                                                                             </div>
                                                                             <div className="flex items-center gap-1.5 text-xs text-muted mb-0.5 flex-wrap">

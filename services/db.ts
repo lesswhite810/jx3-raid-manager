@@ -587,20 +587,6 @@ class DatabaseService {
     }
   }
 
-  /** 显式确认或撤销某次翻牌的完整牌面核对，不改变其他明细。 */
-  async setTrialDrawEquipmentReviewed(drawId: string, reviewed: boolean, expectedFlippedIndex: number, expectedCards: string[]): Promise<void> {
-    await this.init();
-    try {
-      await invoke('db_set_trial_draw_equipment_reviewed', { drawId, reviewed, expectedFlippedIndex, expectedCards });
-    } catch (error) {
-      // 该命令带 CAS 校验（expectedFlippedIndex / expectedCards）：并发编辑时
-      // 后端会拒绝并返回冲突原因。若在这里吞掉错误，界面会表现为「点了确认
-      // 但状态没变」，用户无法判断是否需要刷新，因此必须原样抛出。
-      console.error('Failed to set trial draw equipment reviewed:', error);
-      throw error;
-    }
-  }
-
   async deleteTrialRecord(id: string): Promise<void> {
     await this.init();
     try {

@@ -19,7 +19,7 @@ export interface TrialWeeklyDrawProgressOptions {
 }
 
 interface TimedTrialDraw {
-  draw: Pick<TrialDraw, 'flippedIndex' | 'equipmentUnreviewed'>;
+  draw: Pick<TrialDraw, 'flippedIndex'>;
   timestamp: number | null;
   usedManualDateFallback: boolean;
 }

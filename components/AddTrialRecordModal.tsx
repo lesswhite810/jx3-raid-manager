@@ -50,17 +50,15 @@ interface ManualTrialDrawDraft {
     id: string;
     flippedIndex: number;
     cardItems: Record<number, string>;
-    equipmentUnreviewed: boolean;
     /** 仅本次提交使用：用户明确选择或清空的牌位，不能被旧自动观察覆盖。 */
     editedCardIndices: number[];
 }
 
 const createManualTrialDrawDraft = (): ManualTrialDrawDraft => ({
     id: generateUUID(),
-    // 手工新建没有画面或日志证据；未选择牌位、未核对五张牌前不得进入装备统计。
+    // 手工新建没有画面或日志证据；未选择牌位前不得保存。
     flippedIndex: 0,
     cardItems: { 1: '', 2: '', 3: '', 4: '', 5: '' },
-    equipmentUnreviewed: true,
     editedCardIndices: [],
 });
 
@@ -294,10 +292,13 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     // 仅纯手工记录可维护翻牌明细。自动来源或已被自动证据认领的手工父记录
     // 仍只允许编辑通关信息，避免覆盖已关联的日志、精力和奖励。
     const hasUnownedOrAutomaticDraw = Boolean(initialRecord?.draws?.some(draw => draw.source !== 'manual'));
+    // 例外：自动记录一条翻牌明细都没有（离线扫描漏捞聊天库）时，
+    // 允许在编辑弹窗直接补录手工翻牌（后端只接受全手工子笔）。
     const canEditManualDraws = !initialRecord || (
-        (initialRecord.source ?? 'manual') === 'manual'
-        && !initialRecord.sourceKey
-        && !hasUnownedOrAutomaticDraw
+        !hasRecordedDraws
+        || ((initialRecord.source ?? 'manual') === 'manual'
+            && !initialRecord.sourceKey
+            && !hasUnownedOrAutomaticDraw)
     );
     const hasProtectedDraws = hasRecordedDraws && !canEditManualDraws;
     const [selectedRoleId, setSelectedRoleId] = useState<string>(initialRole?.id || '');
@@ -316,7 +317,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
     // 自动识别可能在编辑弹窗打开后才落库。只将用户实际动过的牌位写回，
     // 其余空牌位交给后端保留晚到的识别结果。
     const [editedCardIndices, setEditedCardIndices] = useState<Set<number>>(new Set());
-    const [equipmentUnreviewed, setEquipmentUnreviewed] = useState(false);
     const [selectedCard, setSelectedCard] = useState<number | null>(null);
     // 手工新增时可在同一轮下录入多次翻牌。自动记录已有子笔时，这个表单
     // 只编辑通关信息，不能把手工草稿覆盖到自动明细。
@@ -395,7 +395,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setBoss2(initialRecord.bosses[1] || '');
             setBoss3(initialRecord.bosses[2] || '');
             setFlipIndex(initialRecord.flippedIndex >= 1 && initialRecord.flippedIndex <= 5 ? initialRecord.flippedIndex : 0);
-            setEquipmentUnreviewed(Boolean(initialRecord.equipmentUnreviewed));
             setCardItems({
                 1: initialRecord.card1 || '',
                 2: initialRecord.card2 || '',
@@ -403,7 +402,9 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 4: initialRecord.card4 || '',
                 5: initialRecord.card5 || '',
             });
-            if ((initialRecord.source ?? 'manual') === 'manual' && !initialRecord.sourceKey) {
+            // 零子笔的自动记录（离线扫描漏捞聊天库）也进入补录流程：
+            // 表单按手工翻牌明细编辑，保存时走全手工子笔链路。
+            if (!hasRecordedDraws || ((initialRecord.source ?? 'manual') === 'manual' && !initialRecord.sourceKey)) {
                 const savedDraws = Array.isArray(initialRecord.draws) && initialRecord.draws.length > 0
                     ? initialRecord.draws.map(draw => ({
                         id: draw.id,
@@ -412,7 +413,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             1: draw.card1 || '', 2: draw.card2 || '', 3: draw.card3 || '',
                             4: draw.card4 || '', 5: draw.card5 || '',
                         },
-                        equipmentUnreviewed: Boolean(draw.equipmentUnreviewed),
                         editedCardIndices: draw.editedCardIndices || [],
                     }))
                     : [{
@@ -423,7 +423,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                             1: initialRecord.card1 || '', 2: initialRecord.card2 || '', 3: initialRecord.card3 || '',
                             4: initialRecord.card4 || '', 5: initialRecord.card5 || '',
                         },
-                        equipmentUnreviewed: Boolean(initialRecord.equipmentUnreviewed),
                         editedCardIndices: [],
                     }];
                 const firstDraw = savedDraws[0];
@@ -431,12 +430,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 setActiveManualDrawIndex(0);
                 setFlipIndex(firstDraw.flippedIndex);
                 setCardItems({ ...firstDraw.cardItems });
-                setEquipmentUnreviewed(firstDraw.equipmentUnreviewed);
             }
         } else {
             applyRoleProgress(roleId);
             setFlipIndex(0);
-            setEquipmentUnreviewed(true);
             setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
         }
         setHasExplicitFlipIndexChange(false);
@@ -598,23 +595,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         setSelectedCard(null);
     };
 
-    const handleConfirmNoEquipment = () => {
-        setCardItems({ 1: '', 2: '', 3: '', 4: '', 5: '' });
-        setEditedCardIndices(new Set([1, 2, 3, 4, 5]));
-        setEquipmentUnreviewed(false);
-    };
-
-    const handleConfirmAllCardsReviewed = () => {
-        // 用户明确确认五张牌都已核对后，当前空位才可作为“未出装备”统计。
-        setEditedCardIndices(new Set([1, 2, 3, 4, 5]));
-        setEquipmentUnreviewed(false);
-    };
-
     const getActiveManualDrawDraft = (): ManualTrialDrawDraft => ({
         id: manualDraws[activeManualDrawIndex]?.id || generateUUID(),
         flippedIndex: flipIndex,
         cardItems: { ...cardItems },
-        equipmentUnreviewed,
         editedCardIndices: Array.from(editedCardIndices),
     });
 
@@ -625,7 +609,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         setActiveManualDrawIndex(index);
         setFlipIndex(draft.flippedIndex);
         setCardItems({ ...draft.cardItems });
-        setEquipmentUnreviewed(draft.equipmentUnreviewed);
         setEditedCardIndices(new Set(draft.editedCardIndices));
         setSelectedCard(null);
         setShowEquipSelector(false);
@@ -640,7 +623,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         setActiveManualDrawIndex(manualDraws.length);
         setFlipIndex(nextDraft.flippedIndex);
         setCardItems({ ...nextDraft.cardItems });
-        setEquipmentUnreviewed(nextDraft.equipmentUnreviewed);
         setEditedCardIndices(new Set(nextDraft.editedCardIndices));
         setSelectedCard(null);
         setShowEquipSelector(false);
@@ -656,7 +638,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
         setActiveManualDrawIndex(nextIndex);
         setFlipIndex(nextDraft.flippedIndex);
         setCardItems({ ...nextDraft.cardItems });
-        setEquipmentUnreviewed(nextDraft.equipmentUnreviewed);
         setEditedCardIndices(new Set(nextDraft.editedCardIndices));
         setSelectedCard(null);
         setShowEquipSelector(false);
@@ -678,6 +659,16 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             setError('请填写所有三个 Boss');
             return;
         }
+        // 必须有选择的翻牌记录才可以保存；未设置装备就是没有装备。
+        // 校验时以当前表单为准：活动草稿的牌位取实时 flipIndex，
+        // 避免用户已标记翻牌但未切页签时误用旧的草稿数据拦截保存。
+        if (canEditManualDraws && !manualDraws.every((draft, index) => {
+            const flippedIndex = index === activeManualDrawIndex ? flipIndex : draft.flippedIndex;
+            return flippedIndex >= 1 && flippedIndex <= 5;
+        })) {
+            setError('请为每笔翻牌选择翻牌位后再保存');
+            return;
+        }
 
         setIsSubmitting(true);
 
@@ -694,8 +685,10 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
             const drafts = canEditManualDraws
                 ? manualDraws.map((draft, index) => index === activeManualDrawIndex ? activeDraft : draft)
                 : [];
+            // 编辑已有记录时（含零子笔自动记录的首次补录）必须持久化手工子笔，
+            // 否则新增的一次翻牌会被父表单吞掉。
             const shouldPersistManualDraws = canEditManualDraws && (
-                drafts.length > 1 || (initialRecord?.draws?.length ?? 0) > 0
+                drafts.length > 1 || Boolean(initialRecord)
             );
             const legacyDraw = drafts[0] || activeDraft;
             const manualDrawDetails: TrialDraw[] = shouldPersistManualDraws
@@ -713,7 +706,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                     card3: draft.cardItems[3] || '',
                     card4: draft.cardItems[4] || '',
                     card5: draft.cardItems[5] || '',
-                    equipmentUnreviewed: draft.equipmentUnreviewed,
                     editedCardIndices: draft.editedCardIndices,
                 }))
                 : [];
@@ -741,7 +733,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                 source: initialRecord?.source || 'manual',
                 status: 'confirmed',
                 sourceKey: initialRecord?.sourceKey,
-                equipmentUnreviewed: legacyDraw.equipmentUnreviewed,
                 // 多次手工翻牌的修改标记只属于子笔；父记录保留旧单次兼容字段。
                 editedCardIndices: initialRecord && !shouldPersistManualDraws
                     ? Array.from(editedCardIndices)
@@ -1096,28 +1087,6 @@ export const AddTrialRecordModal: React.FC<AddTrialRecordModalProps> = ({
                                 );
                             })}
                         </div>
-                        {equipmentUnreviewed && (
-                            <div
-                                role="group"
-                                aria-label="装备核对操作"
-                                className="flex flex-wrap items-center gap-2 rounded-lg border border-ds-warning-soft bg-ds-warning-soft px-3 py-2 text-xs text-ds-warning-strong"
-                            >
-                                <button
-                                    type="button"
-                                    onClick={handleConfirmNoEquipment}
-                                    className="rounded border border-ds-warning-strong/30 bg-surface px-2 py-1 font-medium hover:bg-ds-warning-soft/60"
-                                >
-                                    {manualDraws.length > 1 ? '确认本次无装备' : '确认本轮无装备'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleConfirmAllCardsReviewed}
-                                    className="rounded border border-ds-warning-strong/30 bg-surface px-2 py-1 font-medium hover:bg-ds-warning-soft/60"
-                                >
-                                    已核对全部牌面
-                                </button>
-                            </div>
-                        )}
                     </div>
                     )}
 

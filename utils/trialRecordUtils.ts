@@ -79,7 +79,7 @@ const LEGACY_TRIAL_CARD_KEYS = ['card_1', 'card_2', 'card_3', 'card_4', 'card_5'
 type TrialCardKey = typeof TRIAL_CARD_KEYS[number];
 type LegacyTrialCardKey = typeof LEGACY_TRIAL_CARD_KEYS[number];
 type TrialCardRecordLike = Pick<TrialPlaceRecord,
-  'card1' | 'card2' | 'card3' | 'card4' | 'card5' | 'flippedIndex' | 'equipmentUnreviewed'
+  'card1' | 'card2' | 'card3' | 'card4' | 'card5' | 'flippedIndex'
 > & Partial<Record<LegacyTrialCardKey, string | number>>;
 type TrialRecordLike = TrialPlaceRecord & TrialCardRecordLike;
 
@@ -94,7 +94,6 @@ export interface TrialFlipSample {
   card4: string;
   card5: string;
   flippedIndex: number;
-  equipmentUnreviewed?: boolean;
   /**
    * 日志收据与手工补录同时存在时，不能根据顺序猜测二者的对应关系。
    * 缺失来源的历史子项沿用自动收据兼容行为。
@@ -201,14 +200,14 @@ export const hasObservedTrialFlippedEquipment = (record: TrialRecordLike): boole
   ));
 };
 
-/** 只有完整核对五张牌的记录才可用于翻中率、位置出现率和 Boss 出装备统计。 */
+/** 只有已确认牌位的翻牌才可用于翻中率、位置出现率和 Boss 出装备统计。 */
 export const isTrialEquipmentAppearanceReviewed = (record: TrialRecordLike): boolean => {
   return getTrialRecordFlipSamples(record).some(sample => isTrialFlipSampleEquipmentAppearanceReviewed(sample));
 };
 
-/** 只有完整核对五张牌的单次翻牌才可进入概率统计。 */
+/** 只有已确认牌位的单次翻牌才可进入概率统计。 */
 export const isTrialFlipSampleEquipmentAppearanceReviewed = (sample: TrialFlipSample): boolean => {
-  return hasRecordedTrialFlipSample(sample) && !sample.equipmentUnreviewed;
+  return hasRecordedTrialFlipSample(sample);
 };
 
 export const getTrialRecordEquipmentEntries = (record: TrialCardRecordLike): TrialRecordEquipmentEntry[] => {

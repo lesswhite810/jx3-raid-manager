@@ -80,7 +80,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           <div>
             <h2 className="text-2xl font-bold text-main">试炼翻牌统计</h2>
             <p className="mt-1 text-sm text-muted">
-              全部历史 {stats.totalRecords} 轮通关，共 {stats.drawCount} 次翻牌（已确认牌位 {stats.knownPositionDrawCount} 次）。其中 {stats.equipmentReviewedRecords} 次已核对全部牌面，用于概率统计
+              全部历史 {stats.totalRecords} 轮通关，共 {stats.drawCount} 次翻牌（已确认牌位 {stats.knownPositionDrawCount} 次），用于概率统计
             </p>
           </div>
         </div>
@@ -96,7 +96,7 @@ export const TrialFlipDetail: React.FC<TrialFlipDetailProps> = ({ trialRecords, 
           <div className="mt-2 text-3xl font-bold text-main">{stats.totalRecords}</div>
         </div>
         <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">
-          <div className="text-sm font-medium text-muted">全牌已核对</div>
+          <div className="text-sm font-medium text-muted">概率样本数</div>
           <div className="mt-2 text-3xl font-bold text-main">{stats.equipmentReviewedRecords}</div>
         </div>
         <div className="rounded-xl border border-base bg-surface p-5 shadow-sm">

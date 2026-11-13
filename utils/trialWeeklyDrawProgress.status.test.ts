@@ -123,7 +123,6 @@ describe('试炼三态按本周翻牌次数判定', () => {
       roleName: '发白少',
       draws: [],
       flippedIndex: 2,
-      equipmentUnreviewed: false,
       status: 'confirmed',
     });
 

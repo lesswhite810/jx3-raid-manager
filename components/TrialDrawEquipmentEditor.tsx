@@ -15,8 +15,6 @@ interface TrialDrawEquipmentEditorProps {
     findEquipmentById: (id: string | undefined) => JX3Equip | null;
     /** 仅保存当前翻牌子记录的指定卡位，不能写入父通关记录。 */
     onUpdateEquipment: (cardIndex: number, equipmentId: string | null) => Promise<void> | void;
-    /** 显式确认/撤销本次五张牌面的核对状态，由调用方持久化。 */
-    onUpdateEquipmentReview?: (reviewed: boolean) => Promise<void> | void;
 }
 
 const CARD_KEYS = ['card1', 'card2', 'card3', 'card4', 'card5'] as const;
@@ -27,12 +25,11 @@ const getEquipmentId = (draw: TrialDraw, cardIndex: number): string => {
 };
 
 export const TrialDrawEquipmentEditor: React.FC<TrialDrawEquipmentEditorProps> = ({
-    draw, equipments, catalogState, catalogMessage, findEquipmentById, onUpdateEquipment, onUpdateEquipmentReview,
+    draw, equipments, catalogState, catalogMessage, findEquipmentById, onUpdateEquipment,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [selectedCard, setSelectedCard] = useState(draw.flippedIndex >= 1 && draw.flippedIndex <= 5 ? draw.flippedIndex : 1);
     const [savingCard, setSavingCard] = useState<number | null>(null);
-    const [isUpdatingReview, setIsUpdatingReview] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [lastSavedCard, setLastSavedCard] = useState<number | null>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
@@ -79,28 +76,7 @@ export const TrialDrawEquipmentEditor: React.FC<TrialDrawEquipmentEditorProps> =
         }
     };
 
-    const updateReview = async (reviewed: boolean) => {
-        if (!onUpdateEquipmentReview || operationPendingRef.current) return;
-        operationPendingRef.current = true;
-        setIsUpdatingReview(true);
-        setSaveError(null);
-        setLastSavedCard(null);
-        try {
-            await onUpdateEquipmentReview(reviewed);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-            const wasUpdated = message.includes('已更新') || message.includes('已变化') || message.includes('冲突') || message.includes('stale');
-            setSaveError(wasUpdated
-                ? '牌面已更新，请刷新后重新确认'
-                : `${reviewed ? '确认牌面失败' : '撤销确认失败'}${message ? `：${message}` : '，请重试'}`);
-        } finally {
-            operationPendingRef.current = false;
-            setIsUpdatingReview(false);
-        }
-    };
-
-    const isReviewed = draw.equipmentUnreviewed === false;
-    const isSaving = savingCard !== null || isUpdatingReview;
+    const isSaving = savingCard !== null;
     const hasEquipment = cards.some(card => card.equipId);
 
     const openEditor = () => {
@@ -162,7 +138,7 @@ export const TrialDrawEquipmentEditor: React.FC<TrialDrawEquipmentEditorProps> =
                         卡 {card.cardIndex}：{card.label}
                     </span>
                 ))}
-                {!hasEquipment && <span className="text-xs text-muted">{draw.equipmentUnreviewed === false ? '本次无装备' : '待确认'}</span>}
+                {!hasEquipment && <span className="text-xs text-muted">本次无装备</span>}
                 <button ref={triggerRef} type="button" onClick={openEditor} aria-haspopup="dialog" aria-label={hasEquipment ? '修改装备' : '补录装备'}
                     className="ml-auto inline-flex w-32 max-w-full items-center justify-center gap-1 whitespace-nowrap rounded-tag border border-ds-success-soft bg-ds-success-soft px-2 py-1.5 text-xs font-medium text-ds-success-strong transition-colors hover:bg-ds-success-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-success-strong">
                     <Package className="h-3.5 w-3.5" />{hasEquipment ? '修改装备' : '补录装备'}
@@ -211,14 +187,7 @@ export const TrialDrawEquipmentEditor: React.FC<TrialDrawEquipmentEditorProps> =
                         <div className="shrink-0 border-t border-base bg-surface px-4 py-3">
                             {saveError && <div className="mb-2 rounded-card border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300" role="alert">{saveError}</div>}
                             <div className="flex flex-wrap items-center gap-2">
-                                {onUpdateEquipmentReview && <span className={`mr-auto text-xs ${isReviewed ? 'text-ds-success-strong' : 'text-ds-warning-strong'}`} aria-live="polite">
-                                    {isReviewed ? '本次牌面已核对' : '本次牌面待核对'}
-                                </span>}
                                 <div className="ml-auto flex items-center gap-2">
-                                    {onUpdateEquipmentReview && <button type="button" disabled={isSaving} onClick={() => updateReview(!isReviewed)} className={`inline-flex items-center gap-1.5 rounded-tag border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-success-strong disabled:cursor-not-allowed disabled:opacity-60 ${isReviewed ? 'border-base bg-surface text-ds-fg-soft hover:bg-base' : 'border-ds-success-soft bg-ds-success-soft text-ds-success-strong hover:bg-ds-success-soft/70'}`}>
-                                        {isUpdatingReview ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isReviewed ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
-                                        {isReviewed ? '撤销核对' : hasEquipment ? '确认全部牌面' : '确认本次无装备'}
-                                    </button>}
                                     <button type="button" disabled={isSaving} onClick={closeEditor} className="rounded-tag bg-primary px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-success-strong disabled:cursor-not-allowed disabled:opacity-60">
                                         完成
                                     </button>

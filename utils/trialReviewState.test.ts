@@ -5,7 +5,7 @@ import { trialDrawNeedsReview, trialRecordNeedsReview } from './trialReviewState
 const draw = (overrides: Partial<TrialDraw> = {}): TrialDraw => ({
   id: 'draw', sourceKey: 'receipt', sequence: 1, receiptTime: 1, flippedIndex: 2,
   rewardItems: [], card1: '', card2: '', card3: '', card4: '', card5: '',
-  equipmentUnreviewed: false, ...overrides,
+  ...overrides,
 });
 const record = (draws: TrialDraw[], status: TrialPlaceRecord['status'] = 'confirmed'): TrialPlaceRecord => ({
   id: 'run', accountId: 'a', roleId: 'r', roleName: 'r', server: 's', date: 1, layer: 1,
@@ -14,19 +14,19 @@ const record = (draws: TrialDraw[], status: TrialPlaceRecord['status'] = 'confir
 });
 
 describe('试炼翻牌待确认状态', () => {
-  it('牌位未知或牌面未核对时保持待确认', () => {
+  it('牌位未知或超出 1-5 时保持待确认', () => {
     expect(trialDrawNeedsReview(draw({ flippedIndex: 0 }))).toBe(true);
-    expect(trialDrawNeedsReview(draw({ equipmentUnreviewed: true }))).toBe(true);
+    expect(trialDrawNeedsReview(draw({ flippedIndex: 6 }))).toBe(true);
+    expect(trialDrawNeedsReview(draw({ flippedIndex: undefined }))).toBe(true);
     expect(trialDrawNeedsReview(draw())).toBe(false);
   });
-  it('通关待确认和手工明细待归属不因牌面完整而消失', () => {
+  it('通关待确认和手工明细待归属不因牌位完整而消失', () => {
     expect(trialRecordNeedsReview(record([draw()], 'pending'))).toBe(true);
     expect(trialRecordNeedsReview(record([draw({ source: 'auto' }), draw({ id: 'm', source: 'manual' })]))).toBe(true);
     expect(trialRecordNeedsReview(record([draw()]))).toBe(false);
   });
-  it('旧单次记录依据父记录的实际牌位和核对状态判断', () => {
+  it('旧单次记录依据父记录的实际牌位判断', () => {
     expect(trialRecordNeedsReview({ ...record([]), flippedIndex: 0 })).toBe(true);
-    expect(trialRecordNeedsReview({ ...record([]), equipmentUnreviewed: true })).toBe(true);
     expect(trialRecordNeedsReview(record([]))).toBe(false);
   });
 });

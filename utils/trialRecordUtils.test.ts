@@ -201,22 +201,21 @@ describe('试炼自动记录状态', () => {
     expect(hasRecordedTrialFlip(createTrialRecord({ flippedIndex: 1, status: 'pending' }))).toBe(false);
   });
 
-  it('允许已识别的选中牌单独进入翻中装备统计，但不把未观察的牌当成完整核对', () => {
+  it('已确认牌位的选中牌进入翻中装备统计', () => {
     const record = createTrialRecord({
       flippedIndex: 2,
       card2: 'selected-item',
       card3: 'hovered-other-item',
-      equipmentUnreviewed: true,
     });
 
     expect(getTrialCardEquipmentId(record, 2)).toBe('selected-item');
     expect(getTrialCardEquipmentId(record, 6)).toBe('');
     expect(hasObservedTrialFlippedEquipment(record)).toBe(true);
-    expect(isTrialEquipmentAppearanceReviewed(record)).toBe(false);
+    expect(isTrialEquipmentAppearanceReviewed(record)).toBe(true);
   });
 
-  it('完整核对且选中牌为空时，仍作为翻中未出装备的样本', () => {
-    const record = createTrialRecord({ flippedIndex: 4, equipmentUnreviewed: false });
+  it('已确认牌位且选中牌为空时，作为翻中未出装备的样本', () => {
+    const record = createTrialRecord({ flippedIndex: 4 });
 
     expect(hasObservedTrialFlippedEquipment(record)).toBe(false);
     expect(isTrialEquipmentAppearanceReviewed(record)).toBe(true);
@@ -226,12 +225,12 @@ describe('试炼自动记录状态', () => {
     const multiDraw = {
       ...createTrialRecord({ source: 'auto', flippedIndex: 1, card1: 'parent-card' }),
       draws: [
-        { card1: '', card2: '', card3: '', card4: '', card5: '', flippedIndex: 0, equipmentUnreviewed: true },
-        { card1: '', card2: 'child-card', card3: '', card4: '', card5: '', flippedIndex: 2, equipmentUnreviewed: false },
+        { card1: '', card2: '', card3: '', card4: '', card5: '', flippedIndex: 0 },
+        { card1: '', card2: 'child-card', card3: '', card4: '', card5: '', flippedIndex: 2 },
       ],
     } as TrialPlaceRecord & { draws: Array<{
       card1: string; card2: string; card3: string; card4: string; card5: string;
-      flippedIndex: number; equipmentUnreviewed: boolean;
+      flippedIndex: number;
     }> };
     const automaticWithoutKnownParentFlip = {
       ...createTrialRecord({ source: 'auto', flippedIndex: 1, card1: 'stale-card' }),
@@ -253,12 +252,12 @@ describe('试炼自动记录状态', () => {
     const record = {
       ...createTrialRecord({ source: 'auto', flippedIndex: 0 }),
       draws: [
-        { card1: 'manual-card', card2: '', card3: '', card4: '', card5: '', flippedIndex: 1, equipmentUnreviewed: false, source: 'manual' as const },
-        { card1: '', card2: 'auto-card', card3: '', card4: '', card5: '', flippedIndex: 2, equipmentUnreviewed: false, source: 'auto' as const },
+        { card1: 'manual-card', card2: '', card3: '', card4: '', card5: '', flippedIndex: 1, source: 'manual' as const },
+        { card1: '', card2: 'auto-card', card3: '', card4: '', card5: '', flippedIndex: 2, source: 'auto' as const },
       ],
     } as TrialPlaceRecord & { draws: Array<{
       card1: string; card2: string; card3: string; card4: string; card5: string;
-      flippedIndex: number; equipmentUnreviewed: boolean; source: 'manual' | 'auto';
+      flippedIndex: number; source: 'manual' | 'auto';
     }> };
 
     expect(getTrialRecordFlipSamples(record)).toEqual([
@@ -270,21 +269,21 @@ describe('试炼自动记录状态', () => {
     const manualRecord = {
       ...createTrialRecord({ source: 'manual', flippedIndex: 0 }),
       draws: [
-        { card1: 'first', card2: '', card3: '', card4: '', card5: '', flippedIndex: 1, equipmentUnreviewed: false, source: 'manual' as const },
-        { card1: '', card2: 'second', card3: '', card4: '', card5: '', flippedIndex: 2, equipmentUnreviewed: false, source: 'manual' as const },
+        { card1: 'first', card2: '', card3: '', card4: '', card5: '', flippedIndex: 1, source: 'manual' as const },
+        { card1: '', card2: 'second', card3: '', card4: '', card5: '', flippedIndex: 2, source: 'manual' as const },
       ],
     } as TrialPlaceRecord & { draws: Array<{
       card1: string; card2: string; card3: string; card4: string; card5: string;
-      flippedIndex: number; equipmentUnreviewed: boolean; source: 'manual';
+      flippedIndex: number; source: 'manual';
     }> };
     const legacyRecord = {
       ...createTrialRecord({ source: 'auto', flippedIndex: 0 }),
       draws: [
-        { card1: '', card2: '', card3: 'legacy', card4: '', card5: '', flippedIndex: 3, equipmentUnreviewed: false },
+        { card1: '', card2: '', card3: 'legacy', card4: '', card5: '', flippedIndex: 3 },
       ],
     } as TrialPlaceRecord & { draws: Array<{
       card1: string; card2: string; card3: string; card4: string; card5: string;
-      flippedIndex: number; equipmentUnreviewed: boolean;
+      flippedIndex: number;
     }> };
 
     expect(getTrialRecordFlipSamples(manualRecord)).toHaveLength(2);

@@ -212,60 +212,14 @@ describe('calculateTrialFlipStats', () => {
     expect(stats.bossEquipmentStats[0]).toMatchObject({ totalRecords: 1, equipmentCount: 1 });
   });
 
-  it('counts an auto-detected flip position without treating unknown equipment as no equipment', () => {
-    const stats = calculateTrialFlipStats([
-      createTrialRecord({
-        flippedIndex: 2,
-        equipmentUnreviewed: true,
-      }),
-    ]);
-
-    expect(stats.totalRecords).toBe(1);
-    expect(stats.equipmentReviewedRecords).toBe(0);
-    expect(stats.positions[1]).toMatchObject({
-      flipCount: 1,
-      equipmentReviewCount: 0,
-      flippedEquipmentCount: 0,
-      appearanceCount: 0,
-    });
-    expect(stats.bestFlipPosition).toBeNull();
-    expect(stats.bestAppearancePosition).toBeNull();
-    expect(stats.bossEquipmentStats).toEqual([]);
-  });
-
-  it('keeps an automatically recognized selected-card item out of all probability samples', () => {
-    const records = [
-      createTrialRecord({
-        card2: 'selected-card-item',
-        card3: 'hovered-other-card-item',
-        flippedIndex: 2,
-        equipmentUnreviewed: true,
-      }),
-    ];
-
-    const stats = calculateTrialFlipStats(records);
-    expect(stats.equipmentReviewedRecords).toBe(0);
-    expect(stats.positions[1]).toMatchObject({
-      flipCount: 1,
-      equipmentReviewCount: 0,
-      flippedEquipmentCount: 0,
-      flipEquipmentRate: 0,
-      appearanceCount: 0,
-    });
-    expect(stats.positions[2]).toMatchObject({
-      appearanceCount: 0,
-    });
-    expect(stats.bossEquipmentStats).toEqual([]);
-  });
-
   it('keeps legacy manual records without equipment as confirmed no-equipment samples', () => {
     const stats = calculateTrialFlipStats([
-      createTrialRecord({ id: 'auto', flippedIndex: 2, equipmentUnreviewed: true }),
+      createTrialRecord({ id: 'auto', flippedIndex: 2 }),
       createTrialRecord({ id: 'manual-no-equipment', flippedIndex: 1 }),
     ]);
 
     expect(stats.totalRecords).toBe(2);
-    expect(stats.equipmentReviewedRecords).toBe(1);
+    expect(stats.equipmentReviewedRecords).toBe(2);
     expect(stats.positions[0]).toMatchObject({
       flipCount: 1,
       equipmentReviewCount: 1,
@@ -275,7 +229,7 @@ describe('calculateTrialFlipStats', () => {
     });
     expect(stats.positions[1]).toMatchObject({
       flipCount: 1,
-      equipmentReviewCount: 0,
+      equipmentReviewCount: 1,
       flipEquipmentRate: 0,
     });
     expect(stats.bestFlipPosition?.position).toBe(1);
@@ -292,27 +246,23 @@ describe('calculateTrialFlipStats', () => {
         {
           card1: '', card2: '', card3: '', card4: '', card5: '',
           flippedIndex: 0,
-          equipmentUnreviewed: true,
         },
         {
           card1: '', card2: 'second-draw-selected', card3: '', card4: '', card5: '',
           flippedIndex: 2,
-          equipmentUnreviewed: false,
         },
         {
           card1: '', card2: 'third-draw-observed-only', card3: '', card4: '', card5: '',
           flippedIndex: 2,
-          equipmentUnreviewed: true,
         },
         {
           card1: '', card2: '', card3: '', card4: '', card5: 'fourth-draw-other-position',
           flippedIndex: 4,
-          equipmentUnreviewed: false,
         },
       ],
     } as TrialPlaceRecord & { draws: Array<{
       card1: string; card2: string; card3: string; card4: string; card5: string;
-      flippedIndex: number; equipmentUnreviewed: boolean;
+      flippedIndex: number;
     }> };
 
     const stats = calculateTrialFlipStats([record]);
@@ -320,12 +270,12 @@ describe('calculateTrialFlipStats', () => {
     expect(stats.totalRecords).toBe(1);
     expect(stats.drawCount).toBe(4);
     expect(stats.knownPositionDrawCount).toBe(3);
-    expect(stats.equipmentReviewedRecords).toBe(2);
+    expect(stats.equipmentReviewedRecords).toBe(3);
     expect(stats.positions[1]).toMatchObject({
       flipCount: 2,
-      equipmentReviewCount: 1,
-      flippedEquipmentCount: 1,
-      appearanceCount: 1,
+      equipmentReviewCount: 2,
+      flippedEquipmentCount: 2,
+      appearanceCount: 2,
     });
     expect(stats.positions[3]).toMatchObject({
       flipCount: 1,
@@ -335,7 +285,7 @@ describe('calculateTrialFlipStats', () => {
     });
     expect(stats.positions[4]).toMatchObject({ appearanceCount: 1 });
     expect(stats.positions[4].appearanceCount).not.toBe(2);
-    expect(stats.bossEquipmentStats[0]).toMatchObject({ totalRecords: 2, equipmentCount: 2 });
+    expect(stats.bossEquipmentStats[0]).toMatchObject({ totalRecords: 3, equipmentCount: 3 });
   });
 
   it('does not double-count unassigned manual draws when automatic receipts exist in the same round', () => {
@@ -344,16 +294,16 @@ describe('calculateTrialFlipStats', () => {
       draws: [
         {
           card1: 'manual-card', card2: '', card3: '', card4: '', card5: '',
-          flippedIndex: 1, equipmentUnreviewed: false, source: 'manual' as const,
+          flippedIndex: 1, source: 'manual' as const,
         },
         {
           card1: '', card2: 'auto-card', card3: '', card4: '', card5: '',
-          flippedIndex: 2, equipmentUnreviewed: false, source: 'auto' as const,
+          flippedIndex: 2, source: 'auto' as const,
         },
       ],
     } as TrialPlaceRecord & { draws: Array<{
       card1: string; card2: string; card3: string; card4: string; card5: string;
-      flippedIndex: number; equipmentUnreviewed: boolean; source: 'manual' | 'auto';
+      flippedIndex: number; source: 'manual' | 'auto';
     }> };
 
     const stats = calculateTrialFlipStats([record]);

@@ -72,7 +72,7 @@ export const TrialFlipStatsModal: React.FC<TrialFlipStatsModalProps> = ({
                 可靠翻牌 {stats.drawCount} 次，已识别牌位 {stats.knownPositionDrawCount} 次
               </div>
               <div className="mt-1 text-xs text-muted">
-                概率统计使用全牌已核对的 {stats.equipmentReviewedRecords} 次翻牌
+                概率统计使用已确认牌位的 {stats.equipmentReviewedRecords} 次翻牌
               </div>
             </div>
             <div className="rounded-xl border border-base bg-base/40 px-4 py-3">
