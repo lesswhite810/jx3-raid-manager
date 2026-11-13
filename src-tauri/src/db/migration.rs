@@ -37,6 +37,8 @@ pub fn apply_migration(conn: &Connection, version: i32) -> Result<(), String> {
         20 => migrations::v20::migrate(conn),
         21 => migrations::v21::migrate(conn),
         22 => migrations::v22::migrate(conn),
+        23 => migrations::v23::migrate(conn),
+        24 => migrations::v24::migrate(conn),
         _ => Err(format!("未知的迁移版本: {}", version)),
     }
 }
@@ -182,20 +184,24 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
 
     let mut version_names: Vec<String> = Vec::new();
     let mut version_orders: Vec<i64> = Vec::new();
+    let mut version_level_caps: Vec<i64> = Vec::new();
     for v in versions.iter() {
         let name = v["name"].as_str().unwrap_or_default();
         if !version_id_map.contains_key(name) {
             version_names.push(name.to_string());
             version_orders.push(v["sort_order"].as_i64().unwrap_or(0));
+            version_level_caps.push(v["level_cap"].as_i64().unwrap_or(0));
         }
     }
 
     let inserted_new_version = !version_names.is_empty();
     if inserted_new_version {
         let count = version_names.len();
-        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?)".to_string()).collect();
+        let placeholders: Vec<String> = (0..count)
+            .map(|_| "(?, ?, ?, ?)".to_string())
+            .collect();
         let sql = format!(
-            "INSERT INTO game_versions (name, sort_order, created_at) VALUES {}",
+            "INSERT INTO game_versions (name, sort_order, level_cap, created_at) VALUES {}",
             placeholders.join(", ")
         );
 
@@ -203,6 +209,12 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
         for (i, name) in version_names.iter().enumerate() {
             params_vec.push(Box::new(name.clone()));
             params_vec.push(Box::new(version_orders[i]));
+            // 未配置等级上限的版本写入 NULL（0 表示未配置）
+            params_vec.push(Box::new(if version_level_caps[i] > 0 {
+                Some(version_level_caps[i])
+            } else {
+                None::<i64>
+            }));
             params_vec.push(Box::new(timestamp.clone()));
         }
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -227,6 +239,24 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
         // 前端会缓存版本列表一天；新预置版本写入后必须让它重新按 sort_order 读取。
         conn.execute("DELETE FROM cache WHERE key = 'raid_versions_cache_v2'", [])
             .map_err(error_to_string)?;
+    }
+
+    // 版本等级上限（level_cap）在 JSON 中确认后需要对已存在的版本回填：
+    // 升级场景下丝路风雨/苍生铸世等版本早已入库，仅靠 INSERT 覆盖不到它们。
+    // 仅当 JSON 配置了 level_cap 且库中该行仍为 NULL 时写入；JSON 未配置的
+    // 版本不动库里的值，用户手工设置的值也不会被覆盖。
+    for v in versions.iter() {
+        let name = v["name"].as_str().unwrap_or_default();
+        let level_cap = v["level_cap"].as_i64();
+        if let (Some(cap), Some(&version_id)) = (level_cap, version_id_map.get(name)) {
+            conn.execute(
+                "UPDATE game_versions
+                 SET level_cap = ?
+                 WHERE id = ? AND level_cap IS NULL",
+                params![cap, version_id],
+            )
+            .map_err(error_to_string)?;
+        }
     }
 
     let seasons_json = include_str!("static_seasons.json");
@@ -376,6 +406,7 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 sort_order INTEGER NOT NULL DEFAULT 0,
+                level_cap INTEGER,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE seasons (

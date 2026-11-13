@@ -3,9 +3,10 @@ import { calculateCooldown, getLastMonday, getNextMonday } from './cooldownManag
 import { calculateBossCooldowns } from './bossCooldownManager';
 import { getRaidKey } from './raidUtils';
 import { shouldShowClientRoleInRaid } from './raidVersionUtils';
-import { buildWeeklyRaidGroups, SeasonContext } from './weeklyRaids';
+import { buildWeeklyRaidGroups, isCurrentSeasonRaid, SeasonContext } from './weeklyRaids';
 import { getTrialWeeklyDrawProgress } from './trialWeeklyDrawProgress';
 import { TrialProgressPeriod } from './trialProgress';
+import { shouldShowRoleByLevel } from './roleLevelFilter';
 
 /**
  * CD 概览单元格状态。
@@ -115,6 +116,21 @@ export interface BuildRaidCdOverviewOptions {
    * 缺省或版本名不在表里时，该副本排在所有已知版本之后。
    */
   versionOrder?: Record<string, number>;
+  /**
+   * 是否展示周常副本列（默认 true）。关闭时周常列仅保留当前赛季副本：
+   * 无法判定赛季归属的副本也会隐藏；收藏列不受影响。
+   */
+  showWeeklyRaids?: boolean;
+  /**
+   * 当前版本的等级上限（null/undefined 表示未配置，不做等级过滤）。
+   * 与 hideNonMaxLevelRoles 配合，用于在概览行中隐藏未满级的角色。
+   */
+  levelCap?: number | null;
+  /**
+   * 是否隐藏非满级角色（默认 false）。开启时等级已知且 ≠ levelCap 的角色
+   * 不进入概览行；等级未知（老数据）的角色保留。
+   */
+  hideNonMaxLevelRoles?: boolean;
   now?: Date;
 }
 
@@ -196,7 +212,16 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
   //    周常副本按赛季新旧排序（离现在最近的赛季在前），同赛季内按人数、难度排序；
   //    收藏副本排在周常之后，同样按人数、难度排序。
   const weeklyGroups = buildWeeklyRaidGroups(safeRaids, weeklyRaidNames, favoriteRaids, seasonContext);
-  const weeklyRaidList: Raid[] = weeklyGroups.flatMap(group => group.raids);
+  // 关闭「展示周常」时只保留当前赛季副本：判定为非本赛季或无法判定的都隐藏。
+  // 赛季上下文缺失（currentSeasonId 与 currentVersionName 均为空）时不过滤，
+  // 避免上下文加载异常导致整表清空。
+  const showWeeklyRaids = options.showWeeklyRaids ?? true;
+  const hasSeasonContext =
+    Number.isInteger(seasonContext.currentSeasonId) || Boolean(seasonContext.currentVersionName);
+  const weeklyRaidList: Raid[] = weeklyGroups.flatMap(group => group.raids).filter(raid => {
+    if (showWeeklyRaids || !hasSeasonContext) return true;
+    return isCurrentSeasonRaid(raid, seasonContext) === true;
+  });
 
   /** 版本越新排名越小；未知版本排最后 */
   const getVersionRank = (raid: Raid): number => {
@@ -211,7 +236,9 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
     return compareRaidInstance(a, b);
   };
 
-  const weeklyNames = new Set(weeklyGroups.map(group => group.name));
+  // 收藏列排除项：以过滤后的周常名单为准。关闭展示周常时，被过滤掉的历史赛季
+  // 副本若同时被收藏，会自然落到收藏列继续展示（收藏列不受开关影响）。
+  const weeklyNames = new Set(weeklyRaidList.map(raid => raid.name));
   const favoriteRaidList = activeRaids
     .filter(raid => favoriteRaids.has(raid.name) && !weeklyNames.has(raid.name))
     .sort(compareRaidInstance);
@@ -261,6 +288,8 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
     const roles = Array.isArray(account.roles) ? account.roles : [];
     roles.forEach(role => {
       if (role.disabled) return;
+      // 「隐藏非满级角色」开关开启时，等级已知且未达到当前版本上限的角色不进入概览
+      if (!shouldShowRoleByLevel(role, options.levelCap, options.hideNonMaxLevelRoles ?? false)) return;
       const inRaid = role.visibility?.raid !== false;
       // 试炼 / 百战页本身会过滤掉代清号角色，这里保持同一口径
       const inTrial = role.visibility?.trial !== false && !role.isClient;
@@ -471,4 +500,62 @@ function toTimestamp(value: string | number): number {
   }
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** CD 概览三列点击应分发到的目标，集中定义避免各列各写一套判断。 */
+export type CdCellClickTarget =
+  | { kind: 'raid-confirm' }
+  | { kind: 'raid-cell' }
+  | { kind: 'trial-cell' }
+  | { kind: 'baizhan-cell' }
+  | { kind: 'none' };
+
+/**
+ * 把单元格点击按"所在模块 + 状态"映射到对应操作。
+ *
+ * 历史 bug：三类单元格的「待确认」都走同一个团队副本待确认回调，导致点试炼/百战
+ * 的待确认错误地打开了团队副本待确认面板。现在只有团队副本的待确认才打开该面板；
+ * 试炼、百战的待确认各自回到本模块的记录列表，不适用（na）一律不响应。
+ */
+export function resolveCdCellClickTarget(
+  module: 'raid' | 'trial' | 'baizhan',
+  status: CdCellStatus,
+): CdCellClickTarget {
+  if (status === 'na') return { kind: 'none' };
+  if (module === 'raid') {
+    return status === 'pending' ? { kind: 'raid-confirm' } : { kind: 'raid-cell' };
+  }
+  if (module === 'trial') return { kind: 'trial-cell' };
+  return { kind: 'baizhan-cell' };
+}
+
+/**
+ * 按状态决定试炼/百战单元格打开"新增记录"还是"查看记录列表"。
+ *
+ * 待确认记录必须进列表由用户选中后再确认，不能当成一次"新增"直接补录；
+ * 已清进列表查看，未清/部分清才进新增表单；不适用不打开任何弹窗。
+ */
+export function resolveActivityCellMode(status: CdCellStatus): 'add' | 'view' | null {
+  if (status === 'na') return null;
+  if (status === 'pending' || status === 'complete') return 'view';
+  return 'add';
+}
+
+/**
+ * 团队副本「待确认」单元格点击后要打开的记录范围。
+ *
+ * 用户点击某角色某副本列的「待确认」时，弹窗只应显示这一格对应的记录，
+ * 而不是全部角色全部副本的待确认列表。
+ */
+export interface PendingRecordScope {
+  /** 点击所在行的角色 ID */
+  roleId: string;
+  /** 点击所在列的副本实例（用 raidName 构造规则匹配记录，记录没有 raidId） */
+  raid: Raid;
+}
+
+/** 判断一条记录是否落在待确认范围内：角色匹配 + 副本实例匹配（与列头判定同一套规则）。 */
+export function matchesPendingRecordScope(record: RaidRecord, scope: PendingRecordScope): boolean {
+  if (record.roleId !== scope.roleId) return false;
+  return matchesRaidInstance(record, scope.raid);
 }

@@ -210,41 +210,6 @@ describe('DatabaseService 失败路径', () => {
       await expect(db.getTrialRecords()).resolves.toEqual([{ id: 'trial-1', type: 'trial' }]);
     });
 
-    // 该命令带 CAS 校验，冲突时后端会拒绝。若前端吞掉错误，界面会表现为
-    // 「点了确认但状态没变」，用户无法判断要不要刷新。
-    it('setTrialDrawEquipmentReviewed 在 CAS 冲突时必须 rethrow', async () => {
-      const { db } = await loadDb();
-      invokeCommandMock.mockImplementation((cmd: string) => {
-        if (cmd === 'db_init') return Promise.resolve(undefined);
-        if (cmd === 'db_set_trial_draw_equipment_reviewed') {
-          return Promise.reject(makeError('牌面已变化，请刷新后重试'));
-        }
-        return Promise.resolve(undefined);
-      });
-
-      await expect(
-        db.setTrialDrawEquipmentReviewed('draw-1', true, 1, ['a', 'b', 'c', 'd', 'e'])
-      ).rejects.toThrow('牌面已变化，请刷新后重试');
-    });
-
-    it('setTrialDrawEquipmentReviewed 成功时透传 CAS 期望值', async () => {
-      const { db } = await loadDb();
-      invokeCommandMock.mockImplementation(() => Promise.resolve(undefined));
-
-      await db.setTrialDrawEquipmentReviewed('draw-1', true, 2, ['甲', '乙', '丙', '丁', '戊']);
-
-      const call = invokeCommandMock.mock.calls.find(
-        ([cmd]) => cmd === 'db_set_trial_draw_equipment_reviewed'
-      );
-      expect(call).toBeDefined();
-      expect(call?.[1]).toMatchObject({
-        drawId: 'draw-1',
-        reviewed: true,
-        expectedFlippedIndex: 2,
-        expectedCards: ['甲', '乙', '丙', '丁', '戊'],
-      });
-    });
-
     it('deleteTrialRecord 在 IPC 失败时 rethrow', async () => {
       const { db } = await loadDb();
       invokeCommandMock.mockImplementation((cmd: string) => {

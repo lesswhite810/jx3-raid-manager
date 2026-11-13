@@ -25,9 +25,6 @@ pub const MINGYI_ACCOUNTS_BASE_PATH: &str = GKP_BASE_PATH;
 const MING_YI_DB_PATH: &str =
     r"Interface\MY#DATA\!all-users@zhcn_hd\userdata\role_statistics\equip_stat.v4.db";
 
-// 当前游戏等级
-const CURRENT_LEVEL: i32 = 130;
-
 // 预编译正则表达式，避免重复编译开销
 static KUNGFU_DESC_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"推荐心法[：:]([^()]+)\(([^()]+)\)").unwrap());
@@ -245,7 +242,6 @@ struct RoleStatData {
 
     // ===== 基础属性 =====
     force_id: i32,
-    #[allow(dead_code)]
     level: i32,
     equip_score: i32,
     #[allow(dead_code)]
@@ -560,17 +556,16 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
     let conn =
         rusqlite::Connection::open(&db_path).map_err(|e| format!("打开茗伊数据库失败: {}", e))?;
 
-    // 查询角色信息，只取当前等级的角色
+    // 查询所有角色信息（等级过滤只发生在前端显示层，这里全量读取入库）
     let mut stmt = conn
         .prepare(
             "SELECT ownerkey, ownername, servername, ownerforce, ownerlevel, ownerscore, ownersuitindex
-             FROM OwnerInfo
-             WHERE ownerlevel = ?",
+             FROM OwnerInfo",
         )
         .map_err(|e| format!("准备查询失败: {}", e))?;
 
     let role_iter = stmt
-        .query_map([CURRENT_LEVEL], |row| {
+        .query_map([], |row| {
             let owner_key_str: String = row.get(0)?;
             let owner_name: String = row.get(1)?;
             let server_name: String = row.get(2)?;
@@ -1299,13 +1294,14 @@ fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String>
                         continue;
                     }
 
-                    // 茗伊数据库中有该角色，正常更新门派、心法、装分
+                    // 茗伊数据库中有该角色，正常更新门派、心法、装分、等级
                     conn.execute(
-                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, level = ?, updated_at = ? WHERE id = ?",
                         params![
                             parsed_role.force_name.clone().unwrap_or_default(),
                             parsed_role.kungfu_name.clone().unwrap_or_default(),
                             parsed_role.score.unwrap_or(0) as i64,
+                            parsed_role.level.map(|l| l as i64),
                             timestamp,
                             existing_role_id,
                         ],
@@ -1315,8 +1311,8 @@ fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String>
                 None => {
                     // 角色不存在，插入新角色
                     conn.execute(
-                        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, level, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         params![
                             role_id,
                             account_id_to_use,
@@ -1326,6 +1322,7 @@ fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String>
                             parsed_role.force_name.clone().unwrap_or_default(),
                             parsed_role.kungfu_name.clone().unwrap_or_default(),
                             parsed_role.score.unwrap_or(0) as i64,
+                            parsed_role.level.map(|l| l as i64),
                             timestamp,
                             timestamp,
                         ],
@@ -1472,14 +1469,15 @@ pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, 
             // 只处理新角色，不更新已有角色
             if old_role_id.is_none() {
                 conn.execute(
-                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, '', '', 0, ?, ?)",
+                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, level, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, '', '', 0, ?, ?, ?)",
                     params![
                         role_id,
                         account_id_to_use,
                         parsed_role.name.clone(),
                         parsed_role.server.clone(),
                         parsed_role.region.clone(),
+                        parsed_role.level.map(|l| l as i64),
                         timestamp,
                         timestamp,
                     ],
@@ -1527,7 +1525,7 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
     let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
     let timestamp = db::get_local_timestamp();
 
-    // 数据源1：茗伊全局库（!all-users），含心法解析但仅满级角色
+    // 数据源1：茗伊全局库（!all-users），含心法解析与角色等级
     let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
         Ok(roles) => {
             log::info!("[AnalyzeRoles] 从茗伊全局库读取到 {} 个角色信息", roles.len());
@@ -1577,6 +1575,7 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
             processed_names.insert(stat.name.clone());
 
             let force_name = kungfu_data::get_force_name(stat.force_id);
+            // level 无论装分是否有效都应更新（等级读取失败不会影响装分逻辑）
             if stat.equip_score > 0 {
                 log::info!(
                     "[AnalyzeRoles] 第一阶段更新: {} ({}) score={}",
@@ -1585,10 +1584,11 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
                     stat.equip_score
                 );
                 conn.execute(
-                    "UPDATE roles SET sect = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE roles SET sect = ?, equipment_score = ?, level = ?, updated_at = ? WHERE id = ?",
                     params![
                         force_name.unwrap_or_default(),
                         stat.equip_score as i64,
+                        stat.level as i64,
                         timestamp,
                         existing_role_id,
                     ],
@@ -1596,8 +1596,17 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
                 .map_err(|e| format!("更新角色装分失败: {}", e))?;
                 updated_roles += 1;
             } else {
+                conn.execute(
+                    "UPDATE roles SET level = ?, updated_at = ? WHERE id = ?",
+                    params![
+                        stat.level as i64,
+                        timestamp,
+                        existing_role_id,
+                    ],
+                )
+                .map_err(|e| format!("更新角色等级失败: {}", e))?;
                 log::warn!(
-                    "[AnalyzeRoles] 角色 {} 的装分为0，跳过 equipment_score 更新",
+                    "[AnalyzeRoles] 角色 {} 的装分为0，仅更新 level，跳过 equipment_score 更新",
                     stat.name
                 );
             }
@@ -1626,10 +1635,11 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
             if let Some(existing_role_id) = old_role_id {
                 let force_name = kungfu_data::get_force_name(mingyi_role.force_id);
                 conn.execute(
-                    "UPDATE roles SET sect = ?, martial = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE roles SET sect = ?, martial = ?, level = ?, updated_at = ? WHERE id = ?",
                     params![
                         force_name.unwrap_or_default(),
                         mingyi_role.kungfu_name.clone().unwrap_or_default(),
+                        mingyi_role.level as i64,
                         timestamp,
                         existing_role_id,
                     ],
@@ -1656,11 +1666,12 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
 
                 if current_score > 0 {
                     conn.execute(
-                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE roles SET sect = ?, martial = ?, equipment_score = ?, level = ?, updated_at = ? WHERE id = ?",
                         params![
                             force_name.unwrap_or_default(),
                             mingyi_role.kungfu_name.clone().unwrap_or_default(),
                             current_score as i64,
+                            mingyi_role.level as i64,
                             timestamp,
                             existing_role_id,
                         ],
@@ -1669,10 +1680,11 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
                     updated_roles += 1;
                 } else {
                     conn.execute(
-                        "UPDATE roles SET sect = ?, martial = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE roles SET sect = ?, martial = ?, level = ?, updated_at = ? WHERE id = ?",
                         params![
                             force_name.unwrap_or_default(),
                             mingyi_role.kungfu_name.clone().unwrap_or_default(),
+                            mingyi_role.level as i64,
                             timestamp,
                             existing_role_id,
                         ],

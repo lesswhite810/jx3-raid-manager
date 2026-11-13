@@ -28,7 +28,7 @@ export interface ParsedRole {
   forceName?: string;        // 门派名称
   kungfuId?: number;        // 心法ID
   kungfuName?: string;       // 心法名称
-  level?: number;            // 角色等级
+  level?: number | null;     // 角色等级（null 表示未扫描）
   score?: number;            // 装备分数（第一套）
   scores?: number[];         // 所有套装的装备分数 [第1套, 第2套, 第3套, 第4套]
 }
@@ -65,7 +65,9 @@ export const convertToSystemAccounts = (parsedAccounts: ParsedAccount[]): Accoun
       region: role.region,
       server: role.server,
       sect: role.forceName || '', // 优先使用茗伊数据库的门派名称
-      martial: role.kungfuName || '' // 优先使用茗伊数据库的心法名称
+      martial: role.kungfuName || '', // 优先使用茗伊数据库的心法名称
+      // 等级透传（null/undefined 均表示未扫描，等级过滤时默认显示）
+      ...(role.level !== undefined && role.level !== null ? { level: role.level } : {})
     }));
 
     return account;

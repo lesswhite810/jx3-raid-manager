@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { TrialDraw, TrialPlaceRecord, Account, Config, Season } from '../types';
+import { TrialPlaceRecord, Account, Config, Season } from '../types';
 import { Trophy, Check, Target, Search, X, BarChart3, Clock } from 'lucide-react';
 import { AddTrialRecordModal } from './AddTrialRecordModal';
 import { TrialRoleRecordsModal } from './TrialRoleRecordsModal';
@@ -13,6 +13,9 @@ import { calculateTrialFlipStats } from '../utils/trialFlipStats';
 import { isConfirmedTrialRecord } from '../utils/trialRecordUtils';
 import { getTrialWeeklyDrawProgress } from '../utils/trialWeeklyDrawProgress';
 import { getCardClass, getAddButtonClass, getViewButtonClass, SECONDARY_BUTTON_CLASS, CardStatus } from '../utils/cardStatusStyles';
+import { RoleCredentialInfo } from './RoleCredentialInfo';
+import { useAppConfig } from '../contexts/AppConfigContext';
+import { getCurrentVersionLevelCap, shouldShowRoleByLevel } from '../utils/roleLevelFilter';
 import {
     getTrialProgressPeriod,
     isTrialRecordInProgressPeriod,
@@ -42,6 +45,12 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     onRefreshRecords,
     onConfigChange
 }) => {
+    // 旧版模式保留角色卡片上的账号与密码展示 / 复制；新版把入口收敛到 CD 概览表的操作列
+    const { appConfig } = useAppConfig();
+    const isHistoryMode = (appConfig?.raidViewMode ?? 'current') === 'history';
+    // 当前版本等级上限（用于「隐藏非满级角色」过滤；null 表示未配置，不过滤）
+    const [currentLevelCap, setCurrentLevelCap] = useState<number | null>(null);
+
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
     const [viewFlipStatsRole, setViewFlipStatsRole] = useState<any>(null);
@@ -72,10 +81,13 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
     }, [onConfigChange]);
 
     const allRoles = useMemo(() => {
+        const hideNonMaxLevelRoles = appConfig?.hideNonMaxLevelRoles ?? false;
         return accounts
             .filter(acc => !acc.disabled)
             .flatMap(acc => acc.roles
-                .filter(role => !role.disabled && !role.isClient && role.visibility?.trial !== false)
+                .filter(role => !role.disabled && !role.isClient
+                    && role.visibility?.trial !== false
+                    && shouldShowRoleByLevel(role, currentLevelCap, hideNonMaxLevelRoles))
                 .map(role => ({
                     ...role,
                     accountId: acc.id,
@@ -84,7 +96,7 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                     equipmentScore: role.equipmentScore // Ensure equipmentScore is passed
                 }))
             );
-    }, [accounts]);
+    }, [accounts, currentLevelCap, appConfig?.hideNonMaxLevelRoles]);
 
     const [selectedRole, setSelectedRole] = useState<any>(null); // For passing to modal
 
@@ -101,12 +113,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                 if (!cancelled) {
                     setCurrentSeason(currentSeason);
                     setTrialProgressPeriod(getTrialProgressPeriod(currentSeason, seasons, versions));
+                    setCurrentLevelCap(getCurrentVersionLevelCap(versions));
                 }
             })
             .catch(() => {
                 if (!cancelled) {
                     setCurrentSeason(null);
                     setTrialProgressPeriod(null);
+                    setCurrentLevelCap(null);
                 }
             });
 
@@ -292,20 +306,6 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
         onRefreshRecords?.();
     }, [onRefreshRecords]);
 
-    const handleUpdateTrialDrawEquipmentReview = useCallback(async (
-        _recordId: string,
-        draw: TrialDraw,
-        reviewed: boolean,
-    ) => {
-        try {
-            await db.setTrialDrawEquipmentReviewed(draw.id, reviewed, draw.flippedIndex,
-                [draw.card1, draw.card2, draw.card3, draw.card4, draw.card5]);
-        } finally {
-            // 冲突时也刷新，避免用户重复按旧画面确认。
-            onRefreshRecords?.();
-        }
-    }, [onRefreshRecords]);
-
     // 删除试炼记录：调用数据库删除，然后重新查询
     const handleDeleteTrialRecord = useCallback(async (recordId: string) => {
         try {
@@ -484,6 +484,14 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                                         </div>
                                     </div>
 
+                                    {/* 旧版模式下保留账号与密码复制入口 */}
+                                    {isHistoryMode && (
+                                        <RoleCredentialInfo
+                                            accountName={role.accountName}
+                                            password={role.password}
+                                        />
+                                    )}
+
                                     {/* Action Buttons */}
                                     <div className="mt-3 grid grid-cols-3 gap-2">
                                         <button
@@ -543,7 +551,6 @@ export const TrialPlaceManager: React.FC<TrialPlaceManagerProps> = ({
                         onConfirmRecord={handleConfirmTrialRecord}
                         onUpdateDrawFlippedIndex={handleUpdateTrialDrawFlippedIndex}
                         onUpdateDrawEquipment={handleUpdateTrialDrawEquipment}
-                        onUpdateDrawEquipmentReview={handleUpdateTrialDrawEquipmentReview}
                     />
                 )
             }

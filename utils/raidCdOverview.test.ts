@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { Account, AccountType, Raid, RaidRecord } from '../types';
 import { injectDefaultBosses } from '../data/raidBosses';
-import { buildRaidCdOverview } from './raidCdOverview';
+import { buildRaidCdOverview, matchesPendingRecordScope, PendingRecordScope, resolveActivityCellMode, resolveCdCellClickTarget } from './raidCdOverview';
 
 /** 2026-11-09 是周一，21:00 仍在当周窗口内（周界为周一 07:00） */
 const NOW = new Date(2026, 10, 9, 21, 0);
@@ -533,6 +533,127 @@ describe('buildRaidCdOverview - 列顺序', () => {
   });
 });
 
+describe('buildRaidCdOverview - 展示周常开关', () => {
+  /** 造一个指定大版本的副本难度（seasonId 置空以走版本名兜底判定） */
+  function makeVersionRaid(name: string, version: string, playerCount: 10 | 25, difficulty: Raid['difficulty'] = '普通'): Raid {
+    return { ...makeRaid(playerCount, name, difficulty), version, seasonId: undefined };
+  }
+
+  it('关闭展示周常时，非当前赛季的周常副本列被隐藏，收藏列保留', () => {
+    const raids = [
+      makeVersionRaid('洛阳之战', '苍生铸世', 25),
+      makeVersionRaid('达摩洞', '奉天证道', 10),
+    ];
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids,
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: ['洛阳之战', '达摩洞'],
+      favoriteRaids: new Set<string>(['达摩洞']),
+      seasonContext: { currentSeasonId: 1, currentVersionName: '苍生铸世' },
+      versionOrder: { '苍生铸世': 0, '奉天证道': 1 },
+      showWeeklyRaids: false,
+      now: NOW,
+    });
+
+    // 达摩洞（奉天证道，历史赛季）不再以周常列出现，但收藏列保留
+    expect(result.columns.map(column => column.key)).toEqual(['25人普通洛阳之战', '10人普通达摩洞']);
+    expect(result.columns.map(column => column.source)).toEqual(['weekly', 'favorite']);
+  });
+
+  it('关闭展示周常时，无法判定赛季归属的周常副本列也被隐藏', () => {
+    const raids = [
+      makeVersionRaid('洛阳之战', '苍生铸世', 25),
+      makeVersionRaid('敖龙岛', '未知版本', 10),
+    ];
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids,
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: ['洛阳之战', '敖龙岛'],
+      favoriteRaids: new Set<string>(),
+      seasonContext: { currentSeasonId: 1, currentVersionName: '苍生铸世' },
+      versionOrder: { '苍生铸世': 0 },
+      showWeeklyRaids: false,
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.key)).toEqual(['25人普通洛阳之战']);
+  });
+
+  it('关闭展示周常时，当前赛季的周常副本列正常保留', () => {
+    const raids = [makeRaid(25)];
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids,
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      showWeeklyRaids: false,
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.key)).toEqual(['25人普通洛阳之战']);
+    expect(result.columns[0].source).toBe('weekly');
+  });
+
+  it('赛季上下文缺失时关闭展示周常不产生过滤，避免整表清空', () => {
+    const raids = [
+      makeVersionRaid('洛阳之战', '苍生铸世', 25),
+      makeVersionRaid('达摩洞', '奉天证道', 10),
+    ];
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids,
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: ['洛阳之战', '达摩洞'],
+      favoriteRaids: new Set<string>(),
+      seasonContext: { currentSeasonId: null, currentVersionName: null },
+      versionOrder: { '苍生铸世': 0, '奉天证道': 1 },
+      showWeeklyRaids: false,
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.key)).toEqual([
+      '25人普通洛阳之战',
+      '10人普通达摩洞',
+    ]);
+  });
+
+  it('默认（未传 showWeeklyRaids）保持展示全部周常副本列', () => {
+    const raids = [
+      makeVersionRaid('洛阳之战', '苍生铸世', 25),
+      makeVersionRaid('达摩洞', '奉天证道', 10),
+    ];
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids,
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: ['洛阳之战', '达摩洞'],
+      favoriteRaids: new Set<string>(),
+      seasonContext: { currentSeasonId: 1, currentVersionName: '苍生铸世' },
+      versionOrder: { '苍生铸世': 0, '奉天证道': 1 },
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.key)).toEqual([
+      '25人普通洛阳之战',
+      '10人普通达摩洞',
+    ]);
+  });
+});
+
 describe('buildRaidCdOverview - 玩法参与标记', () => {
   it('没有角色参与试炼 / 百战时，对应标记为 false', () => {
     const raid = makeRaid(25);
@@ -591,5 +712,163 @@ describe('buildRaidCdOverview - 玩法参与标记', () => {
 
     expect(result.hasTrialParticipants).toBe(false);
     expect(result.hasBaizhanParticipants).toBe(false);
+  });
+});
+
+describe('resolveCdCellClickTarget - 待确认单元格按模块分流', () => {
+  const ALL_STATUSES = ['none', 'partial', 'pending', 'complete', 'na'] as const;
+
+  it('只有团队副本的「待确认」打开团队副本待确认面板', () => {
+    expect(resolveCdCellClickTarget('raid', 'pending')).toEqual({ kind: 'raid-confirm' });
+    // 历史 bug：试炼 / 百战的待确认曾经也走团队副本的待确认回调
+    expect(resolveCdCellClickTarget('trial', 'pending')).toEqual({ kind: 'trial-cell' });
+    expect(resolveCdCellClickTarget('baizhan', 'pending')).toEqual({ kind: 'baizhan-cell' });
+  });
+
+  it('各模块的其余可点击状态分别回到本模块', () => {
+    for (const status of ALL_STATUSES) {
+      if (status === 'na' || status === 'pending') continue;
+      expect(resolveCdCellClickTarget('raid', status)).toEqual({ kind: 'raid-cell' });
+      expect(resolveCdCellClickTarget('trial', status)).toEqual({ kind: 'trial-cell' });
+      expect(resolveCdCellClickTarget('baizhan', status)).toEqual({ kind: 'baizhan-cell' });
+    }
+  });
+
+  it('「不适用」的单元格在任何模块都不响应点击', () => {
+    for (const module of ['raid', 'trial', 'baizhan'] as const) {
+      expect(resolveCdCellClickTarget(module, 'na')).toEqual({ kind: 'none' });
+    }
+  });
+});
+
+describe('resolveActivityCellMode - 试炼 / 百战单元格点击目标', () => {
+  it('待确认与已清都进记录列表，不能把待确认当成一次新增', () => {
+    expect(resolveActivityCellMode('pending')).toBe('view');
+    expect(resolveActivityCellMode('complete')).toBe('view');
+  });
+
+  it('未清 / 部分清进入添加记录', () => {
+    expect(resolveActivityCellMode('none')).toBe('add');
+    expect(resolveActivityCellMode('partial')).toBe('add');
+  });
+
+  it('「不适用」不产生点击目标', () => {
+    expect(resolveActivityCellMode('na')).toBeNull();
+  });
+});
+
+describe('matchesPendingRecordScope - 待确认弹窗按角色与副本过滤', () => {
+  const scopeRaid: Raid = {
+    name: '洛阳之战',
+    difficulty: '普通',
+    playerCount: 10,
+    version: 'Meta V',
+    isActive: true,
+  };
+  const scope: PendingRecordScope = { roleId: 'role-1', raid: scopeRaid };
+  const makeScopeRecord = (overrides: Partial<RaidRecord>): RaidRecord => ({
+    id: 'record-1',
+    accountId: 'account-1',
+    roleId: 'role-1',
+    raidName: 'Meta V 10人普通洛阳之战',
+    date: '2026-11-10',
+    goldIncome: 0,
+    hasXuanjing: false,
+    ...overrides,
+  });
+
+  it('同角色同副本实例的记录在范围内', () => {
+    expect(matchesPendingRecordScope(makeScopeRecord({}), scope)).toBe(true);
+  });
+
+  it('其他角色的记录不在范围内', () => {
+    expect(matchesPendingRecordScope(makeScopeRecord({ roleId: 'role-2' }), scope)).toBe(false);
+  });
+
+  it('其他副本实例（副本名 / 难度 / 人数不同）的记录不在范围内', () => {
+    expect(matchesPendingRecordScope(makeScopeRecord({ raidName: 'Meta V 10人英雄洛阳之战' }), scope)).toBe(false);
+    expect(matchesPendingRecordScope(makeScopeRecord({ raidName: 'Meta V 25人普通洛阳之战' }), scope)).toBe(false);
+    expect(matchesPendingRecordScope(makeScopeRecord({ raidName: 'Meta V 10人普通范阳大战' }), scope)).toBe(false);
+  });
+
+  it('raidName 为空的记录不匹配任何范围', () => {
+    expect(matchesPendingRecordScope(makeScopeRecord({ raidName: '' }), scope)).toBe(false);
+  });
+});
+
+describe('buildRaidCdOverview - 隐藏非满级角色过滤', () => {
+  /** 既有调用点未传新参数时不过滤（levelCap 缺省 + 开关默认关闭），保持向后兼容 */
+  it('不传新参数时不做等级过滤', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({
+      roles: [
+        { ...makeRole('role-1', '未满级'), level: 50 },
+        makeRole('role-2', '老数据'),
+      ],
+    });
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      now: NOW,
+    });
+
+    expect(result.rows).toHaveLength(2);
+  });
+
+  it('开关开启时等级未达上限的行被排除，等级未知的行保留', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({
+      roles: [
+        { ...makeRole('role-1', '未满级'), level: 120 },
+        { ...makeRole('role-2', '已满级'), level: 130 },
+        makeRole('role-3', '老数据'),
+        { ...makeRole('role-4', '等级为 null'), level: null },
+      ],
+    });
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      levelCap: 130,
+      hideNonMaxLevelRoles: true,
+      now: NOW,
+    });
+
+    const roleNames = result.rows.map(row => row.roleName);
+    expect(roleNames).toContain('已满级');
+    expect(roleNames).toContain('老数据');
+    expect(roleNames).toContain('等级为 null');
+    expect(roleNames).not.toContain('未满级');
+    expect(result.rows).toHaveLength(3);
+  });
+
+  it('版本未配置 levelCap（null）时不过滤', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({
+      roles: [{ ...makeRole('role-1', '未满级'), level: 50 }],
+    });
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      levelCap: null,
+      hideNonMaxLevelRoles: true,
+      now: NOW,
+    });
+
+    expect(result.rows).toHaveLength(1);
   });
 });

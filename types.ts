@@ -18,6 +18,8 @@ export interface Role {
   isClient?: boolean; // @deprecated 使用 Account.type 判断代清账号
   disabled?: boolean; // 是否禁用该角色
   equipmentScore?: number; // 装备分数（装分）
+  /** 角色等级；null/undefined 表示尚未扫描（老数据），等级过滤时默认显示 */
+  level?: number | null;
   visibility?: Record<string, boolean>; // 可见性配置 { raid: true, baizhan: false, trial: true }
   // 以下字段来自账号级配置（UI 展示复制账号密码时使用，后端通常不存储于角色表）
   password?: string;
@@ -163,7 +165,6 @@ export interface TrialDraw {
   card4: string;
   card5: string;
   /** 此次牌面尚未完整核对；不可据此将未观察牌视为无装备。 */
-  equipmentUnreviewed?: boolean;
   /** 人工修改过的牌位，包含明确清空的牌。 */
   manualEquipmentCardIndexes?: number[];
   /** 本次表单明确修改的牌位，仅用于保存意图，不作为持久数据。 */
@@ -197,8 +198,6 @@ export interface TrialPlaceRecord {
   status?: 'pending' | 'confirmed';
   /** 自动扫描候选的稳定来源键，用于幂等写入。 */
   sourceKey?: string;
-  /** 五张牌尚未完整核对时为 true。已识别的选中牌可独立保留，旧记录按 false 兼容。 */
-  equipmentUnreviewed?: boolean;
   /** 编辑草稿中用户实际修改过的牌位。后端会保留其余空位晚到的识别结果，不持久化。 */
   editedCardIndices?: number[];
   /** 一轮通关后的翻牌明细。旧记录固定按空数组兼容，绝不把父记录旧牌面虚构为首笔。 */
@@ -237,7 +236,7 @@ export interface TrialFlipStatsSummary {
   drawCount: number;
   /** 已确认翻牌位的明细数。 */
   knownPositionDrawCount: number;
-  /** 已完整核对五张牌的记录数，用作装备出现率和 Boss 统计的分母。 */
+  /** 已确认牌位的样本数，用作装备出现率和 Boss 统计的分母。 */
   equipmentReviewedRecords: number;
   positions: TrialFlipPositionStats[];
   bestFlipPosition: TrialFlipPositionStats | null;
@@ -309,6 +308,15 @@ export interface BossCooldownInfo {
   lastRecordDate?: string | number;
   canAddRecord: boolean; // 是否可以添加记录
 }
+
+/**
+ * 副本管理显示模式。
+ *
+ * - `current`：新版，进入副本管理直接是 CD 概览表，无顶部页签
+ * - `history`：旧版，还原 v2.2.8 之前的样子——团队副本 / 试炼之地 / 百战 三个页签，
+ *   团队副本页签默认落在收藏界面，角色卡片上保留账号与密码的复制入口
+ */
+export type RaidViewMode = 'current' | 'history';
 
 // 配置接口
 export interface AIConfig {
@@ -414,6 +422,8 @@ export interface GameVersion {
   id?: number;
   name: string;
   sortOrder: number;
+  /** 该版本的等级上限；null/undefined 表示该版本未配置（不做等级过滤），如丝路风雨=130、苍生铸世=50 */
+  levelCap?: number | null;
 }
 
 export interface Season {
@@ -507,4 +517,10 @@ export interface AppConfig {
   autoRefreshEquipScore: boolean;
   /** 点击关闭按钮时的行为，默认每次询问。 */
   closeBehavior: CloseBehavior;
+  /** 副本管理的显示模式，默认新版（CD 概览）。 */
+  raidViewMode: RaidViewMode;
+  /** 是否在 CD 概览中展示周常副本列（关闭时仅展示当前赛季副本），默认开启。 */
+  showWeeklyRaids: boolean;
+  /** 副本管理界面隐藏未达到当前版本等级上限的角色（开关关闭或等级未知时不过滤），默认关闭。 */
+  hideNonMaxLevelRoles: boolean;
 }

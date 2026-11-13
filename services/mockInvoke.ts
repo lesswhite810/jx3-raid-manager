@@ -15,6 +15,7 @@ const MOCK_ACCOUNTS = [
         "server": "梦江南",
         "region": "电信五区",
         "sect": "万花",
+        "level": 130,
         "equipmentScore": 320000
       },
       {
@@ -23,6 +24,7 @@ const MOCK_ACCOUNTS = [
         "server": "梦江南",
         "region": "电信五区",
         "sect": "纯阳",
+        "level": 120,
         "equipmentScore": 280000
       }
     ]
@@ -55,7 +57,6 @@ const MOCK_TRIAL_RECORDS: TrialPlaceRecord[] = [
     "bosses": ["九色鹿", "吸血鬼", "推石头"],
     "flippedIndex": 0,
     "source": "auto",
-    "equipmentUnreviewed": true,
     card1: '', card2: '', card3: '', card4: '', card5: '',
     draws: [1, 2].map(sequence => ({
       id: `mock-draw-${sequence}`,
@@ -66,7 +67,6 @@ const MOCK_TRIAL_RECORDS: TrialPlaceRecord[] = [
       rewardItems: [{ name: '银叶子·试炼之地', quantity: sequence === 1 ? 31 : 33 }],
       ...(sequence === 2 ? { staminaCost: 1000, staminaCosts: [125, 875] } : {}),
       card1: '', card2: '', card3: '', card4: '', card5: '',
-      equipmentUnreviewed: true,
     })),
     "type": "trial"
   }
@@ -82,6 +82,9 @@ const MOCK_APP_CONFIG: AppConfig = {
   trialScreenshotRecognitionEnabled: false,
   autoRefreshEquipScore: true,
   closeBehavior: 'ask',
+  raidViewMode: 'current',
+  showWeeklyRaids: true,
+  hideNonMaxLevelRoles: false,
 };
 
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -172,6 +175,11 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'db_get_raid_versions':
           result = ['丝路风雨'];
           break;
+        case 'db_get_game_versions':
+          result = JSON.stringify([
+            { name: '丝路风雨', sortOrder: 1, levelCap: 130 },
+          ]);
+          break;
         case 'db_get_current_raid_version_info':
           result = {
             majorVersion: '丝路风雨',
@@ -254,23 +262,6 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           draw[key] = equipmentId?.trim() || '';
           break;
         }
-        case 'db_set_trial_draw_equipment_reviewed': {
-          const draw = MOCK_TRIAL_RECORDS.flatMap(record => record.draws ?? [])
-            .find(row => row.id === args?.drawId);
-          if (!draw || typeof args?.reviewed !== 'boolean') {
-            reject(new Error('未找到翻牌明细或核对状态无效'));
-            return;
-          }
-          const expectedCards = args.expectedCards;
-          if (args.reviewed && (args.expectedFlippedIndex !== draw.flippedIndex
-            || !Array.isArray(expectedCards) || expectedCards.length !== 5
-            || [draw.card1, draw.card2, draw.card3, draw.card4, draw.card5].some((card, index) => card !== expectedCards[index]))) {
-            reject(new Error('牌面已更新，请刷新后重新确认'));
-            return;
-          }
-          draw.equipmentUnreviewed = !args.reviewed;
-          break;
-        }
         case 'db_get_baizhan_records':
           result = '[]';
           break;
@@ -319,6 +310,24 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         case 'set_close_behavior':
           if (args?.behavior === 'ask' || args?.behavior === 'minimize' || args?.behavior === 'exit') {
             MOCK_APP_CONFIG.closeBehavior = args.behavior;
+          }
+          result = null;
+          break;
+        case 'set_raid_view_mode':
+          if (args?.mode === 'current' || args?.mode === 'history') {
+            MOCK_APP_CONFIG.raidViewMode = args.mode;
+          }
+          result = null;
+          break;
+        case 'set_show_weekly_raids_enabled':
+          if (typeof args?.enabled === 'boolean') {
+            MOCK_APP_CONFIG.showWeeklyRaids = args.enabled;
+          }
+          result = null;
+          break;
+        case 'set_hide_non_max_level_roles_enabled':
+          if (typeof args?.enabled === 'boolean') {
+            MOCK_APP_CONFIG.hideNonMaxLevelRoles = args.enabled;
           }
           result = null;
           break;
