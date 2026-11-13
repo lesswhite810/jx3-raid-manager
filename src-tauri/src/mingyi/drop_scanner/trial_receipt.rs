@@ -124,6 +124,10 @@ fn collect_trial_receipt_times_ms(
 /// `terminal+window_ms`（仍受下一可信事件硬上界约束），并强制走全量文件枚举
 /// （等价 Historical 搜索，不受实时 mtime 过滤影响）。只允许扩大，不允许缩小：
 /// 传入更短窗口时仍按标准窗口查询，保证不改变已有行为。
+///
+/// 生产路径已改用 [`collect_trial_draws_late_with_index`]；此无索引版本仅由
+/// 测试与回放使用，保留用于行为对照。
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn collect_trial_draws_late(
     account_dir: &Path,
     expected_uid: &str,
@@ -141,11 +145,35 @@ pub(super) fn collect_trial_draws_late(
     )
 }
 
+/// [`collect_trial_draws_late`] 的索引版本：同一账号多轮迟到对账共享元数据索引。
+pub(super) fn collect_trial_draws_late_with_index(
+    account_dir: &Path,
+    expected_uid: &str,
+    terminal_at_ms: i64,
+    next_trusted_event_at_ms: Option<i64>,
+    window_ms: i64,
+    index: &TrialChatlogIndex,
+) -> Vec<TrialDrawEvidence> {
+    collect_trial_draws_with_selection(
+        account_dir,
+        expected_uid,
+        terminal_at_ms,
+        next_trusted_event_at_ms,
+        TrialReceiptSearch::Historical,
+        window_ms,
+        Some(index),
+    )
+}
+
 /// 从角色身份已核验的 ChatLog 解析终局后的每一次翻牌。
 ///
 /// ChatLog 的主键是 `(time, hash)`，所以同秒不同消息不能仅按秒去重。仅当同秒
 /// 存在一条银叶子时，才将同秒的可信物品和精力行归给该牌；多条银叶子仍保留
 /// 独立叶子来源，但不分摊其它行。
+///
+/// 生产路径已改用 [`collect_trial_draws_with_index`]；此无索引版本仅由测试与
+/// 回放使用，保留用于行为对照。
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn collect_trial_draws(
     account_dir: &Path,
     expected_uid: &str,
@@ -163,6 +191,7 @@ pub(super) fn collect_trial_draws(
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn collect_trial_draws_with_window(
     account_dir: &Path,
     expected_uid: &str,
@@ -170,6 +199,47 @@ fn collect_trial_draws_with_window(
     next_trusted_event_at_ms: Option<i64>,
     search: TrialReceiptSearch,
     window_ms: i64,
+) -> Vec<TrialDrawEvidence> {
+    collect_trial_draws_with_selection(
+        account_dir,
+        expected_uid,
+        terminal_at_ms,
+        next_trusted_event_at_ms,
+        search,
+        window_ms,
+        None,
+    )
+}
+
+/// 带账号级元数据索引的查询：同一账号的多个终局共享一次目录枚举与
+/// ChatInfo 读取，每个终局只打开覆盖自身时间窗的聊天库。
+pub(super) fn collect_trial_draws_with_index(
+    account_dir: &Path,
+    expected_uid: &str,
+    terminal_at_ms: i64,
+    next_trusted_event_at_ms: Option<i64>,
+    search: TrialReceiptSearch,
+    index: &TrialChatlogIndex,
+) -> Vec<TrialDrawEvidence> {
+    collect_trial_draws_with_selection(
+        account_dir,
+        expected_uid,
+        terminal_at_ms,
+        next_trusted_event_at_ms,
+        search,
+        RECEIPT_WINDOW_MS,
+        Some(index),
+    )
+}
+
+fn collect_trial_draws_with_selection(
+    account_dir: &Path,
+    expected_uid: &str,
+    terminal_at_ms: i64,
+    next_trusted_event_at_ms: Option<i64>,
+    search: TrialReceiptSearch,
+    window_ms: i64,
+    index: Option<&TrialChatlogIndex>,
 ) -> Vec<TrialDrawEvidence> {
     let Some((start_sec, end_sec)) =
         receipt_window_seconds(terminal_at_ms, next_trusted_event_at_ms, window_ms)
@@ -181,9 +251,27 @@ fn collect_trial_draws_with_window(
     }
 
     let earliest_mtime_ms = terminal_at_ms.saturating_sub(CHATLOG_MTIME_LOOKBACK_MS);
+    let selected_files: Vec<PathBuf> = match index {
+        Some(index) => {
+            let mut files: Vec<PathBuf> = index
+                .covering_files(expected_uid, start_sec, end_sec)
+                .into_iter()
+                .filter(|path| passes_search_filter(path, earliest_mtime_ms, search))
+                .collect();
+            files.sort();
+            log::debug!(
+                "[TrialReceipt] 元数据索引为窗口 [{start_sec}, {end_sec}) 选中 {} 个聊天库",
+                files.len()
+            );
+            files
+        }
+        None => chatlog_files(account_dir, earliest_mtime_ms, search),
+    };
     let mut rows_by_source = BTreeMap::new();
-    for path in chatlog_files(account_dir, earliest_mtime_ms, search) {
-        let Ok(conn) = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+    for path in selected_files {
+        let Ok(conn) =
+            Connection::open_with_flags::<&PathBuf>(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
             log::debug!("[TrialReceipt] 无法只读打开 chatlog: {}", path.display());
             continue;
         };
@@ -357,29 +445,137 @@ fn chatlog_files(
 ) -> Vec<PathBuf> {
     let account_dir = account_dir.to_path_buf();
     let all_files = super::find_chatlog_files(&account_dir).unwrap_or_default();
-    let files: Vec<PathBuf> = all_files
+    all_files
         .iter()
-        .filter(|entry| match search {
-            TrialReceiptSearch::Historical => true,
-            TrialReceiptSearch::Realtime => fs::metadata(entry)
+        .filter(|entry| passes_search_filter(entry, earliest_mtime_ms, search))
+        .cloned()
+        .collect()
+}
+
+/// Realtime 搜索按 mtime 过滤掉所有聊天库时明确记录。茗伊封存式落盘
+/// 会让活跃库长期不动，导致实时窗口一个文件都查不到，这是"迟到回执"
+/// 场景下最容易被忽视的静默失败点。
+fn passes_search_filter(path: &Path, earliest_mtime_ms: i64, search: TrialReceiptSearch) -> bool {
+    match search {
+        TrialReceiptSearch::Historical => true,
+        TrialReceiptSearch::Realtime => {
+            let passes = fs::metadata(path)
                 .ok()
                 .and_then(|metadata| metadata.modified().ok())
                 .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-                .is_some_and(|duration| duration.as_millis() as i64 >= earliest_mtime_ms),
-        })
-        .cloned()
-        .collect();
-    // 诊断：实时窗口按 mtime 过滤掉所有聊天库时明确记录。茗伊封存式落盘
-    // 会让活跃库长期不动，导致实时窗口一个文件都查不到，这是"迟到回执"
-    // 场景下最容易被忽视的静默失败点。
-    if search == TrialReceiptSearch::Realtime && files.len() < all_files.len() {
-        log::info!(
-            "[TrialReceipt] 实时 mtime 过滤: {} 个聊天库中仅 {} 个满足最近落盘要求 (earliest_mtime_ms={earliest_mtime_ms})",
-            all_files.len(),
-            files.len()
-        );
+                .is_some_and(|duration| duration.as_millis() as i64 >= earliest_mtime_ms);
+            if !passes {
+                log::debug!(
+                    "[TrialReceipt] 实时 mtime 过滤跳过聊天库: {} (earliest_mtime_ms={earliest_mtime_ms})",
+                    path.display()
+                );
+            }
+            passes
+        }
     }
-    files
+}
+
+/// 同一账号一次扫描内共享的聊天库元数据索引。
+///
+/// 目录只枚举一次；每个聊天库只打开一次，读取 `ChatInfo` 的
+/// `user_global_id` 与 `min_time`/`max_time`。此后每个试炼终局按
+/// `[start_sec, end_sec)` 秒级窗口在内存中筛出覆盖它的文件，只对命中
+/// 文件执行 ChatLog 查询，避免「候选数 × 文件数」次重复的 SQLite 打开。
+pub(super) struct TrialChatlogIndex {
+    entries: Vec<TrialChatlogEntry>,
+}
+
+struct TrialChatlogEntry {
+    path: PathBuf,
+    uid: Option<String>,
+    /// (min_time, max_time) 秒级；max_time=0 表示活跃库，视为仍在本轮写入。
+    range: Option<(i64, i64)>,
+}
+
+impl TrialChatlogIndex {
+    /// 枚举账号聊天库并一次性读取元数据。读取失败的文件按「uid 未知 +
+    /// 覆盖未知」保留，交由查询路径按原语义保守处理。
+    pub(super) fn build(account_dir: &Path) -> TrialChatlogIndex {
+        let account_dir = account_dir.to_path_buf();
+        let all_files = super::find_chatlog_files(&account_dir).unwrap_or_default();
+        let entries = all_files
+            .into_iter()
+            .map(|path| {
+                let meta = Connection::open_with_flags::<&PathBuf>(
+                    &path,
+                    OpenFlags::SQLITE_OPEN_READ_ONLY,
+                )
+                .ok()
+                .map(|conn| (chatlog_uid(&conn), chatlog_time_range(&conn)))
+                .unwrap_or((None, None));
+                TrialChatlogEntry {
+                    path,
+                    uid: meta.0,
+                    range: meta.1,
+                }
+            })
+            .collect();
+        TrialChatlogIndex { entries }
+    }
+
+    /// 返回 uid 匹配且时间范围覆盖 `[start_sec, end_sec)` 的聊天库路径。
+    ///
+    /// 与 [`chatlog_covers_seconds`] 语义一致：无法读取范围的文件保守保留，
+    /// `max_time=0` 的活跃库视为时间上界无穷。
+    pub(super) fn covering_files(
+        &self,
+        expected_uid: &str,
+        start_sec: i64,
+        end_sec: i64,
+    ) -> Vec<PathBuf> {
+        self.entries
+            .iter()
+            .filter(|entry| match &entry.uid {
+                Some(uid) => uid == expected_uid,
+                // uid 读不出来时保留，让打开后的查询自然返回空结果。
+                None => true,
+            })
+            .filter(|entry| match entry.range {
+                Some((min_time, max_time)) => {
+                    let effective_max = if max_time == 0 { i64::MAX } else { max_time };
+                    min_time <= end_sec && effective_max >= start_sec
+                }
+                // 覆盖未知（损坏或无 ChatInfo 表）时保守保留。
+                None => true,
+            })
+            .map(|entry| entry.path.clone())
+            .collect()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+fn chatlog_time_range(conn: &Connection) -> Option<(i64, i64)> {
+    let min_time: i64 = conn
+        .query_row(
+            "SELECT value FROM ChatInfo WHERE key = 'min_time'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()?
+        .parse()
+        .ok()?;
+    let max_time: i64 = conn
+        .query_row(
+            "SELECT value FROM ChatInfo WHERE key = 'max_time'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()?
+        .parse()
+        .ok()?;
+    Some((min_time, max_time))
 }
 
 fn chatlog_uid(conn: &Connection) -> Option<String> {

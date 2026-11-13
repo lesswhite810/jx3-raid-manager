@@ -92,6 +92,32 @@ struct DropApiResponse {
     list: Vec<DropItem>,
 }
 
+/// JX3Box item_merged 接口布尔字段的容错反序列化。
+///
+/// 该接口历史上返回 true/false，但部分物品的部分字段开始返回整数 0/1（甚至 null），
+/// serde 对 Option<bool> 的严格类型校验会导致整条响应反序列化失败，
+/// 进而使物品分类整体失败、drop_items 缓存无法重建。
+/// 这里统一兼容：true/false、整数（0=false，非 0=true）、null（视为缺失）。
+fn deserialize_flexible_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Bool(b) => Ok(Some(b)),
+        serde_json::Value::Number(n) => Ok(Some(
+            n.as_f64().unwrap_or_default() != 0.0,
+        )),
+        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
+            "true" | "1" => Ok(Some(true)),
+            "false" | "0" | "" => Ok(Some(false)),
+            other => Err(D::Error::custom(format!("无效的布尔值: {}", other))),
+        },
+        other => Err(D::Error::custom(format!("无效的布尔值: {}", other))),
+    }
+}
+
 /// JX3Box 物品详情接口（item_merged）返回的完整物品信息
 ///
 /// 完整存储所有字段（含 JSON 字段），分类字段用于规则判断。
@@ -129,9 +155,9 @@ pub struct ItemMerged {
     pub max_exist_time: Option<i64>,
     #[serde(rename = "MaxExistAmount", default)]
     pub max_exist_amount: Option<i64>,
-    #[serde(rename = "CanTrade", default)]
+    #[serde(rename = "CanTrade", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_trade: Option<bool>,
-    #[serde(rename = "CanDestroy", default)]
+    #[serde(rename = "CanDestroy", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_destroy: Option<bool>,
     #[serde(rename = "Quality", default)]
     pub quality: Option<i64>,
@@ -149,7 +175,7 @@ pub struct ItemMerged {
     pub get_type: Option<String>,
     #[serde(rename = "IconID", default)]
     pub icon_id: Option<i64>,
-    #[serde(rename = "CanSetColor", default)]
+    #[serde(rename = "CanSetColor", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_set_color: Option<bool>,
     #[serde(rename = "AucGenre", default)]
     pub auc_genre: Option<i64>,
@@ -159,19 +185,19 @@ pub struct ItemMerged {
     pub require_camp: Option<i64>,
     #[serde(rename = "MaxStrengthLevel", default)]
     pub max_strength_level: Option<i64>,
-    #[serde(rename = "CanApart", default)]
+    #[serde(rename = "CanApart", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_apart: Option<bool>,
     #[serde(rename = "CanExterior", default)]
     pub can_exterior: Option<serde_json::Value>,
-    #[serde(rename = "CanChangeMagic", default)]
+    #[serde(rename = "CanChangeMagic", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_change_magic: Option<bool>,
-    #[serde(rename = "CanShared", default)]
+    #[serde(rename = "CanShared", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_shared: Option<bool>,
     #[serde(rename = "RepairPriceRebate", default)]
     pub repair_price_rebate: Option<i64>,
-    #[serde(rename = "CanStack", default)]
+    #[serde(rename = "CanStack", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_stack: Option<bool>,
-    #[serde(rename = "CanConsume", default)]
+    #[serde(rename = "CanConsume", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_consume: Option<bool>,
     #[serde(rename = "RequireLevel", default)]
     pub require_level: Option<i64>,
@@ -179,15 +205,15 @@ pub struct ItemMerged {
     pub require_gender: Option<i64>,
     #[serde(rename = "RequireHomelandLevel", default)]
     pub require_homeland_level: Option<i64>,
-    #[serde(rename = "CanUseOnHorse", default)]
+    #[serde(rename = "CanUseOnHorse", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_use_on_horse: Option<bool>,
-    #[serde(rename = "CanUseInFight", default)]
+    #[serde(rename = "CanUseInFight", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_use_in_fight: Option<bool>,
-    #[serde(rename = "CanGoodCampUse", default)]
+    #[serde(rename = "CanGoodCampUse", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_good_camp_use: Option<bool>,
-    #[serde(rename = "CanEvilCampUse", default)]
+    #[serde(rename = "CanEvilCampUse", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_evil_camp_use: Option<bool>,
-    #[serde(rename = "CanNeutralCampUse", default)]
+    #[serde(rename = "CanNeutralCampUse", default, deserialize_with = "deserialize_flexible_bool")]
     pub can_neutral_camp_use: Option<bool>,
     #[serde(rename = "Diamonds", default)]
     pub diamonds: Option<serde_json::Value>,
@@ -205,13 +231,13 @@ pub struct ItemMerged {
     pub attribute_types: Option<serde_json::Value>,
     #[serde(rename = "CoolDown", default)]
     pub cool_down: Option<serde_json::Value>,
-    #[serde(rename = "IsQuest", default)]
+    #[serde(rename = "IsQuest", default, deserialize_with = "deserialize_flexible_bool")]
     pub is_quest: Option<bool>,
     #[serde(rename = "WuCaiHtml", default)]
     pub wu_cai_html: Option<String>,
     #[serde(rename = "Set", default)]
     pub set: Option<serde_json::Value>,
-    #[serde(rename = "IsEquip", default)]
+    #[serde(rename = "IsEquip", default, deserialize_with = "deserialize_flexible_bool")]
     pub is_equip: Option<bool>,
     #[serde(rename = "EquipUsage", default)]
     pub equip_usage: Option<i64>,
@@ -1201,6 +1227,49 @@ mod tests {
         assert_eq!(slash_join("https://a.com/b/", 795), "https://a.com/b/795");
     }
 
+    /// 布尔字段容错反序列化：JX3Box item_merged 接口对布尔字段
+    /// 可能返回整数 0/1，不应导致整条响应解析失败
+    #[test]
+    fn test_item_merged_flexible_bool_deserialization() {
+        // 整数 0/1（当前接口的实际行为，曾导致反序列化整体失败）
+        let json = r#"{
+            "id": "5_21511",
+            "Name": "测试物品",
+            "CanTrade": 1,
+            "CanDestroy": 0,
+            "CanSetColor": 1,
+            "IsEquip": 0,
+            "IsQuest": 1
+        }"#;
+        let item: ItemMerged = serde_json::from_str(json).expect("整数 0/1 应可反序列化");
+        assert_eq!(item.can_trade, Some(true));
+        assert_eq!(item.can_destroy, Some(false));
+        assert_eq!(item.can_set_color, Some(true));
+        assert_eq!(item.is_equip, Some(false));
+        assert_eq!(item.is_quest, Some(true));
+
+        // 传统 true/false 仍然兼容
+        let json = r#"{
+            "id": "5_21511",
+            "Name": "测试物品",
+            "CanTrade": true,
+            "CanDestroy": false
+        }"#;
+        let item: ItemMerged = serde_json::from_str(json).expect("布尔值应可反序列化");
+        assert_eq!(item.can_trade, Some(true));
+        assert_eq!(item.can_destroy, Some(false));
+
+        // 字段缺失 → None；null → None
+        let json = r#"{
+            "id": "5_21511",
+            "Name": "测试物品",
+            "CanTrade": null
+        }"#;
+        let item: ItemMerged = serde_json::from_str(json).expect("null/缺失字段应可反序列化");
+        assert_eq!(item.can_trade, None);
+        assert_eq!(item.can_destroy, None);
+    }
+
     /// 构造一条价格成交记录（用于中位数单测）
     fn price_record(unit_price: i64, n_count: i64) -> PriceRecord {
         PriceRecord {
@@ -1521,6 +1590,20 @@ mod tests {
         assert_eq!(classify_item(&item), "xuanjing");
     }
 
+    /// 为 e2e 测试创建隔离的临时数据目录。
+    ///
+    /// 设置 `JX3RM_TEST_DATA_DIR` 环境变量后，`init_db()` 会把数据库
+    /// 重定向到该目录，避免测试清空/写入生产数据库。
+    /// 返回 TempDir 守卫（drop 时自动清理目录）。
+    fn setup_isolated_test_db() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("创建临时数据目录失败");
+        std::env::set_var(
+            "JX3RM_TEST_DATA_DIR",
+            dir.path().to_string_lossy().to_string(),
+        );
+        dir
+    }
+
     /// 端到端验证：缓存优先策略
     ///
     /// 验证流程：
@@ -1529,22 +1612,27 @@ mod tests {
     /// 3. 第二次调用 classify_drops_sync → 应全命中缓存，drop_items 数量不变
     /// 4. 两次返回的分类结果应一致
     ///
+    /// 物品夹具使用当前 drop/v2 API（MapID=795）真实存在的物品：
+    /// - 昆玉玄晶/鸣沙陨铁/阆风炎魄: Source=other（材料类）
+    /// - 暗渡无声/白骨成霜: Source=armor（装备类）
+    ///
     /// 运行方式：cargo test test_e2e_cache_first -- --ignored --nocapture
     #[test]
-    #[ignore] // 需要网络访问 jx3box API，且操作生产数据库
+    #[ignore] // 需要网络访问 jx3box API；使用隔离临时数据库，不操作生产库
     fn test_e2e_cache_first_optimization() {
         // 使用 25人普通阆风悬城 (MapID=795) 的真实掉落物品（来自 drop/v2 API）
         let map_id: i64 = 795;
         let raid_name = "25人普通阆风悬城";
         let drop_names = vec![
-            "五行石（六级）".to_string(),       // ItemType=5, ItemID=24428
-            "维峰丹".to_string(),               // ItemType=5, ItemID=44430
-            "流漓腰带".to_string(),             // ItemType=7, ItemID=109335
-            "《易筋经·秘卷》".to_string(),      // ItemType=5, ItemID=45798
-            "肆级五彩石".to_string(),           // ItemType=5, ItemID=21511
+            "昆玉玄晶".to_string(),         // ItemType=5, ItemID=71569, Source=other
+            "鸣沙陨铁".to_string(),         // ItemType=5, ItemID=71568, Source=other
+            "阆风炎魄".to_string(),         // ItemType=5, ItemID=85795, Source=other
+            "暗渡无声".to_string(),         // ItemType=7, ItemID=109404, Source=armor
+            "白骨成霜".to_string(),         // ItemType=7, ItemID=109419, Source=armor
         ];
 
-        // 0. 初始化数据库并清空 drop_items 表
+        // 0. 初始化隔离测试数据库并清空 drop_items 表
+        let _temp_guard = setup_isolated_test_db();
         let conn = crate::db::init_db().expect("init_db 失败");
         conn.execute("DELETE FROM drop_items", [])
             .expect("清空 drop_items 失败");
@@ -1614,23 +1702,25 @@ mod tests {
     ///
     /// 预置 2 个物品到 drop_items，传入 5 个物品（2 缓存 + 3 未缓存），
     /// 验证 drop_items 新增量 = 3（仅未命中物品调 API）
+    ///
+    /// 物品夹具使用当前 drop/v2 API（MapID=795）真实存在的物品。
     #[test]
-    #[ignore]
+    #[ignore] // 需要网络访问 jx3box API；使用隔离临时数据库，不操作生产库
     fn test_e2e_partial_cache_hit() {
         let map_id: i64 = 795;
         let raid_name = "25人普通阆风悬城";
 
         // 预置缓存的物品（模拟之前已分类的物品）
         let cached_items = vec![
-            ("五行石（六级）".to_string(), "material".to_string()),
-            ("维峰丹".to_string(), "material".to_string()),
+            ("昆玉玄晶".to_string(), "material".to_string()),
+            ("鸣沙陨铁".to_string(), "material".to_string()),
         ];
 
         // 未缓存的物品（真实存在于 drop/v2 API 中）
         let uncached_items = vec![
-            "流漓腰带".to_string(),
-            "《易筋经·秘卷》".to_string(),
-            "肆级五彩石".to_string(),
+            "阆风炎魄".to_string(),
+            "暗渡无声".to_string(),
+            "白骨成霜".to_string(),
         ];
 
         let all_items: Vec<String> = cached_items
@@ -1639,7 +1729,8 @@ mod tests {
             .chain(uncached_items.iter().cloned())
             .collect();
 
-        // 初始化并清空 drop_items
+        // 初始化隔离测试数据库并清空 drop_items
+        let _temp_guard = setup_isolated_test_db();
         let conn = crate::db::init_db().expect("init_db 失败");
         conn.execute("DELETE FROM drop_items", [])
             .expect("清空失败");

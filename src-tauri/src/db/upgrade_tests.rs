@@ -810,12 +810,7 @@ mod tests {
         .map_err(|e| format!("回退 V21/V22 表失败: {}", e))?;
 
         // 3) 回退 V20：移除 equipment_unreviewed 列。
-        //    SQLite 3.35+ 支持 DROP COLUMN；本地 bundled rusqlite 满足该要求。
-        conn.execute(
-            "ALTER TABLE trial_records DROP COLUMN equipment_unreviewed",
-            [],
-        )
-        .map_err(|e| format!("回退 V20 列失败: {}", e))?;
+        //    V23 已删除该列，全新安装的 schema 本身不再包含它，此步为空操作。
 
         // 4) 回退 V19：移除 source / status / source_key 列，并删除唯一索引与 tombstone 表
         conn.execute_batch(
@@ -857,7 +852,7 @@ mod tests {
         Ok(conn)
     }
 
-    /// V18 → V22 端到端升级：走真实 `upgrade_db`，覆盖 V19~V22 全部增量迁移。
+    /// V18 → 最新端到端升级：走真实 `upgrade_db`，覆盖 V19 起全部增量迁移。
     ///
     /// 与 `test_v1_upgrade` 等夹具测试的区别：
     /// - 夹具测试依赖外部预置 `.db`（CI 不生成 → `#[ignore]` 跳过）
@@ -865,12 +860,12 @@ mod tests {
     ///
     /// 覆盖点：
     /// 1. V19：`source` / `status` 列回填 + `idx_trial_records_source_key` 唯一索引
-    /// 2. V20：`equipment_unreviewed` 全表回填且自动记录被标记
+    /// 2. V20/V23：`equipment_unreviewed` 先加列再删除，最终 schema 不含该列
     /// 3. V21：`trial_draws` 表与索引创建，历史牌面不被重写
     /// 4. V22：`trial_draw_equipment_manual_overrides` 表创建
     /// 5. 数据零丢失：3 条历史记录全部保留
     #[test]
-    fn test_v18_to_v22_end_to_end_upgrade() {
+    fn test_v18_to_latest_end_to_end_upgrade() {
         let conn = create_v18_database().expect("构造 V18 数据库失败");
 
         let rows_before: i64 = conn
@@ -879,7 +874,7 @@ mod tests {
         assert_eq!(rows_before, 3, "V18 夹具应有 3 条试炼记录");
 
         // 走真实升级入口（与生产 `init_db` 同一套 `upgrade_db` 逻辑）
-        crate::db::upgrade_db_for_test(&conn, 18).expect("V18 -> V22 升级失败");
+        crate::db::upgrade_db_for_test(&conn, 18).expect("V18 -> 最新升级失败");
 
         // ---- 1) 版本必须推进到最新 ----
         let version: i32 = conn
@@ -895,15 +890,15 @@ mod tests {
             CURRENT_SCHEMA_VERSION
         );
 
-        // 迁移记录必须逐版本落库：基线 V18 + V19~V22 共 5 条。
+        // 迁移记录必须逐版本落库：基线 V18 + V19 起共 7 条（含 V24）。
         // 注意不能断言 22 条——`schema_versions` 只记录**实际执行过**的迁移，
         // 全新安装只写当前版本一行，本测试的基线也只写 V18 一行。
         let applied: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| row.get(0))
             .expect("统计 schema_versions 失败");
         assert_eq!(
-            applied, 5,
-            "schema_versions 应有 V18 基线 + V19~V22 共 5 条，实际 {}",
+            applied, 7,
+            "schema_versions 应有 V18 基线 + V19 起共 7 条，实际 {}",
             applied
         );
 
@@ -962,7 +957,12 @@ mod tests {
             .expect("检查唯一索引失败");
         assert!(has_unique_index, "V19 未创建 idx_trial_records_source_key");
 
-        // ---- 3) V20：equipment_unreviewed 回填 ----
+        // ---- 3) V20/V23：equipment_unreviewed 列最终不存在 ----
+        //
+        // V20 曾为 trial_records 添加 equipment_unreviewed（自动记录待核对标记），
+        // 但「确认本轮无装备 / 已核对全部牌面」两项待确认状态已从产品中移除，
+        // V23 统一删除了两张表上的该列。这里锁定干净升级路径的最终形态，
+        // 避免未来有人误以为历史记录还携带待核对标记。
         let has_unreviewed: bool = conn
             .query_row(
                 "SELECT COUNT(*) > 0 FROM pragma_table_info('trial_records')
@@ -971,42 +971,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("检查 equipment_unreviewed 列失败");
-        assert!(has_unreviewed, "V20 未添加 equipment_unreviewed 列");
-
-        let null_unreviewed: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM trial_records WHERE equipment_unreviewed IS NULL",
-                [],
-                |row| row.get(0),
-            )
-            .expect("统计 equipment_unreviewed 空值失败");
-        assert_eq!(
-            null_unreviewed, 0,
-            "V20 未完成 equipment_unreviewed 全表回填"
-        );
-
-        // 自动记录（牌面全空）在**干净的 V18→V22** 路径上不会被标记为待核对。
-        //
-        // 这是 V19/V20 的真实语义，不是测试写错：
-        // - V19 把升级前所有记录统一回填为 source='manual'（"任何升级前的记录
-        //   都是此前 UI 手工保存的数据"）；
-        // - V20 的标记条件是 source='auto' AND 牌面全空，而干净的 V18 库在 V19
-        //   之后已不存在 source='auto' 的行。
-        //
-        // 因此 V20 的标记只对「开发版已经跑过 V19、库里已存在 auto 行」的库生效
-        // （该分支由 `v20.rs` 的单元测试覆盖）。这里锁定干净升级路径的实际行为，
-        // 避免未来有人误以为历史自动记录会被标记。
-        let auto_flagged: i64 = conn
-            .query_row(
-                "SELECT equipment_unreviewed FROM trial_records WHERE id='trial-auto'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("查询自动记录标记失败");
-        assert_eq!(
-            auto_flagged, 0,
-            "干净 V18→V22 升级不应把历史记录标记为待核对（V19 已回填为 manual）"
-        );
+        assert!(!has_unreviewed, "V23 未移除 equipment_unreviewed 列");
 
         // 历史行必须全部回填为 manual/confirmed
         let manual_count: i64 = conn
@@ -1021,16 +986,6 @@ mod tests {
             manual_count, rows_before,
             "V19 应把全部历史记录回填为 manual/confirmed"
         );
-
-        // 带牌面的记录不应被标记为未知
-        let cards_flagged: i64 = conn
-            .query_row(
-                "SELECT equipment_unreviewed FROM trial_records WHERE id='trial-cards'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("查询带牌面记录标记失败");
-        assert_eq!(cards_flagged, 0, "V20 误把已有牌面的记录标记为待核对");
 
         // ---- 4) V21：trial_draws 表 + 索引 ----
         let has_draws: bool = conn
@@ -1093,8 +1048,8 @@ mod tests {
             .expect("升级后校验未通过，说明结构不完整");
 
         println!(
-            "V18 -> V22 端到端升级验证通过：22 个版本、{} 条记录零丢失、V19~V22 结构齐全",
-            rows_after
+            "V18 -> 最新端到端升级验证通过：{} 个版本、{} 条记录零丢失、V19 起结构齐全",
+            CURRENT_SCHEMA_VERSION, rows_after
         );
     }
 
@@ -1149,7 +1104,7 @@ mod tests {
 
         // 走真实升级（文件库，会触发快照）
         {
-            let conn = crate::db::init_db_with_path(&db_path).expect("V18 -> V22 升级失败");
+            let conn = crate::db::init_db_with_path(&db_path).expect("V18 -> 最新升级失败");
             drop(conn);
         }
 

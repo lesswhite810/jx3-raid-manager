@@ -102,10 +102,14 @@ const TRIAL_LATE_RECONCILE_WINDOW_MS: i64 = 2 * 60 * 60_000;
 /// 后按普通路径入库并通知截图端；随后无论是否找到都标记已对账，避免每 30 秒
 /// 轮询反复全量枚举聊天库。历史手动扫描同样受益：游戏关闭后 ChatLog 才封存
 /// 落盘的终局能在下一次"扫描本周"时补齐。
+///
+/// `account_id` 是茗伊 UID（采集端与聊天库身份）；`db_account_id` 是当前账号
+/// 目录解析出的数据库账号 UUID（`trial_records.account_id` 存的是它，两者不同）。
 fn reconcile_pending_trial_capture_runs(
     conn: &mut rusqlite::Connection,
     account_dir: &Path,
     account_id: &str,
+    db_account_id: &str,
     live_trial_capture: bool,
     changed_draws: &mut usize,
 ) {
@@ -133,6 +137,8 @@ fn reconcile_pending_trial_capture_runs(
         account_id,
         pending.len()
     );
+    // 多轮迟到对账共享一次聊天库元数据索引，与候选循环同样的按窗口筛选。
+    let chatlog_index = trial_receipt::TrialChatlogIndex::build(account_dir);
     for (index, run) in pending.iter().enumerate() {
         // 下一登记终局是本轮回执的硬上界，避免快速连打时把下一轮的入包误归本轮。
         let next_terminal_ms = pending
@@ -141,12 +147,13 @@ fn reconcile_pending_trial_capture_runs(
             .find(|next| next.terminal_ms > run.terminal_ms)
             .map(|next| next.terminal_ms);
         // trial_draws 的 source_key 必须与 trial_records.source_key 一致
-        // （trial:{JCL角色全局ID}:{map}:{terminal_ms}）。采集端只知道账号 UUID，
-        // 这里按 (账号, 终局时间) 反查已落库的父记录键。父记录不存在（例如用户
-        // 已手动删除该记录）时跳过补录，避免为已删除的记录凭空造子笔。
+        // （trial:{JCL角色全局ID}:{map}:{terminal_ms}）。trial_records.account_id
+        // 存的是数据库账号 UUID（db_identity.account_id），与茗伊 UID 不同，反查
+        // 必须用 db_account_id。父记录不存在（例如用户已手动删除该记录）时跳过
+        // 补录，避免为已删除的记录凭空造子笔。
         let source_key = db::db_find_trial_record_source_key_with_connection(
             conn,
-            account_id,
+            db_account_id,
             run.terminal_ms,
         );
         let Some(source_key) = source_key else {
@@ -167,12 +174,13 @@ fn reconcile_pending_trial_capture_runs(
             }
             continue;
         };
-        let draws = trial_receipt::collect_trial_draws_late(
+        let draws = trial_receipt::collect_trial_draws_late_with_index(
             account_dir,
             account_id,
             run.terminal_ms,
             next_terminal_ms,
             TRIAL_LATE_RECONCILE_WINDOW_MS,
+            &chatlog_index,
         );
         for draw in &draws {
             let auto_draws = vec![draw.to_auto_trial_draw()];
@@ -442,7 +450,7 @@ fn compute_scraps_items(
 
 /// JCL 文件名解析结果
 #[derive(Debug, Clone)]
-struct JclFileInfo {
+pub(super) struct JclFileInfo {
     /// 文件名（不含路径）
     file_name: String,
     /// 时间戳（毫秒）
@@ -477,21 +485,21 @@ fn latest_current_session_scene(jcl_files: &[JclFileInfo]) -> Option<(i64, bool)
 /// - 战斗开始/结束时间（来自 FIGHT_TIME 事件，比文件名时间更精确）
 /// - BOSS 击杀状态（基于同一运行时实体的参战加 type=28/HP=0 终局死亡，或专属宝箱判定）
 #[derive(Debug, Clone)]
-struct JclAnalysis {
+pub(super) struct JclAnalysis {
     /// 真实 BOSS 名（从 JCL 内容解析，当文件名 BOSS 不在配置中时使用）
-    boss_name: Option<String>,
+    pub(super) boss_name: Option<String>,
     /// 战斗开始时间（毫秒，Unix timestamp）
     /// 来自首个 FIGHT_TIME 事件（bFighting=true）的时间戳
-    fight_start_ms: i64,
+    pub(super) fight_start_ms: i64,
     /// 战斗结束时间（毫秒，Unix timestamp）
     /// 来自最后 FIGHT_TIME 事件（bFighting=false）的时间戳
-    fight_end_ms: i64,
+    pub(super) fight_end_ms: i64,
     /// 是否按当前解析规则确认击杀；false 也可能是证据不足，并不等于确认拉脱。
     /// 宝箱与首领战斗事件参与判定，成就和奖励消息不参与。
-    is_kill: bool,
+    pub(super) is_kill: bool,
 }
 
-/// 外部 10 金只能补强这一类已经有完整战斗证据的候选。
+/// 外部 10 金或宝箱证据只能补强这一类已经有完整战斗证据的候选。
 ///
 /// 它刻意不写入 JclAnalysis / SQLite 缓存：`is_kill` 始终只代表 JCL 内的强证据，
 /// 本结构只在单次扫描的聚类阶段消耗。
@@ -499,6 +507,14 @@ struct JclAnalysis {
 struct DamageCompletionCandidate {
     boss_name: String,
     fight_end_ms: i64,
+    /// 击杀瞬间：JCL 内对首领最后一次非零伤害的秒级时间。
+    /// 打完有剧情演出的 BOSS（如史朝义）结算奖励最早可提前到这一刻附近，
+    /// 结算窗口必须从这里起扫，而不是从 type=1 false 的 fight_end 起。
+    kill_sec: i64,
+    /// JCL 内出现了该首领的专属宝箱 NPC（“XX宝箱”或别名模板）。
+    /// 茗伊在剧情演出/死亡事件丢失场景可能漏写死亡证据，但宝箱 NPC 仍会生成；
+    /// 宝箱与 10 金是两条独立的兜底证据，任一成立即判击杀。
+    chest_seen: bool,
 }
 
 /// 单个运行时 NPC 的击杀证据。
@@ -541,7 +557,7 @@ impl RuntimeEntityEvidence {
 /// 用于 scan_raid_drops_with_raids 入口处一次性加载所有 chatlog 文件中的相关记录，
 /// 避免后续每个副本实例重复打开 SQLite 连接和全表扫描。
 #[derive(Clone, Debug)]
-struct ChatlogRecord {
+pub(super) struct ChatlogRecord {
     /// 消息类型：MSG_ITEM / MSG_MONEY / MSG_ROOM / MSG_WHISPER
     msg_type: String,
     /// text 字段（消息文本）
@@ -572,29 +588,29 @@ struct IncomeCandidate {
 
 /// 副本实例（聚类后的一场副本）
 #[derive(Debug)]
-struct RaidInstance {
+pub(super) struct RaidInstance {
     /// 账号 UID
     account_id: String,
     /// JCL 副本名（如 "25人英雄阆风悬城"）
-    raid_display_name: String,
+    pub(super) raid_display_name: String,
     /// 副本 MapID（与 JX3Box 掉落接口同源，如阆风悬城=795）
     /// 取自 JCL 文件名的副本 ID，用于查询理论掉落表
     map_id: i64,
     /// 副本开始时间：第一个成功击杀 JCL 的文件名时间（毫秒）
-    start_time: i64,
+    pub(super) start_time: i64,
     /// 副本结束时间：最后一个成功击杀 JCL 的战斗结束时间（毫秒）
     #[allow(dead_code)]
     end_time: i64,
     /// 最后一个 JCL（含拉托）的文件名时间（毫秒），用于确定聊天记录结束范围
     last_jcl_time: i64,
     /// 已击杀 BOSS 名列表（按 raid_bosses 顺序）
-    bosses_killed: Vec<String>,
+    pub(super) bosses_killed: Vec<String>,
     /// 成功击杀的 JCL 文件名列表（仅通关的）
     jcl_files: Vec<String>,
     /// 每个成功 JCL 对应的 BOSS 名（与 jcl_files 一一对应）
     jcl_boss_names: Vec<String>,
     /// 成功击杀 BOSS 数（=通关 JCL 数）
-    boss_kill_count: u32,
+    pub(super) boss_kill_count: u32,
     /// 聊天记录分析的起始时间（毫秒）
     /// 取首个成功 JCL 的战斗开始时间（fight_start_ms），比文件名时间更精确
     first_gold_time: i64,
@@ -632,6 +648,30 @@ struct DbRoleIdentity {
 /// 从茗伊账号目录解析 info.jx3dat 获取角色身份，
 /// 然后查询 roles 表映射到数据库 UUID。
 ///
+/// 「角色名·服务器」格式的名字回退匹配。
+///
+/// 茗伊装备库 OwnerInfo.ownername 可能是「发白少·梦江南」格式，而 roles 表
+/// 只存角色名（如"发白少"）。仅当「·」后缀与 server 完全一致时剥掉后缀再匹配
+/// 一次；后缀不一致（如名字本身含「·」）不回退，防止误伤同名角色。
+fn match_role_name_with_server_suffix(
+    conn: &Connection,
+    role_name: &str,
+    server: &str,
+) -> Option<(String, String)> {
+    let (name_part, suffix) = role_name.split_once('·')?;
+    if suffix.is_empty() || suffix != server {
+        return None;
+    }
+    conn.query_row(
+        "SELECT r.id, r.account_id FROM roles r \
+         WHERE REPLACE(REPLACE(r.name, ' ', ''), '\u{3000}', '') = REPLACE(REPLACE(?1, ' ', ''), '\u{3000}', '') \
+         AND r.server = ?2 LIMIT 1",
+        params![name_part, server],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .ok()
+}
+
 /// info.jx3dat 提供数字 uid + role_name + server，
 /// 但 records 表的 account_id/role_id 是 UUID 格式。
 /// 必须通过 role_name + server 查询 roles 表得到 UUID。
@@ -665,8 +705,19 @@ fn resolve_db_role_identity(
         |row| Ok((row.get(0)?, row.get(1)?)),
     );
 
-    match result {
-        Ok((role_id, account_id)) => {
+    // 回退：茗伊装备库 OwnerInfo.ownername 可能是「角色名·服务器」格式
+    // （如"发白少·梦江南"），而 roles 表只存角色名（如"发白少"）。
+    // 仅当「·」后缀与 server 一致时剥掉再匹配一次，防止同名角色的误伤。
+    let resolved = match result {
+        Ok(found) => Some(found),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            match_role_name_with_server_suffix(&conn, &identity.role_name, &identity.server)
+        }
+        Err(_) => None,
+    };
+
+    match resolved {
+        Some((role_id, account_id)) => {
             log::info!(
                 "[DropScanner] 角色身份映射: uid={}, name={}, server={} -> role_id={}, account_id={}",
                 identity.uid,
@@ -717,7 +768,7 @@ fn resolve_db_role_identity(
                 region: identity.region.clone(),
             }))
         }
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
+        None => {
             log::warn!(
                 "[DropScanner] 角色未在数据库中登记，跳过: uid={}, name={}, server={}",
                 identity.uid,
@@ -726,7 +777,6 @@ fn resolve_db_role_identity(
             );
             Ok(None)
         }
-        Err(e) => Err(format!("查询 roles 表失败: {}", e)),
     }
 }
 
@@ -1082,7 +1132,11 @@ fn has_salary_between(
 
 /// 在预加载的 chatlog 记录中检查指定时间范围是否有"每人底薪"记录
 /// 用于 cluster_raid_instances，避免重复打开 SQLite 连接
-fn has_salary_in_records(records: &[ChatlogRecord], start_ms: i64, end_ms: i64) -> bool {
+pub(super) fn has_salary_in_records(
+    records: &[ChatlogRecord],
+    start_ms: i64,
+    end_ms: i64,
+) -> bool {
     let start_sec = start_ms / 1000;
     let end_sec = end_ms / 1000;
     // 二分查找时间范围起点
@@ -1095,7 +1149,7 @@ fn has_salary_in_records(records: &[ChatlogRecord], start_ms: i64, end_ms: i64) 
         })
 }
 
-fn cluster_raid_instances(
+pub(super) fn cluster_raid_instances(
     account_id: &str,
     jcl_files: Vec<JclFileInfo>,
     jcl_analyses: &HashMap<String, JclAnalysis>,
@@ -1879,7 +1933,7 @@ fn analyze_jcl_cached(
 }
 
 /// 解析 JCL 文件，提取 BOSS 击杀状态和战斗时间
-fn analyze_jcl(
+pub(super) fn analyze_jcl(
     jcl_path: &Path,
     jcl_boss_name: &str,
     boss_template_id: i64,
@@ -2266,6 +2320,9 @@ fn analyze_completion_candidate(
     let mut pending_effects: Vec<PendingEffect> = Vec::new();
     let mut malformed_effect = false;
     let mut seen_type21_records: HashSet<Vec<u8>> = HashSet::new();
+    // 结算补强的宝箱证据：JCL 内出现当前首领的专属宝箱 NPC。
+    // 剧情演出/死亡事件丢失时主判定会漏记，但宝箱 NPC 仍会生成，是独立兜底证据。
+    let mut chest_seen = false;
 
     for (line_number, line) in reader.split(b'\n').enumerate() {
         let line_bytes = match line {
@@ -2351,6 +2408,22 @@ fn analyze_completion_candidate(
                 }
                 let dwid = fields[0].trim().parse::<i64>().ok()?;
                 let template_id = fields[2].trim().parse::<i64>().ok()?;
+                // 结算补强宝箱证据：名字以“宝箱”结尾的 NPC，且前缀能唯一匹配
+                // 当前首领（完整名或唯一去点名）。只在结算补强路径采集，
+                // ExactDamage 路径保持原语义不受影响。
+                if matches!(proof, CompletionProof::EncounterSettlement { .. })
+                    && fields.len() >= 2
+                {
+                    let npc_name = fields[1].trim().trim_matches('"');
+                    if npc_name.ends_with("宝箱") {
+                        let prefix = &npc_name[..npc_name.len() - "宝箱".len()];
+                        let chest_owner = match_treasure_box_alias(template_id, prefix, raid_bosses)
+                            .or_else(|| match_treasure_box_boss(prefix, raid_bosses));
+                        if chest_owner == Some(jcl_boss_name) {
+                            chest_seen = true;
+                        }
+                    }
+                }
                 if dwid != 0 && template_id == boss_template_id {
                     if fields[1].trim().trim_matches('"') != jcl_boss_name {
                         // 同模板但不同名字的实体不能借用文件名首领的伤害。
@@ -2494,7 +2567,9 @@ fn analyze_completion_candidate(
     let mut first_false_line: Option<usize> = None;
     let mut observed_max_hp: Option<i64> = None;
     let mut last_active_hp: Option<f64> = None;
-    for (dwid, timestamp_sec, client_ms, in_fight, current_hp, max_hp, line_number) in fight_hints {
+    for (dwid, timestamp_sec, client_ms, in_fight, current_hp, max_hp, line_number) in
+        fight_hints.iter().copied()
+    {
         if dwid != boss_dwid {
             continue;
         }
@@ -2527,14 +2602,25 @@ fn analyze_completion_candidate(
         }
         observed_max_hp.get_or_insert(max_hp);
     }
+    // 茗伊可能漏写 boss 的 in-fight type=9 状态行（实测 25 人本伊曼·寂夜只有一条
+    // 脱战行），此时 first_false_line 也不存在。结算补强（EncounterSettlement）只把
+    // JCL 战斗记录作为「确实打过这场」的旁证，真实性由 chatlog 10 金/宝箱证据把关，
+    // 因此允许参战状态行缺失；ExactDamage 仍要求完整参战/终局序列。
     if !saw_participation {
-        return None;
+        if matches!(proof, CompletionProof::ExactDamage) {
+            return None;
+        }
+        if fight_hints.iter().all(|(dwid, ..)| *dwid != boss_dwid) {
+            // 连一条 boss 状态行都没有：无法核对血量上限与血量单调性，拒绝。
+            return None;
+        }
     }
 
     let max_hp = observed_max_hp?;
     let mut total_damage = 0i64;
     let mut total_heal = 0i64;
     let mut reached_max = false;
+    let mut kill_sec = 0i64;
     for (timestamp_sec, client_ms, damage, heal, line_number) in effects {
         // 文件头/尾不完整或跨战斗的伤害不能参与，也不能忽略后伪造完整击杀。
         let in_import_prefix = line_number < start_line
@@ -2561,17 +2647,29 @@ fn analyze_completion_candidate(
         }
         total_damage = total_damage.checked_add(damage)?;
         total_heal = total_heal.checked_add(heal)?;
+        if damage > 0 {
+            kill_sec = timestamp_sec;
+        }
         if total_damage == max_hp {
             reached_max = true;
         } else if total_damage > max_hp {
-            return None;
+            // 最后一击的溢出伤害（如伊曼·寂夜残血 0.78% 时被 5000+ 点伤害击杀）
+            // 会让累计略超血量上限。这是战斗完整性的正常现象：ExactDamage 通道
+            // 仍要求精确打满，但结算补强（EncounterSettlement）只把伤害记录作为
+            // 「确实打过这场」的旁证，真实性由 chatlog 10 金/宝箱证据把关，
+            // 因此这里不再硬拒绝。
+            if matches!(proof, CompletionProof::ExactDamage) {
+                return None;
+            }
         }
     }
 
     let damage_eligible = match proof {
         CompletionProof::ExactDamage => reached_max && total_damage == max_hp,
         CompletionProof::EncounterSettlement { .. } => {
-            total_damage > 0 && first_false_line.is_some()
+            // 参战状态行缺失时 first_false_line 也不存在，但只要 boss 确实挨过
+            // 打（伤害旁证）且血量校验通过即可进入通道 A/B 的证据把关。
+            total_damage > 0 && (first_false_line.is_some() || observed_max_hp.is_some())
         }
     };
     if !damage_eligible || total_heal != 0 {
@@ -2581,6 +2679,8 @@ fn analyze_completion_candidate(
     Some(DamageCompletionCandidate {
         boss_name: jcl_boss_name.to_string(),
         fight_end_ms: end_sec.saturating_mul(1000),
+        kill_sec,
+        chest_seen,
     })
 }
 
@@ -2716,10 +2816,15 @@ fn parse_money_from_msg(msg: &str) -> Option<(i64, i64, i64)> {
     Some((total_gold, silver, copper))
 }
 
-/// 候选 JCL 结束与同角色结算奖励的最大允许时间差。
+/// 候选 JCL 结束与同角色结算奖励的时间窗（非对称）。
 ///
-/// 这是当前样本覆盖的候选时间窗；它不代表通用写盘延迟，也不降低任何 JCL 侧门槛。
-const COMPLETION_REWARD_MATCH_WINDOW_SECS: i64 = 15;
+/// 结算奖励最早可在 fight_end 前（战斗内掉落结算，如 10 人本伊曼·寂夜在
+/// fight_end 前 5 秒、洛阳之战突利和顺在 fight_end 前 11~12 秒），最晚因剧情
+/// 演出与茗伊落盘延迟可推迟到 fight_end 后一分钟内（如 25 人本史朝义在
+/// fight_end 后 20 秒）。这是当前样本覆盖的候选时间窗；它不代表通用写盘
+/// 延迟，也不降低任何 JCL 侧门槛。
+const COMPLETION_REWARD_BEFORE_SECS: i64 = 15;
+const COMPLETION_REWARD_AFTER_SECS: i64 = 60;
 
 /// 茗伊 MSG_XIAXING 的个人入账，例如“你获得了侠行点：150\n”。
 fn is_xiaxing_gain(text: &str) -> bool {
@@ -2749,13 +2854,13 @@ fn read_role_verified_completion_reward_times(
         .map(|candidate| candidate.fight_end_ms / 1000)
         .min()
         .unwrap_or(0)
-        .saturating_sub(COMPLETION_REWARD_MATCH_WINDOW_SECS);
+        .saturating_sub(COMPLETION_REWARD_BEFORE_SECS);
     let last_sec = candidates
         .iter()
         .map(|candidate| candidate.fight_end_ms / 1000)
         .max()
         .unwrap_or(0)
-        .saturating_add(COMPLETION_REWARD_MATCH_WINDOW_SECS);
+        .saturating_add(COMPLETION_REWARD_AFTER_SECS);
 
     let mut reward_times = Vec::new();
     for path in chatlog_files {
@@ -2869,15 +2974,22 @@ fn select_damage_reward_promotions(
     for (file_name, candidate) in candidates {
         let end_sec = candidate.fight_end_ms / 1000;
         let has_exclusive_reward = reward_times.iter().any(|reward_time| {
-            (reward_time - end_sec).abs() <= COMPLETION_REWARD_MATCH_WINDOW_SECS
-                && attempt_end_times
-                    .iter()
-                    .filter(|end_ms| {
-                        ((**end_ms / 1000) - reward_time).abs()
-                            <= COMPLETION_REWARD_MATCH_WINDOW_SECS
-                    })
-                    .count()
-                    == 1
+            let claimable = *reward_time >= end_sec.saturating_sub(COMPLETION_REWARD_BEFORE_SECS)
+                && *reward_time <= end_sec.saturating_add(COMPLETION_REWARD_AFTER_SECS);
+            // 唯一归属：能认领这条奖励的尝试结束锚范围与认领窗口互为镜像
+            // （reward ∈ [end-15, end+60] 等价于 end ∈ [reward-60, reward+15]）。
+            // 其他尝试的结束锚也落在该范围内时，这条奖励归属有歧义，不能借用。
+            // 其他尝试的结束锚也落在该范围内时，这条奖励归属有歧义，不能借用。
+            let exclusive = attempt_end_times
+                .iter()
+                .filter(|end_ms| {
+                    let end = **end_ms / 1000;
+                    end >= reward_time.saturating_sub(COMPLETION_REWARD_AFTER_SECS)
+                        && end <= reward_time.saturating_add(COMPLETION_REWARD_BEFORE_SECS)
+                })
+                .count()
+                == 1;
+            claimable && exclusive
         });
         if has_exclusive_reward {
             result.insert(file_name.clone());
@@ -3441,6 +3553,13 @@ fn resolve_income_amount(
         .filter(|candidate| candidate.time_sec > last_jcl_sec)
         .collect();
     if base_salary.is_none() && !post_jcl.is_empty() {
+        // 无底薪公告时保守自动核对：最后一战之后恰好一笔整金入账才视为工资
+        // 直接入账（单候选场景，如团长未发结算公告但只发了一笔工资）；
+        // 多笔或含银/铜的入账无法确定归属，仍转人工核对。
+        if post_jcl.len() == 1 && post_jcl[0].amount_copper % 10_000 == 0 {
+            let candidate = post_jcl[0];
+            return (candidate.gold, true, false);
+        }
         return (0, false, true);
     }
     match base_salary {
@@ -4253,6 +4372,40 @@ pub fn scan_raid_drops_internal(
 /// `all_jcl_timestamps` 中。若不显式传入，`has_next_jcl` 会恒为 false（条件 6 失效），
 /// 且 `chatlog_end` 会回退到 `now_ms` 而把后一副本的结算事件并入当前副本。
 /// 批量扫描路径的区间覆盖整个 CD 窗口，可自行观察到后续 JCL，传 None 即可。
+/// Computes the trial scan window for one drop scan.
+///
+/// Returns `(trial_scan_start_ms, trial_context_start_ms)`. The scan start is
+/// the terminal lower bound passed to `trial::scan_trial_records`; the context
+/// start feeds `scan_jcl_files_with_trial_context` for filename range checks.
+/// Offline catch-up scans ("扫描本周") look back one extra game week so trial
+/// runs completed before the app was opened still get imported; realtime
+/// sessions keep the original tighter window so settled logs are never
+/// re-imported.
+fn trial_scan_window(
+    start_ms: i64,
+    trial_output_start_ms: i64,
+    realtime_trial_session: bool,
+) -> (i64, i64) {
+    const TRIAL_OFFLINE_LOOKBACK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+    let trial_scan_start_ms = if realtime_trial_session {
+        trial_output_start_ms
+    } else {
+        trial::game_week_start_ms(start_ms)
+            .saturating_sub(TRIAL_OFFLINE_LOOKBACK_MS)
+            .min(trial_output_start_ms)
+    };
+    let trial_context_start_ms = if trial_output_start_ms > 0 {
+        // 周起点允许跨进程长时续打；短回看则保留跨周一刷新前后仍在同一轮内
+        // 结束的既有行为。没有调用方下界时保持全量历史扫描语义。
+        trial::game_week_start_ms(trial_output_start_ms)
+            .min(trial_output_start_ms.saturating_sub(TRIAL_BOUNDARY_LOOKBACK_MS))
+            .min(trial_scan_start_ms)
+    } else {
+        0
+    };
+    (trial_scan_start_ms, trial_context_start_ms)
+}
+
 pub fn scan_raid_drops_with_raids(
     account_id: &str,
     jx3_running: bool,
@@ -4325,14 +4478,8 @@ pub fn scan_raid_drops_with_raids(
     } else {
         start_ms
     };
-    let trial_context_start_ms = if trial_output_start_ms > 0 {
-        // 周起点允许跨进程长时续打；短回看则保留跨周一刷新前后仍在同一轮内
-        // 结束的既有行为。没有调用方下界时保持全量历史扫描语义。
-        trial::game_week_start_ms(trial_output_start_ms)
-            .min(trial_output_start_ms.saturating_sub(TRIAL_BOUNDARY_LOOKBACK_MS))
-    } else {
-        0
-    };
+    let (trial_scan_start_ms, trial_context_start_ms) =
+        trial_scan_window(start_ms, trial_output_start_ms, realtime_trial_session);
     let (jcl_files, trial_jcl_files, has_current_session_trial) =
         scan_jcl_files_with_trial_context(
             &account_dir,
@@ -4394,7 +4541,7 @@ pub fn scan_raid_drops_with_raids(
             &trial_jcl_files,
             &account_dir,
             account_id,
-            trial_output_start_ms,
+            trial_scan_start_ms,
             end_ms,
         )
     } else {
@@ -4535,6 +4682,13 @@ pub fn scan_raid_drops_with_raids(
             notes: None,
         })
         .collect();
+    // 手动范围扫描（“扫描本周”等）是用户的显式补录动作：即使此前手动删除过
+    // 同一条记录（tombstone），也应清除删除标记并重新导入；实时轮询仍尊重删除。
+    // 父记录删除时其翻牌子笔的 source_key 也被写成 tombstone，因此手动扫描
+    // 统一清空试炼删除标记（该表只存试炼数据，不会误伤其他模块）。
+    if !realtime_trial_session {
+        db::db_clear_trial_auto_scan_tombstones_with_connection(&mut conn, &[])?;
+    }
     let trial_inserted_count = match db::db_upsert_auto_trial_records_with_connection(
         &mut conn,
         &trial_records,
@@ -4554,6 +4708,17 @@ pub fn scan_raid_drops_with_raids(
             } else {
                 trial_receipt::TrialReceiptSearch::Historical
             };
+            // 一次枚举 + 一次元数据读取建立账号级索引；之后每个试炼候选只打开
+            // 覆盖其翻牌窗口的聊天库，避免「候选数 × 文件数」次重复 SQLite 打开。
+            // 无聊天库的账号直接复用空索引，跳过构建成本。
+            let trial_chatlog_index = trial_receipt::TrialChatlogIndex::build(&account_dir);
+            if !trial_chatlog_index.is_empty() {
+                log::info!(
+                    "[DropScanner] 账号 {} 建立聊天库元数据索引: {} 个文件",
+                    account_id,
+                    trial_chatlog_index.len()
+                );
+            }
             let mut changed_draws = 0usize;
             let mut trial_draw_error = None;
             for (candidate_index, candidate) in trial_candidates.iter().enumerate() {
@@ -4583,12 +4748,13 @@ pub fn scan_raid_drops_with_raids(
                         .into_iter()
                         .flatten()
                         .min();
-                let draws = trial_receipt::collect_trial_draws(
+                let draws = trial_receipt::collect_trial_draws_with_index(
                     &account_dir,
                     account_id,
                     candidate.completed_at_ms,
                     next_boundary_at_ms,
                     receipt_search,
+                    &trial_chatlog_index,
                 );
                 if draws.is_empty() {
                     continue;
@@ -4643,6 +4809,7 @@ pub fn scan_raid_drops_with_raids(
                 &mut conn,
                 &account_dir,
                 account_id,
+                &db_identity.account_id,
                 live_trial_capture,
                 &mut changed_draws,
             );
@@ -4809,11 +4976,12 @@ pub fn scan_raid_drops_with_raids(
         ) {
             effective.is_kill = true;
             log::info!(
-                "[DropScanner] 结算奖励补强击杀: 文件='{}', BOSS='{}', end={}, window={}s",
+                "[DropScanner] 结算奖励补强击杀: 文件='{}', BOSS='{}', end={}, window=-{}s/+{}s",
                 file_name,
                 candidate.boss_name,
                 candidate.fight_end_ms,
-                COMPLETION_REWARD_MATCH_WINDOW_SECS
+                COMPLETION_REWARD_BEFORE_SECS,
+                COMPLETION_REWARD_AFTER_SECS
             );
         }
     }
@@ -5037,7 +5205,8 @@ pub fn scan_raid_drops_with_raids(
         // 最终收入计算：
         // - 有底薪：在收入记录中找金额 >= 底薪值的第一条记录，用该金额作为收入
         //   （团长发放底薪时的"你获得：XXX金"记录，金额通常等于或略大于底薪）
-        // - 无底薪：最后一个 JCL 之后的非 BOSS 10 金收入保留为候选，待用户核对
+        // - 无底薪：最后一战之后恰好一笔整金入账时自动入账（单候选自动核对）；
+        //   多笔或含银/铜时保留为候选，待用户核对
         // - 找不到匹配记录时：有底薪回退到底薪值，无底薪收入记为 0（不虚高）
         // 返回 (total_gold, income_matched)：income_matched 表示是否命中真实收入记录，
         // 供副本完成判定使用；未经核对的候选不能作为收入命中信号。
@@ -5054,6 +5223,12 @@ pub fn scan_raid_drops_with_raids(
                 "[DropScanner] 收入候选需人工确认: last_jcl_sec={}, candidates={}",
                 last_jcl_sec,
                 post_jcl_income_count
+            );
+        } else if base_salary.is_none() && post_jcl_income_count == 1 {
+            log::info!(
+                "[DropScanner] 无底薪公告，最后一战后单笔整金入账自动入账: last_jcl_sec={}, amount={}金",
+                last_jcl_sec,
+                total_gold
             );
         }
         log::info!(
@@ -6367,7 +6542,6 @@ mod tests {
                 card_3 TEXT NOT NULL,
                 card_4 TEXT NOT NULL,
                 card_5 TEXT NOT NULL,
-                equipment_unreviewed INTEGER NOT NULL DEFAULT 0,
                 flipped_index INTEGER NOT NULL,
                 record_type TEXT NOT NULL,
                 source TEXT NOT NULL,
@@ -6391,6 +6565,46 @@ mod tests {
         )
         .expect("trial auto scan schema should be created");
         conn
+    }
+
+    /// 「角色名·服务器」名字回退匹配的回归测试。
+    ///
+    /// 茗伊装备库 ownername 实测出现「发白少·梦江南」格式，而 roles 表只存
+    /// 「发白少」；修复前 resolve_db_role_identity 匹配失败导致整个账号被跳过。
+    #[test]
+    fn match_role_name_with_server_suffix_strips_server_suffix() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        conn.execute_batch(
+            "CREATE TABLE roles (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                server TEXT
+            );
+            INSERT INTO roles (id, account_id, name, server)
+            VALUES ('role-1', 'account-1', '发白少', '梦江南');",
+        )
+        .expect("roles fixture should be created");
+
+        // 「角色名·服务器」且后缀与 server 一致 → 剥后缀命中
+        let hit = match_role_name_with_server_suffix(&conn, "发白少·梦江南", "梦江南");
+        assert_eq!(
+            hit,
+            Some(("role-1".to_string(), "account-1".to_string())),
+            "剥后缀后应命中 roles 表"
+        );
+
+        // 无该角色时返回 None
+        let miss = match_role_name_with_server_suffix(&conn, "不存在·梦江南", "梦江南");
+        assert_eq!(miss, None, "未登记角色应返回 None");
+
+        // 后缀与 server 不一致（名字本身含「·」）→ 不回退，防止误伤
+        let mismatch = match_role_name_with_server_suffix(&conn, "风·闪", "梦江南");
+        assert_eq!(mismatch, None, "后缀与 server 不一致时不应回退");
+
+        // 无后缀的名字不进入回退
+        let no_suffix = match_role_name_with_server_suffix(&conn, "发白少", "梦江南");
+        assert_eq!(no_suffix, None, "不含「·」的名字不应进入回退");
     }
 
     fn to_auto_trial_record(candidate: trial::TrialScanCandidate) -> db::AutoTrialRecord {
@@ -6552,6 +6766,131 @@ mod tests {
         .expect("trial terminal should parse");
         assert_eq!(records.len(), 1, "终局时间晚于请求下界必须输出");
         assert_eq!(records[0].completed_at_ms, terminal_time);
+        fs::remove_dir_all(temp_dir).expect("temporary fixture should be removed");
+    }
+
+    #[test]
+    fn trial_scan_window_keeps_realtime_tight_and_offline_looks_back_one_week() {
+        let file_time = parse_jcl_filename("2026-11-03-22-00-00-试炼之地(144)-雷神(18138).jcl")
+            .unwrap()
+            .timestamp;
+        // 下一游戏周（周一 07:00 起）补扫上周试炼的典型入参。
+        let start_ms = trial::game_week_start_ms(file_time * 1_000 + 8 * 24 * 60 * 60 * 1_000);
+        let trial_output_start_ms = start_ms;
+        let file_week_start = trial::game_week_start_ms(file_time * 1_000);
+
+        // 实时会话：保持原语义，只看本输出窗口（start_ms 已是周初，
+        // game_week_start_ms(输出起点)==其自身，min 取短回看边界）。
+        let (realtime_scan_start, realtime_context_start) =
+            trial_scan_window(start_ms, trial_output_start_ms, true);
+        assert_eq!(realtime_scan_start, trial_output_start_ms);
+        assert_eq!(
+            realtime_context_start,
+            trial_output_start_ms.saturating_sub(TRIAL_BOUNDARY_LOOKBACK_MS)
+        );
+
+        // 离线补扫：回看一个游戏周，扫描下界放宽到上周周初。
+        let (offline_scan_start, offline_context_start) =
+            trial_scan_window(start_ms, trial_output_start_ms, false);
+        assert_eq!(
+            offline_scan_start,
+            file_week_start.min(trial_output_start_ms),
+            "离线扫描下界必须覆盖上一个游戏周"
+        );
+        assert!(
+            offline_scan_start <= file_time * 1_000,
+            "上周试炼文件的终局必须落在放宽后的扫描窗口内"
+        );
+        assert_eq!(offline_context_start, offline_scan_start);
+    }
+
+    #[test]
+    fn offline_catchup_scan_imports_last_game_week_trial_terminal() {
+        let temp_dir = std::env::temp_dir().join(format!("trial-offline-week-{}", Uuid::new_v4()));
+        let combat_logs = temp_dir.join("userdata").join("combat_logs");
+        fs::create_dir_all(&combat_logs).expect("combat logs directory should be created");
+        let uid = "123456";
+        // 试炼在上游戏周内完成（2026-11-03 是游戏周周一），打的时候没开应用。
+        // 三个关卡各一份 JCL（同文件多关会因 Boss 归属歧义落成待确认）。
+        let first_file = "2026-11-03-22-00-00-试炼之地(144)-雷神(18138).jcl";
+        let second_file = "2026-11-03-22-05-00-试炼之地(144)-苏髓(129690).jcl";
+        let final_file = "2026-11-03-22-10-00-试炼之地(144)-藤原樱奈(129670).jcl";
+        let first_time = parse_jcl_filename(first_file).unwrap().timestamp / 1_000;
+        let second_time = parse_jcl_filename(second_file).unwrap().timestamp / 1_000;
+        let final_time = parse_jcl_filename(final_file).unwrap().timestamp / 1_000;
+        let write_stage_jcl = |file_name: &str, timestamp: i64, message: &str, generic_finish: bool| {
+            let mut content = format!(
+                "1\t1\t{}\t0\t1\t{{true,\"服务器::U{}/1\",0}}\n",
+                timestamp - 1,
+                uid,
+            );
+            if generic_finish {
+                content.push_str(&format!(
+                    "1\t1\t{}\t0\t15\t{{\"MSG_NOTICE_GREEN\",\"{}\"}}\n1\t1\t{}\t0\t18\t{{\"{}\\n\",\"MSG_SYS\"}}\n",
+                    timestamp, message, timestamp, message,
+                ));
+            } else {
+                content.push_str(&format!(
+                    "1\t1\t{}\t0\t18\t{{\"{}\",\"MSG_SYS\"}}\n",
+                    timestamp, message,
+                ));
+            }
+            let (gbk, _, _) = encoding_rs::GBK.encode(&content);
+            fs::write(combat_logs.join(file_name), gbk.as_ref())
+                .expect("GBK fixture should be written");
+        };
+        write_stage_jcl(first_file, first_time, "你通过了第6层的第1关。", false);
+        write_stage_jcl(second_file, second_time, "你通过了第6层的第2关。", false);
+        write_stage_jcl(final_file, final_time, "恭喜你通过了所有的关卡。", true);
+        let terminal_time = final_time;
+
+        // 「扫描本周」在下一游戏周离线补扫：start_ms=下一周周一 07:00，
+        // process_start_ms=0（前端「扫描本周」的典型入参）。
+        let week_ms: i64 = 7 * 24 * 60 * 60 * 1_000;
+        let start_ms = trial::game_week_start_ms((terminal_time + 1) * 1_000) + week_ms;
+        let end_ms = start_ms + week_ms;
+        let trial_output_start_ms = start_ms;
+        let (trial_scan_start_ms, trial_context_start_ms) =
+            trial_scan_window(start_ms, trial_output_start_ms, false);
+        let (_, trial_files, has_current_session_trial) = scan_jcl_files_with_trial_context(
+            &temp_dir,
+            0,
+            start_ms,
+            end_ms,
+            trial_context_start_ms,
+        )
+        .expect("offline scan should succeed");
+        assert!(
+            has_current_session_trial,
+            "离线补扫（since_ms=0）必须把上周试炼文件纳入解析"
+        );
+        assert_eq!(trial_files.len(), 3, "上周试炼文件不得被文件名范围过滤");
+
+        let records = trial::scan_trial_records(
+            &trial_files,
+            &temp_dir,
+            uid,
+            trial_scan_start_ms,
+            end_ms,
+        )
+        .expect("offline trial terminal should parse");
+        assert_eq!(records.len(), 1, "放宽扫描下界后上周终局必须输出");
+        assert_eq!(records[0].completed_at_ms, terminal_time * 1_000);
+        assert_eq!(records[0].status, trial::TrialCandidateStatus::Confirmed);
+
+        // 对照：实时会话语义（扫描下界=本输出窗口起点）仍把上周终局挡在窗口外。
+        let realtime_records = trial::scan_trial_records(
+            &trial_files,
+            &temp_dir,
+            uid,
+            trial_output_start_ms,
+            end_ms,
+        )
+        .expect("realtime trial scan should parse");
+        assert!(
+            realtime_records.is_empty(),
+            "实时语义不得重新导入已对账的上周终局"
+        );
         fs::remove_dir_all(temp_dir).expect("temporary fixture should be removed");
     }
 
@@ -6854,6 +7193,47 @@ mod tests {
         assert_eq!(pending_status, "pending");
 
         fs::remove_dir_all(temp_dir).expect("trial fixture directory should be removed");
+    }
+
+    /// 迟到对账反查父记录必须用数据库账号 UUID，而不是茗伊 UID。
+    ///
+    /// 回归背景：`trial_records.account_id` 写入的是 `db_identity.account_id`
+    /// （数据库 UUID），而采集端登记的 `trial_capture_runs.uid` 是茗伊 UID。
+    /// 反查若误用茗伊 UID 会恒返回 None，迟到回执永远补不进 trial_draws，
+    /// 且该轮被标记 reconciled 后不再重试。
+    #[test]
+    fn reconcile_uses_db_account_uuid_for_trial_record_source_key_lookup() {
+        let conn = create_in_memory_trial_auto_scan_db();
+        let mingyi_uid = "432345564241026543";
+        let db_account_uuid = "3913bc21-4623-4e3b-92cb-bc231dbabe7c";
+        let terminal_ms = 1_794_321_089_000i64;
+        let source_key = format!("trial:{mingyi_uid}:143:{terminal_ms}");
+        conn.execute(
+            "INSERT INTO trial_records
+                (id, account_id, role_id, role_name, server, layer, bosses,
+                 card_1, card_2, card_3, card_4, card_5, flipped_index,
+                 record_type, source, status, source_key, date, updated_at)
+             VALUES ('trial-record-1', ?1, 'role-1', '发白少', '梦江南', 6, '[]',
+                 '', '', '', '', '', 0, 'trial', 'auto_scan', 'confirmed', ?2, ?3, '')",
+            sql_params![db_account_uuid, source_key, terminal_ms],
+        )
+        .expect("trial record fixture should insert");
+
+        // 反查必须命中：传数据库 UUID 找得到，传茗伊 UID 找不到。
+        assert_eq!(
+            db::db_find_trial_record_source_key_with_connection(
+                &conn,
+                db_account_uuid,
+                terminal_ms,
+            ),
+            Some(source_key.clone()),
+            "数据库账号 UUID 反查必须命中父记录"
+        );
+        assert_eq!(
+            db::db_find_trial_record_source_key_with_connection(&conn, mingyi_uid, terminal_ms),
+            None,
+            "茗伊 UID 与 trial_records.account_id 永不相等，反查必须失败"
+        );
     }
 
     /// 将脱敏的 GBK 回归 fixture 写回其原始文件名，以覆盖生产用的文件名副本识别逻辑。
@@ -8833,7 +9213,9 @@ mod tests {
             candidate,
             Some(DamageCompletionCandidate {
                 boss_name: "测试首领".to_string(),
-                fight_end_ms: 1_700_000_005_000
+                fight_end_ms: 1_700_000_005_000,
+                kill_sec: 1_700_000_003,
+                chest_seen: false,
             })
         );
         assert!(
@@ -8970,23 +9352,29 @@ mod tests {
         let candidate = |end_sec: i64| DamageCompletionCandidate {
             boss_name: "测试首领".to_string(),
             fight_end_ms: end_sec * 1000,
+            kill_sec: end_sec,
+            chest_seen: false,
         };
         let mut candidates = HashMap::new();
         candidates.insert("candidate.jcl".to_string(), candidate(1_000));
 
         assert_eq!(
-            select_damage_reward_promotions(&candidates, &[1_000_000], &[1_005]),
+            select_damage_reward_promotions(&candidates, &[1_000_000], &[985]),
             HashSet::from(["candidate.jcl".to_string()]),
-            "一笔唯一且邻近的 10 金可补强"
+            "前 15 秒边界应包含"
         );
         assert_eq!(
-            select_damage_reward_promotions(&candidates, &[1_000_000], &[1_015]),
+            select_damage_reward_promotions(&candidates, &[1_000_000], &[1_060]),
             HashSet::from(["candidate.jcl".to_string()]),
-            "±15 秒边界应包含"
+            "后 60 秒边界应包含"
         );
         assert!(
-            select_damage_reward_promotions(&candidates, &[1_000_000], &[1_016]).is_empty(),
-            "±16 秒必须排除"
+            select_damage_reward_promotions(&candidates, &[1_000_000], &[984]).is_empty(),
+            "前 16 秒必须排除"
+        );
+        assert!(
+            select_damage_reward_promotions(&candidates, &[1_000_000], &[1_061]).is_empty(),
+            "后 61 秒必须排除"
         );
         assert!(
             select_damage_reward_promotions(&candidates, &[1_000_000, 1_012_000], &[1_005])
@@ -9085,13 +9473,16 @@ mod tests {
         let candidate = DamageCompletionCandidate {
             boss_name: "首领".into(),
             fight_end_ms: 1_000_000,
+            kill_sec: 1_000,
+            chest_seen: false,
         };
         let candidates = std::slice::from_ref(&candidate);
         assert!(
             read_role_verified_completion_reward_times(&files, "654321", candidates).is_empty()
         );
         let rewards = read_role_verified_completion_reward_times(&files, "123456", candidates);
-        assert_eq!(rewards, vec![995, 997]);
+        // 1016 的侠行点在 end+60 的放宽窗口内，属预期纳入。
+        assert_eq!(rewards, vec![995, 997, 1016]);
         let by_file = HashMap::from([("首领.jcl".to_string(), candidate)]);
         assert_eq!(
             select_damage_reward_promotions(&by_file, &[1_000_000], &rewards).len(),
@@ -9184,9 +9575,27 @@ mod tests {
                 amount_copper: 15_400_000,
             },
         ];
-        assert_eq!(resolve_income_amount(&candidates[..1], 100, None), (0, false, true));
+        // 多笔战后入账：无法确定归属，仍需人工核对
         assert_eq!(resolve_income_amount(&candidates, 100, None), (0, false, true));
+        // 恰好一笔整金入账（b，0银0铜）：单候选自动入账
+        assert_eq!(resolve_income_amount(&candidates[1..], 100, None), (1540, true, false));
+        // 恰好一笔但带银/铜（a）：零钱拾取不能自动当作工资
+        assert_eq!(resolve_income_amount(&candidates[..1], 100, None), (0, false, true));
         assert_eq!(resolve_income_amount(&candidates, 100, Some(100)), (1540, true, false));
+    }
+
+    #[test]
+    fn non_whole_gold_single_post_jcl_candidate_still_requires_review() {
+        // 单候选但带银/铜（零钱拾取），不能自动当作工资
+        let candidates = vec![IncomeCandidate {
+            id: "a".into(),
+            time_sec: 102,
+            gold: 1540,
+            silver: 30,
+            copper: 50,
+            amount_copper: 15_403_050,
+        }];
+        assert_eq!(resolve_income_amount(&candidates, 100, None), (0, false, true));
     }
 
     #[test]

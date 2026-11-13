@@ -23,7 +23,7 @@ const LOG_FILE_NAME: &str = "jx3-raid-manager.log";
 const LEGACY_DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 22;
+pub const CURRENT_SCHEMA_VERSION: i32 = 24;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -526,7 +526,19 @@ fn maybe_migrate_app_data(
     Ok(())
 }
 
+/// 获取应用数据目录。
+///
+/// 测试隔离钩子：若设置了环境变量 `JX3RM_TEST_DATA_DIR`，则直接返回该目录，
+/// 跳过 bootstrap 配置解析、迁移和安装器状态写入。
+/// 供 `#[ignore]` 的 e2e 测试重定向数据库到临时目录，避免污染生产数据。
 pub fn get_app_dir() -> Result<PathBuf, String> {
+    if let Ok(test_dir) = std::env::var("JX3RM_TEST_DATA_DIR") {
+        if !test_dir.trim().is_empty() {
+            let dir = PathBuf::from(test_dir.trim());
+            ensure_directory_exists(&dir)?;
+            return Ok(dir);
+        }
+    }
     let config = read_data_dir_bootstrap_config()?;
     let (target_dir, location, _) = resolve_target_app_dir(&config)?;
     ensure_directory_exists(&target_dir)?;
@@ -1888,7 +1900,6 @@ fn ensure_critical_columns(conn: &Connection) -> Result<(), String> {
         ("trial_records", "source", "TEXT NOT NULL DEFAULT 'manual'"),
         ("trial_records", "status", "TEXT NOT NULL DEFAULT 'confirmed'"),
         ("trial_records", "source_key", "TEXT"),
-        ("trial_records", "equipment_unreviewed", "INTEGER NOT NULL DEFAULT 0"),
         ("baizhan_records", "role_name", "TEXT"),
         ("baizhan_records", "server", "TEXT"),
         ("baizhan_records", "record_type", "TEXT DEFAULT 'baizhan'"),
@@ -1900,6 +1911,8 @@ fn ensure_critical_columns(conn: &Connection) -> Result<(), String> {
         ("roles", "martial", "TEXT"),
         ("roles", "equipment_score", "INTEGER"),
         ("roles", "disabled", "INTEGER DEFAULT 0"),
+        ("roles", "level", "INTEGER"),
+        ("game_versions", "level_cap", "INTEGER"),
         ("raids", "season_id", "INTEGER"),
         ("drop_items", "season_id", "INTEGER"),
         ("records", "raid_name", "TEXT"),
@@ -2029,7 +2042,6 @@ pub(crate) fn ensure_trial_draws_table(conn: &Connection) -> Result<(), String> 
             card_3 TEXT NOT NULL DEFAULT '',
             card_4 TEXT NOT NULL DEFAULT '',
             card_5 TEXT NOT NULL DEFAULT '',
-            equipment_unreviewed INTEGER NOT NULL DEFAULT 1,
             source TEXT NOT NULL DEFAULT 'auto',
             updated_at TEXT,
             FOREIGN KEY (trial_record_id) REFERENCES trial_records(id) ON DELETE CASCADE
@@ -2237,6 +2249,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             martial TEXT,
             equipment_score INTEGER,
             disabled INTEGER DEFAULT 0,
+            level INTEGER,
             created_at TEXT,
             updated_at TEXT,
             FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
@@ -2247,6 +2260,7 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             sort_order INTEGER NOT NULL DEFAULT 0,
+            level_cap INTEGER,
             created_at TEXT NOT NULL
         );
 
@@ -2341,7 +2355,6 @@ fn create_latest_schema(conn: &Connection) -> Result<(), String> {
             source TEXT NOT NULL DEFAULT 'manual',
             status TEXT NOT NULL DEFAULT 'confirmed',
             source_key TEXT,
-            equipment_unreviewed INTEGER NOT NULL DEFAULT 0,
             date INTEGER NOT NULL,
             notes TEXT,
             updated_at TEXT
@@ -2727,9 +2740,6 @@ pub struct TrialRecord {
     pub status: String,
     #[serde(rename = "sourceKey", default)]
     pub source_key: Option<String>,
-    /// `None` means an older client did not send an equipment-review decision.
-    #[serde(rename = "equipmentUnreviewed", default)]
-    pub equipment_unreviewed: Option<bool>,
     /// Per-flip facts for a continuous trial run. Older records deliberately
     /// remain empty: their single legacy card fields cannot be assigned to a
     /// particular flip without inventing evidence.
@@ -2778,11 +2788,6 @@ pub struct TrialDraw {
     pub card_4: String,
     #[serde(rename = "card5")]
     pub card_5: String,
-    #[serde(
-        rename = "equipmentUnreviewed",
-        default = "default_draw_equipment_unreviewed"
-    )]
-    pub equipment_unreviewed: bool,
     /// Cards explicitly reviewed by the user. This includes a deliberately
     /// empty card, so consumers must not infer a fully reviewed five-card
     /// board merely from this list.
@@ -2798,10 +2803,6 @@ pub struct TrialDraw {
     /// or one-to-one relationship between the two kinds.
     #[serde(default = "default_trial_source")]
     pub source: String,
-}
-
-fn default_draw_equipment_unreviewed() -> bool {
-    true
 }
 
 fn default_trial_source() -> String {
@@ -2990,9 +2991,9 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
         "INSERT INTO trial_records (
             id, account_id, role_id, role_name, server, layer, bosses,
             card_1, card_2, card_3, card_4, card_5, flipped_index, record_type, source, status, source_key,
-            equipment_unreviewed, date, notes, updated_at
+            date, notes, updated_at
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             account_id = excluded.account_id,
             role_id = excluded.role_id,
@@ -3003,7 +3004,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             card_1 = CASE
                 WHEN ?
                   AND trial_records.source = 'auto'
-                  AND trial_records.equipment_unreviewed = 1
                   AND COALESCE(TRIM(excluded.card_1), '') = ''
                 THEN trial_records.card_1
                 ELSE excluded.card_1
@@ -3011,7 +3011,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             card_2 = CASE
                 WHEN ?
                   AND trial_records.source = 'auto'
-                  AND trial_records.equipment_unreviewed = 1
                   AND COALESCE(TRIM(excluded.card_2), '') = ''
                 THEN trial_records.card_2
                 ELSE excluded.card_2
@@ -3019,7 +3018,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             card_3 = CASE
                 WHEN ?
                   AND trial_records.source = 'auto'
-                  AND trial_records.equipment_unreviewed = 1
                   AND COALESCE(TRIM(excluded.card_3), '') = ''
                 THEN trial_records.card_3
                 ELSE excluded.card_3
@@ -3027,7 +3025,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             card_4 = CASE
                 WHEN ?
                   AND trial_records.source = 'auto'
-                  AND trial_records.equipment_unreviewed = 1
                   AND COALESCE(TRIM(excluded.card_4), '') = ''
                 THEN trial_records.card_4
                 ELSE excluded.card_4
@@ -3035,7 +3032,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             card_5 = CASE
                 WHEN ?
                   AND trial_records.source = 'auto'
-                  AND trial_records.equipment_unreviewed = 1
                   AND COALESCE(TRIM(excluded.card_5), '') = ''
                 THEN trial_records.card_5
                 ELSE excluded.card_5
@@ -3054,10 +3050,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
                 ELSE excluded.status
             END,
             source_key = COALESCE(trial_records.source_key, excluded.source_key),
-            equipment_unreviewed = CASE
-                WHEN ? IS NULL THEN trial_records.equipment_unreviewed
-                ELSE excluded.equipment_unreviewed
-            END,
             date = excluded.date,
             notes = excluded.notes,
             updated_at = excluded.updated_at",
@@ -3079,7 +3071,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             source,
             status,
             item.source_key.as_deref(),
-            item.equipment_unreviewed,
             item.date,
             &item.notes,
             timestamp,
@@ -3089,7 +3080,6 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
             preserve_observed_card(4),
             preserve_observed_card(5),
             item.preserve_flipped_index,
-            item.equipment_unreviewed,
         ],
     )
     .map_err(|e| {
@@ -3104,7 +3094,40 @@ fn save_trial_record_with_connection(conn: &mut Connection, item: &TrialRecord) 
     // fabricated game receipt. Once a completion is claimed by automatic
     // evidence (`source_key` is present), this bulk path must stay inert so a
     // parent-form save cannot replace the scanner's receipt rows.
-    if source == "manual" && item.source_key.is_none() && !item.draws.is_empty() {
+    //
+    // Automatic parents with zero receipt rows (offline scans that missed the
+    // chat library) stay editable: the modal only submits manual child flips,
+    // and this guard refuses them once automatic receipt rows already exist,
+    // so scanner rows can never be shadowed by parent-form input.
+    let all_draws_manual = !item.draws.is_empty()
+        && item
+            .draws
+            .iter()
+            .all(|draw| normalize_trial_source(&draw.source) == "manual");
+    let can_persist_manual_draws = if !all_draws_manual {
+        false
+    } else if source == "manual" {
+        item.source_key.is_none()
+    } else {
+        let has_auto_draw: bool = tx
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM trial_draws
+                    WHERE trial_record_id = ?1 AND source = 'auto'
+                )",
+                params![item.id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("检查自动翻牌明细失败: {}", e))?;
+        if has_auto_draw {
+            return Err(
+                "该试炼已由日志自动记录翻牌明细，请在查看记录中逐笔修改"
+                    .to_string(),
+            );
+        }
+        true
+    };
+    if can_persist_manual_draws {
         save_manual_trial_draws_with_transaction(&tx, item, &timestamp)?;
     }
 
@@ -3185,18 +3208,17 @@ fn save_manual_trial_draws_with_transaction(
     }
 
     for (index, draw) in item.draws.iter().enumerate() {
-        let equipment_unreviewed = i64::from(draw.equipment_unreviewed);
         tx.execute(
             "INSERT INTO trial_draws (
                 id, trial_record_id, source_key, sequence, receipt_time, receipt_hash,
                 reward_items, reward_sources, stamina_cost, stamina_costs, stamina_sources,
                 flipped_index, position_manual, card_1, card_2, card_3, card_4, card_5,
-                equipment_unreviewed, source, updated_at
+                source, updated_at
              ) VALUES (
                 ?1, ?2, ?3, ?4, 0, NULL,
                 '[]', '[]', NULL, '[]', '[]',
                 ?5, 1, ?6, ?7, ?8, ?9, ?10,
-                ?11, 'manual', ?12
+                'manual', ?11
              )
              ON CONFLICT(id) DO UPDATE SET
                 trial_record_id = excluded.trial_record_id,
@@ -3211,24 +3233,23 @@ fn save_manual_trial_draws_with_transaction(
                 card_1 = CASE WHEN EXISTS (
                     SELECT 1 FROM trial_draw_equipment_manual_overrides m
                     WHERE m.draw_id = trial_draws.id AND m.card_index = 1
-                ) AND ?13 THEN trial_draws.card_1 ELSE excluded.card_1 END,
+                ) AND ?12 THEN trial_draws.card_1 ELSE excluded.card_1 END,
                 card_2 = CASE WHEN EXISTS (
                     SELECT 1 FROM trial_draw_equipment_manual_overrides m
                     WHERE m.draw_id = trial_draws.id AND m.card_index = 2
-                ) AND ?14 THEN trial_draws.card_2 ELSE excluded.card_2 END,
+                ) AND ?13 THEN trial_draws.card_2 ELSE excluded.card_2 END,
                 card_3 = CASE WHEN EXISTS (
                     SELECT 1 FROM trial_draw_equipment_manual_overrides m
                     WHERE m.draw_id = trial_draws.id AND m.card_index = 3
-                ) AND ?15 THEN trial_draws.card_3 ELSE excluded.card_3 END,
+                ) AND ?14 THEN trial_draws.card_3 ELSE excluded.card_3 END,
                 card_4 = CASE WHEN EXISTS (
                     SELECT 1 FROM trial_draw_equipment_manual_overrides m
                     WHERE m.draw_id = trial_draws.id AND m.card_index = 4
-                ) AND ?16 THEN trial_draws.card_4 ELSE excluded.card_4 END,
+                ) AND ?15 THEN trial_draws.card_4 ELSE excluded.card_4 END,
                 card_5 = CASE WHEN EXISTS (
                     SELECT 1 FROM trial_draw_equipment_manual_overrides m
                     WHERE m.draw_id = trial_draws.id AND m.card_index = 5
-                ) AND ?17 THEN trial_draws.card_5 ELSE excluded.card_5 END,
-                equipment_unreviewed = excluded.equipment_unreviewed,
+                ) AND ?16 THEN trial_draws.card_5 ELSE excluded.card_5 END,
                 source = 'manual',
                 updated_at = excluded.updated_at",
             params![
@@ -3242,7 +3263,6 @@ fn save_manual_trial_draws_with_transaction(
                 draw.card_3.trim(),
                 draw.card_4.trim(),
                 draw.card_5.trim(),
-                equipment_unreviewed,
                 updated_at,
                 !draw.edited_card_indices.contains(&1),
                 !draw.edited_card_indices.contains(&2),
@@ -3379,18 +3399,18 @@ fn snapshot_legacy_manual_trial_flip_if_needed(
     if has_manual_draw {
         return Ok(());
     }
-    let parent: Option<(i64, String, String, String, String, String, i64)> = conn
+    let parent: Option<(i64, String, String, String, String, String)> = conn
         .query_row(
-            "SELECT flipped_index, card_1, card_2, card_3, card_4, card_5, equipment_unreviewed
+            "SELECT flipped_index, card_1, card_2, card_3, card_4, card_5
              FROM trial_records WHERE id = ?1 AND source = 'manual'",
             params![record_id],
             |row| Ok((
-                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?,
+                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?,
             )),
         )
         .optional()
         .map_err(|e| format!("读取旧手工翻牌快照失败: {e}"))?;
-    let Some((flipped_index, card_1, card_2, card_3, card_4, card_5, equipment_unreviewed)) = parent else {
+    let Some((flipped_index, card_1, card_2, card_3, card_4, card_5)) = parent else {
         return Ok(());
     };
     let has_explicit_board = (1..=5).contains(&flipped_index)
@@ -3407,17 +3427,17 @@ fn snapshot_legacy_manual_trial_flip_if_needed(
             id, trial_record_id, source_key, sequence, receipt_time, receipt_hash,
             reward_items, reward_sources, stamina_cost, stamina_costs, stamina_sources,
             flipped_index, position_manual, card_1, card_2, card_3, card_4, card_5,
-            equipment_unreviewed, source, updated_at
+            source, updated_at
          ) VALUES (
             ?1, ?2, ?3, 1, 0, NULL,
             '[]', '[]', NULL, '[]', '[]',
             ?4, 1, ?5, ?6, ?7, ?8, ?9,
-            ?10, 'manual', ?11
+            'manual', ?10
          )",
         params![
             draw_id, record_id, source_key, flipped_index,
             card_1, card_2, card_3, card_4, card_5,
-            equipment_unreviewed, updated_at,
+            updated_at,
         ],
     )
     .map_err(|e| format!("保存旧手工翻牌快照失败: {e}"))?;
@@ -3528,11 +3548,11 @@ pub fn db_upsert_auto_trial_records_with_connection(
                 "INSERT INTO trial_records (
                     id, account_id, role_id, role_name, server, layer, bosses,
                     card_1, card_2, card_3, card_4, card_5, flipped_index,
-                    record_type, source, status, source_key, equipment_unreviewed, date, notes, updated_at
+                    record_type, source, status, source_key, date, notes, updated_at
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7,
                     '', '', '', '', '', 0,
-                    'trial', 'auto', ?8, ?9, 1, ?10, ?11, ?12
+                    'trial', 'auto', ?8, ?9, ?10, ?11, ?12
                 )
                 ON CONFLICT(source_key) WHERE source_key IS NOT NULL DO UPDATE SET
                     account_id = excluded.account_id,
@@ -3569,6 +3589,46 @@ pub fn db_upsert_auto_trial_records_with_connection(
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(changed)
+}
+
+/// Clears trial tombstones so a later scan can revive the deleted records.
+///
+/// `parent_source_keys` non-empty: only the given parents and their child draw
+/// keys are revived. Empty slice: clears every trial tombstone. The blanket
+/// variant is used by the explicit manual "scan a range" flow — the user is
+/// deliberately asking for the data to be re-imported, so records removed by
+/// hand (including their child draw keys, which are tombstoned too) come back.
+/// Realtime polling keeps respecting tombstones.
+pub fn db_clear_trial_auto_scan_tombstones_with_connection(
+    conn: &mut Connection,
+    parent_source_keys: &[String],
+) -> Result<(), String> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let parents: Vec<&str> = parent_source_keys
+        .iter()
+        .map(|key| key.trim())
+        .filter(|key| !key.is_empty())
+        .collect();
+    if parents.is_empty() {
+        tx.execute("DELETE FROM trial_auto_scan_tombstones", [])
+            .map_err(|e| format!("清理试炼删除标记失败: {e}"))?;
+    } else {
+        for key in parents {
+            tx.execute(
+                "DELETE FROM trial_auto_scan_tombstones WHERE source_key = ?1",
+                params![key],
+            )
+            .map_err(|e| format!("清理试炼删除标记失败: {e}"))?;
+        }
+    }
+    // 父记录删除时其全部翻牌子笔的 source_key 也会一并写成 tombstone
+    // （见 delete_trial_record_with_connection），恢复父记录必须同步清除，
+    // 否则重新扫描到的翻牌回执仍会被子笔删除标记拦下。
+    tx.execute("DELETE FROM trial_auto_scan_tombstones WHERE source_key LIKE 'trial-draw:%'", [])
+        .map_err(|e| format!("清理试炼翻牌删除标记失败: {e}"))?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// Stores reward receipts that belong to one already-persisted automatic trial.
@@ -3678,11 +3738,11 @@ pub fn db_upsert_auto_trial_draws_with_connection(
                     "INSERT INTO trial_draws (
                         id, trial_record_id, source_key, sequence, receipt_time, receipt_hash,
                         reward_items, reward_sources, stamina_cost, stamina_costs, stamina_sources, flipped_index, position_manual,
-                        card_1, card_2, card_3, card_4, card_5, equipment_unreviewed, source, updated_at
+                        card_1, card_2, card_3, card_4, card_5, source, updated_at
                     ) VALUES (
                         ?1, ?2, ?3, 0, ?4, ?5,
                         ?6, ?7, ?8, ?9, ?10, 0, 0,
-                        '', '', '', '', '', 1, 'auto', ?11
+                        '', '', '', '', '', 'auto', ?11
                     )",
                     params![
                         format!("trial-draw:{}", draw.source_key),
@@ -3829,27 +3889,26 @@ fn invalidate_auto_trial_draw_observations_for_receipt(
     conn.execute(
         "UPDATE trial_draws
          SET flipped_index = CASE WHEN position_manual = 0 THEN 0 ELSE flipped_index END,
-             card_1 = CASE WHEN equipment_unreviewed = 0 OR EXISTS (
+             card_1 = CASE WHEN EXISTS (
                  SELECT 1 FROM trial_draw_equipment_manual_overrides m
                  WHERE m.draw_id = trial_draws.id AND m.card_index = 1
              ) THEN card_1 ELSE '' END,
-             card_2 = CASE WHEN equipment_unreviewed = 0 OR EXISTS (
+             card_2 = CASE WHEN EXISTS (
                  SELECT 1 FROM trial_draw_equipment_manual_overrides m
                  WHERE m.draw_id = trial_draws.id AND m.card_index = 2
              ) THEN card_2 ELSE '' END,
-             card_3 = CASE WHEN equipment_unreviewed = 0 OR EXISTS (
+             card_3 = CASE WHEN EXISTS (
                  SELECT 1 FROM trial_draw_equipment_manual_overrides m
                  WHERE m.draw_id = trial_draws.id AND m.card_index = 3
              ) THEN card_3 ELSE '' END,
-             card_4 = CASE WHEN equipment_unreviewed = 0 OR EXISTS (
+             card_4 = CASE WHEN EXISTS (
                  SELECT 1 FROM trial_draw_equipment_manual_overrides m
                  WHERE m.draw_id = trial_draws.id AND m.card_index = 4
              ) THEN card_4 ELSE '' END,
-             card_5 = CASE WHEN equipment_unreviewed = 0 OR EXISTS (
+             card_5 = CASE WHEN EXISTS (
                  SELECT 1 FROM trial_draw_equipment_manual_overrides m
                  WHERE m.draw_id = trial_draws.id AND m.card_index = 5
              ) THEN card_5 ELSE '' END,
-             equipment_unreviewed = CASE WHEN equipment_unreviewed = 0 THEN 0 ELSE 1 END,
              auto_observed_start_ms = NULL, auto_observed_end_ms = NULL,
              auto_equipment_observed_start_ms = NULL, auto_equipment_observed_end_ms = NULL,
              updated_at = ?1
@@ -4131,10 +4190,10 @@ pub fn db_apply_auto_trial_draw_equipment_with_connection(
     if deleted {
         return Ok(TrialAutoEquipmentUpdateOutcome::Deleted);
     }
-    let existing: Option<(String, i64, i64, String, String, bool)> = tx
+    let existing: Option<(String, i64, String, String, bool)> = tx
         .query_row(
             &format!(
-                "SELECT d.source, d.equipment_unreviewed, d.flipped_index, d.{card_column}, d.trial_record_id,
+                "SELECT d.source, d.flipped_index, d.{card_column}, d.trial_record_id,
                         EXISTS(
                             SELECT 1 FROM trial_draw_equipment_manual_overrides m
                             WHERE m.draw_id = d.id AND m.card_index = ?2
@@ -4148,16 +4207,14 @@ pub fn db_apply_auto_trial_draw_equipment_with_connection(
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
-                row.get(5)?,
             )),
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let Some((source, equipment_unreviewed, saved_index, saved_equipment, record_id, manually_reviewed)) = existing else {
+    let Some((source, saved_index, saved_equipment, record_id, manually_reviewed)) = existing else {
         return Ok(TrialAutoEquipmentUpdateOutcome::Missing);
     };
     if source != "auto"
-        || equipment_unreviewed == 0
         || saved_index != expected_flipped_index
         || manually_reviewed
         || !saved_equipment.trim().is_empty()
@@ -4181,7 +4238,7 @@ pub fn db_apply_auto_trial_draw_equipment_with_connection(
                      auto_equipment_observed_start_ms = ?2, auto_equipment_observed_end_ms = ?3,
                      updated_at = ?4
                  WHERE source_key = ?5 AND source = 'auto'
-                   AND equipment_unreviewed = 1 AND flipped_index = ?6
+                   AND flipped_index = ?6
                    AND COALESCE(TRIM({card_column}), '') = ''
                    AND NOT EXISTS (
                        SELECT 1 FROM trial_draw_equipment_manual_overrides m
@@ -4360,9 +4417,10 @@ pub fn db_mark_trial_capture_run_reconciled_with_connection(
 
 /// 按账号与终局时间反查已落库的试炼父记录 source_key。
 ///
-/// 采集端（截图 worker）只知道账号 UUID，而 `trial_draws.source_key` 必须与
-/// `trial_records.source_key`（JCL 角色全局 ID 推导的稳定键）一致。迟到对账
-/// 路径用它把持久化的采集会话重新绑定到正确的父记录。找不到时返回 `None`，
+/// `account_id` 必须是数据库账号 UUID（`roles.account_id`，即写入
+/// `trial_records.account_id` 的那个值），**不是茗伊 UID**——茗伊 UID 只出现在
+/// `trial_capture_runs.uid` 与聊天库身份里，两者没有可比性。迟到对账用它把
+/// 持久化的采集会话重新绑定到正确的父记录。找不到时返回 `None`，
 /// 调用方应跳过补录，避免为已删除的记录凭空造子笔。
 pub fn db_find_trial_record_source_key_with_connection(
     conn: &Connection,
@@ -4386,10 +4444,9 @@ pub fn db_find_trial_record_source_key_with_connection(
 ///
 /// The caller must have already resolved the OCR text to exactly one known
 /// trial equipment id and supplied the selected card observed in the same
-/// frame. This helper never creates a record, never changes the selected card,
-/// and never clears equipment_unreviewed. Seeing one tooltip is not proof that
-/// all five cards were inspected. Existing card values, manual records, and
-/// user-reviewed automatic records are preserved.
+/// frame. This helper never creates a record and never changes the selected
+/// card. Existing card values, manual records, and user-reviewed automatic
+/// records are preserved.
 #[cfg(test)]
 pub fn db_apply_auto_trial_equipment_with_connection(
     conn: &mut Connection,
@@ -4435,26 +4492,24 @@ pub fn db_apply_auto_trial_equipment_with_connection(
         return Ok(TrialAutoEquipmentUpdateOutcome::Deleted);
     }
 
-    let existing: Option<(String, i64, Option<i64>, String)> = tx
+    let existing: Option<(String, Option<i64>, String)> = tx
         .query_row(
             &format!(
-                "SELECT source, equipment_unreviewed, flipped_index, {card_column}
+                "SELECT source, flipped_index, {card_column}
                  FROM trial_records WHERE source_key = ?1"
             ),
             params![source_key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let Some((source, equipment_unreviewed, saved_flipped_index, existing_equipment)) = existing else {
+    let Some((source, saved_flipped_index, existing_equipment)) = existing else {
         return Ok(TrialAutoEquipmentUpdateOutcome::Missing);
     };
 
-    // A manual save or a completed review owns all of its card fields. This
-    // also prevents a delayed screenshot sample from overwriting an explicit
-    // no-equipment review.
+    // A manual save owns all of its card fields. This also prevents a delayed
+    // screenshot sample from overwriting explicit user input.
     if source != "auto"
-        || equipment_unreviewed == 0
         || saved_flipped_index != Some(expected_flipped_index)
         || !existing_equipment.trim().is_empty()
     {
@@ -4468,7 +4523,6 @@ pub fn db_apply_auto_trial_equipment_with_connection(
                  SET {card_column} = ?1, updated_at = ?2
                  WHERE source_key = ?3
                    AND source = 'auto'
-                   AND equipment_unreviewed = 1
                    AND flipped_index = ?4
                    AND COALESCE(TRIM({card_column}), '') = ''"
             ),
@@ -4496,7 +4550,7 @@ pub fn db_get_trial_records() -> Result<String, String> {
             "
         SELECT id, account_id, role_id, role_name, server, layer, bosses,
                card_1, card_2, card_3, card_4, card_5, flipped_index, record_type,
-               source, status, source_key, equipment_unreviewed, date, notes, updated_at
+               source, status, source_key, date, notes, updated_at
         FROM trial_records
         ORDER BY date DESC
     ",
@@ -4527,10 +4581,9 @@ pub fn db_get_trial_records() -> Result<String, String> {
                 source: row.get(14)?,
                 status: row.get(15)?,
                 source_key: row.get(16)?,
-                equipment_unreviewed: Some(row.get::<_, i64>(17)? != 0),
                 draws: Vec::new(),
-                date: row.get(18)?,
-                notes: row.get(19)?,
+                date: row.get(17)?,
+                notes: row.get(18)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -4549,7 +4602,7 @@ pub fn db_get_trial_records() -> Result<String, String> {
         .prepare(
             "SELECT id, trial_record_id, source_key, sequence, receipt_time, receipt_hash,
                     reward_items, stamina_cost, stamina_costs, flipped_index,
-                    card_1, card_2, card_3, card_4, card_5, equipment_unreviewed, source
+                    card_1, card_2, card_3, card_4, card_5, source
              FROM trial_draws
              ORDER BY trial_record_id ASC, sequence ASC, receipt_time ASC, source_key ASC",
         )
@@ -4576,10 +4629,9 @@ pub fn db_get_trial_records() -> Result<String, String> {
                     card_3: row.get(12)?,
                     card_4: row.get(13)?,
                     card_5: row.get(14)?,
-                    equipment_unreviewed: row.get::<_, i64>(15)? != 0,
                 manual_equipment_card_indexes: Vec::new(),
                 edited_card_indices: Vec::new(),
-                    source: row.get(16)?,
+                    source: row.get(15)?,
                 },
             ))
         })
@@ -4680,96 +4732,6 @@ pub fn db_update_trial_draw_equipment(
         card_index,
         equipment_id.as_deref(),
     )
-}
-
-/// Explicitly marks one draw's complete five-card board as reviewed, or
-/// returns that exact draw to the pending-review state. Confirmation uses the
-/// currently rendered board as a compare-and-set snapshot, preventing a late
-/// OCR result from being incorrectly confirmed as something the user saw.
-/// The review marker is deliberately independent from per-card overrides:
-/// confirming preserves the currently saved cards (including blanks), while
-/// revoking never deletes any manual card decisions.
-#[tauri::command]
-pub fn db_set_trial_draw_equipment_reviewed(
-    draw_id: String,
-    reviewed: bool,
-    expected_flipped_index: Option<i64>,
-    expected_cards: Option<Vec<String>>,
-) -> Result<(), String> {
-    let mut conn = init_db().map_err(|e| e.to_string())?;
-    db_set_trial_draw_equipment_reviewed_with_connection(
-        &mut conn,
-        &draw_id,
-        reviewed,
-        expected_flipped_index,
-        expected_cards.as_deref(),
-    )
-}
-
-fn db_set_trial_draw_equipment_reviewed_with_connection(
-    conn: &mut Connection,
-    draw_id: &str,
-    reviewed: bool,
-    expected_flipped_index: Option<i64>,
-    expected_cards: Option<&[String]>,
-) -> Result<(), String> {
-    if draw_id.trim().is_empty() {
-        return Err("试炼翻牌明细不能为空".to_string());
-    }
-    if reviewed {
-        if expected_flipped_index.is_none() {
-            return Err("确认完整牌面时必须包含当前翻牌位".to_string());
-        }
-        if expected_cards.map_or(true, |cards| cards.len() != 5) {
-            return Err("确认完整牌面时必须包含 5 张牌".to_string());
-        }
-    }
-
-    let tx = conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|e| e.to_string())?;
-    let current: Option<(i64, String, String, String, String, String)> = tx
-        .query_row(
-            "SELECT flipped_index, card_1, card_2, card_3, card_4, card_5
-             FROM trial_draws WHERE id = ?1",
-            params![draw_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|e| format!("读取试炼翻牌明细失败: {e}"))?;
-    let Some((flipped_index, card_1, card_2, card_3, card_4, card_5)) = current else {
-        return Err("未找到对应的试炼翻牌明细，请刷新后重试".to_string());
-    };
-    if reviewed {
-        let current_cards = [card_1, card_2, card_3, card_4, card_5];
-        if expected_flipped_index != Some(flipped_index)
-            || expected_cards != Some(current_cards.as_slice())
-        {
-            return Err("牌面已变化，请刷新后重新核对".to_string());
-        }
-    }
-    let changed = tx
-        .execute(
-            "UPDATE trial_draws
-             SET equipment_unreviewed = ?1, updated_at = ?2
-             WHERE id = ?3",
-            params![if reviewed { 0 } else { 1 }, get_local_timestamp(), draw_id],
-        )
-        .map_err(|e| format!("更新试炼翻牌装备核对状态失败: {e}"))?;
-    if changed != 1 {
-        return Err("未找到对应的试炼翻牌明细，请刷新后重试".to_string());
-    }
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 fn db_update_trial_draw_equipment_with_connection(
@@ -5187,11 +5149,12 @@ pub(crate) fn save_accounts_with_conn(
                     .to_string();
                 let r_disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
                 let equipment_score = role["equipmentScore"].as_i64();
+                let level = role["level"].as_i64();
 
                 // 使用 INSERT ... ON CONFLICT DO UPDATE 避免触发级联删除
                 tx.execute(
-                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, level, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON CONFLICT(id) DO UPDATE SET
                         account_id = excluded.account_id,
                         name = excluded.name,
@@ -5201,8 +5164,9 @@ pub(crate) fn save_accounts_with_conn(
                         martial = excluded.martial,
                         equipment_score = excluded.equipment_score,
                         disabled = excluded.disabled,
+                        level = excluded.level,
                         updated_at = excluded.updated_at",
-                    params![role_id, id, name, server, region, sect, martial, equipment_score, r_disabled, timestamp],
+                    params![role_id, id, name, server, region, sect, martial, equipment_score, r_disabled, level, timestamp],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -5259,7 +5223,7 @@ pub fn db_get_all_roles() -> Result<String, String> {
         .prepare(
             "
         SELECT r.id, r.account_id, r.name, r.server, r.region, r.sect, r.martial,
-               r.equipment_score, r.disabled, r.created_at, r.updated_at,
+               r.equipment_score, r.disabled, r.level, r.created_at, r.updated_at,
                a.account_name
         FROM roles r JOIN accounts a ON r.account_id = a.id
         ORDER BY r.name
@@ -5279,9 +5243,10 @@ pub fn db_get_all_roles() -> Result<String, String> {
                 "martial": row.get::<_, Option<String>>(6)?,
                 "equipmentScore": row.get::<_, Option<i64>>(7)?,
                 "disabled": row.get::<_, i32>(8)? != 0,
-                "createdAt": row.get::<_, Option<String>>(9)?,
-                "updatedAt": row.get::<_, Option<String>>(10)?,
-                "accountName": row.get::<_, String>(11)?,
+                "level": row.get::<_, Option<i64>>(9)?,
+                "createdAt": row.get::<_, Option<String>>(10)?,
+                "updatedAt": row.get::<_, Option<String>>(11)?,
+                "accountName": row.get::<_, String>(12)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -5301,6 +5266,7 @@ struct RoleJoinRow {
     martial: Option<String>,
     equipment_score: Option<i64>,
     disabled: bool,
+    level: Option<i64>,
 }
 
 struct AccountJoinRow {
@@ -5357,6 +5323,7 @@ fn upsert_account_from_join_row(
             "martial": role.martial,
             "equipmentScore": role.equipment_score,
             "disabled": role.disabled,
+            "level": role.level,
             "visibility": visibility,
         });
         if let Some(account) = account_map.get_mut(&account_id) {
@@ -5416,7 +5383,7 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
     }
 
     // 单次 LEFT JOIN 查询获取账号和角色
-    // Account 字段: 0-9, Role 字段: 10-19 (可能为 NULL)
+    // Account 字段: 0-9, Role 字段: 10-20 (可能为 NULL)
     let mut stmt = conn
         .prepare(
             "
@@ -5424,7 +5391,7 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
             a.id, a.account_name, a.account_type, a.sort_order, a.password, a.notes,
             a.hidden, a.disabled, a.created_at, a.updated_at,
             r.id, r.account_id, r.name, r.server, r.region,
-            r.sect, r.martial, r.equipment_score, r.disabled, r.created_at, r.updated_at
+            r.sect, r.martial, r.equipment_score, r.disabled, r.level, r.created_at, r.updated_at
         FROM accounts a
         LEFT JOIN roles r ON a.id = r.account_id
         ORDER BY a.sort_order, a.account_name, r.name
@@ -5449,6 +5416,7 @@ pub fn db_get_accounts_with_roles() -> Result<String, String> {
                     martial: row.get(16)?,
                     equipment_score: row.get(17)?,
                     disabled: row.get::<_, i32>(18)? != 0,
+                    level: row.get(19)?,
                 })
             } else {
                 None
@@ -5547,7 +5515,7 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
     let mut stmt = conn
         .prepare(
             "
-        SELECT id, name, server, region, sect, martial, equipment_score, disabled, created_at, updated_at
+        SELECT id, name, server, region, sect, martial, equipment_score, disabled, level, created_at, updated_at
         FROM roles WHERE account_id = ? ORDER BY name
     ",
         )
@@ -5570,8 +5538,9 @@ pub fn db_get_roles_by_account(account_id: String) -> Result<String, String> {
                 "martial": row.get::<_, Option<String>>(5)?,
                 "equipmentScore": row.get::<_, Option<i64>>(6)?,
                 "disabled": row.get::<_, i32>(7)? != 0,
-                "createdAt": row.get::<_, Option<String>>(8)?,
-                "updatedAt": row.get::<_, Option<String>>(9)?,
+                "level": row.get::<_, Option<i64>>(8)?,
+                "createdAt": row.get::<_, Option<String>>(9)?,
+                "updatedAt": row.get::<_, Option<String>>(10)?,
                 "visibility": visibility,
             }))
         })
@@ -5661,6 +5630,7 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
     let martial = role["martial"].as_str().map(|s| s.to_string());
     let disabled = role["disabled"].as_bool().unwrap_or(false) as i32;
     let equipment_score = role["equipmentScore"].as_i64();
+    let level = role["level"].as_i64();
 
     // 检查是否为新建角色
     let is_new_role: bool = conn
@@ -5675,8 +5645,8 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
         .unwrap_or(true);
 
     conn.execute(
-        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, level, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             account_id = excluded.account_id,
             name = excluded.name,
@@ -5686,8 +5656,9 @@ pub fn db_save_role_structured(role_json: String) -> Result<(), String> {
             martial = excluded.martial,
             equipment_score = excluded.equipment_score,
             disabled = excluded.disabled,
+            level = excluded.level,
             updated_at = excluded.updated_at",
-        params![id, account_id, name, server, region, sect, martial, equipment_score, disabled, timestamp],
+        params![id, account_id, name, server, region, sect, martial, equipment_score, disabled, level, timestamp],
     ).map_err(|e| e.to_string())?;
 
     // 如果是新建角色，自动创建可见性记录
@@ -6002,6 +5973,8 @@ pub struct GameVersion {
     pub id: Option<i64>,
     pub name: String,
     pub sort_order: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_cap: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -6023,7 +5996,7 @@ pub struct Season {
 pub fn db_get_game_versions() -> Result<String, String> {
     let conn = init_db().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, sort_order FROM game_versions ORDER BY sort_order ASC")
+        .prepare("SELECT id, name, sort_order, level_cap FROM game_versions ORDER BY sort_order ASC")
         .map_err(|e| e.to_string())?;
 
     let version_iter = stmt
@@ -6032,6 +6005,7 @@ pub fn db_get_game_versions() -> Result<String, String> {
                 id: Some(row.get(0)?),
                 name: row.get(1)?,
                 sort_order: row.get(2)?,
+                level_cap: row.get(3)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -6052,15 +6026,15 @@ pub fn db_save_game_version(version: String) -> Result<i64, String> {
 
     if let Some(id) = item.id {
         conn.execute(
-            "UPDATE game_versions SET name = ?, sort_order = ? WHERE id = ?",
-            params![item.name, item.sort_order, id],
+            "UPDATE game_versions SET name = ?, sort_order = ?, level_cap = ? WHERE id = ?",
+            params![item.name, item.sort_order, item.level_cap, id],
         )
         .map_err(|e| e.to_string())?;
         Ok(id)
     } else {
         conn.execute(
-            "INSERT INTO game_versions (name, sort_order, created_at) VALUES (?, ?, ?)",
-            params![item.name, item.sort_order, &timestamp],
+            "INSERT INTO game_versions (name, sort_order, level_cap, created_at) VALUES (?, ?, ?, ?)",
+            params![item.name, item.sort_order, item.level_cap, &timestamp],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
@@ -7215,6 +7189,7 @@ mod tests {
                     martial: None,
                     equipment_score: Some(123456),
                     disabled: false,
+                    level: None,
                 }),
             },
             &visibility,
@@ -7434,7 +7409,6 @@ mod tests {
             source: source.to_string(),
             status: status.to_string(),
             source_key: source_key.map(str::to_string),
-            equipment_unreviewed: Some(false),
             draws: Vec::new(),
             date: 1_793_715_000_000,
             notes: Some("手工备注".to_string()),
@@ -7458,7 +7432,6 @@ mod tests {
             card_3: String::new(),
             card_4: String::new(),
             card_5: String::new(),
-            equipment_unreviewed: true,
             manual_equipment_card_indexes: Vec::new(),
             edited_card_indices: Vec::new(),
             source: "manual".to_string(),
@@ -7551,6 +7524,63 @@ mod tests {
         ).unwrap().query_map(params![record.id], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap().collect::<std::result::Result<_, _>>().unwrap();
         assert_eq!(children, vec![("auto-child".into(), "auto".into()), ("first".into(), "manual".into())]);
+    }
+
+    #[test]
+    fn zero_draw_auto_parent_accepts_manual_flip_backfill_but_rejects_once_auto_draws_exist() {
+        let (mut conn, _path) = create_test_conn();
+        ensure_version_tables(&conn).unwrap();
+        install_fresh_db(&conn).unwrap();
+
+        // 离线扫描漏捞聊天库 → 零子笔的自动父记录：允许用户在编辑弹窗补录手工翻牌。
+        let mut auto_parent = trial_record("trial-auto:offline-miss", "auto", "pending", Some("trial:offline-miss:144:1"));
+        auto_parent.card_1 = String::new();
+        auto_parent.flipped_index = 0;
+        auto_parent.draws = vec![manual_trial_draw(&auto_parent.id, "backfill", 1)];
+        save_trial_record_with_connection(&mut conn, &auto_parent).unwrap();
+
+        let backfilled: (i64, String, String) = conn
+            .query_row(
+                "SELECT flipped_index, card_1, source FROM trial_draws WHERE id = 'backfill'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(backfilled.0, 1);
+        assert_eq!(backfilled.1, "card-1");
+        assert_eq!(backfilled.2, "manual");
+
+        // 已有自动回执子笔的自动父记录：整单提交（含手工子笔）必须被拒绝，
+        // 防止父表单覆盖扫描器的翻牌明细。
+        conn.execute(
+            "INSERT INTO trial_draws (
+                id, trial_record_id, source_key, sequence, receipt_time, reward_items,
+                reward_sources, stamina_costs, stamina_sources, source
+             ) VALUES ('receipt-child', ?1, 'receipt:1', 1, 12345, '[]', '[]', '[]', '[]', 'auto')",
+            params![auto_parent.id],
+        )
+        .unwrap();
+        let mut resubmit = trial_record("trial-auto:offline-miss", "auto", "pending", Some("trial:offline-miss:144:1"));
+        resubmit.card_1 = String::new();
+        resubmit.flipped_index = 0;
+        resubmit.draws = vec![manual_trial_draw(&auto_parent.id, "second-attempt", 2)];
+        assert!(save_trial_record_with_connection(&mut conn, &resubmit).is_err());
+        let rejected: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM trial_draws WHERE id = 'second-attempt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rejected, 0);
+        let receipt_child: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM trial_draws WHERE id = 'receipt-child' AND source = 'auto'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipt_child, 1);
     }
 
     #[test]
@@ -7728,15 +7758,15 @@ mod tests {
         assert_eq!(db_upsert_auto_trial_records_with_connection(&mut conn, &[record.clone()]).unwrap(), 1);
         assert_eq!(db_upsert_auto_trial_records_with_connection(&mut conn, &[record.clone()]).unwrap(), 0);
 
-        let saved: (String, String, i64, String, String, i64) = conn
+        let saved: (String, String, i64, String, String) = conn
             .query_row(
-                "SELECT source, status, flipped_index, card_1, source_key, equipment_unreviewed
+                "SELECT source, status, flipped_index, card_1, source_key
                  FROM trial_records WHERE source_key = 'terminal-event-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
-        assert_eq!(saved, ("auto".to_string(), "confirmed".to_string(), 0, "".to_string(), "terminal-event-1".to_string(), 1));
+        assert_eq!(saved, ("auto".to_string(), "confirmed".to_string(), 0, "".to_string(), "terminal-event-1".to_string()));
 
         conn.execute("UPDATE trial_records SET status = 'confirmed' WHERE source_key = 'terminal-event-1'", [])
             .unwrap();
@@ -7857,6 +7887,92 @@ mod tests {
     }
 
     #[test]
+    fn manual_scan_clears_tombstones_and_revives_deleted_trial_records() {
+        let (mut conn, _path) = create_test_conn();
+        ensure_version_tables(&conn).unwrap();
+        install_fresh_db(&conn).unwrap();
+        let record = auto_trial_record("terminal-revive");
+        assert_eq!(
+            db_upsert_auto_trial_records_with_connection(&mut conn, &[record.clone()]).unwrap(),
+            1
+        );
+        let draw = auto_trial_draw("trial-draw:role:terminal-revive:10:h1", 10_000, None);
+        assert_eq!(
+            db_upsert_auto_trial_draws_with_connection(
+                &mut conn,
+                "terminal-revive",
+                std::slice::from_ref(&draw)
+            )
+            .unwrap(),
+            1
+        );
+        delete_trial_record_with_connection(&mut conn, "trial-auto:terminal-revive").unwrap();
+
+        let tombstone_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trial_auto_scan_tombstones", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(
+            tombstone_count >= 2,
+            "删除父记录应同时标记父与翻牌子笔，实际 {tombstone_count}"
+        );
+        assert_eq!(
+            db_upsert_auto_trial_records_with_connection(&mut conn, &[record.clone()]).unwrap(),
+            0,
+            "实时扫描仍应尊重删除标记"
+        );
+
+        // 手动范围扫描是显式补录动作：清空试炼删除标记后记录与翻牌都可恢复。
+        db_clear_trial_auto_scan_tombstones_with_connection(&mut conn, &[]).unwrap();
+        let remaining_tombstones: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trial_auto_scan_tombstones", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(remaining_tombstones, 0);
+        assert_eq!(
+            db_upsert_auto_trial_records_with_connection(&mut conn, &[record]).unwrap(),
+            1,
+            "手动扫描应重新导入已删除的试炼记录"
+        );
+        assert_eq!(
+            db_upsert_auto_trial_draws_with_connection(
+                &mut conn,
+                "terminal-revive",
+                &[auto_trial_draw("trial-draw:role:terminal-revive:10:h1", 10_000, None)]
+            )
+            .unwrap(),
+            1,
+            "手动扫描应同时恢复翻牌明细"
+        );
+    }
+
+    #[test]
+    fn clearing_named_tombstones_keeps_other_keys() {
+        let (mut conn, _path) = create_test_conn();
+        ensure_version_tables(&conn).unwrap();
+        install_fresh_db(&conn).unwrap();
+        for key in ["terminal-a", "terminal-b"] {
+            conn.execute(
+                "INSERT INTO trial_auto_scan_tombstones (source_key, deleted_at) VALUES (?1, 'now')",
+                params![key],
+            )
+            .unwrap();
+        }
+        db_clear_trial_auto_scan_tombstones_with_connection(&mut conn, &["terminal-a".to_string()])
+            .unwrap();
+        let remaining: Vec<String> = conn
+            .prepare("SELECT source_key FROM trial_auto_scan_tombstones")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(remaining, vec!["terminal-b".to_string()]);
+    }
+
+    #[test]
     fn auto_trial_records_do_not_replace_exact_manual_or_tombstoned_records() {
         let (mut conn, _path) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
@@ -7919,12 +8035,12 @@ mod tests {
             db_apply_auto_trial_flip_with_connection(&mut conn, "flip-auto-unknown", 4).unwrap(),
             TrialAutoFlipUpdateOutcome::Updated
         );
-        let automatic_saved: (i64, String, String, String, String, i64) = conn
+        let automatic_saved: (i64, String, String, String, String) = conn
             .query_row(
-                "SELECT flipped_index, card_1, notes, status, source, equipment_unreviewed
+                "SELECT flipped_index, card_1, notes, status, source
                  FROM trial_records WHERE source_key = 'flip-auto-unknown'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
         assert_eq!(
@@ -7935,7 +8051,6 @@ mod tests {
                 "保留备注".to_string(),
                 "confirmed".to_string(),
                 "auto".to_string(),
-                1,
             )
         );
         assert_eq!(
@@ -8071,15 +8186,15 @@ mod tests {
             .unwrap(),
             TrialAutoEquipmentUpdateOutcome::Updated
         );
-        let saved: (String, String, i64) = conn
+        let saved: (String, String) = conn
             .query_row(
-                "SELECT card_2, card_3, equipment_unreviewed
+                "SELECT card_2, card_3
                  FROM trial_records WHERE source_key = 'equipment-auto'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(saved, ("51468".to_string(), "51426".to_string(), 1));
+        assert_eq!(saved, ("51468".to_string(), "51426".to_string()));
 
         // The observed tooltip can be on card 3 while card 2 was selected.
         // If a user or a newer screenshot changed that selection, the older
@@ -8105,8 +8220,7 @@ mod tests {
         assert!(card_4.is_empty());
 
         // A later frame must not replace a card that has already been
-        // recognized. The record remains unreviewed because not all five
-        // cards were inspected.
+        // recognized.
         assert_eq!(
             db_apply_auto_trial_equipment_with_connection(
                 &mut conn,
@@ -8114,24 +8228,6 @@ mod tests {
                 2,
                 3,
                 "99999",
-            )
-            .unwrap(),
-            TrialAutoEquipmentUpdateOutcome::Preserved
-        );
-
-        conn.execute(
-            "UPDATE trial_records SET equipment_unreviewed = 0
-             WHERE source_key = 'equipment-auto'",
-            [],
-        )
-        .unwrap();
-        assert_eq!(
-            db_apply_auto_trial_equipment_with_connection(
-                &mut conn,
-                "equipment-auto",
-                2,
-                4,
-                "51426",
             )
             .unwrap(),
             TrialAutoEquipmentUpdateOutcome::Preserved
@@ -8245,14 +8341,13 @@ mod tests {
         stale_form.preserve_flipped_index = true;
         stale_form.card_2 = "手工选择的装备".to_string();
         stale_form.edited_card_indices = vec![2];
-        stale_form.equipment_unreviewed = Some(true);
         save_trial_record_with_connection(&mut conn, &stale_form).unwrap();
-        let saved: (String, String, i64, i64) = conn
+        let saved: (String, String, i64) = conn
             .query_row(
-                "SELECT card_2, card_3, flipped_index, equipment_unreviewed
+                "SELECT card_2, card_3, flipped_index
                  FROM trial_records WHERE source_key = 'equipment-stale-form'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
         assert_eq!(
@@ -8261,7 +8356,6 @@ mod tests {
                 "手工选择的装备".to_string(),
                 "51426".to_string(),
                 2,
-                1
             )
         );
 
@@ -8269,19 +8363,19 @@ mod tests {
         // without forcing the player to claim every other card was checked.
         stale_form.edited_card_indices.push(3);
         save_trial_record_with_connection(&mut conn, &stale_form).unwrap();
-        let explicitly_cleared: (String, i64) = conn
+        let explicitly_cleared: String = conn
             .query_row(
-                "SELECT card_3, equipment_unreviewed
+                "SELECT card_3
                  FROM trial_records WHERE source_key = 'equipment-stale-form'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(explicitly_cleared, (String::new(), 1));
+        assert_eq!(explicitly_cleared, String::new());
     }
 
     #[test]
-    fn trial_save_preserves_omitted_review_and_concurrent_flip_but_accepts_explicit_choices() {
+    fn trial_save_preserves_omitted_flip_but_accepts_explicit_choices() {
         let (mut conn, _path) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
@@ -8297,54 +8391,36 @@ mod tests {
         );
 
         // An old form has no equipment-review field and did not touch the card
-        // position, so neither a newly recognized position nor the unknown
-        // equipment marker may be lost.
+        // position, so a newly recognized position may not be lost.
         let mut stale_form = trial_record("trial-auto:review-auto", "manual", "confirmed", None);
         stale_form.flipped_index = 0;
         stale_form.preserve_flipped_index = true;
-        stale_form.equipment_unreviewed = None;
         stale_form.notes = Some("旧表单补充备注".to_string());
         save_trial_record_with_connection(&mut conn, &stale_form).unwrap();
-        let after_stale_form: (i64, i64, String) = conn
+        let after_stale_form: (i64, String) = conn
             .query_row(
-                "SELECT flipped_index, equipment_unreviewed, notes
-                 FROM trial_records WHERE source_key = 'review-auto'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(after_stale_form, (3, 1, "旧表单补充备注".to_string()));
-
-        // The current form always sends an explicit review decision. It can
-        // therefore confirm an empty result, and a deliberate flip clear still
-        // takes effect when preserve_flipped_index is false.
-        let mut explicit_empty = stale_form;
-        explicit_empty.preserve_flipped_index = false;
-        explicit_empty.equipment_unreviewed = Some(false);
-        save_trial_record_with_connection(&mut conn, &explicit_empty).unwrap();
-        let explicit_empty_saved: (i64, i64) = conn
-            .query_row(
-                "SELECT flipped_index, equipment_unreviewed
+                "SELECT flipped_index, notes
                  FROM trial_records WHERE source_key = 'review-auto'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(explicit_empty_saved, (0, 0));
+        assert_eq!(after_stale_form, (3, "旧表单补充备注".to_string()));
 
-        let mut manual = trial_record("manual-review", "manual", "confirmed", None);
-        manual.equipment_unreviewed = Some(true);
-        save_trial_record_with_connection(&mut conn, &manual).unwrap();
-        manual.equipment_unreviewed = None;
-        save_trial_record_with_connection(&mut conn, &manual).unwrap();
-        let manual_review: i64 = conn
+        // The current form can deliberately clear the flip when
+        // preserve_flipped_index is false.
+        let mut explicit_empty = stale_form;
+        explicit_empty.preserve_flipped_index = false;
+        save_trial_record_with_connection(&mut conn, &explicit_empty).unwrap();
+        let explicit_empty_saved: i64 = conn
             .query_row(
-                "SELECT equipment_unreviewed FROM trial_records WHERE id = 'manual-review'",
+                "SELECT flipped_index
+                 FROM trial_records WHERE source_key = 'review-auto'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(manual_review, 1);
+        assert_eq!(explicit_empty_saved, 0);
     }
 
     #[test]
@@ -9365,7 +9441,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_equipment_observations_keep_draw_unreviewed_until_full_review() {
+    fn multiple_equipment_observations_fill_independent_cards() {
         let (mut conn, _path) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-multiple-equipment");
@@ -9385,12 +9461,12 @@ mod tests {
             ).unwrap(),
             TrialAutoEquipmentUpdateOutcome::Updated
         );
-        let saved: (String, String, i64) = conn.query_row(
-            "SELECT card_1, card_3, equipment_unreviewed FROM trial_draws WHERE source_key = ?1",
+        let saved: (String, String) = conn.query_row(
+            "SELECT card_1, card_3 FROM trial_draws WHERE source_key = ?1",
             params![draw.source_key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ).unwrap();
-        assert_eq!(saved, ("51426".to_string(), "51468".to_string(), 1));
+        assert_eq!(saved, ("51426".to_string(), "51468".to_string()));
     }
 
     #[test]
@@ -9477,34 +9553,34 @@ mod tests {
             "未锁定的其他卡仍可被自动补齐"
         );
 
-        let before_late_receipt: (i64, Option<i64>, String, String, String, String, i64) = conn
+        let before_late_receipt: (i64, Option<i64>, String, String, String, String) = conn
             .query_row(
-                "SELECT flipped_index, stamina_cost, card_1, card_2, card_3, source, equipment_unreviewed
+                "SELECT flipped_index, stamina_cost, card_1, card_2, card_3, source
                  FROM trial_draws WHERE id = ?1",
                 params![first_id],
                 |row| Ok((
-                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?,
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?,
                 )),
             )
             .unwrap();
-        assert_eq!(before_late_receipt, (2, Some(125), "manual-card".into(), "".into(), "auto-card-three".into(), "auto".into(), 1));
+        assert_eq!(before_late_receipt, (2, Some(125), "manual-card".into(), "".into(), "auto-card-three".into(), "auto".into()));
 
         // A receipt appearing inside the old observation window may revoke the
         // automatic card position too, but it must retain both manual cards,
         // the reward facts, and the stamina fact.
         let late = auto_trial_draw("terminal-manual-equipment:draw:late", 10_500, None);
         db_upsert_auto_trial_draws_with_connection(&mut conn, &parent.source_key, &[late]).unwrap();
-        let after_late_receipt: (i64, Option<i64>, String, String, String, String, i64) = conn
+        let after_late_receipt: (i64, Option<i64>, String, String, String, String) = conn
             .query_row(
-                "SELECT flipped_index, stamina_cost, card_1, card_2, card_3, source, equipment_unreviewed
+                "SELECT flipped_index, stamina_cost, card_1, card_2, card_3, source
                  FROM trial_draws WHERE id = ?1",
                 params![first_id],
                 |row| Ok((
-                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?,
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?,
                 )),
             )
             .unwrap();
-        assert_eq!(after_late_receipt, (0, Some(125), "manual-card".into(), "".into(), "".into(), "auto".into(), 1));
+        assert_eq!(after_late_receipt, (0, Some(125), "manual-card".into(), "".into(), "".into(), "auto".into()));
         let second_card: String = conn
             .query_row("SELECT card_4 FROM trial_draws WHERE id = ?1", params![second_id], |row| row.get(0))
             .unwrap();
@@ -9542,265 +9618,6 @@ mod tests {
             )
             .unwrap();
         assert!(index_exists);
-    }
-
-    #[test]
-    fn complete_draw_review_preserves_all_cards_until_explicitly_revoked() {
-        let (mut conn, path) = create_test_conn();
-        install_fresh_db_for_test(&conn).unwrap();
-        let parent = auto_trial_record("terminal-complete-draw-review");
-        db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
-        let first = auto_trial_draw("terminal-complete-draw-review:draw:first", 10_000, Some(125));
-        let sibling = auto_trial_draw("terminal-complete-draw-review:draw:sibling", 20_000, Some(875));
-        db_upsert_auto_trial_draws_with_connection(
-            &mut conn,
-            &parent.source_key,
-            &[first.clone(), sibling.clone()],
-        )
-        .unwrap();
-        let first_id = format!("trial-draw:{}", first.source_key);
-        let sibling_id = format!("trial-draw:{}", sibling.source_key);
-        db_apply_auto_trial_draw_flip_with_connection(
-            &mut conn,
-            &first.source_key,
-            2,
-            9_000,
-            11_000,
-        )
-        .unwrap();
-        assert_eq!(
-            db_apply_auto_trial_draw_equipment_with_connection(
-                &mut conn,
-                &first.source_key,
-                2,
-                1,
-                "ocr-card-one",
-                9_000,
-                11_000,
-            )
-            .unwrap(),
-            TrialAutoEquipmentUpdateOutcome::Updated
-        );
-        db_update_trial_draw_equipment_with_connection(&mut conn, &first_id, 2, None).unwrap();
-        db_update_trial_draw_equipment_with_connection(
-            &mut conn,
-            &sibling_id,
-            4,
-            Some("sibling-manual-card"),
-        )
-        .unwrap();
-
-        // This action means all five currently visible values have been
-        // checked. Empty slots are part of that decision, not OCR gaps.
-        let initially_reviewed_cards = vec![
-            "ocr-card-one".to_string(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ];
-        db_set_trial_draw_equipment_reviewed_with_connection(
-            &mut conn,
-            &first_id,
-            true,
-            Some(2),
-            Some(&initially_reviewed_cards),
-        )
-        .unwrap();
-        assert_eq!(
-            db_apply_auto_trial_draw_equipment_with_connection(
-                &mut conn,
-                &first.source_key,
-                2,
-                3,
-                "late-ocr-card",
-                9_000,
-                11_000,
-            )
-            .unwrap(),
-            TrialAutoEquipmentUpdateOutcome::Preserved,
-            "完整核对后，空牌位也不能再被迟到 OCR 填入"
-        );
-
-        // A same-window later receipt may still revoke an automatically
-        // detected position, but it cannot clear the reviewed board or reset
-        // its confirmation state.
-        let late = auto_trial_draw("terminal-complete-draw-review:draw:late", 10_500, None);
-        db_upsert_auto_trial_draws_with_connection(&mut conn, &parent.source_key, &[late]).unwrap();
-        let after_late: (i64, String, String, String, String, String, i64) = conn
-            .query_row(
-                "SELECT flipped_index, card_1, card_2, card_3, card_4, card_5,
-                        equipment_unreviewed
-                 FROM trial_draws WHERE id = ?1",
-                params![first_id],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                    ))
-                },
-            )
-            .unwrap();
-        assert_eq!(
-            after_late,
-            (0, "ocr-card-one".into(), "".into(), "".into(), "".into(), "".into(), 0)
-        );
-        let sibling_card: String = conn
-            .query_row(
-                "SELECT card_4 FROM trial_draws WHERE id = ?1",
-                params![sibling_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(sibling_card, "sibling-manual-card", "只能操作当前翻牌明细");
-
-        // Revocation deliberately keeps both the saved board and previous
-        // per-card manual evidence. Only unprotected empty slots may accept
-        // future OCR after the user has made that decision.
-        db_set_trial_draw_equipment_reviewed_with_connection(&mut conn, &first_id, false, None, None)
-            .unwrap();
-        let after_revoke: (String, String, i64, i64) = conn
-            .query_row(
-                "SELECT card_1, card_2, equipment_unreviewed,
-                        (SELECT COUNT(*) FROM trial_draw_equipment_manual_overrides
-                         WHERE draw_id = trial_draws.id)
-                 FROM trial_draws WHERE id = ?1",
-                params![first_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(after_revoke, ("ocr-card-one".into(), "".into(), 1, 1));
-
-        conn.execute(
-            "UPDATE trial_draws SET flipped_index = 2, position_manual = 1 WHERE id = ?1",
-            params![first_id],
-        )
-        .unwrap();
-        let cards_seen_before_late_ocr = vec![
-            "ocr-card-one".to_string(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ];
-        assert_eq!(
-            db_apply_auto_trial_draw_equipment_with_connection(
-                &mut conn,
-                &first.source_key,
-                2,
-                4,
-                "ocr-after-revoke",
-                12_000,
-                12_100,
-            )
-            .unwrap(),
-            TrialAutoEquipmentUpdateOutcome::Updated
-        );
-        let stale_confirm_error = db_set_trial_draw_equipment_reviewed_with_connection(
-            &mut conn,
-            &first_id,
-            true,
-            Some(2),
-            Some(&cards_seen_before_late_ocr),
-        )
-        .unwrap_err();
-        assert_eq!(stale_confirm_error, "牌面已变化，请刷新后重新核对");
-        let stale_confirm_state: i64 = conn
-            .query_row(
-                "SELECT equipment_unreviewed FROM trial_draws WHERE id = ?1",
-                params![first_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(stale_confirm_state, 1, "过期快照不能改变核对状态");
-        assert_eq!(
-            db_apply_auto_trial_draw_equipment_with_connection(
-                &mut conn,
-                &first.source_key,
-                2,
-                2,
-                "must-not-replace-manual-empty",
-                12_000,
-                12_100,
-            )
-            .unwrap(),
-            TrialAutoEquipmentUpdateOutcome::Preserved
-        );
-
-        let cards_seen_after_late_ocr = vec![
-            "ocr-card-one".to_string(),
-            String::new(),
-            String::new(),
-            "ocr-after-revoke".to_string(),
-            String::new(),
-        ];
-        db_set_trial_draw_equipment_reviewed_with_connection(
-            &mut conn,
-            &first_id,
-            true,
-            Some(2),
-            Some(&cards_seen_after_late_ocr),
-        )
-        .unwrap();
-        assert_eq!(
-            db_apply_auto_trial_draw_equipment_with_connection(
-                &mut conn,
-                &first.source_key,
-                2,
-                5,
-                "late-after-confirm",
-                12_000,
-                12_100,
-            )
-            .unwrap(),
-            TrialAutoEquipmentUpdateOutcome::Preserved,
-            "与当前牌面一致的快照确认后仍应保护空牌"
-        );
-
-        assert!(db_set_trial_draw_equipment_reviewed_with_connection(
-            &mut conn,
-            "missing",
-            true,
-            Some(2),
-            Some(&cards_seen_after_late_ocr),
-        )
-        .is_err());
-        let state_after_missing: i64 = conn
-            .query_row(
-                "SELECT equipment_unreviewed FROM trial_draws WHERE id = ?1",
-                params![first_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(state_after_missing, 0, "不存在的明细不能产生部分写入");
-
-        // The immediate transaction must fail without changing the draw when
-        // a concurrent save owns SQLite's write lock.
-        let blocker = Connection::open(&path).unwrap();
-        blocker.execute_batch("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE;").unwrap();
-        conn.execute_batch("PRAGMA busy_timeout = 0;").unwrap();
-        assert!(db_set_trial_draw_equipment_reviewed_with_connection(
-            &mut conn,
-            &first_id,
-            false,
-            None,
-            None,
-        )
-        .is_err());
-        blocker.execute_batch("ROLLBACK;").unwrap();
-        let state_after_locked_write: i64 = conn
-            .query_row(
-                "SELECT equipment_unreviewed FROM trial_draws WHERE id = ?1",
-                params![first_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(state_after_locked_write, 0, "并发失败不能回滚或篡改已存牌面");
     }
 
     #[test]
@@ -9847,5 +9664,229 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).unwrap();
         assert_eq!(saved, (3, String::new()));
+    }
+
+    // ===== V24：版本等级上限 + 角色等级 =====
+
+    fn assert_level_cap_value(conn: &Connection, version_name: &str, expected: Option<i64>) {
+        let level_cap: Option<i64> = conn
+            .query_row(
+                "SELECT level_cap FROM game_versions WHERE name = ?1",
+                params![version_name],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| panic!("查询版本 {} 应成功", version_name));
+        assert_eq!(
+            level_cap, expected,
+            "版本 {} 的 level_cap 应为 {:?}",
+            version_name, expected
+        );
+    }
+
+    #[test]
+    fn v24_fresh_install_seeds_level_caps() {
+        let (conn, _path) = create_test_conn();
+
+        install_fresh_db_for_test(&conn).expect("新装库应初始化成功");
+
+        // 全量 schema 含两列
+        assert!(
+            get_column_names(&conn, "roles").contains(&"level".to_string()),
+            "新装 roles 表应有 level 列"
+        );
+        assert!(
+            get_column_names(&conn, "game_versions").contains(&"level_cap".to_string()),
+            "新装 game_versions 表应有 level_cap 列"
+        );
+
+        // 静态数据回填：丝路风雨=130、苍生铸世=50、其余 NULL
+        assert_level_cap_value(&conn, "丝路风雨", Some(130));
+        assert_level_cap_value(&conn, "苍生铸世", Some(50));
+        // JSON 未配置 level_cap 的版本（奉天证道 sort 6 / 横刀断浪 sort 7）应写 NULL
+        assert_level_cap_value(&conn, "奉天证道", None);
+        assert_level_cap_value(&conn, "横刀断浪", None);
+        // 除配置的 2 个版本外，其余全部为 NULL
+        let null_caps: i64 = conn
+            .query_row("SELECT COUNT(*) FROM game_versions WHERE level_cap IS NULL", [], |row| row.get(0))
+            .expect("统计 NULL level_cap 应成功");
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM game_versions", [], |row| row.get(0))
+            .expect("统计版本总数应成功");
+        assert_eq!(total, 9, "预置版本总数应为 9");
+        assert_eq!(null_caps, total - 2, "未配置 level_cap 的版本数应为总数-2");
+    }
+
+    #[test]
+    fn v24_upgrade_backfills_level_caps_and_keeps_role_rows() {
+        let (conn, _path) = create_test_conn();
+
+        // 通过真实迁移链构造 V23 结构旧库（roles/game_versions 无新列，
+        // 但 seasons/raids 等结构与真实 V23 完全一致，保证 init_static_raids 可执行）
+        ensure_version_tables(&conn).expect("version tables should be created");
+        ensure_baseline_tables(&conn).expect("baseline tables should be created");
+        for v in 1..=23 {
+            conn.execute("BEGIN TRANSACTION", []).expect("begin tx");
+            migration::apply_migration(&conn, v).expect("migration should succeed");
+            set_schema_version(&conn, v, &format!("升级到 V{}", v)).expect("set version");
+            conn.execute("COMMIT", []).expect("commit");
+        }
+
+        // 旧库已有版本行（升级场景：丝路风雨/苍生铸世早已入库）。
+        // 迁移链可能已由 v10/v24 等预置过同名版本行，仅在缺失时补插。
+        conn.execute(
+            "INSERT OR IGNORE INTO game_versions (name, sort_order, created_at) VALUES ('丝路风雨', 8, '2025-01-01T00:00:00+08:00')",
+            [],
+        )
+        .expect("插入丝路风雨应成功");
+        conn.execute(
+            "INSERT OR IGNORE INTO game_versions (name, sort_order, created_at) VALUES ('苍生铸世', 9, '2025-01-01T00:00:00+08:00')",
+            [],
+        )
+        .expect("插入苍生铸世应成功");
+        // 确认两行确实存在（无论预置还是上面补插）
+        let silk_row: i64 = conn
+            .query_row("SELECT COUNT(*) FROM game_versions WHERE name = '丝路风雨'", [], |row| row.get(0))
+            .expect("查询丝路风雨应成功");
+        assert_eq!(silk_row, 1, "升级前库中应有丝路风雨版本行");
+
+        // 旧库已有角色行（升级后 level 应保持 NULL，不报错）
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, created_at, updated_at) VALUES ('acc-1', '测试账号', '2025-01-01T00:00:00+08:00', '2025-01-01T00:00:00+08:00')",
+            [],
+        )
+        .expect("插入账号应成功");
+        conn.execute(
+            "INSERT INTO roles (id, account_id, name, server, created_at, updated_at) VALUES ('role-1', 'acc-1', '测试角色', '梦江南', '2025-01-01T00:00:00+08:00', '2025-01-01T00:00:00+08:00')",
+            [],
+        )
+        .expect("插入角色应成功");
+
+        // 迁移链只推进了 schema_versions 记录，未跑 upgrade_db；
+        // 升级前断言 V23 状态下新列尚不存在
+        assert!(
+            !get_column_names(&conn, "roles").contains(&"level".to_string()),
+            "V23 旧库 roles 不应有 level 列"
+        );
+        assert!(
+            !get_column_names(&conn, "game_versions").contains(&"level_cap".to_string()),
+            "V23 旧库 game_versions 不应有 level_cap 列"
+        );
+
+        upgrade_db_for_test(&conn, 23).expect("V23 → V24 升级应成功");
+
+        // 两列均已补上
+        assert!(
+            get_column_names(&conn, "roles").contains(&"level".to_string()),
+            "升级后 roles 表应有 level 列"
+        );
+        assert!(
+            get_column_names(&conn, "game_versions").contains(&"level_cap".to_string()),
+            "升级后 game_versions 表应有 level_cap 列"
+        );
+
+        // 静态回填覆盖升级场景中已存在的版本行
+        assert_level_cap_value(&conn, "丝路风雨", Some(130));
+        assert_level_cap_value(&conn, "苍生铸世", Some(50));
+
+        // 升级后 init_static_raids 会补齐缺失版本，这些版本不应配置 level_cap
+        assert_level_cap_value(&conn, "奉天证道", None);
+        assert_level_cap_value(&conn, "横刀断浪", None);
+
+        // 旧角色行保留且 level 为 NULL
+        let (role_level, role_name): (Option<i64>, String) = conn
+            .query_row(
+                "SELECT level, name FROM roles WHERE id = 'role-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("查询旧角色行应成功");
+        assert_eq!(role_name, "测试角色", "旧角色行应保留");
+        assert_eq!(role_level, None, "旧角色行 level 应为 NULL");
+    }
+
+    #[test]
+    fn role_level_roundtrip_with_and_without_level_json() {
+        let (conn, _path) = create_test_conn();
+        install_fresh_db_for_test(&conn).expect("测试库应初始化成功");
+
+        let timestamp = get_local_timestamp();
+
+        // 角色外键指向 accounts，先建账号
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, created_at, updated_at) VALUES ('acc-1', '测试账号', ?1, ?1)",
+            params![timestamp],
+        )
+        .expect("插入测试账号应成功");
+
+        // 复刻 db_save_role_structured 的 upsert 逻辑（两入口内部走 init_db 单例，
+        // 测试改在受控连接上验证相同 SQL 的 level 列读写行为）
+        let save_role = |conn: &Connection, role_json: &str| -> Result<(), String> {
+            let role: serde_json::Value =
+                serde_json::from_str(role_json).map_err(|e| format!("解析失败: {}", e))?;
+            let level = role["level"].as_i64();
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM roles WHERE id = ?1",
+                    params![role["id"].as_str().unwrap_or_default()],
+                    |row| row.get::<_, i64>(0).map(|c| c > 0),
+                )
+                .map_err(|e| e.to_string())?;
+            if exists {
+                conn.execute(
+                    "UPDATE roles SET level = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![level, timestamp],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                conn.execute(
+                    "INSERT INTO roles (id, account_id, name, server, region, sect, martial, equipment_score, disabled, level, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, '', '', 0, 0, ?6, ?7)",
+                    params![
+                        role["id"].as_str().unwrap_or_default(),
+                        role["accountId"].as_str().unwrap_or_default(),
+                        role["name"].as_str().unwrap_or_default(),
+                        role["server"].as_str().unwrap_or_default(),
+                        role["region"].as_str().unwrap_or_default(),
+                        level,
+                        timestamp,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        };
+
+        save_role(
+            &conn,
+            r#"{"id":"role-lv","accountId":"acc-1","name":"有等级角色","server":"梦江南","region":"电信一区","level":130}"#,
+        )
+        .expect("保存带 level 的角色应成功");
+        save_role(
+            &conn,
+            r#"{"id":"role-nolv","accountId":"acc-1","name":"无等级角色","server":"梦江南","region":"电信一区"}"#,
+        )
+        .expect("保存无 level 的角色应成功");
+
+        // 复刻 db_get_all_roles 的读取逻辑（level 位于 SELECT 索引 9）
+        let read_levels = |conn: &Connection| -> Vec<(String, Option<i64>)> {
+            let mut stmt = conn
+                .prepare("SELECT r.id, r.level FROM roles r ORDER BY r.id")
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+
+        let levels = read_levels(&conn);
+        assert_eq!(levels.len(), 2, "应有两行角色");
+        assert!(
+            levels.contains(&("role-lv".to_string(), Some(130))),
+            "带 level 的角色应存 130"
+        );
+        assert!(
+            levels.contains(&("role-nolv".to_string(), None)),
+            "JSON 缺 level 字段时应存 NULL"
+        );
     }
 }

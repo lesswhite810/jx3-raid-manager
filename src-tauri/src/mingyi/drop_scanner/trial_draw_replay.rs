@@ -93,8 +93,7 @@ fn assert_saved_draws(conn: &Connection, parent_key: &str, expected: &[TrialDraw
     let mut statement = conn
         .prepare(
             "SELECT sequence, receipt_time, reward_items, stamina_cost, stamina_costs,
-                    flipped_index, card_1, card_2, card_3, card_4, card_5,
-                    equipment_unreviewed
+                    flipped_index, card_1, card_2, card_3, card_4, card_5
              FROM trial_draws
              WHERE trial_record_id = (SELECT id FROM trial_records WHERE source_key = ?1)
              ORDER BY sequence ASC",
@@ -114,7 +113,6 @@ fn assert_saved_draws(conn: &Connection, parent_key: &str, expected: &[TrialDraw
                 row.get::<_, String>(8)?,
                 row.get::<_, String>(9)?,
                 row.get::<_, String>(10)?,
-                row.get::<_, i64>(11)?,
             ))
         })
         .expect("查询内存翻牌记录失败")
@@ -135,7 +133,6 @@ fn assert_saved_draws(conn: &Connection, parent_key: &str, expected: &[TrialDraw
             card_3,
             card_4,
             card_5,
-            equipment_unreviewed,
         ) = row;
         assert_eq!(*sequence, (index + 1) as i64, "翻牌序号必须从 1 连续编号");
         assert_eq!(*receipt_time, evidence.receipt_at_ms);
@@ -171,7 +168,6 @@ fn assert_saved_draws(conn: &Connection, parent_key: &str, expected: &[TrialDraw
                 .all(|card| card.is_empty()),
             "无截图证据时五张牌都应保持未知"
         );
-        assert_eq!(*equipment_unreviewed, 1, "无装备截图证据时应标记待核对");
     }
 }
 
