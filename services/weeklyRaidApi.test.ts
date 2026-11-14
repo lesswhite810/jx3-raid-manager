@@ -39,6 +39,25 @@ describe('getWeeklyRaidDungeons', () => {
         );
     });
 
+    it('兼容新版 status/detail 返回结构', async () => {
+        fetchMock.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                status: 200,
+                detail: {
+                    date: '2026-11-14',
+                    weekly: { raid: ['洛阳之战', '达摩洞', '范阳夜变'] },
+                },
+            }),
+        });
+
+        await expect(getWeeklyRaidDungeons()).resolves.toEqual({
+            date: '2026-11-14',
+            raids: ['洛阳之战', '达摩洞', '范阳夜变'],
+        });
+    });
+
     it('HTTP 错误和网络异常返回空结果', async () => {
         fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
         await expect(getWeeklyRaidDungeons()).resolves.toBeNull();
@@ -66,6 +85,20 @@ describe('getWeeklyRaidDungeons', () => {
             ok: true,
             status: 200,
             json: async () => ({ code: 500, data: { date: '2026-11-05', weekly: { raid: ['洛阳之战'] } } }),
+        });
+        await expect(getWeeklyRaidDungeons()).resolves.toBeNull();
+
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 500, detail: { date: '2026-11-05', weekly: { raid: ['洛阳之战'] } } }),
+        });
+        await expect(getWeeklyRaidDungeons()).resolves.toBeNull();
+
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 200, detail: { date: '2026-11-05', weekly: { raid: ['洛阳之战', null] } } }),
         });
         await expect(getWeeklyRaidDungeons()).resolves.toBeNull();
     });

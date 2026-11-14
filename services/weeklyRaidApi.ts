@@ -8,13 +8,18 @@ export interface WeeklyRaidResult {
     raids: string[];
 }
 
+// jx3api 历史返回 { code, data }，2026-11 起改为 { status, detail }，两种格式兼容解析
 interface WeeklyRaidApiPayload {
     code?: number;
-    data?: {
-        date?: unknown;
-        weekly?: {
-            raid?: unknown;
-        };
+    status?: number;
+    data?: WeeklyRaidApiDetail;
+    detail?: WeeklyRaidApiDetail;
+}
+
+interface WeeklyRaidApiDetail {
+    date?: unknown;
+    weekly?: {
+        raid?: unknown;
     };
 }
 
@@ -91,13 +96,15 @@ export async function getWeeklyRaidDungeons(): Promise<WeeklyRaidResult | null> 
         }
 
         const payload = await response.json() as WeeklyRaidApiPayload;
-        if (payload.code !== 200) {
+        const ok = payload.status ?? payload.code;
+        if (ok !== 200) {
             console.warn('获取周常副本失败：接口业务状态无效');
             return null;
         }
 
-        const date = typeof payload.data?.date === 'string' ? payload.data.date.trim() : '';
-        const raids = normalizeRaidNames(payload.data?.weekly?.raid);
+        const detail = payload.detail ?? payload.data;
+        const date = typeof detail?.date === 'string' ? detail.date.trim() : '';
+        const raids = normalizeRaidNames(detail?.weekly?.raid);
         if (!isValidDate(date) || !raids) {
             console.warn('获取周常副本失败：接口返回结构无效');
             return null;
