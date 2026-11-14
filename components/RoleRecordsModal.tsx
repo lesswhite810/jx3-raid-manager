@@ -90,10 +90,10 @@ export const RoleRecordsModal: React.FC<RoleRecordsModalProps> = ({
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [records, role.id, raid, weekInfo]);
 
-  // 用于统计的记录：排除待确认和已拒绝的自动扫描记录
+  // 用于统计的记录：排除待确认、已拒绝和扫描中的自动扫描记录
   const confirmedRoleRecords = useMemo(() => {
     return roleRecords.filter(r => {
-      if (r.source === 'auto' && (r.status === 'pending' || r.status === 'rejected')) return false;
+      if (r.source === 'auto' && (r.status === 'pending' || r.status === 'rejected' || r.status === 'scanning')) return false;
       return true;
     });
   }, [roleRecords]);

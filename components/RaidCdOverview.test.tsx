@@ -177,6 +177,17 @@ describe('RaidCdOverview', () => {
     expect(markup).toContain('bg-ds-warning-soft');
   });
 
+  it('有扫描中记录的格子同样显示待确认，不弹添加提示', () => {
+    const markup = renderOverview({
+      records: [makeRecord({ source: 'auto', status: 'scanning' })],
+    });
+
+    expect(markup).toContain('待确认');
+    expect(markup).toContain('bg-ds-warning-soft');
+    // 团队副本格子的点击提示引导处理待确认记录，而不是添加记录
+    expect(markup).toContain('（点击处理该角色该副本的待确认记录）');
+  });
+
   it('装分列展示装分，未填写时显示占位符', () => {
     const scored = renderOverview({
       account: { ...ACCOUNT, roles: [{ ...ACCOUNT.roles[0], equipmentScore: 213456 }] },

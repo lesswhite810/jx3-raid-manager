@@ -80,11 +80,27 @@ pub struct TrialCaptureAnchor {
     pub occurred_at_ms: i64,
 }
 
+/// 正在进行中的试炼（已通过若干关但尚未出现终局事件）。它只用于 UI 提示，
+/// 绝不作为截图观察或翻牌窗口的输入。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrialInProgress {
+    pub map_id: i64,
+    pub layer: Option<i32>,
+    /// 已通过的第几关（1 或 2）。
+    pub stage: usize,
+    /// 第一、二关已知的首领名，未过的关卡以空字符串占位。
+    pub bosses: [String; 2],
+    pub last_event_at_ms: i64,
+    pub saved_progress: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrialScanResult {
     pub candidates: Vec<TrialScanCandidate>,
     pub stage_signals: Vec<TrialStageSignal>,
     pub capture_anchors: Vec<TrialCaptureAnchor>,
+    pub in_progress: Option<TrialInProgress>,
 }
 
 impl TrialScanResult {
@@ -287,11 +303,11 @@ impl Run {
     }
 
     fn can_resume(&self, event: &Event, boss: Option<&str>) -> bool {
-        let Some(saved_at) = self.saved_at else {
-            return false;
-        };
+        // 跨游戏周绝不续接；本周内的跨时段续打（如周一打老一、周五继续老二）
+        // 允许接回链条，无论是否写过「当前进度已保存。」存档——存档只是加分
+        // 项，同层逐关递进本身就足以证明是同一条进度链。
         if event.timestamp_ms < self.last_ms
-            || game_week_start_ms(saved_at) != game_week_start_ms(event.timestamp_ms)
+            || !self.runs_in_same_game_week(event.timestamp_ms)
             || self
                 .retry_boss
                 .as_deref()
@@ -309,6 +325,13 @@ impl Run {
             Kind::Failed => true,
             Kind::WeeklyCredit => false,
         }
+    }
+
+    /// 存档时间与事件是否属于同一游戏周。无存档时退回用上次事件时间判断，
+    /// 使未写过存档的跨时段续打同样受"仅本周"约束。
+    fn runs_in_same_game_week(&self, event_ms: i64) -> bool {
+        let anchor = self.saved_at.unwrap_or(self.last_ms);
+        anchor > 0 && game_week_start_ms(anchor) == game_week_start_ms(event_ms)
     }
 }
 
@@ -365,7 +388,17 @@ pub fn scan_trial_records(
             parsed.push(file);
         }
     }
-    Ok(group(expected_uid, parsed, start_ms, end_ms))
+    let mut result = group(expected_uid, parsed, start_ms, end_ms);
+    // 进行中提示只对"当前确实还在打"的进度有意义：最后一次试炼事件距今超过
+    // 一个战斗间隔（45 分钟）就视为已中断（周一打完老一后弃坑的情况），不再
+    // 显示徽标。历史补扫（JCL 是几天前的）天然落在阈值之外。
+    if let Some(progress) = result.in_progress.as_ref() {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        if now_ms.saturating_sub(progress.last_event_at_ms) > TRIAL_RUN_GAP_MS {
+            result.in_progress = None;
+        }
+    }
+    Ok(result)
 }
 
 fn cached_parse(
@@ -705,6 +738,21 @@ fn group(uid: &str, files: Vec<TrialFile>, start_ms: i64, end_ms: i64) -> TrialS
             }
         }
     }
+    // 循环结束后仍存活且已通过至少一关的 Run 即为进行中的试炼。失败重试中
+    // （retry_boss 非空）也视为进行中：玩家停在同层等待重新挑战。
+    if let Some(run) = active.as_ref().filter(|run| run.last_stage > 0) {
+        result.in_progress = Some(TrialInProgress {
+            map_id: run.map_id,
+            layer: run.layer,
+            stage: run.last_stage,
+            bosses: [
+                run.bosses[0].clone().unwrap_or_default(),
+                run.bosses[1].clone().unwrap_or_default(),
+            ],
+            last_event_at_ms: run.last_ms,
+            saved_progress: run.saved_at.is_some(),
+        });
+    }
     result
 }
 
@@ -1033,6 +1081,25 @@ mod tests {
     }
 
     #[test]
+    fn long_break_resumes_within_the_game_week_even_without_a_save() {
+        // 放宽后的续接规则：只要同游戏周、同层逐关递进，跨时段（甚至没有写过
+        // 存档）也能接回链条，bosses 与状态与有存档时一致。
+        let t = 1_793_638_576_000;
+        let later = t + 22 * 3_600_000;
+        let mut first = saved_stage(t, 1);
+        first.saved_progress = false;
+        let files = vec![
+            file(146, "寅", vec![first]),
+            file(146, "濯尘", vec![event(later, Kind::Stage { layer: 6, stage: 2 })]),
+            file(146, "叶冬辰", vec![event(later + 1000, Kind::Finish { layer: None })]),
+        ];
+        let candidates = group("123456", files, 0, 0);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].status, TrialCandidateStatus::Confirmed);
+        assert_eq!(candidates[0].bosses, ["寅", "濯尘", "叶冬辰"]);
+    }
+
+    #[test]
     fn long_break_requires_a_compatible_unconsumed_save_from_the_same_game_week() {
         let t = 1_793_638_576_000;
         let later = t + 22 * 3_600_000;
@@ -1041,27 +1108,23 @@ mod tests {
         assert_eq!(game_week_start_ms(t), week_start);
         assert_eq!(game_week_start_ms(next_reset - 1), week_start);
         assert_eq!(game_week_start_ms(next_reset), next_reset);
-        for (reason, saved, interruption, time, layer) in [
-            ("首关没有存档", false, None, later, 6),
-            ("不同层数", true, None, later, 7),
-            ("跨周", true, None, next_reset, 6),
+        for (reason, interruption, time, layer) in [
+            ("不同层数", None, later, 7),
+            ("跨周", None, next_reset, 6),
             (
                 "重试了另一位首领",
-                true,
                 Some(file(146, "方鹤影", vec![event(t + 1000, Kind::Failed)])),
                 later,
                 6,
             ),
             (
                 "已在另一张试炼地图参战",
-                true,
                 Some(file(147, "濯尘", vec![])),
                 later,
                 6,
             ),
             (
                 "上一轮已有周任务结算",
-                true,
                 Some(file(
                     146,
                     "叶冬辰",
@@ -1071,8 +1134,7 @@ mod tests {
                 6,
             ),
         ] {
-            let mut first = saved_stage(t, 1);
-            first.saved_progress = saved;
+            let first = saved_stage(t, 1);
             let mut files = vec![file(146, "寅", vec![first])];
             files.extend(interruption);
             files.push(file(

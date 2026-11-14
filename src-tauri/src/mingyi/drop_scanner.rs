@@ -912,6 +912,124 @@ fn scan_jcl_files_with_trial_context(
         }
     }
 
+    // 离线路径（「扫描本周」等，since_ms=0）没有进程启动时间可依托，改为以
+    // 「目录 mtime + 扫描窗口」为键复用上一次枚举结果：JCL 文件一旦封存不再
+    // 变更，目录 mtime 不变则目录内容与各文件解析结果都不会变化，直接返回
+    // 缓存即可。新文件写入会更新目录 mtime，缓存自然失效。
+    if since_ms <= 0 {
+        if let Ok(dir_mtime) = std::fs::metadata(&combat_logs_dir).and_then(|meta| meta.modified())
+        {
+            let dir_mtime_ms = dir_mtime
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0);
+            let key = JclScanCacheKey {
+                dir: combat_logs_dir.clone(),
+                dir_mtime_ms,
+                start_ms,
+                end_ms,
+                trial_context_start_ms,
+            };
+            if let Some(cached) = JCL_SCAN_CACHE.lock().ok().and_then(|mut cache| cache.get(&key))
+            {
+                log::debug!(
+                    "[DropScanner] 目录未变化（mtime={}），复用上次 JCL 枚举结果: 常规 {} 个, 试炼 {} 个",
+                    dir_mtime_ms,
+                    cached.0.len(),
+                    cached.1.len()
+                );
+                return Ok(cached);
+            }
+
+            let result = scan_jcl_files_full_range(
+                &combat_logs_dir,
+                since_ms,
+                start_ms,
+                end_ms,
+                trial_context_start_ms,
+            )?;
+            if let Ok(mut cache) = JCL_SCAN_CACHE.lock() {
+                cache.put(key, result.clone());
+            }
+            return Ok(result);
+        }
+    }
+
+    scan_jcl_files_full_range(
+        &combat_logs_dir,
+        since_ms,
+        start_ms,
+        end_ms,
+        trial_context_start_ms,
+    )
+}
+
+/// 离线 JCL 枚举缓存的键：目录路径 + 目录 mtime + 扫描窗口。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct JclScanCacheKey {
+    dir: PathBuf,
+    dir_mtime_ms: i64,
+    start_ms: i64,
+    end_ms: i64,
+    trial_context_start_ms: i64,
+}
+
+/// 离线 JCL 枚举结果缓存：目录 mtime 未变化时直接复用上一次枚举。
+/// 上限 8 个账号（JCL 目录只在新增文件时变 mtime，进程生命周期内命中率高）。
+/// 用 Vec 保存键序实现简单的 LRU 淘汰，避免引入 lru 依赖。
+static JCL_SCAN_CACHE: LazyLock<Mutex<JclScanCache>> =
+    LazyLock::new(|| Mutex::new(JclScanCache::new(8)));
+
+#[derive(Default)]
+struct JclScanCache {
+    entries: HashMap<JclScanCacheKey, (Vec<JclFileInfo>, Vec<JclFileInfo>, bool)>,
+    order: Vec<JclScanCacheKey>,
+    max_entries: usize,
+}
+
+impl JclScanCache {
+    fn new(max_entries: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: Vec::new(),
+            max_entries,
+        }
+    }
+
+    fn get(
+        &mut self,
+        key: &JclScanCacheKey,
+    ) -> Option<(Vec<JclFileInfo>, Vec<JclFileInfo>, bool)> {
+        let hit = self.entries.get(key).cloned()?;
+        // 命中后移到队尾（最近使用）
+        self.order.retain(|k| k != key);
+        self.order.push(key.clone());
+        Some(hit)
+    }
+
+    fn put(&mut self, key: JclScanCacheKey, value: (Vec<JclFileInfo>, Vec<JclFileInfo>, bool)) {
+        if !self.entries.contains_key(&key) && self.order.len() >= self.max_entries {
+            let evicted = self.order.remove(0);
+            self.entries.remove(&evicted);
+        }
+        self.order.retain(|k| k != &key);
+        self.order.push(key.clone());
+        self.entries.insert(key, value);
+    }
+}
+
+/// 完整枚举 combat_logs 目录：按文件名日期窗口过滤并分类常规/试炼 JCL。
+///
+/// `since_ms > 0`（实时会话）时额外按文件 mtime 过滤本会话文件；
+/// 离线路径传 0（离线语义本就不做 mtime 过滤，仅靠目录 mtime 缓存去重）。
+fn scan_jcl_files_full_range(
+    combat_logs_dir: &Path,
+    since_ms: i64,
+    start_ms: i64,
+    end_ms: i64,
+    trial_context_start_ms: i64,
+) -> Result<(Vec<JclFileInfo>, Vec<JclFileInfo>, bool), String> {
+
     let start_date = (start_ms > 0).then(|| timestamp_to_local_date_string(start_ms));
     let trial_start_date = (trial_context_start_ms > 0)
         .then(|| timestamp_to_local_date_string(trial_context_start_ms));
@@ -4349,7 +4467,7 @@ pub fn scan_raid_drops_internal(
     process_start_ms: i64,
     start_ms: i64,
     end_ms: i64,
-) -> Result<usize, String> {
+) -> Result<RaidScanOutcome, String> {
     scan_raid_drops_with_raids(
         account_id,
         jx3_running,
@@ -4406,6 +4524,16 @@ fn trial_scan_window(
     (trial_scan_start_ms, trial_context_start_ms)
 }
 
+/// 单个账号一次扫描的总结果：常规副本与试炼通关的写入数量，以及解析出的
+/// 「进行中试炼」提示（仅实时轮询/范围扫描时可能有值，供 UI 展示）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct RaidScanOutcome {
+    /// 写入/更新的记录总数（常规副本实例 + 试炼通关记录）。
+    pub inserted_count: usize,
+    /// 正在打但尚未出终局的试炼（None 表示没有进行中的试炼）。
+    pub trial_in_progress: Option<trial::TrialInProgress>,
+}
+
 pub fn scan_raid_drops_with_raids(
     account_id: &str,
     jx3_running: bool,
@@ -4415,7 +4543,7 @@ pub fn scan_raid_drops_with_raids(
     end_ms: i64,
     pre_loaded_raids: Option<&[RaidEntry]>,
     known_next_jcl_time: Option<i64>,
-) -> Result<usize, String> {
+) -> Result<RaidScanOutcome, String> {
     log::info!(
         "[DropScanner] 开始扫描账号 {} 的掉落记录 (jx3_running={}, role_online={}, process_start_ms={}, start_ms={}, end_ms={}, known_next_jcl={:?})",
         account_id, jx3_running, role_online, process_start_ms, start_ms, end_ms, known_next_jcl_time
@@ -4519,7 +4647,7 @@ pub fn scan_raid_drops_with_raids(
     };
     if jcl_files.is_empty() && trial_jcl_files.is_empty() && cached_trial_candidates.is_empty() {
         log::info!("[DropScanner] 账号 {} 本次会话无 JCL 文件", account_id);
-        return Ok(0);
+        return Ok(RaidScanOutcome::default());
     }
 
     log::info!(
@@ -4580,7 +4708,7 @@ pub fn scan_raid_drops_with_raids(
 
     // 纯试炼会话无候选时不打开数据库，也不报告为一次成功的记录写入。
     // 如果试炼解析确实失败而没有团本可继续处理，向调用方返回错误，避免静默漏记。
-    let trial_scan = match trial_scan_result {
+    let mut trial_scan = match trial_scan_result {
         Ok(scan) => scan,
         Err(error) if configured_jcl_files.is_empty() => {
             return Err(format!("试炼日志解析失败: {}", error));
@@ -4633,12 +4761,38 @@ pub fn scan_raid_drops_with_raids(
     };
     trial_candidates.sort_by_key(|candidate| candidate.completed_at_ms);
 
+    // 「进行中试炼」提示只在玩家确实还站在试炼里时展示。三个否定条件任一成立
+    // 即隐藏：
+    // 1. 非实时会话（扫描本周 / JX3 退出后补扫）——历史数据没有"现在"可言；
+    // 2. 角色已离线且本会话没有晚于最后试炼事件的任何 JCL——例如 8 点打了
+    //    半场后退出游戏，徽标应立即消失而不是等 45 分钟超时；
+    // 3. 本会话在最后试炼事件之后出现了非试炼的 JCL——玩家转场去打别的副本，
+    //    试炼进度链已经中断。
+    let trial_in_progress = trial_scan.in_progress.take_if(|progress| {
+        if !realtime_trial_session {
+            return false;
+        }
+        let has_later_any_jcl = all_session_jcl_files
+            .iter()
+            .any(|file| file.timestamp > progress.last_event_at_ms);
+        let has_later_non_trial_jcl = jcl_files
+            .iter()
+            .any(|file| file.timestamp > progress.last_event_at_ms);
+        if has_later_non_trial_jcl {
+            return false;
+        }
+        role_online || has_later_any_jcl
+    });
+
     if configured_jcl_files.is_empty() && trial_candidates.is_empty() {
         log::info!(
             "[DropScanner] 账号 {} 过滤后无已配置副本的 JCL 文件",
             account_id
         );
-        return Ok(0);
+        return Ok(RaidScanOutcome {
+            inserted_count: 0,
+            trial_in_progress,
+        });
     }
 
     // records 与 trial_records 都需要数据库 UUID。延后到确认需要写入后才解析，
@@ -4652,8 +4806,11 @@ pub fn scan_raid_drops_with_raids(
                 "[DropScanner] 账号 {} 角色未在数据库登记，跳过自动扫描",
                 account_id
             );
-        return Ok(0);
-    }
+            return Ok(RaidScanOutcome {
+                inserted_count: 0,
+                trial_in_progress,
+            });
+        }
         Err(error) => {
             log::error!(
                 "[DropScanner] 账号 {} 解析角色身份失败: {}",
@@ -4843,7 +5000,10 @@ pub fn scan_raid_drops_with_raids(
     };
 
     if configured_jcl_files.is_empty() {
-        return Ok(trial_inserted_count);
+        return Ok(RaidScanOutcome {
+            inserted_count: trial_inserted_count,
+            trial_in_progress,
+        });
     }
 
     // 如果 JX3 进程在运行且本次会话有已配置副本的 JCL 文件产生，说明角色正在打本，
@@ -5335,7 +5495,10 @@ pub fn scan_raid_drops_with_raids(
         inserted_count
     );
 
-    Ok(inserted_count + trial_inserted_count)
+    Ok(RaidScanOutcome {
+        inserted_count: inserted_count + trial_inserted_count,
+        trial_in_progress,
+    })
 }
 
 /// Tauri 命令：扫描指定账号的掉落记录
@@ -5346,7 +5509,7 @@ pub fn scan_raid_drops_with_raids(
 /// 自动获取 JX3 进程状态和角色在线状态（基于 chatlog mtime），
 /// 传递给 `scan_raid_drops_internal` 用于副本完成判断。
 #[tauri::command]
-pub async fn scan_raid_drops(account_id: String) -> Result<usize, String> {
+pub async fn scan_raid_drops(account_id: String) -> Result<RaidScanOutcome, String> {
     tokio::task::spawn_blocking(move || {
         let game_dir = get_game_directory()?;
         let game_path = PathBuf::from(&game_dir);
@@ -5396,6 +5559,9 @@ pub struct AccountScanResult {
     /// 代表父通关/副本记录变化，保持既有统计口径。
     #[serde(default)]
     pub trial_draws_changed: bool,
+    /// 该账号正在打但尚未出终局的试炼（None 表示没有），仅用于 UI 提示。
+    #[serde(default)]
+    pub trial_in_progress: Option<trial::TrialInProgress>,
     /// 失败原因（失败时）
     pub error: Option<String>,
 }
@@ -5434,7 +5600,8 @@ fn scanned_recent_uids() -> &'static Mutex<HashSet<String>> {
 /// 副本完成判断依赖两个外部信号：
 /// - `jx3_running`: 整个批量扫描共用，来自 JX3 进程状态
 /// - `role_online`: 每个账号独立计算，基于该账号 chatlog 最新 mtime（5 分钟阈值）
-pub fn scan_all_active_raid_drops_internal() -> Result<Vec<(String, Result<usize, String>)>, String>
+pub fn scan_all_active_raid_drops_internal()
+-> Result<Vec<(String, Result<RaidScanOutcome, String>)>, String>
 {
     let scan_started_at_outer = std::time::Instant::now();
     let game_dir_outer = get_game_directory()?;
@@ -5518,7 +5685,7 @@ fn scan_all_active_raid_drops_internal_impl(
     active_result: crate::mingyi::active_detector::BatchActiveResult,
     preloaded_raids: Option<&[RaidEntry]>,
     scan_started_at: std::time::Instant,
-) -> Result<Vec<(String, Result<usize, String>)>, String> {
+) -> Result<Vec<(String, Result<RaidScanOutcome, String>)>, String> {
     let jx3_running = active_result.jx3_running;
 
     // 从 active_result 获取进程启动时间（用于过滤 JCL 文件，只扫描本次会话产生的）
@@ -5573,7 +5740,7 @@ fn scan_all_active_raid_drops_internal_impl(
     );
 
     // 3. 对每个活跃角色执行扫描
-    let mut results: Vec<(String, Result<usize, String>)> = Vec::new();
+    let mut results: Vec<(String, Result<RaidScanOutcome, String>)> = Vec::new();
     let game_path = PathBuf::from(&game_dir);
     let accounts_base = game_path.join(MINGYI_ACCOUNTS_BASE_PATH);
 
@@ -5647,7 +5814,7 @@ fn scan_all_active_raid_drops_internal_impl(
     let failed_count = results.len() - success_count;
     let total_instances: usize = results
         .iter()
-        .filter_map(|(_, r)| r.as_ref().ok().copied())
+        .filter_map(|(_, r)| r.as_ref().ok().map(|outcome| outcome.inserted_count))
         .sum();
     let elapsed_ms = scan_started_at.elapsed().as_millis();
 
@@ -6127,11 +6294,12 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
         Ok(raw
             .into_iter()
             .map(|(uid, res)| match res {
-                Ok(n) => AccountScanResult {
+                Ok(outcome) => AccountScanResult {
                     account_id: uid,
                     success: true,
-                    instance_count: Some(n),
+                    instance_count: Some(outcome.inserted_count),
                     trial_draws_changed,
+                    trial_in_progress: outcome.trial_in_progress,
                     error: None,
                 },
                 Err(e) => AccountScanResult {
@@ -6141,6 +6309,7 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
                     // 子翻牌可能已部分写入后才报告剩余一笔失败，前端仍应刷新以
                     // 展示已持久化的部分，并把错误交给用户重扫补齐。
                     trial_draws_changed,
+                    trial_in_progress: None,
                     error: Some(e),
                 },
             })
@@ -6262,17 +6431,18 @@ pub async fn scan_raids_in_range(
                                 None, // 范围扫描路径：区间由调用方给定，不注入额外的切换点信号
                             );
                             match result {
-                                Ok(n) => {
+                                Ok(outcome) => {
                                     log::info!(
                                         "[DropScanner] 账号 {} 时间范围扫描完成: {} 个副本实例",
-                                        account_id, n
+                                        account_id, outcome.inserted_count
                                     );
                                     local_results.push(AccountScanResult {
                                         account_id,
                                         success: true,
-                                        instance_count: Some(n),
+                                        instance_count: Some(outcome.inserted_count),
                                         trial_draws_changed: trial_draw_revision()
                                             != draw_revision_before,
+                                        trial_in_progress: outcome.trial_in_progress,
                                         error: None,
                                     });
                                 }
@@ -6287,6 +6457,7 @@ pub async fn scan_raids_in_range(
                                         instance_count: None,
                                         trial_draws_changed: trial_draw_revision()
                                             != draw_revision_before,
+                                        trial_in_progress: None,
                                         error: Some(e),
                                     });
                                 }

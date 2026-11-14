@@ -8,6 +8,7 @@ import { BaizhanManager } from './BaizhanManager';
 import { VersionSelect } from './VersionSelect';
 import { TrialPlaceRecord, Account, BaizhanRecord, RaidRecord } from '../types';
 import { db } from '../services/db';
+import { TrialInProgressWithAccount } from '../services/dropScanner';
 import { useCancellableEffect } from '../hooks/useCancellableEffect';
 import { RaidDetail } from './RaidDetail';
 import { RaidCdOverview } from './RaidCdOverview';
@@ -45,6 +46,8 @@ interface RaidManagerProps {
   onConfigChange?: (updater: (prev: Config) => Config) => void;
   weeklyRaidNames: string[];
   weeklyRaidStatus?: 'loading' | 'success' | 'error';
+  /** 正在打但尚未出终局的试炼列表（来自自动轮询扫描） */
+  trialInProgressList?: TrialInProgressWithAccount[];
 }
 
 interface RaidCellAction {
@@ -83,7 +86,8 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   onRefreshBaizhanRecords,
   onConfigChange,
   weeklyRaidNames,
-  weeklyRaidStatus = 'success'
+  weeklyRaidStatus = 'success',
+  trialInProgressList,
 }) => {
   // 当前页面：概览（含 CD 概览表与赛季副本卡片）/ 试炼之地 / 百战 / 单个副本详情由 selectedRaid 控制。
   // 试炼之地与百战不再占据顶部页签，只通过 CD 概览表的列头进入。
@@ -741,6 +745,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 onRefreshTrialRecords={onRefreshTrialRecords}
                 openSignal={pendingPanelOpenSignal}
                 openScope={pendingPanelOpenScope}
+                trialInProgressList={trialInProgressList}
               />
               {versions.length > 0 && (
                 <VersionSelect

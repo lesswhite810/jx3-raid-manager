@@ -7,7 +7,7 @@ import {
   Boxes,
 } from 'lucide-react';
 import { Raid, RaidRecord, ScrapsItem, Account, IncomeCandidate } from '../types';
-import { dropScannerService } from '../services/dropScanner';
+import { dropScannerService, TrialInProgressWithAccount } from '../services/dropScanner';
 import { db } from '../services/db';
 import { getLastMonday, getNextMonday, getTenPersonCycle, getMonthStart, getMonthEnd } from '../utils/cooldownManager';
 import { getBaseServerName } from '../utils/serverUtils';
@@ -55,7 +55,18 @@ interface PendingRecordsPanelProps {
    * 不传或为 null 时展示全部待确认记录（如点击面板上的常驻按钮）。
    */
   openScope?: PendingRecordScope | null;
+  /**
+   * 正在打但尚未出终局的试炼列表（来自自动轮询扫描）。
+   * 面板自身「扫描本周」的结果会合并进本地状态展示。
+   */
+  trialInProgressList?: TrialInProgressWithAccount[];
 }
+
+/** 格式化进行中试炼的提示文案：如「试炼之地·第6层第2关·进行中」 */
+const formatTrialInProgress = (item: TrialInProgressWithAccount): string => {
+  const layerText = item.layer ? `第${item.layer}层` : '';
+  return `试炼之地·${layerText}第${item.stage}关·进行中`;
+};
 
 interface RoleInfo {
   name: string;
@@ -102,6 +113,7 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   onRefreshTrialRecords,
   openSignal,
   openScope = null,
+  trialInProgressList,
 }) => {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [cdConflictRecord, setCdConflictRecord] = useState<RaidRecord | null>(null);
@@ -112,6 +124,10 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
   const [isScanningThisWeek, setIsScanningThisWeek] = useState(false);
   const [isScanMenuOpen, setIsScanMenuOpen] = useState(false);
   const scanMenuRef = useRef<HTMLDivElement>(null);
+  // 面板自身手动扫描发现的进行中试炼（与外部轮询路径的 trialInProgressList 合并展示）
+  const [manualTrialInProgress, setManualTrialInProgress] = useState<TrialInProgressWithAccount[]>([]);
+  // 进行中试炼：本地手动扫描结果优先（更新），否则用外部轮询结果
+  const displayTrialInProgress = manualTrialInProgress.length > 0 ? manualTrialInProgress : (trialInProgressList ?? []);
   // Debug 模式：仅在开启时显示「扫描本月」下拉选项
   const { debugEnabled } = useDebug();
 
@@ -417,6 +433,15 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       const totalScanned = results.reduce((sum, r) => sum + (r.instanceCount ?? 0), 0);
       const failedCount = results.filter(r => !r.success).length;
       const trialDrawsChanged = results.some(result => result.trialDrawsChanged);
+      // 提取进行中试炼，供扫描按钮旁的提示展示（无则清空，避免过期提示）
+      setManualTrialInProgress(
+        results
+          .filter(result => result.success && result.trialInProgress)
+          .map(result => ({
+            accountId: result.accountId,
+            ...(result.trialInProgress as NonNullable<typeof result.trialInProgress>),
+          })),
+      );
       if (totalScanned > 0) {
         toast.success(`扫描完成，处理 ${totalScanned} 条副本或试炼记录`);
         onRefreshRecords?.();
@@ -536,6 +561,18 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     <>
       <div className="flex items-center gap-2">
         {scanMenu}
+
+        {/* 进行中试炼提示：扫描发现玩家正在试炼但尚未出终局时显示 */}
+        {displayTrialInProgress.length > 0 && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-ds-warning-soft dark:border-ds-warning-soft bg-ds-warning-soft dark:bg-ds-warning-soft/20 text-ds-warning-strong dark:text-ds-warning-strong text-sm font-medium">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>
+              {displayTrialInProgress.length === 1
+                ? formatTrialInProgress(displayTrialInProgress[0])
+                : `试炼进行中（${displayTrialInProgress.length} 个角色）`}
+            </span>
+          </div>
+        )}
 
         {/* 待确认按钮：仅在有待确认记录时显示 */}
         {pendingRecords.length > 0 && (

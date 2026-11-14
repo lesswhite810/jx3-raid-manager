@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useActivePoller } from '../contexts/ActivePollerContext';
-import { dropScannerService } from '../services/dropScanner';
+import {
+  AccountScanResult,
+  dropScannerService,
+  TrialInProgressWithAccount,
+} from '../services/dropScanner';
 import { getLastMonday, getNextMonday } from '../utils/cooldownManager';
 
 /**
@@ -46,6 +50,8 @@ export interface UseDropScannerReturn {
   lastError: string | null;
   /** 最近一次扫描时间（毫秒时间戳） */
   lastScanAt: number | null;
+  /** 正在打但尚未出终局的试炼列表（按账号聚合，最近一次扫描结果） */
+  trialInProgressList: TrialInProgressWithAccount[];
   /** 手动触发一次扫描（绕过节流） */
   refresh: () => Promise<void>;
   /**
@@ -64,6 +70,19 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
   const [isScanning, setIsScanning] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastScanAt, setLastScanAt] = useState<number | null>(null);
+  const [trialInProgressList, setTrialInProgressList] = useState<TrialInProgressWithAccount[]>([]);
+
+  // 从扫描结果中提取进行中试炼并整体覆盖状态（无试炼时清空，避免 stale 提示）
+  const collectTrialInProgress = useCallback((scanResults: AccountScanResult[]) => {
+    setTrialInProgressList(
+      scanResults
+        .filter(result => result.success && result.trialInProgress)
+        .map(result => ({
+          accountId: result.accountId,
+          ...(result.trialInProgress as NonNullable<AccountScanResult['trialInProgress']>),
+        })),
+    );
+  }, []);
 
   // 防止并发扫描
   const isScanningRef = useRef(false);
@@ -106,6 +125,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
 
       setLastScanAt(Date.now());
       setLastError(null);
+      collectTrialInProgress(scanResults);
 
       if (totalScanned > 0 || scanResults.some(result => result.trialDrawsChanged)) {
         onRecordsUpdatedRef.current?.(totalScanned);
@@ -123,7 +143,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
       isScanningRef.current = false;
       setIsScanning(false);
     }
-  }, []);
+  }, [collectTrialInProgress]);
 
   // 订阅活跃检测结果 + 30 秒轮询（仅在自动扫描开启时）
   useEffect(() => {
@@ -193,6 +213,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
 
       setLastScanAt(Date.now());
       setLastError(null);
+      collectTrialInProgress(scanResults);
 
       if (totalScanned > 0 || scanResults.some(result => result.trialDrawsChanged)) {
         onRecordsUpdatedRef.current?.(totalScanned);
@@ -213,7 +234,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
       isScanningRef.current = false;
       setIsScanning(false);
     }
-  }, []);
+  }, [collectTrialInProgress]);
 
   // JX3 退出时触发一次"最终扫描"（离线扫描）
   // 原因：茗伊 chatlog 插件在 JX3 运行时不会实时 flush 聊天记录到磁盘，
@@ -305,6 +326,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
                 }
                 setLastScanAt(Date.now());
                 setLastError(null);
+                collectTrialInProgress(scanResults);
 
                 console.log(
                   `${LOG_TAG} [exit] 会话 ${i + 1}/${sessions.length} 完成：账号 ${sessionSuccess}/${scanResults.length}（失败 ${sessionFailed}），副本实例 ${sessionScanned} 个，耗时 ${sessionElapsedMs}ms`,
@@ -341,6 +363,7 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
     isScanning,
     lastError,
     lastScanAt,
+    trialInProgressList,
     refresh,
     scanThisWeek,
   };

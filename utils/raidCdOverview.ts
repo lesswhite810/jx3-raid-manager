@@ -12,7 +12,7 @@ import { shouldShowRoleByLevel } from './roleLevelFilter';
  * CD 概览单元格状态。
  * - none：本周尚未清（还需要打）
  * - partial：部分 BOSS 已清
- * - pending：有自动扫描记录待确认（未确认前不算已清）
+ * - pending：有自动扫描记录待确认或扫描中（确认前、扫描完成前都不算已清）
  * - complete：本周已清完
  * - na：该副本难度不适用该角色（10 人本不展示代清号角色）
  */
@@ -159,9 +159,9 @@ const matchesRaidInstance = (record: RaidRecord, raid: Raid): boolean => {
   );
 };
 
-/** 与 RaidDetail 一致：自动扫描的待确认 / 已拒绝记录不参与"已清"统计 */
+/** 与 RaidDetail 一致：自动扫描的待确认 / 已拒绝 / 扫描中记录不参与"已清"统计 */
 const isConfirmedRecord = (record: RaidRecord): boolean =>
-  !(record.source === 'auto' && (record.status === 'pending' || record.status === 'rejected'));
+  !(record.source === 'auto' && (record.status === 'pending' || record.status === 'rejected' || record.status === 'scanning'));
 
 /** 与 RaidDetail 一致：单条记录按 bossIds 展开为多条 BOSS 记录 */
 const expandBossRecords = (records: RaidRecord[]): BossRecord[] =>
@@ -332,8 +332,9 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
     rowSources.forEach(({ account, roleId, inRaid }) => {
       const isClientAccount = account.type === AccountType.CLIENT;
       const roleRecords = confirmedRecords.filter(record => record.roleId === roleId);
+      // 扫描中的记录和待确认一样不可确认，单元格同样按「待确认」处理，避免误弹添加界面
       const hasPendingRecord = weekRecords.some(
-        record => record.roleId === roleId && record.source === 'auto' && record.status === 'pending',
+        record => record.roleId === roleId && record.source === 'auto' && (record.status === 'pending' || record.status === 'scanning'),
       );
 
       let cell: CdCell;

@@ -251,9 +251,9 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
         new Date(r.date).getTime() <= periodEndTime;
     });
 
-    // 用于统计的记录：排除待确认和已拒绝的自动扫描记录
+    // 用于统计的记录：排除待确认、已拒绝和扫描中的自动扫描记录
     const confirmedThisWeekRecords = thisWeekRecords.filter(r => {
-      if (r.source === 'auto' && (r.status === 'pending' || r.status === 'rejected')) return false;
+      if (r.source === 'auto' && (r.status === 'pending' || r.status === 'rejected' || r.status === 'scanning')) return false;
       return true;
     });
 
@@ -302,8 +302,8 @@ export const RaidDetail: React.FC<RaidDetailProps> = ({ raid, accounts, records,
 
       // 统计数据使用排除 pending 的记录
       const roleRecords = confirmedThisWeekRecords.filter(r => r.roleId === record.roleId);
-      // 待确认状态检测使用全部记录
-      const hasPendingRecord = thisWeekRecords.some(r => r.roleId === record.roleId && r.source === 'auto' && r.status === 'pending');
+      // 待确认状态检测使用全部记录：扫描中与待确认同样不可确认，卡片同样按「待确认」展示
+      const hasPendingRecord = thisWeekRecords.some(r => r.roleId === record.roleId && r.source === 'auto' && (r.status === 'pending' || r.status === 'scanning'));
 
       const lastRunRecord = roleRecords.sort((a, b) =>
         new Date(b.date).getTime() - new Date(a.date).getTime()

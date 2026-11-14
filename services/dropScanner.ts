@@ -2,6 +2,34 @@ import { invokeCommand } from './invoke';
 import { RaidRecord } from '../types';
 
 /**
+ * 进行中的试炼（与后端 TrialInProgress 对齐）
+ */
+export interface TrialInProgress {
+  /** 试炼地图 ID */
+  mapId: number;
+  /** 当前层数 */
+  layer?: number;
+  /** 已通过的第几关（1 或 2） */
+  stage: number;
+  /** 第一、二关已知的首领名，未过的关卡为空字符串 */
+  bosses: [string, string];
+  /** 最后一次试炼事件的毫秒时间戳 */
+  lastEventAtMs: number;
+  /** 是否存在跨时段续打存档 */
+  savedProgress: boolean;
+}
+
+/**
+ * 单个账号一次扫描的总结果（与后端 RaidScanOutcome 对齐）
+ */
+export interface RaidScanOutcome {
+  /** 写入/更新的记录总数（常规副本实例 + 试炼通关记录） */
+  insertedCount: number;
+  /** 正在打但尚未出终局的试炼（无则为空） */
+  trialInProgress?: TrialInProgress;
+}
+
+/**
  * 单个账号的批量扫描结果（与后端 AccountScanResult 对齐）
  */
 export interface AccountScanResult {
@@ -13,8 +41,18 @@ export interface AccountScanResult {
   instanceCount?: number;
   /** 已有通关的翻牌明细发生变化，通关数可以为零。 */
   trialDrawsChanged?: boolean;
+  /** 正在打但尚未出终局的试炼（无则为空） */
+  trialInProgress?: TrialInProgress;
   /** 失败原因（失败时） */
   error?: string;
+}
+
+/**
+ * 带账号归属的进行中试炼（供 UI 展示）
+ */
+export interface TrialInProgressWithAccount extends TrialInProgress {
+  /** 茗伊账号 UID */
+  accountId: string;
 }
 
 /**
@@ -29,10 +67,10 @@ export const dropScannerService = {
    * 将识别到的副本掉落记录以 status='pending' 写入 records 表。
    *
    * @param accountId 茗伊 uid（{uid}@zhcn_hd 目录名中的数字部分）
-   * @returns 本次扫描处理（新增或更新）的副本实例数量
+   * @returns 本次扫描的总结果（写入数量 + 进行中试炼）
    */
-  async scanRaidDrops(accountId: string): Promise<number> {
-    return invokeCommand<number>('scan_raid_drops', { accountId });
+  async scanRaidDrops(accountId: string): Promise<RaidScanOutcome> {
+    return invokeCommand<RaidScanOutcome>('scan_raid_drops', { accountId });
   },
 
   /**

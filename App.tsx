@@ -224,7 +224,9 @@ function App() {
     }
   }, []);
 
-  useDropScanner({
+  const {
+    trialInProgressList,
+  } = useDropScanner({
     autoScanEnabled: appConfig?.autoScanEnabled ?? false,
     onRecordsUpdated: (instanceCount) => {
       if (instanceCount > 0) void reloadRecords();
@@ -942,6 +944,7 @@ function App() {
                 onRefreshTrialRecords={reloadTrialRecords}
                 onRefreshBaizhanRecords={reloadBaizhanRecords}
                 onConfigChange={updateConfig}
+                trialInProgressList={trialInProgressList}
               />
             )}
         </>

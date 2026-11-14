@@ -171,6 +171,31 @@ describe('buildRaidCdOverview - 四态判定', () => {
     expect(result.columns[0].clearedCount).toBe(0);
   });
 
+  it('扫描中的记录与待确认一致：显示为待确认，不参与已清统计，点击不再弹添加界面', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({ roles: [makeRole('role-1', '张三')] });
+    const scanning = makeFullClear('role-1');
+    scanning.source = 'auto';
+    scanning.status = 'scanning';
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [scanning],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      now: NOW,
+    });
+
+    // 单元格按「待确认」处理，点击会走待确认面板而不是添加记录弹窗
+    expect(result.rows[0].cells['25人普通洛阳之战'].status).toBe('pending');
+    expect(result.rows[0].pendingClearedCount).toBe(1);
+    // 扫描中的记录不算已清
+    expect(result.columns[0].clearedCount).toBe(0);
+    expect(resolveCdCellClickTarget('raid', result.rows[0].cells['25人普通洛阳之战'].status)).toEqual({ kind: 'raid-confirm' });
+  });
+
   it('上周的记录不计入本周 CD', () => {
     const raid = makeRaid(25);
     const account = makeAccount({ roles: [makeRole('role-1', '张三')] });
