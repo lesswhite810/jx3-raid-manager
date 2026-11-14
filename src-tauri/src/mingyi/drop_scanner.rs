@@ -15,7 +15,7 @@ use crate::mingyi::active_detector::parse_info_jx3dat;
 use crate::trial_capture;
 
 mod settlement;
-mod trial;
+pub(crate) mod trial;
 #[cfg(test)]
 mod trial_draw_replay;
 mod trial_receipt;
@@ -450,7 +450,7 @@ fn compute_scraps_items(
 
 /// JCL 文件名解析结果
 #[derive(Debug, Clone)]
-pub(super) struct JclFileInfo {
+pub(crate) struct JclFileInfo {
     /// 文件名（不含路径）
     file_name: String,
     /// 时间戳（毫秒）
@@ -4736,7 +4736,13 @@ pub fn scan_raid_drops_with_raids(
             trial_capture::battle_boundary(account_id, signal.map_id, signal.occurred_at_ms);
         }
         for candidate in trial_scan.completion_capture_candidates() {
-            trial_capture::cleared(account_id, candidate.map_id, candidate.completed_at_ms);
+            // JCL 终局事件自带层号，直接交给采集端，免去页眉 OCR。
+            trial_capture::cleared(
+                account_id,
+                candidate.map_id,
+                candidate.completed_at_ms,
+                candidate.layer.map(|value| value.clamp(0, 255) as u8),
+            );
         }
     }
     // 关卡系统事件比文件名起始时间精确。缓存的旧终局在下一次试炼关卡已出现时，

@@ -23,7 +23,7 @@ const LOG_FILE_NAME: &str = "jx3-raid-manager.log";
 const LEGACY_DATA_DIR_BOOTSTRAP_FILE: &str = "data-dir.json";
 
 /// 当前数据库 schema 版本
-pub const CURRENT_SCHEMA_VERSION: i32 = 24;
+pub const CURRENT_SCHEMA_VERSION: i32 = 25;
 
 /// 数据库连接单例
 static DB_INITIALIZED: Mutex<bool> = Mutex::new(false);
@@ -1989,6 +1989,7 @@ pub(crate) fn ensure_trial_capture_tables(conn: &Connection) -> Result<(), Strin
             terminal_ms INTEGER NOT NULL,
             frame_count INTEGER NOT NULL DEFAULT 0,
             reconciled INTEGER NOT NULL DEFAULT 0,
+            layer INTEGER NOT NULL DEFAULT -1,
             created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
         );
@@ -2005,7 +2006,9 @@ pub(crate) fn ensure_trial_capture_tables(conn: &Connection) -> Result<(), Strin
             equipment_name TEXT NOT NULL DEFAULT '',
             equipment_level INTEGER NOT NULL DEFAULT 0,
             equipment_bind TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (run_key, at_ms, pid, slot, reset_visible, equipment_slot, equipment_name, equipment_level, equipment_bind)
+            weekly_flip_count INTEGER NOT NULL DEFAULT -1,
+            layer INTEGER NOT NULL DEFAULT -1,
+            PRIMARY KEY (run_key, at_ms, pid, slot, reset_visible, equipment_slot, equipment_name, equipment_level, equipment_bind, weekly_flip_count, layer)
         );
         CREATE INDEX IF NOT EXISTS idx_trial_capture_observations_run
             ON trial_capture_observations(run_key, at_ms);",
@@ -4271,6 +4274,8 @@ pub struct TrialCaptureRun {
     pub terminal_ms: i64,
     pub frame_count: i64,
     pub reconciled: bool,
+    /// 采集期间识别到的层数（JCL 终局自带层号直传）；-1 = 未识别。
+    pub layer: i64,
 }
 
 /// 一帧试炼面板的结构化截图观测（不含任何像素数据）。
@@ -4285,6 +4290,10 @@ pub struct TrialCaptureObservation {
     pub equipment_name: String,
     pub equipment_level: i64,
     pub equipment_bind: String,
+    /// 该帧识别到的周翻牌次数；-1 = 本帧未识别（ROI 帧或识别失败）。
+    pub weekly_flip_count: i64,
+    /// 该帧识别到的层数；-1 = 未识别。层数主源是 JCL 终局直传。
+    pub layer: i64,
 }
 
 /// 记录/更新一轮试炼采集会话。`created_at` 只在首次插入时写入。
@@ -4293,11 +4302,12 @@ pub fn db_upsert_trial_capture_run_with_connection(
     run: &TrialCaptureRun,
 ) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO trial_capture_runs (run_key, uid, map_id, terminal_ms, frame_count, reconciled, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now', 'localtime'))
+        "INSERT INTO trial_capture_runs (run_key, uid, map_id, terminal_ms, frame_count, reconciled, layer, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now', 'localtime'))
          ON CONFLICT(run_key) DO UPDATE SET
             frame_count = MAX(frame_count, excluded.frame_count),
             reconciled = MAX(reconciled, excluded.reconciled),
+            layer = MAX(layer, excluded.layer),
             updated_at = datetime('now', 'localtime')",
         rusqlite::params![
             run.run_key,
@@ -4306,38 +4316,15 @@ pub fn db_upsert_trial_capture_run_with_connection(
             run.terminal_ms,
             run.frame_count,
             i64::from(run.reconciled),
+            run.layer,
         ],
     )
     .map_err(|e| format!("写入试炼采集会话失败: {e}"))?;
     Ok(())
 }
 
-/// 将一帧截图观测写入持久化存储。重复写入同一帧由主键幂等吸收。
-pub fn db_insert_trial_capture_observation_with_connection(
-    conn: &Connection,
-    observation: &TrialCaptureObservation,
-) -> Result<(), String> {
-    conn.execute(
-        "INSERT OR IGNORE INTO trial_capture_observations (
-            run_key, at_ms, pid, slot, reset_visible,
-            equipment_slot, equipment_name, equipment_level, equipment_bind
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![
-            observation.run_key,
-            observation.at_ms,
-            observation.pid,
-            observation.slot,
-            i64::from(observation.reset_visible),
-            observation.equipment_slot,
-            observation.equipment_name,
-            observation.equipment_level,
-            observation.equipment_bind,
-        ],
-    )
-    .map_err(|e| format!("写入试炼截图观测失败: {e}"))?;
-    Ok(())
-}
-
+/// 找该帧的一行原观测复制其上下文（equipment/reset/layer），只替换次数，
+/// 由 `db_backfill_trial_capture_flip_counts_with_connection` 调用。
 /// 读取一轮采集会话的全部结构化观测，按帧时间排序。
 pub fn db_load_trial_capture_observations_with_connection(
     conn: &Connection,
@@ -4346,7 +4333,8 @@ pub fn db_load_trial_capture_observations_with_connection(
     let mut statement = conn
         .prepare(
             "SELECT run_key, at_ms, pid, slot, reset_visible,
-                    equipment_slot, equipment_name, equipment_level, equipment_bind
+                    equipment_slot, equipment_name, equipment_level, equipment_bind,
+                    weekly_flip_count, layer
              FROM trial_capture_observations
              WHERE run_key = ?1
              ORDER BY at_ms, pid, slot",
@@ -4364,10 +4352,363 @@ pub fn db_load_trial_capture_observations_with_connection(
                 equipment_name: row.get(6)?,
                 equipment_level: row.get(7)?,
                 equipment_bind: row.get(8)?,
+                weekly_flip_count: row.get(9)?,
+                layer: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// 周翻牌次数补插值（会话内优先，跨会话兜底）：
+///
+/// 第一优先级：同一采集会话内，用前后识别到次数的帧做锚点，对中间未识别
+/// （-1）的帧补充一条带插值的观测记录。
+///
+/// 兜底（用户补充的场景）：同会话没有可用锚点对时，允许跨会话——周一打剩
+/// 3 次、周五打识别到 1 次，中间（周二~周四）没识别到的轮次「按最近的识别」
+/// 补值。跨会话插值只取时间上最近的前/后锚点各一次（不按帧距细分，中间轮
+/// 统一补「离它最近的识别值」），且要求后锚点 < 前锚点（周内单调递减）。
+/// 跨周（次数重置回升）不兜底。
+///
+/// 会话内规则（用户确认的语义）：
+/// - 前后锚点值相同（如 3 与 3）→ 补同值（面板没变，中间帧必然同值）。
+/// - 前锚点 > 后锚点（如 3 与 1）→ 按帧距线性插值取整（3→?→1 中间帧是 2），
+///   且不低于后锚点。
+/// - 后锚点 > 前锚点（次数回升）→ 不补。
+/// - 插值行写入为独立记录（weekly_flip_count 在主键中），原 -1 行保留，
+///   可审计区分「真识别」与「插值」。
+///
+/// `uid` 限定补插范围（茗伊角色 UID）；空串表示只处理 `run_key` 单会话。
+/// 返回补插的记录数。
+pub fn db_backfill_trial_capture_flip_counts_with_connection(
+    conn: &Connection,
+    run_key: &str,
+    uid: &str,
+) -> Result<usize, String> {
+    let session_total =
+        backfill_flip_counts_within_sessions(conn, run_key, uid)?;
+    let cross_total = if uid.is_empty() {
+        0
+    } else {
+        backfill_flip_counts_across_sessions(conn, uid)?
+    };
+    Ok(session_total + cross_total)
+}
+
+/// 读取一个角色的全部采集会话（按终局时间排序），用于跨会话锚点定位。
+fn load_uid_capture_runs(
+    conn: &Connection,
+    uid: &str,
+) -> Result<Vec<(String, i64)>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT run_key, terminal_ms
+             FROM trial_capture_runs
+             WHERE uid = ?1
+             ORDER BY terminal_ms",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([uid], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// 会话内补插值（原有逻辑）：每个 -1 帧用同会话内的前后锚点插值。
+fn backfill_flip_counts_within_sessions(
+    conn: &Connection,
+    run_key: &str,
+    uid: &str,
+) -> Result<usize, String> {
+    // uid 给定时覆盖该角色全部会话；否则只处理单会话。
+    let run_keys: Vec<String> = if uid.is_empty() {
+        vec![run_key.to_string()]
+    } else {
+        load_uid_capture_runs(conn, uid)?
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    };
+    let mut total = 0usize;
+    for key in &run_keys {
+        total += backfill_flip_counts_single_session(conn, key)?;
+    }
+    Ok(total)
+}
+
+/// 单个会话内的锚点插值。返回补插条数。
+fn backfill_flip_counts_single_session(
+    conn: &Connection,
+    run_key: &str,
+) -> Result<usize, String> {
+    let observations = db_load_trial_capture_observations_with_connection(conn, run_key)?;
+    // 锚点帧（识别到次数）按时间排序；-1 帧按 (at_ms, pid, slot) 分组，
+    // 同一帧可能有多行（装备识别变化），补插值只需针对每帧一次。
+    let mut anchors: Vec<(i64, i64, i64, i64)> = Vec::new(); // (at_ms, pid, slot, count)
+    let mut gaps: Vec<(i64, i64, i64)> = Vec::new(); // (at_ms, pid, slot)
+    let mut seen_gap_frames: std::collections::HashSet<(i64, i64, i64)> =
+        std::collections::HashSet::new();
+    for observation in &observations {
+        if observation.weekly_flip_count >= 0 {
+            anchors.push((
+                observation.at_ms,
+                observation.pid,
+                observation.slot,
+                observation.weekly_flip_count,
+            ));
+        } else if seen_gap_frames.insert((
+            observation.at_ms,
+            observation.pid,
+            observation.slot,
+        )) {
+            gaps.push((observation.at_ms, observation.pid, observation.slot));
+        }
+    }
+    if anchors.len() < 2 || gaps.is_empty() {
+        return Ok(0);
+    }
+    anchors.sort_by_key(|&(at, _, _, _)| at);
+    gaps.sort_by_key(|&(at, _, _)| at);
+
+    let mut backfilled = 0usize;
+    for &(gap_at, gap_pid, gap_slot) in &gaps {
+        // 前锚点：时间严格早于该帧的最近一次识别；后锚点：时间严格晚于该帧
+        // 的最早一次识别。同帧锚点（同 at_ms）视为该帧自身已有值，跳过。
+        let before = anchors
+            .iter()
+            .filter(|&&(at, ..)| at < gap_at)
+            .max_by_key(|&(at, ..)| at);
+        let after = anchors
+            .iter()
+            .filter(|&&(at, ..)| at > gap_at)
+            .min_by_key(|&(at, ..)| at);
+        let (Some(before), Some(after)) = (before, after) else {
+            continue;
+        };
+        let (before_at, _, _, before_count) = *before;
+        let (after_at, _, _, after_count) = *after;
+        let value = if before_count == after_count {
+            before_count
+        } else if after_count < before_count {
+            // 单调递减：优先贴近前锚点（间隔越近的帧次数越可能等于前值），
+            // 但不超过后锚点。按帧距线性插值取整。
+            let span = (after_at - before_at).max(1);
+            let progress = ((gap_at - before_at) as f64 / span as f64).clamp(0.0, 1.0);
+            let drop = (before_count - after_count) as f64 * progress;
+            before_count - drop.round() as i64
+        } else {
+            // 次数在会话内回升（异常：重复图/换轮）。前后不同且后更大时
+            // 无法安全推断中间值，不补。
+            continue;
+        };
+        if value < 0 {
+            continue;
+        }
+        // 找该帧的一行原观测复制其上下文（equipment/reset/layer），只替换次数。
+        let source = observations.iter().find(|observation| {
+            observation.at_ms == gap_at
+                && observation.pid == gap_pid
+                && observation.slot == gap_slot
+        });
+        let Some(source) = source else {
+            continue;
+        };
+        let backfill = TrialCaptureObservation {
+            weekly_flip_count: value,
+            ..source.clone()
+        };
+        let inserted =
+            db_insert_trial_capture_observation_if_new_with_connection(conn, &backfill)?;
+        if inserted {
+            backfilled += 1;
+        }
+    }
+    Ok(backfilled)
+}
+
+/// 跨会话兜底补插值（用户场景：周一 3 次、周五 1 次，中间轮没识别到）。
+///
+/// 对每个「会话内没能插值」的 -1 帧（该帧同会话缺前锚点或后锚点），用时间上
+/// 最近的前会话锚点 / 后会话锚点兜底：
+/// - 前后跨会话锚点都存在且 后 < 前（周内单调递减）→ 补「离该帧最近的识别值」：
+///   前锚点与后锚点中时间更近者（用户语义「按最近的识别」）。
+/// - 只有前锚点（本会话是本周最后一轮）→ 补前锚点值。
+/// - 只有后锚点（本会话是本周第一轮）→ 补后锚点值。
+/// - 后 > 前（跨周重置回升）→ 不补。
+/// 跨会话锚点不按帧距细分，整个中间会话统一一个值。
+/// 跨会话兜底只发生在同一游戏周内（周一 07:00 刷新），不同周绝不互相借锚点。
+fn backfill_flip_counts_across_sessions(
+    conn: &Connection,
+    uid: &str,
+) -> Result<usize, String> {
+    let runs = load_uid_capture_runs(conn, uid)?;
+    if runs.len() < 2 {
+        return Ok(0);
+    }
+    // 只在同一游戏周内兜底（周一 07:00 刷新重置次数）；跨周的会话不补，
+    // 避免上周的剩余次数污染新一周。会话按 terminal_ms 分组到游戏周，
+    // 跨会话锚点只取同一游戏周内的相邻会话。
+    let game_week_start =
+        crate::mingyi::drop_scanner::trial::game_week_start_ms;
+    // 每个会话的锚点汇总: run_key -> (anchors sorted by at, gap frames)。
+    struct SessionEvidence {
+        anchors: Vec<(i64, i64)>, // (at_ms, count)
+        gaps: Vec<i64>,           // 帧时间
+        week_start: i64,          // 所属游戏周起点
+    }
+    let mut sessions: Vec<(String, i64, SessionEvidence)> = Vec::new(); // (run_key, terminal_ms, evidence)
+    for (key, terminal_ms) in &runs {
+        let observations = db_load_trial_capture_observations_with_connection(conn, key)?;
+        let mut evidence = SessionEvidence {
+            anchors: Vec::new(),
+            gaps: Vec::new(),
+            week_start: game_week_start(*terminal_ms),
+        };
+        let mut seen_gaps: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        for observation in &observations {
+            if observation.weekly_flip_count >= 0 {
+                evidence.anchors.push((observation.at_ms, observation.weekly_flip_count));
+            } else if seen_gaps.insert(observation.at_ms) {
+                evidence.gaps.push(observation.at_ms);
+            }
+        }
+        evidence.anchors.sort_by_key(|&(at, _)| at);
+        evidence.gaps.sort_unstable();
+        sessions.push((key.clone(), *terminal_ms, evidence));
+    }
+
+    let mut backfilled = 0usize;
+    for (index, (key, _terminal, evidence)) in sessions.iter().enumerate() {
+        if evidence.gaps.is_empty() {
+            continue;
+        }
+        // 该会话的首/末锚点时间。
+        let first_anchor_at = evidence.anchors.first().map(|&(at, _)| at);
+        let last_anchor_at = evidence.anchors.last().map(|&(at, _)| at);
+        // 前会话最近锚点：仅限同一游戏周内的会话（跨周不补）。
+        let before = sessions[..index]
+            .iter()
+            .rev()
+            .take_while(|(_, _, prev)| prev.week_start == evidence.week_start)
+            .find_map(|(_, _, prev)| prev.anchors.last().copied());
+        // 后会话最近锚点：同样仅限同一游戏周内。
+        let after = sessions[index + 1..]
+            .iter()
+            .take_while(|(_, _, next)| next.week_start == evidence.week_start)
+            .find_map(|(_, _, next)| next.anchors.first().copied());
+        for &gap_at in &evidence.gaps {
+            // 会话内已能插值的帧跳过（由 within 阶段处理）。判定方式：
+            // 帧时间严格夹在会话内两个锚点之间 → within 已补，这里跳过。
+            if let (Some(first_at), Some(last_at)) = (first_anchor_at, last_anchor_at) {
+                if gap_at > first_at && gap_at < last_at {
+                    continue;
+                }
+            }
+            // 本会话内该帧之后的最近锚点：只作为回升判断的局部证据，
+            // 不参与兜底取值（单侧锚点不补原则与会话内插值一致）。
+            let local_after = evidence
+                .anchors
+                .iter()
+                .find(|&&(at, _)| at > gap_at)
+                .map(|&(_, count)| count);
+            // 跨会话兜底取值只用外锚点（before/after 已按周过滤）。
+            let value = match (before, after) {
+                (Some((_, before_count)), Some((_, after_count))) => {
+                    // 回升方向判断优先用本会话局部锚点（更近的证据）。
+                    let upper = local_after.unwrap_or(after_count);
+                    if upper < before_count {
+                        // 周内单调递减：按用户语义取「最近的识别」= 前锚点。
+                        Some(before_count)
+                    } else if upper == before_count {
+                        Some(before_count)
+                    } else {
+                        // 跨周重置回升，不补。
+                        None
+                    }
+                }
+                (Some((_, before_count)), None) => {
+                    // 本周最后一轮且本会话内 gap 后无锚点：补前值。
+                    if local_after.is_some_and(|count| count > before_count) {
+                        // 本会话后面的锚点已经回升（跨周重置残留帧），不补。
+                        None
+                    } else {
+                        Some(before_count)
+                    }
+                }
+                (None, Some((_, after_count))) => {
+                    // 本周第一轮：本会话内 gap 后无锚点才用后会话锚点兜底。
+                    if local_after.is_some() {
+                        // 本会话自己后面有锚点，值应由会话内决定（单侧不补）。
+                        None
+                    } else {
+                        Some(after_count)
+                    }
+                }
+                (None, None) => None,
+            };
+            let Some(value) = value else {
+                continue;
+            };
+            // 找该帧原观测行。
+            let observations = db_load_trial_capture_observations_with_connection(conn, key)?;
+            let source = observations.iter().find(|observation| {
+                observation.at_ms == gap_at && observation.weekly_flip_count < 0
+            });
+            let Some(source) = source else {
+                continue;
+            };
+            let backfill = TrialCaptureObservation {
+                weekly_flip_count: value,
+                ..source.clone()
+            };
+            let inserted =
+                db_insert_trial_capture_observation_if_new_with_connection(conn, &backfill)?;
+            if inserted {
+                backfilled += 1;
+            }
+        }
+    }
+    Ok(backfilled)
+}
+
+/// 将一帧截图观测写入持久化存储。重复写入同一帧由主键幂等吸收。
+pub fn db_insert_trial_capture_observation_with_connection(
+    conn: &Connection,
+    observation: &TrialCaptureObservation,
+) -> Result<(), String> {
+    db_insert_trial_capture_observation_if_new_with_connection(conn, observation).map(|_| ())
+}
+
+/// 判断一次观测插入是否真的写入了新行（INSERT OR IGNORE 下主键冲突会
+/// 静默跳过，调用方需要区分「新数据」与「重复回放」）。
+fn db_insert_trial_capture_observation_if_new_with_connection(
+    conn: &Connection,
+    observation: &TrialCaptureObservation,
+) -> Result<bool, String> {
+    let changed = conn
+        .execute(
+            "INSERT OR IGNORE INTO trial_capture_observations (
+                run_key, at_ms, pid, slot, reset_visible,
+                equipment_slot, equipment_name, equipment_level, equipment_bind,
+                weekly_flip_count, layer
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                observation.run_key,
+                observation.at_ms,
+                observation.pid,
+                observation.slot,
+                i64::from(observation.reset_visible),
+                observation.equipment_slot,
+                observation.equipment_name,
+                observation.equipment_level,
+                observation.equipment_bind,
+                observation.weekly_flip_count,
+                observation.layer,
+            ],
+        )
+        .map_err(|e| format!("写入试炼截图观测失败: {e}"))?;
+    Ok(changed > 0)
 }
 
 /// 找出仍未对账（`reconciled = 0`）且终局时间落在给定窗口内的采集会话，
@@ -4379,7 +4720,7 @@ pub fn db_pending_trial_capture_runs_with_connection(
 ) -> Result<Vec<TrialCaptureRun>, String> {
     let mut statement = conn
         .prepare(
-            "SELECT run_key, uid, map_id, terminal_ms, frame_count, reconciled
+            "SELECT run_key, uid, map_id, terminal_ms, frame_count, reconciled, layer
              FROM trial_capture_runs
              WHERE reconciled = 0 AND terminal_ms >= ?1 AND terminal_ms <= ?2
              ORDER BY terminal_ms",
@@ -4394,6 +4735,7 @@ pub fn db_pending_trial_capture_runs_with_connection(
                 terminal_ms: row.get(3)?,
                 frame_count: row.get(4)?,
                 reconciled: row.get::<_, i64>(5)? != 0,
+                layer: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -9887,6 +10229,359 @@ mod tests {
         assert!(
             levels.contains(&("role-nolv".to_string(), None)),
             "JSON 缺 level 字段时应存 NULL"
+        );
+    }
+
+    fn observation(run_key: &str, at_ms: i64, count: i64) -> TrialCaptureObservation {
+        TrialCaptureObservation {
+            run_key: run_key.to_string(),
+            at_ms,
+            pid: 100,
+            slot: 2,
+            reset_visible: false,
+            equipment_slot: 0,
+            equipment_name: String::new(),
+            equipment_level: 0,
+            equipment_bind: String::new(),
+            weekly_flip_count: count,
+            layer: 7,
+        }
+    }
+
+    fn counts_by_time(conn: &Connection, run_key: &str) -> Vec<(i64, Vec<i64>)> {
+        let observations =
+            db_load_trial_capture_observations_with_connection(conn, run_key).expect("load");
+        let mut frames: std::collections::BTreeMap<i64, Vec<i64>> = std::collections::BTreeMap::new();
+        for observation in observations {
+            frames
+                .entry(observation.at_ms)
+                .or_default()
+                .push(observation.weekly_flip_count);
+        }
+        frames.into_iter().collect()
+    }
+
+    #[test]
+    fn backfill_fills_middle_frame_between_two_anchors() {
+        // 3 → 识别不到 → 1: 中间帧补 2（用户给定的示例场景）。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let run_key = "trial-auto:trial:1:143:1000";
+        for (at, count) in [(1000, 3i64), (2000, -1), (3000, 1)] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(run_key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_key, "")
+            .expect("backfill");
+        assert_eq!(backfilled, 1, "应补插 1 帧");
+        let frames = counts_by_time(&conn, run_key);
+        assert_eq!(
+            frames,
+            vec![(1000, vec![3]), (2000, vec![-1, 2]), (3000, vec![1])],
+            "中间帧应同时保留原 -1 行与插值行 2"
+        );
+    }
+
+    #[test]
+    fn backfill_fills_same_value_when_anchors_equal() {
+        // 3 → 识别不到 → 3: 中间帧补 3。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let run_key = "trial-auto:trial:1:143:2000";
+        for (at, count) in [(1000, 3i64), (1500, -1), (2000, 3)] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(run_key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_key, "")
+            .expect("backfill");
+        assert_eq!(backfilled, 1);
+        let frames = counts_by_time(&conn, run_key);
+        assert_eq!(frames[1], (1500, vec![-1, 3]), "锚点相同应补同值");
+    }
+
+    #[test]
+    fn backfill_skips_when_only_one_anchor_exists() {
+        // 只有前锚点（面板刚出现）→ 不补。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let run_key = "trial-auto:trial:1:143:3000";
+        for (at, count) in [(1000, 3i64), (1100, -1)] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(run_key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_key, "")
+            .expect("backfill");
+        assert_eq!(backfilled, 0, "缺后锚点不得插值");
+    }
+
+    #[test]
+    fn backfill_is_idempotent_on_repeat_calls() {
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let run_key = "trial-auto:trial:1:143:4000";
+        for (at, count) in [(1000, 3i64), (2000, -1), (3000, 1)] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(run_key, at, count),
+            )
+            .expect("insert");
+        }
+        let first = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_key, "")
+            .expect("backfill");
+        let second = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_key, "")
+            .expect("backfill");
+        assert_eq!(first, 1);
+        assert_eq!(second, 0, "重复调用应被主键幂等吸收");
+    }
+
+    #[test]
+    fn backfill_never_crosses_run_keys() {
+        // 相邻两个 run_key 的观测不得互相插值（快速连打时帧交错）。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let run_a = "trial-auto:trial:1:143:5000";
+        let run_b = "trial-auto:trial:1:143:6000";
+        // run_a: 3 → -1（无后锚点）; run_b: 1 → ... 不得借给 run_a。
+        for (key, at, count) in [
+            (run_a, 1000, 3i64),
+            (run_a, 2000, -1),
+            (run_b, 3000, 1i64),
+        ] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled_a = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_a, "")
+            .expect("backfill a");
+        assert_eq!(backfilled_a, 0, "跨 run_key 不得插值");
+    }
+
+    #[test]
+    fn backfill_cross_session_fills_middle_run_with_nearest_anchor() {
+        // 用户场景：周一打剩 3 次（run_a 全识别），中间 run_b 全没识别到，
+        // 周五打识别到 1 次（run_c）。run_b 的帧应按「最近的识别」补值。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let uid = "432345564243886337";
+        let run_a = "trial-auto:trial:1:143:1000"; // 周一
+        let run_b = "trial-auto:trial:1:143:2000"; // 中间，全 -1
+        let run_c = "trial-auto:trial:1:143:3000"; // 周五
+        // 登记三个会话（terminal_ms 递增）。
+        for (key, terminal) in [(run_a, 1000i64), (run_b, 2000), (run_c, 3000)] {
+            db_upsert_trial_capture_run_with_connection(
+                &conn,
+                &TrialCaptureRun {
+                    run_key: key.to_string(),
+                    uid: uid.to_string(),
+                    map_id: 143,
+                    terminal_ms: terminal,
+                    frame_count: 3,
+                    reconciled: true,
+                    layer: 7,
+                },
+            )
+            .expect("run");
+        }
+        for (key, at, count) in [
+            (run_a, 1100, 3i64),
+            (run_a, 1200, 3),
+            (run_b, 2100, -1),
+            (run_b, 2200, -1),
+            (run_c, 3100, 1i64),
+        ] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_b, uid)
+            .expect("backfill");
+        assert_eq!(backfilled, 2, "中间会话两帧都应跨会话兜底");
+        let frames = counts_by_time(&conn, run_b);
+        assert_eq!(frames[0], (2100, vec![-1, 3]), "兜底值=前会话最近识别 3");
+        assert_eq!(frames[1], (2200, vec![-1, 3]), "整个中间会话统一 3");
+    }
+
+    #[test]
+    fn backfill_cross_session_fills_first_run_with_after_anchor() {
+        // 第一轮只有后锚点：本周第一轮没识别到的帧用后会话锚点兜底。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let uid = "432345564243886337";
+        let run_a = "trial-auto:trial:1:143:1000";
+        let run_b = "trial-auto:trial:1:143:2000";
+        for (key, terminal) in [(run_a, 1000i64), (run_b, 2000)] {
+            db_upsert_trial_capture_run_with_connection(
+                &conn,
+                &TrialCaptureRun {
+                    run_key: key.to_string(),
+                    uid: uid.to_string(),
+                    map_id: 143,
+                    terminal_ms: terminal,
+                    frame_count: 2,
+                    reconciled: true,
+                    layer: 7,
+                },
+            )
+            .expect("run");
+        }
+        for (key, at, count) in [
+            (run_a, 1100, -1i64),
+            (run_b, 2100, 2i64),
+        ] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_a, uid)
+            .expect("backfill");
+        assert_eq!(backfilled, 1);
+        let frames = counts_by_time(&conn, run_a);
+        assert_eq!(frames[0], (1100, vec![-1, 2]), "首会话帧用后锚点兜底");
+    }
+
+    #[test]
+    fn backfill_cross_session_refuses_when_count_resets_upward() {
+        // 跨周重置（后会话次数回升 5）不得兜底。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let uid = "432345564243886337";
+        let run_a = "trial-auto:trial:1:143:1000";
+        let run_b = "trial-auto:trial:1:143:200000";
+        for (key, terminal) in [(run_a, 1000i64), (run_b, 200000)] {
+            db_upsert_trial_capture_run_with_connection(
+                &conn,
+                &TrialCaptureRun {
+                    run_key: key.to_string(),
+                    uid: uid.to_string(),
+                    map_id: 143,
+                    terminal_ms: terminal,
+                    frame_count: 2,
+                    reconciled: true,
+                    layer: 7,
+                },
+            )
+            .expect("run");
+        }
+        for (key, at, count) in [
+            (run_a, 1100, 1i64),
+            (run_b, 200100, -1),
+            (run_b, 200200, 5i64),
+        ] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(key, at, count),
+            )
+            .expect("insert");
+        }
+        // run_b 末帧 5 > run_a 首帧 1（跨周回升）：run_b 的 -1 帧夹在会话内
+        // (1 帧在 -1 与 5 之间吗? 不——run_b 的 -1 帧时间 200100 < 首锚点 200200,
+        // 会话内无前锚点), 跨会话前锚点 1 < 后锚点 5 → 回升不补。
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_b, uid)
+            .expect("backfill");
+        assert_eq!(backfilled, 0, "跨周回升不得兜底");
+        let frames = counts_by_time(&conn, run_b);
+        assert_eq!(frames[0], (200100, vec![-1]));
+    }
+
+    #[test]
+    fn backfill_cross_session_never_borrows_across_weeks() {
+        // 用户明确要求：同一周才插值，不同周不补。前会话在上一游戏周
+        // （terminal_ms 在周一 07:00 刷新之前），后会话在新游戏周，
+        // 即使次数递减（3 → 1）也不得跨周兜底。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let uid = "432345564243886337";
+        // game_week_start_ms 按北京时间周一 07:00 刷新。
+        // 1793574000000 = 2026-11-02 07:00 UTC+8（游戏周起点）。
+        let week1_start = 1_793_574_000_000i64;
+        let week2_start = week1_start + 7 * 24 * 3_600_000;
+        // 前会话在上周（周一 07:00 后 1 小时），后会话在新周（刷新后 1 小时）。
+        let run_a = "trial-auto:trial:1:143:1000";
+        let run_b = "trial-auto:trial:1:143:2000";
+        for (key, terminal) in [(run_a, week1_start + 3_600_000i64), (run_b, week2_start + 3_600_000)] {
+            db_upsert_trial_capture_run_with_connection(
+                &conn,
+                &TrialCaptureRun {
+                    run_key: key.to_string(),
+                    uid: uid.to_string(),
+                    map_id: 143,
+                    terminal_ms: terminal,
+                    frame_count: 2,
+                    reconciled: true,
+                    layer: 7,
+                },
+            )
+            .expect("run");
+        }
+        for (key, at, count) in [
+            (run_a, week1_start + 3_600_000 + 100, 3i64),
+            (run_b, week2_start + 3_600_000 + 100, -1),
+            (run_b, week2_start + 3_600_000 + 200, 1i64),
+        ] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(key, at, count),
+            )
+            .expect("insert");
+        }
+        // run_b 内部 -1→1 本可插值（会话内），但该帧在首锚点之前 → 无会话内
+        // 前锚点；跨会话前锚点属于上一周 → 禁止借用 → 不补。
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_b, uid)
+            .expect("backfill");
+        assert_eq!(backfilled, 0, "不同周绝不互相借锚点");
+        let frames = counts_by_time(&conn, run_b);
+        assert_eq!(frames[0], (week2_start + 3_600_000 + 100, vec![-1]));
+    }
+
+    #[test]
+    fn backfill_handles_multi_frame_gap_with_linear_interpolation() {
+        // 3 → 两帧识别不到 → 0: 线性插值分摊递减（3,2,1 或 3,1,2 均单调，
+        // 实现取「按帧距线性」→ 靠近前锚点的帧接近 3）。
+        let (conn, _dir) = create_test_conn();
+        ensure_trial_capture_tables(&conn).expect("tables");
+        let run_key = "trial-auto:trial:1:143:7000";
+        for (at, count) in [(1000, 3i64), (2000, -1), (3000, -1), (4000, 0)] {
+            db_insert_trial_capture_observation_if_new_with_connection(
+                &conn,
+                &observation(run_key, at, count),
+            )
+            .expect("insert");
+        }
+        let backfilled = db_backfill_trial_capture_flip_counts_with_connection(&conn, run_key, "")
+            .expect("backfill");
+        assert_eq!(backfilled, 2, "两帧空缺应各补一行");
+        let frames = counts_by_time(&conn, run_key);
+        let frame_2000 = &frames[1].1;
+        let frame_3000 = &frames[2].1;
+        assert!(
+            frame_2000.contains(&2) || frame_2000.contains(&1),
+            "第一空缺帧应在 1..2 区间: {frame_2000:?}"
+        );
+        assert!(
+            frame_3000.contains(&1),
+            "第二空缺帧应插值 1: {frame_3000:?}"
+        );
+        assert!(
+            frame_2000
+                .iter()
+                .filter(|&&value| value >= 0)
+                .all(|&value| value >= 1),
+            "插值不得低于后锚点 0（-1 是保留的原观测行）: {frame_2000:?}"
         );
     }
 }

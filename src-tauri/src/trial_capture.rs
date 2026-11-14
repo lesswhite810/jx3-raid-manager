@@ -16,6 +16,7 @@ mod sampling_tests;
 mod selector_replay;
 mod session_equipment;
 mod vision;
+mod weekly;
 mod window;
 
 use std::collections::VecDeque;
@@ -40,6 +41,39 @@ const STARTUP_SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 // 翻牌动画可能短暂隐藏底边，保留快档，不能在两次翻牌之间退回慢档。
 const PANEL_FAST_TAIL_MS: i64 = 3_000;
 const TOOLTIP_FRAME_INTERVAL_MS: i64 = 500;
+/// 提前终止：结算页数字（周翻牌次数/层数）连续稳定到这个帧数，就认定翻牌
+/// 已结束。全帧快档 250ms 间隔下 3 帧约 1 秒，慢档 1s 间隔下约 3 秒——都远
+/// 短于玩家打开新牌所需的时间，误判代价只是提前收窄观察窗。
+const SETTLE_STABLE_FRAMES: u32 = 3;
+
+/// 结算页数字稳定帧计数器。同一次翻牌内连续读到相同数字才会累计；数字变化
+/// 或面板消失都会清零。只在 Full 帧上更新（ROI 帧裁掉了底部行）。
+#[derive(Default)]
+struct SettleCounter {
+    last: Option<(i64, i64)>,
+    count: u32,
+}
+
+impl SettleCounter {
+    /// 每个识别到数字的 Full 帧调用。返回是否达到稳定阈值。
+    fn observe(&mut self, numbers: (Option<u8>, Option<u8>)) -> bool {
+        let key = (
+            numbers.0.map_or(-1, i64::from),
+            numbers.1.map_or(-1, i64::from),
+        );
+        if self.last == Some(key) {
+            self.count += 1;
+        } else {
+            self.last = Some(key);
+            self.count = 1;
+        }
+        self.count >= SETTLE_STABLE_FRAMES
+    }
+
+    fn reset(&mut self) {
+        *self = SettleCounter::default();
+    }
+}
 
 #[derive(Default)]
 struct CaptureSchedule {
@@ -132,6 +166,8 @@ impl CaptureDiagnostics {
 struct Target {
     uid: String,
     map: i64,
+    /// JCL 终局事件直传的层号（第 N 层）；None = 无 JCL 上下文，留给截图识别。
+    layer: Option<u8>,
 }
 
 struct Watch {
@@ -371,13 +407,15 @@ pub fn battle_boundary(uid: &str, _map: i64, at: i64) {
 }
 
 /// 仅由本人最终通关信号调用。保存进度、关卡通过和战斗活动不得启动取帧。
-pub fn cleared(uid: &str, map: i64, at: i64) {
+/// `layer` 是 JCL 终局事件直传的层号；None = 无 JCL 上下文（场景信号兜底）。
+pub fn cleared(uid: &str, map: i64, at: i64, layer: Option<u8>) {
     let now = chrono::Utc::now().timestamp_millis();
     if (now - WATCH_MS..=now).contains(&at) {
         send(Message::Cleared(
             Target {
                 uid: uid.to_owned(),
                 map,
+                layer,
             },
             at,
         ));
@@ -428,6 +466,7 @@ pub fn finished_draw(
             target: Target {
                 uid: uid.to_owned(),
                 map,
+                layer: None,
             },
             run_key: run_key.to_owned(),
             draw_key: draw_key.to_owned(),
@@ -561,6 +600,8 @@ struct Session {
     handled: Vec<Completion>,
     filled: Vec<(String, i64)>,
     equipment_reviews: Vec<EquipmentReview>,
+    /// 结算页数字连续稳定计数（提前终止依据）。
+    settle: SettleCounter,
 }
 
 impl Session {
@@ -991,6 +1032,8 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                                     terminal_ms: at,
                                     frame_count: 0,
                                     reconciled: false,
+                                    // JCL 层号直传；无 JCL 上下文时由截图识别路径经 upsert 的 MAX 回填。
+                                    layer: target.layer.map_or(-1, i64::from),
                                 };
                                 if let Err(error) =
                                     crate::db::db_upsert_trial_capture_run_with_connection(&conn, &run)
@@ -1033,10 +1076,12 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
             continue;
         }
         let mut frame_work = Duration::ZERO;
-        if let Some(watch) = session
+        // 借用拆分：watch 的引用要活过 push_back(sample)，所以先复制关键字段。
+        let watch_scope = session
             .active_watch(now)
             .filter(|watch| presence.allows(&watch.target, now))
-        {
+            .map(|watch| (watch.target.clone(), watch.at));
+        if let Some((watch_target, watch_at)) = watch_scope {
             let capture_started = Instant::now();
             let mut sample_at = now;
             let mode = schedule.mode(now);
@@ -1064,6 +1109,13 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                 let tooltip_needed = card
                     .as_ref()
                     .is_some_and(|card| card.hovered_slot.is_some());
+                // 周翻牌次数只在结算面板在场时识别（纯像素，微秒级），
+                // ROI 轻量帧裁掉了底部行，只有 Full 帧才可信。
+                let numbers = if panel_visible && mode == window::CaptureMode::Full {
+                    weekly::settlement_numbers(&frame.pixels, frame.width, frame.height)
+                } else {
+                    (None, None)
+                };
                 let item = if mode == window::CaptureMode::Full {
                     if let Some(card) = card.as_ref() {
                         tooltip.observe_async(frame, card, &mut tooltip_worker)
@@ -1093,6 +1145,7 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                     tooltip_needed,
                     reset_visible,
                     selector,
+                    numbers,
                 )
             });
             if observation.is_none() {
@@ -1103,7 +1156,7 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                 presence.end_capture(sample_at);
             } else {
                 let frame = match observation.as_ref() {
-                    Some((_, _, _, _, _, selector)) => (*selector).into(),
+                    Some((_, _, _, _, _, selector, _)) => (*selector).into(),
                     None => presence::CaptureFrame::Unavailable,
                 };
                 presence.frame(sample_at, frame);
@@ -1111,14 +1164,21 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
             let captured = observation.is_some();
             let visual_uncertain = observation
                 .as_ref()
-                .is_some_and(|(_, _, _, _, _, selector)| selector.is_none());
-            let (selected, equipment, _, tooltip_needed, reset_visible, selector) =
-                observation.unwrap_or((None, None, false, false, false, None));
+                .is_some_and(|(_, _, _, _, _, selector, _)| selector.is_none());
+            let (selected, equipment, panel_visible, tooltip_needed, reset_visible, selector, numbers) =
+                observation.unwrap_or((None, None, false, false, false, None, (None, None)));
+            let (weekly_flip_count, captured_layer) = (
+                numbers.0.map_or(-1, i64::from),
+                numbers.1.map_or(-1, i64::from),
+            );
             // 结构化观测当场落库（无像素），封存式 ChatLog 落盘后仍可回灌补录。
-            // 有牌位或装备信息才值得写库，纯空帧由内存队列承担。
-            let persist_observation = selected.is_some() || equipment.is_some();
+            // 有牌位、装备或数字识别结果才值得写库，纯空帧由内存队列承担。
+            let persist_observation = selected.is_some()
+                || equipment.is_some()
+                || weekly_flip_count >= 0
+                || captured_layer >= 0;
             if persist_observation {
-                let run_key = capture_run_key(&watch.target, watch.at);
+                let run_key = capture_run_key(&watch_target, watch_at);
                 let (equipment_slot, equipment_name, equipment_level, equipment_bind) =
                     equipment
                         .as_ref()
@@ -1135,7 +1195,7 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                             )
                         });
                 let observation = crate::db::TrialCaptureObservation {
-                    run_key,
+                    run_key: run_key.clone(),
                     at_ms: sample_at,
                     pid: selected.map_or(-1, |(pid, _)| i64::from(pid)),
                     slot: selected.map_or(0, |(_, slot)| i64::from(slot)),
@@ -1144,11 +1204,31 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                     equipment_name,
                     equipment_level,
                     equipment_bind,
+                    weekly_flip_count,
+                    layer: captured_layer,
                 };
                 match crate::db::init_db() {
                     Ok(conn) => {
                         if let Err(error) = crate::db::db_insert_trial_capture_observation_with_connection(&conn, &observation) {
                             log::warn!("[TrialCapture] 持久化截图观测失败: {error}");
+                        }
+                        // 每次识别到次数（包括 0）都尝试补插值：后锚点出现时，
+                        // 之前识别不到的帧才能被前后锚点约束出来。会话内锚点
+                        // 不足时按角色 uid 跨会话兜底（周内单调递减取最近识别）。
+                        // 重复调用幂等（已补的帧主键吸收）。
+                        if weekly_flip_count >= 0 {
+                            let uid = watch_target.uid.clone();
+                            match crate::db::db_backfill_trial_capture_flip_counts_with_connection(
+                                &conn,
+                                &run_key,
+                                &uid,
+                            ) {
+                                Ok(0) => {}
+                                Ok(n) => log::info!(
+                                    "[TrialCapture] 周翻牌次数补插值 {n} 帧 (run_key={run_key}, 当前={weekly_flip_count})"
+                                ),
+                                Err(error) => log::warn!("[TrialCapture] 周翻牌次数补插值失败: {error}"),
+                            }
                         }
                     }
                     Err(error) => {
@@ -1161,7 +1241,7 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                 schedule.recheck_uncertain_frame(sample_at);
             }
             session.samples.push_back(Sample {
-                target: watch.target.clone(),
+                target: watch_target.clone(),
                 at: sample_at,
                 selected,
                 reset_visible,
@@ -1169,6 +1249,46 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
             });
             frame_work = capture_started.elapsed();
             diagnostics.record(frame_work, captured, mode);
+            // 提前终止：同一翻牌轮里结算页数字（次数+层数）连续多帧一致，
+            // 说明玩家没有在翻新牌，观察窗可以安全收窄到短尾（保留一点
+            // 余量，覆盖玩家读牌/截图的时间），不必等满 15 分钟。
+            if numbers.0.is_some() || numbers.1.is_some() {
+                // 次数为 0 且本轮已经翻过牌：本周翻牌次数用尽，不可能再有
+                // 新牌。0 是明确的终止信号，不要求多帧稳定（识别抖动只影响
+                // 一帧，下一帧仍会读到 0 或非 0 均可继续/维持收窄），直接
+                // 按 1 分钟短尾结束采集。轮内是否有翻牌在 push_back 前先算好，
+                // 避免与 samples 的可变借用冲突。
+                let flipped_this_watch = session.samples.iter().any(|sample| {
+                    sample.at >= watch_at
+                        && sample.target == watch_target
+                        && sample.selected.is_some()
+                });
+                let exhausted = weekly_flip_count == 0 && flipped_this_watch;
+                let settled = exhausted || session.settle.observe(numbers);
+                if settled {
+                    let tail_end = sample_at + DRAW_SETTLE_MS;
+                    if let Some(watch) = session.watch.as_mut() {
+                        if tail_end < watch.until {
+                            watch.until = tail_end;
+                            if exhausted {
+                                log::info!(
+                                    "[TrialCapture] 周翻牌次数已用尽（次数=0）且本轮已翻过牌，1 分钟后结束采集（层={captured_layer}）"
+                                );
+                            } else {
+                                log::info!(
+                                    "[TrialCapture] 结算页数字连续稳定（次数={}层={}），提前收窄观察窗至 {}s 后",
+                                    weekly_flip_count,
+                                    captured_layer,
+                                    (tail_end - now) / 1000
+                                );
+                            }
+                        }
+                    }
+                }
+            } else if reset_visible || !panel_visible {
+                // 面板退回牌背或消失，说明下一张牌要开始了，稳定计数作废。
+                session.settle.reset();
+            }
         }
         if !session
             .active_watch(now)
@@ -1354,6 +1474,7 @@ mod tests {
         Target {
             uid: uid.into(),
             map: 144,
+            layer: Some(6),
         }
     }
     fn completion() -> Completion {

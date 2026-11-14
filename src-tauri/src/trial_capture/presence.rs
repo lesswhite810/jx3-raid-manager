@@ -297,7 +297,8 @@ mod tests {
 
     fn ready() -> (CapturePresence, Target) {
         let target = Target {
-            uid: "1234".into(),
+        layer: Some(6),
+        uid: "1234".into(),
             map: 144,
         };
         let mut gate = CapturePresence::default();

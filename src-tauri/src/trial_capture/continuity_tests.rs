@@ -4,6 +4,7 @@ use super::*;
 
 fn target() -> Target {
     Target {
+        layer: Some(6),
         uid: "role-1".into(),
         map: 144,
     }

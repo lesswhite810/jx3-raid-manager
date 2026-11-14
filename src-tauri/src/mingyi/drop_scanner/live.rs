@@ -299,7 +299,7 @@ fn deliver_if_current(control: &Shared, action: Action) {
         ActionKind::Boundary { at } => trial_capture::battle_boundary(&action.activity.uid, 0, at),
         ActionKind::Terminal { at, map_id } => {
             trial_capture::observe_scene(&action.activity.uid, at, true);
-            trial_capture::cleared(&action.activity.uid, map_id, at);
+            trial_capture::cleared(&action.activity.uid, map_id, at, None);
         }
     }
 }

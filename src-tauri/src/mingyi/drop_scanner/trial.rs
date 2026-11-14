@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 pub(super) const TRIAL_RUN_GAP_MS: i64 = 45 * 60 * 1000;
 
 /// 游戏周按北京时间周一 07:00 刷新。Unix 纪元后的第一个刷新点为 UTC 周日 23:00。
-pub(super) fn game_week_start_ms(timestamp_ms: i64) -> i64 {
+pub(crate) fn game_week_start_ms(timestamp_ms: i64) -> i64 {
     const HOUR_MS: i64 = 3_600_000;
     const WEEK_MS: i64 = 7 * 24 * HOUR_MS;
     const FIRST_RESET_MS: i64 = (3 * 24 + 23) * HOUR_MS;

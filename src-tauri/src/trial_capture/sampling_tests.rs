@@ -22,6 +22,7 @@ fn a_late_receipt_revokes_frames_saved_after_its_timestamp() {
     )
     .unwrap();
     let target = Target {
+        layer: Some(6),
         uid: "late".into(),
         map: 144,
     };
@@ -178,7 +179,8 @@ fn adaptive_sampling_recognizes_four_draws_with_dense_frames_at_different_poll_p
         for phase in [0, 137, 499, 997] {
             let mut session = Session::default();
             let target = Target {
-                uid: "sampling".into(),
+        layer: Some(6),
+        uid: "sampling".into(),
                 map: 144,
             };
             let mut schedule = CaptureSchedule::default();
@@ -278,6 +280,7 @@ fn adaptive_sampling_recognizes_four_draws_with_dense_frames_at_different_poll_p
 #[test]
 fn late_clearance_detection_does_not_assign_the_last_card_to_missed_earlier_draws() {
     let target = Target {
+        layer: Some(6),
         uid: "late-clearance".into(),
         map: 144,
     };

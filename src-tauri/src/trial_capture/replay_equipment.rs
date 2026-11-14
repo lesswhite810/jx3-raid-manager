@@ -37,6 +37,7 @@ fn reward_and_unflipped_screenshots_to_isolated_record() {
     let mut tooltip = TooltipCache::default();
     let mut session = Session::default();
     let target = Target {
+        layer: Some(6),
         uid: "replay".into(),
         map: 144,
     };

@@ -890,15 +890,17 @@ mod tests {
             CURRENT_SCHEMA_VERSION
         );
 
-        // 迁移记录必须逐版本落库：基线 V18 + V19 起共 7 条（含 V24）。
+        // 迁移记录必须逐版本落库：基线 V18 + V19 起到当前版本共 N 条。
         // 注意不能断言 22 条——`schema_versions` 只记录**实际执行过**的迁移，
         // 全新安装只写当前版本一行，本测试的基线也只写 V18 一行。
         let applied: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| row.get(0))
             .expect("统计 schema_versions 失败");
         assert_eq!(
-            applied, 7,
-            "schema_versions 应有 V18 基线 + V19 起共 7 条，实际 {}",
+            applied,
+            i64::from(CURRENT_SCHEMA_VERSION - 18 + 1),
+            "schema_versions 应有 V18 基线 + V19 起共 {} 条，实际 {}",
+            CURRENT_SCHEMA_VERSION - 18 + 1,
             applied
         );
 
