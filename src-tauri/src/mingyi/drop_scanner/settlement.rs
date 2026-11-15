@@ -10,13 +10,15 @@
 //! 配置中的 JCL 都按同一套规则补强。
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use rusqlite::{params, Connection, OpenFlags};
 
 use super::{
-    analyze_completion_candidate, is_exact_boss_kill_reward_msg, match_raid_name,
-    normalize_chatlog_user_global_id, CompletionProof, JclAnalysis, JclFileInfo, RaidEntry,
+    analyze_completion_candidate_cached, is_exact_boss_kill_reward_msg, match_raid_name,
+    ChatlogMeta, CompletionProof, EvidenceCache, JclAnalysis, JclFileInfo, RaidEntry,
 };
 
 /// 邻近尝试边界歧义判定的重叠容差（秒）。
@@ -67,7 +69,7 @@ impl SettlementRejectReason {
 /// 输入中的所有 JCL（包括未配置副本）仅用于消除相邻尝试、切图和未闭合战斗
 /// 的歧义；若不存在目标首领候选，本函数不会读取 chatlog 或重扫其它 JCL 内容。
 pub(super) fn select_settlement_promotions(
-    chatlog_files: &[PathBuf],
+    chatlogs: &[ChatlogMeta],
     expected_uid: &str,
     all_jcl_files: &[JclFileInfo],
     jcl_analyses: &std::collections::HashMap<String, JclAnalysis>,
@@ -75,6 +77,8 @@ pub(super) fn select_settlement_promotions(
     combat_logs_dir: &Path,
     scan_end_ms: i64,
     known_next_jcl_time: Option<i64>,
+    evidence: &EvidenceCache,
+    covered_raids: &HashSet<String>,
 ) -> HashSet<String> {
     if expected_uid.is_empty() {
         return HashSet::new();
@@ -85,6 +89,12 @@ pub(super) fn select_settlement_promotions(
         let Some(raid) = match_raid_name(&jcl.raid_display_name, raids) else {
             continue;
         };
+        // 调用方已预判该副本本 CD 周期存在手工记录：补强即使成功，
+        // 写入时也会被 CD 检查丢弃，直接跳过候选的 JCL 重读与 chatlog 查询。
+        // 注意只跳过候选判定，all_jcl_files 仍完整用于 settlement_end_ms 边界。
+        if covered_raids.contains(&raid.raid_id) {
+            continue;
+        }
         if !raid
             .bosses
             .iter()
@@ -113,9 +123,11 @@ pub(super) fn select_settlement_promotions(
         ) else {
             continue;
         };
-        // 先重读 JCL 校验战斗完整性，同时采集宝箱证据：打完有剧情演出的
+        // 先取 JCL 战斗完整性证据，同时采集宝箱证据：打完有剧情演出的
         // BOSS（如史朝义）结算奖励最早出现在击杀瞬间附近，远早于 type=1 false。
-        let Some(proof) = analyze_completion_candidate(
+        // 走本轮扫描共享的证据包，与主循环的伤害补漏复用同一次解析。
+        let Some(proof) = analyze_completion_candidate_cached(
+            evidence,
             &combat_logs_dir.join(&jcl.file_name),
             &jcl.boss_name,
             jcl.boss_id,
@@ -142,7 +154,7 @@ pub(super) fn select_settlement_promotions(
         // 两条证据独立兜底，任一成立即判击杀；都没有才记录拒绝原因。
         if !proof.chest_seen {
             if let Err(reason) = settlement_check(
-                chatlog_files,
+                chatlogs,
                 expected_uid,
                 candidate.end_sec,
                 settlement_end_ms / 1000,
@@ -162,6 +174,7 @@ pub(super) fn select_settlement_promotions(
             combat_logs_dir,
             expected_uid,
             settlement_end_ms,
+            evidence,
         ) {
             log::debug!(
                 "[DropScanner] 结算补强拒绝: BOSS={} 原因=邻近战斗边界有歧义",
@@ -211,6 +224,7 @@ fn has_ambiguous_attempt_boundary(
     combat_logs_dir: &Path,
     expected_uid: &str,
     settlement_end_ms: i64,
+    evidence: &EvidenceCache,
 ) -> bool {
     let candidate_end_ms = candidate.end_sec.saturating_mul(1000);
     for jcl in all_jcl_files {
@@ -241,9 +255,11 @@ fn has_ambiguous_attempt_boundary(
             // 歧义，改为读文件的结束锚：同类中断日志的末事件时间同样能定界。
         }
         // 未配置日志没有缓存边界；仅检查同会话附近文件，兼顾轮询成本与“较早开始、结算期仍在打”的歧义。
-        let Some(ends) =
-            super::collect_type1_end_anchors(&combat_logs_dir.join(&jcl.file_name), expected_uid)
-        else {
+        let Some(ends) = super::collect_type1_end_anchors_cached(
+            evidence,
+            &combat_logs_dir.join(&jcl.file_name),
+            expected_uid,
+        ) else {
             return true;
         };
         if ends.is_empty()
@@ -260,7 +276,7 @@ fn has_ambiguous_attempt_boundary(
 /// 通道 A：检查角色 chatlog 是否在 [fight_end-15s, min(fight_end+60s, 结算上限)]
 /// 内出现精确 10 金的击杀结算奖励。
 fn settlement_check(
-    chatlog_files: &[PathBuf],
+    chatlogs: &[ChatlogMeta],
     expected_uid: &str,
     end_sec: i64,
     settlement_end_sec: i64,
@@ -270,14 +286,22 @@ fn settlement_check(
         .saturating_add(SETTLEMENT_REWARD_AFTER_SECS)
         .min(settlement_end_sec);
     let mut matched_uid = false;
-    for path in chatlog_files {
-        let Ok(conn) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+    for meta in chatlogs {
+        // 先用账号级元数据排除不覆盖窗口 / 非当前角色的库，避免每个候选都开 41 个库
+        if !meta.covers_range(
+            window_start.saturating_mul(1000),
+            window_end.saturating_mul(1000),
+        ) {
             continue;
-        };
-        if chatlog_uid(&conn).as_deref() != Some(expected_uid) {
+        }
+        if !meta.matches_uid(expected_uid) {
             continue;
         }
         matched_uid = true;
+        let Ok(conn) = Connection::open_with_flags(&meta.path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
+            continue;
+        };
         let rows = read_settlement_rows(&conn, window_start, window_end);
         if rows.iter().any(is_exact_ten_gold) {
             return Ok(());
@@ -290,25 +314,16 @@ fn settlement_check(
     }
 }
 
-fn chatlog_uid(conn: &Connection) -> Option<String> {
-    let value: Option<String> = conn
-        .query_row(
-            "SELECT value FROM ChatInfo WHERE key = 'user_global_id'",
-            [],
-            |row| row.get(0),
-        )
-        .ok()
-        .flatten();
-    normalize_chatlog_user_global_id(value?.as_str())
-}
-
 fn read_settlement_rows(
     conn: &Connection,
     window_start_sec: i64,
     window_end_sec: i64,
 ) -> Vec<ChatRow> {
+    // 只用时间条件：ChatLog 主键是 (time, hash)，按时间窗查询会直接走时间索引并天然有序。
+    // 早前带上 `type IN (...)` 会让优化器改走低选择性的 ChatLog_type_idx，再额外建临时
+    // B 树排序；实测同样窗口下成本相差约 50 倍，而消息类型过滤在 is_exact_ten_gold 里等价完成。
     let Ok(mut statement) = conn.prepare(
-        "SELECT type, text, msg, time FROM ChatLog WHERE time >= ?1 AND time <= ?2 AND type IN ('MSG_MONEY', 'MSG_ITEM', 'MSG_ROOM', 'MSG_WHISPER') ORDER BY time ASC",
+        "SELECT type, text, msg, time FROM ChatLog WHERE time >= ?1 AND time <= ?2 ORDER BY time ASC",
     ) else { return Vec::new(); };
     let Ok(rows) = statement.query_map(params![window_start_sec, window_end_sec], |row| {
         Ok(ChatRow {
@@ -367,7 +382,7 @@ mod tests {
             .unwrap();
             drop(conn);
             assert_eq!(
-                settlement_check(&[path.clone()], "123456", 105, 200).is_ok(),
+                settlement_check(&metas_of(&[path.clone()]), "123456", 105, 200).is_ok(),
                 expected,
                 "奖励时间 {reward_time}"
             );
@@ -395,7 +410,7 @@ mod tests {
         let (dir, jcl_path) = write_target_jcl("promotion");
         let file_name = jcl_path.file_name().unwrap().to_string_lossy().into_owned();
         let promotions = select_settlement_promotions(
-            &[path.clone()],
+            &metas_of(&[path.clone()]),
             "123456",
             &[target_jcl(&file_name)],
             &target_analyses(&file_name),
@@ -403,6 +418,8 @@ mod tests {
             &dir,
             130_000,
             None,
+            &EvidenceCache::new(),
+            &HashSet::new(),
         );
         assert_eq!(promotions, HashSet::from([file_name]));
         fs::remove_file(path).unwrap();
@@ -424,6 +441,8 @@ mod tests {
             &dir,
             130_000,
             None,
+            &EvidenceCache::new(),
+            &HashSet::new(),
         );
         assert_eq!(
             promotions,
@@ -455,7 +474,7 @@ mod tests {
         let file_name = jcl_path.file_name().unwrap().to_string_lossy().into_owned();
         assert!(
             select_settlement_promotions(
-                &[path.clone()],
+                &metas_of(&[path.clone()]),
                 "123456",
                 &[target_jcl(&file_name)],
                 &target_analyses(&file_name),
@@ -463,6 +482,8 @@ mod tests {
                 &dir,
                 130_000,
                 None,
+                &EvidenceCache::new(),
+                &HashSet::new(),
             )
             .is_empty(),
             "窗口外的 10 金不能补记"
@@ -511,6 +532,7 @@ mod tests {
                 &dir,
                 "123456",
                 200_000,
+                &EvidenceCache::new(),
             ),
             "末事件远早于候选窗口时，未闭合邻居不得判歧义"
         );
@@ -536,6 +558,7 @@ mod tests {
                 &dir,
                 "123456",
                 200_000,
+                &EvidenceCache::new(),
             ),
             "末事件落在候选结束前 30 秒内仍须判歧义"
         );
@@ -583,7 +606,7 @@ mod tests {
         let stale_neighbor = write_neighbor("interrupted-old.jcl", 60);
         assert_eq!(
             select_settlement_promotions(
-                &[path.clone()],
+                &metas_of(&[path.clone()]),
                 "123456",
                 &[target_jcl(&file_name), stale_neighbor],
                 &target_analyses(&file_name),
@@ -591,6 +614,8 @@ mod tests {
                 &dir,
                 130_000,
                 None,
+                &EvidenceCache::new(),
+                &HashSet::new(),
             ),
             HashSet::from([file_name.clone()]),
             "中断邻居的末事件早于候选窗口时不得阻断补强"
@@ -599,7 +624,7 @@ mod tests {
         let live_neighbor = write_neighbor("interrupted-live.jcl", 104);
         assert!(
             select_settlement_promotions(
-                &[path.clone()],
+                &metas_of(&[path.clone()]),
                 "123456",
                 &[target_jcl(&file_name), live_neighbor],
                 &target_analyses(&file_name),
@@ -607,6 +632,8 @@ mod tests {
                 &dir,
                 130_000,
                 None,
+                &EvidenceCache::new(),
+                &HashSet::new(),
             )
             .is_empty(),
             "末事件落在候选结束前 30 秒内仍须视为歧义"
@@ -633,7 +660,7 @@ mod tests {
         .unwrap();
         drop(conn);
         assert_eq!(
-            settlement_check(&[path.clone()], "123456", 105, 200),
+            settlement_check(&metas_of(&[path.clone()]), "123456", 105, 200),
             Err(SettlementRejectReason::NoRoleChatlog)
         );
         fs::remove_file(path).unwrap();
@@ -669,6 +696,7 @@ mod tests {
             Path::new("."),
             "123456",
             200_000,
+            &EvidenceCache::new(),
         ));
     }
 
@@ -705,7 +733,7 @@ mod tests {
         // scan_end 取 21:08:19（生产当时扫描时刻），known_next 无后续副本。
         let scan_end_ms = 1_794_230_900_000;
         let promotions = select_settlement_promotions(
-            &chatlog_files,
+            &metas_of(&chatlog_files),
             uid,
             &all_files,
             &analyses,
@@ -713,6 +741,8 @@ mod tests {
             logs_dir,
             scan_end_ms,
             None,
+            &EvidenceCache::new(),
+            &HashSet::new(),
         );
         let target = "2026-11-09-20-51-00-25人普通洛阳之战(835)-史朝义(139312).jcl";
         assert!(
@@ -927,7 +957,7 @@ mod tests {
                 bosses: bosses.clone(),
             }];
             let promotions = select_settlement_promotions(
-                &chatlog_files,
+                &metas_of(&chatlog_files),
                 uid,
                 &infos,
                 &analyses,
@@ -935,6 +965,8 @@ mod tests {
                 &logs_dir,
                 hms(23, 59, 59),
                 None,
+                &EvidenceCache::new(),
+                &HashSet::new(),
             );
             println!("map_id={map_id} promotions={promotions:?}");
             assert!(
@@ -1093,7 +1125,7 @@ mod tests {
                 .unwrap_or(0)
                 + 3_600_000;
             let promotions = select_settlement_promotions(
-                &chatlog_files,
+                &metas_of(&chatlog_files),
                 &uid,
                 &infos,
                 &analyses,
@@ -1101,6 +1133,8 @@ mod tests {
                 &logs_dir,
                 scan_end_ms,
                 None,
+                &EvidenceCache::new(),
+                &HashSet::new(),
             );
             if promotions.is_empty() {
                 continue;
@@ -1262,7 +1296,7 @@ mod tests {
                 .unwrap_or(0)
                 + 3_600_000;
             let promotions = select_settlement_promotions(
-                &chatlog_files,
+                &metas_of(&chatlog_files),
                 &uid,
                 &infos,
                 &analyses,
@@ -1270,6 +1304,8 @@ mod tests {
                 &logs_dir,
                 scan_end_ms,
                 None,
+                &EvidenceCache::new(),
+                &HashSet::new(),
             );
             for name in &promotions {
                 if let Some(a) = analyses.get_mut(name) {
@@ -1372,6 +1408,11 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    /// 用测试数据库构建账号级 chatlog 元数据（与生产 build_chatlog_meta 同源）。
+    fn metas_of(paths: &[PathBuf]) -> Vec<ChatlogMeta> {
+        super::super::build_chatlog_meta(paths)
     }
 
     fn temp_jcl_dir(label: &str) -> PathBuf {

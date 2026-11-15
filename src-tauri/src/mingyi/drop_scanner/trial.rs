@@ -255,8 +255,10 @@ impl FileCache {
     }
 
     fn prune_idle(&mut self, now: Instant) {
+        // 用 saturating 版本：`Instant` 只能表示本机启动以来的时间，若某条记录的
+        // last_used 落到 now 之后（时钟/构造顺序异常），duration_since 会 panic。
         self.entries
-            .retain(|_, entry| now.duration_since(entry.last_used) <= FILE_CACHE_IDLE);
+            .retain(|_, entry| now.saturating_duration_since(entry.last_used) <= FILE_CACHE_IDLE);
     }
 }
 
@@ -905,9 +907,11 @@ mod tests {
         assert!(cache.get(&first, first_fingerprint, uid).is_none());
 
         // Once idle entries expire, rereading the same source produces the same evidence.
-        for entry in cache.entries.values_mut() {
-            entry.last_used = Instant::now() - FILE_CACHE_IDLE - Duration::from_secs(1);
-        }
+        // 用「未来时刻」触发过期判断，而不是把 last_used 往过去推：`Instant` 只能表示
+        // 本机启动以来的时间，开机不足 31 分钟时 `Instant::now() - FILE_CACHE_IDLE`
+        // 会直接 panic（实测在刚重启的机器上必现）。
+        cache.prune_idle(Instant::now() + FILE_CACHE_IDLE + Duration::from_secs(1));
+        assert_eq!(cache.len(), 0, "idle entries should be pruned");
         assert!(cache.insert(
             first.clone(),
             first_fingerprint,
@@ -921,11 +925,7 @@ mod tests {
         assert_eq!(reparsed.events[0].timestamp_ms, 1_000);
 
         cache
-            .entries
-            .get_mut(&first)
-            .expect("first cache entry")
-            .last_used = Instant::now() - FILE_CACHE_IDLE - Duration::from_secs(1);
-        assert!(cache.get(&first, first_fingerprint, uid).is_none());
+            .prune_idle(Instant::now() + FILE_CACHE_IDLE + Duration::from_secs(1));
         assert!(
             !cache.entries.contains_key(&first),
             "idle entry must not remain resident forever"

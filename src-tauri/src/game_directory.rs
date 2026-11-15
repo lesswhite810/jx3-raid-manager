@@ -224,6 +224,48 @@ pub fn lookup_role_name_by_uid(game_directory: &Path, uid: &str) -> Option<Strin
     }
 }
 
+/// 从茗伊装备数据库的 OwnerInfo 表读取全部「角色 uid → 等级」映射
+///
+/// 这是扫描阶段唯一可信的 uid→等级数据源：
+/// - `roles` 表的主键是角色 UUID，与茗伊 uid 不是同一套标识，无法直接映射；
+/// - `equip_stat.v4.db` 的 `OwnerInfo.ownerkey` 就是茗伊 uid，且包含全部角色。
+///
+/// 返回空 Map 表示数据库缺失或读取失败，调用方应按「无法判定等级」处理。
+pub fn read_mingyi_owner_levels(game_directory: &Path) -> std::collections::HashMap<String, i64> {
+    let mut levels = std::collections::HashMap::new();
+    let db_path = game_directory.join(MING_YI_DB_PATH);
+    if !db_path.exists() {
+        return levels;
+    }
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) else {
+        log::warn!(
+            "[GameDirectory] 打开茗伊装备数据库失败: {}",
+            db_path.display()
+        );
+        return levels;
+    };
+    let Ok(mut stmt) = conn.prepare("SELECT ownerkey, ownerlevel FROM OwnerInfo") else {
+        log::warn!("[GameDirectory] 查询 OwnerInfo 等级失败，将跳过等级过滤");
+        return levels;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        let owner_key: String = row.get(0)?;
+        let level: Option<i64> = row.get(1).ok();
+        Ok((owner_key, level))
+    }) else {
+        return levels;
+    };
+    for (owner_key, level) in rows.flatten() {
+        if let Some(level) = level {
+            levels.insert(owner_key.trim().to_string(), level);
+        }
+    }
+    levels
+}
+
 /// 从角色目录的 userdata.db 解析出的角色统计信息
 ///
 /// 字段来源：茗伊插件 MY_RoleStatistics_RoleStat.lua 的 COLUMN_LIST

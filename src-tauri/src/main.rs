@@ -69,8 +69,39 @@ fn check_webview2() -> Result<String, String> {
     }
 }
 
+/// 解析本应用的日志级别。
+///
+/// 默认只写 Info 及以上级别：扫描、结算补强等热路径每秒会产生大量 Debug 日志，
+/// 逐条格式化并落盘本身就会拖慢扫描，正式使用也不需要这些细节。
+/// 需要排查问题时可用环境变量 `JX3_LOG_LEVEL=debug`（或 trace）重新打开。
+fn resolve_app_log_level() -> log::LevelFilter {
+    match std::env::var("JX3_LOG_LEVEL") {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "trace" => log::LevelFilter::Trace,
+            "debug" => log::LevelFilter::Debug,
+            "info" => log::LevelFilter::Info,
+            "warn" | "warning" => log::LevelFilter::Warn,
+            "error" => log::LevelFilter::Error,
+            "off" => log::LevelFilter::Off,
+            other => {
+                eprintln!("忽略无法识别的 JX3_LOG_LEVEL 取值: {other}");
+                log::LevelFilter::Info
+            }
+        },
+        // 调试构建保留完整日志，方便开发期定位问题。
+        Err(_) => {
+            if cfg!(debug_assertions) {
+                log::LevelFilter::Debug
+            } else {
+                log::LevelFilter::Info
+            }
+        }
+    }
+}
+
 fn init_logging() -> tauri_plugin_log::Builder {
     tauri_plugin_log::Builder::new()
+        .level(resolve_app_log_level())
         .level_for("reqwest", log::LevelFilter::Info)
         .level_for("h2", log::LevelFilter::Info)
         .level_for("hyper", log::LevelFilter::Info)
@@ -119,6 +150,12 @@ fn initialize_primary_instance(app: &mut tauri::App) -> Result<(), Box<dyn std::
         Ok(_) => log::info!("[INIT] 数据库预初始化完成"),
         Err(e) => log::error!("[INIT] 数据库预初始化失败: {}", e),
     }
+    // 启动即收敛历史遗留的 scanning 记录：此前该翻转只在直播复核路径里跑，
+    // 而那条路径要求游戏正在运行，导致游戏关闭后记录会长期停在「扫描中」。
+    // 应用启动说明上一轮扫描已被中断，直接转成待确认交给用户处理。
+    mingyi::drop_scanner::flip_interrupted_scanning_records();
+    // 记录一次 JCL 缓存现场，便于分辨「缓存被清空」与「数据库文件被替换」
+    mingyi::drop_scanner::log_jcl_cache_snapshot("应用启动时");
     let capture_config = app_config::get_app_config_internal().ok();
     let capture_enabled = capture_config
         .as_ref()

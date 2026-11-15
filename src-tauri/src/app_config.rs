@@ -239,6 +239,8 @@ pub fn set_game_directory(path: String) -> Result<(), String> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let conn = db::init_db()?;
     upsert_value(&conn, KEY_GAME_DIRECTORY, &path)?;
+    // 扫描侧缓存了补全后的游戏目录，配置变更后必须失效，否则会继续用旧路径
+    crate::mingyi::drop_scanner::invalidate_game_directory_cache();
     crate::mingyi::drop_scanner::live::clear();
     crate::trial_capture::clear();
     refresh_trial_screenshot_capture(&conn)?;
@@ -271,6 +273,7 @@ pub fn reset_setup() -> Result<(), String> {
     upsert_value(&conn, KEY_RAID_VIEW_MODE, RaidViewMode::Current.as_str())?;
     upsert_value(&conn, KEY_SHOW_WEEKLY_RAIDS, "true")?;
     upsert_value(&conn, KEY_HIDE_NON_MAX_LEVEL_ROLES, "false")?;
+    crate::mingyi::drop_scanner::invalidate_game_directory_cache();
     refresh_trial_screenshot_capture(&conn)?;
     log::info!("[AppConfig] 应用配置已重置，将回到引导界面");
     Ok(())

@@ -3,14 +3,14 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Datelike;
 
 use crate::app_config;
 use crate::db;
-use crate::game_directory::MINGYI_ACCOUNTS_BASE_PATH;
+use crate::game_directory::{read_mingyi_owner_levels, MINGYI_ACCOUNTS_BASE_PATH};
 use crate::mingyi::active_detector::parse_info_jx3dat;
 use crate::trial_capture;
 
@@ -616,8 +616,34 @@ pub(super) struct RaidInstance {
     first_gold_time: i64,
 }
 
+/// 游戏目录缓存。
+///
+/// `get_game_directory` 会读 app_config 并做路径补全，而 app_config 的读取内部会
+/// `db::init_db()`。单轮「扫描本周」里它被调用 40+ 次（每账号一次 + live 轮询每轮两次），
+/// 每次都白白重开一次数据库连接并重新探测目录。这里缓存补全结果，
+/// 仅在 `set_game_directory` / `reset_setup` 修改配置时失效。
+static GAME_DIRECTORY_CACHE: Mutex<Option<String>> = Mutex::new(None);
+
+/// 使游戏目录缓存失效（配置变更时调用）
+pub(crate) fn invalidate_game_directory_cache() {
+    if let Ok(mut guard) = GAME_DIRECTORY_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 /// 从 app_config 获取游戏目录（自动补全为 bin/zhcn_hd 运行目录）
 fn get_game_directory() -> Result<String, String> {
+    // 测试会在同一进程内反复改写 game_directory 配置，缓存会导致串场，测试下直读。
+    if !cfg!(test) {
+        if let Some(cached) = GAME_DIRECTORY_CACHE
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
+            return Ok(cached);
+        }
+    }
+
     let config = app_config::get_app_config_internal()?;
     let raw = config
         .game_directory
@@ -627,6 +653,11 @@ fn get_game_directory() -> Result<String, String> {
     let resolved = crate::game_directory::resolve_game_runtime_directory(&raw);
     if resolved != raw {
         log::info!("[DropScanner] 游戏目录补全: {} → {}", raw, resolved);
+    }
+    if !cfg!(test) {
+        if let Ok(mut guard) = GAME_DIRECTORY_CACHE.lock() {
+            *guard = Some(resolved.clone());
+        }
     }
     Ok(resolved)
 }
@@ -912,49 +943,12 @@ fn scan_jcl_files_with_trial_context(
         }
     }
 
-    // 离线路径（「扫描本周」等，since_ms=0）没有进程启动时间可依托，改为以
-    // 「目录 mtime + 扫描窗口」为键复用上一次枚举结果：JCL 文件一旦封存不再
-    // 变更，目录 mtime 不变则目录内容与各文件解析结果都不会变化，直接返回
-    // 缓存即可。新文件写入会更新目录 mtime，缓存自然失效。
-    if since_ms <= 0 {
-        if let Ok(dir_mtime) = std::fs::metadata(&combat_logs_dir).and_then(|meta| meta.modified())
-        {
-            let dir_mtime_ms = dir_mtime
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_millis() as i64)
-                .unwrap_or(0);
-            let key = JclScanCacheKey {
-                dir: combat_logs_dir.clone(),
-                dir_mtime_ms,
-                start_ms,
-                end_ms,
-                trial_context_start_ms,
-            };
-            if let Some(cached) = JCL_SCAN_CACHE.lock().ok().and_then(|mut cache| cache.get(&key))
-            {
-                log::debug!(
-                    "[DropScanner] 目录未变化（mtime={}），复用上次 JCL 枚举结果: 常规 {} 个, 试炼 {} 个",
-                    dir_mtime_ms,
-                    cached.0.len(),
-                    cached.1.len()
-                );
-                return Ok(cached);
-            }
-
-            let result = scan_jcl_files_full_range(
-                &combat_logs_dir,
-                since_ms,
-                start_ms,
-                end_ms,
-                trial_context_start_ms,
-            )?;
-            if let Ok(mut cache) = JCL_SCAN_CACHE.lock() {
-                cache.put(key, result.clone());
-            }
-            return Ok(result);
-        }
-    }
-
+    // 离线路径（「扫描本周」等，since_ms=0）也走完整枚举。
+    //
+    // 这里曾经用「目录 mtime + 扫描窗口」做缓存键复用上一次枚举结果，但 Windows
+    // 上目录 mtime 并不可靠（同一目录连续写入文件，实测约 99% 的情况 mtime 不变），
+    // 命中后会返回过期枚举，漏掉新产生的 JCL。而完整枚举只做 read_dir 和文件名
+    // 解析，不打开任何 JCL 内容，相对本函数后续的文件解析可以忽略，因此不再缓存。
     scan_jcl_files_full_range(
         &combat_logs_dir,
         since_ms,
@@ -962,60 +956,6 @@ fn scan_jcl_files_with_trial_context(
         end_ms,
         trial_context_start_ms,
     )
-}
-
-/// 离线 JCL 枚举缓存的键：目录路径 + 目录 mtime + 扫描窗口。
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct JclScanCacheKey {
-    dir: PathBuf,
-    dir_mtime_ms: i64,
-    start_ms: i64,
-    end_ms: i64,
-    trial_context_start_ms: i64,
-}
-
-/// 离线 JCL 枚举结果缓存：目录 mtime 未变化时直接复用上一次枚举。
-/// 上限 8 个账号（JCL 目录只在新增文件时变 mtime，进程生命周期内命中率高）。
-/// 用 Vec 保存键序实现简单的 LRU 淘汰，避免引入 lru 依赖。
-static JCL_SCAN_CACHE: LazyLock<Mutex<JclScanCache>> =
-    LazyLock::new(|| Mutex::new(JclScanCache::new(8)));
-
-#[derive(Default)]
-struct JclScanCache {
-    entries: HashMap<JclScanCacheKey, (Vec<JclFileInfo>, Vec<JclFileInfo>, bool)>,
-    order: Vec<JclScanCacheKey>,
-    max_entries: usize,
-}
-
-impl JclScanCache {
-    fn new(max_entries: usize) -> Self {
-        Self {
-            entries: HashMap::new(),
-            order: Vec::new(),
-            max_entries,
-        }
-    }
-
-    fn get(
-        &mut self,
-        key: &JclScanCacheKey,
-    ) -> Option<(Vec<JclFileInfo>, Vec<JclFileInfo>, bool)> {
-        let hit = self.entries.get(key).cloned()?;
-        // 命中后移到队尾（最近使用）
-        self.order.retain(|k| k != key);
-        self.order.push(key.clone());
-        Some(hit)
-    }
-
-    fn put(&mut self, key: JclScanCacheKey, value: (Vec<JclFileInfo>, Vec<JclFileInfo>, bool)) {
-        if !self.entries.contains_key(&key) && self.order.len() >= self.max_entries {
-            let evicted = self.order.remove(0);
-            self.entries.remove(&evicted);
-        }
-        self.order.retain(|k| k != &key);
-        self.order.push(key.clone());
-        self.entries.insert(key, value);
-    }
 }
 
 /// 完整枚举 combat_logs 目录：按文件名日期窗口过滤并分类常规/试炼 JCL。
@@ -1222,19 +1162,14 @@ const RAID_SESSION_GAP_MS: i64 = 2 * 60 * 60 * 1000;
 /// 检查指定时间范围内 chatlog 是否有"每人底薪"记录
 /// 用于 2 小时阈值分割决策和中间工资检查
 #[allow(dead_code)]
-fn has_salary_between(
-    chatlog_files: &[PathBuf],
-    start_ms: i64,
-    end_ms: i64,
-    chatlog_range_cache: &HashMap<PathBuf, Option<(i64, i64)>>,
-) -> bool {
+fn has_salary_between(chatlogs: &[ChatlogMeta], start_ms: i64, end_ms: i64) -> bool {
     let start_sec = start_ms / 1000;
     let end_sec = end_ms / 1000;
-    for path in chatlog_files {
-        if !chatlog_file_covers_range_cached(path, start_ms, end_ms, chatlog_range_cache) {
+    for meta in chatlogs {
+        if !meta.covers_range(start_ms, end_ms) {
             continue;
         }
-        if let Ok(conn) = Connection::open(path) {
+        if let Ok(conn) = Connection::open(&meta.path) {
             let has = conn.query_row(
                 "SELECT COUNT(*) FROM ChatLog WHERE time >= ?1 AND time <= ?2 AND (type = 'MSG_ROOM' OR type = 'MSG_WHISPER') AND text LIKE '%每人底薪%'",
                 params![start_sec, end_sec],
@@ -1542,12 +1477,24 @@ pub fn invalidate_raids_cache() {
     }
     // 清空 JCL 解析缓存表，避免副本配置变更后使用旧的 BOSS 分析结果
     if let Ok(conn) = crate::db::init_db() {
-        if let Err(e) = conn.execute("DELETE FROM jcl_cache", []) {
-            log::warn!("[DropScanner] 清空 JCL 缓存失败: {}", e);
-        } else {
-            log::info!("[DropScanner] 已清空 JCL 解析缓存（副本配置变更）");
+        let before = count_jcl_cache_rows(&conn);
+        match conn.execute("DELETE FROM jcl_cache", []) {
+            Err(e) => log::warn!("[DropScanner] 清空 JCL 缓存失败: {}", e),
+            Ok(deleted) => log::info!(
+                "[DropScanner] 已清空 JCL 解析缓存（副本配置变更）: 删除 {} 条，清空前 {} 条",
+                deleted,
+                before
+            ),
         }
     }
+}
+
+/// 统计 jcl_cache 当前行数（观测用，失败返回 -1）
+fn count_jcl_cache_rows(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM jcl_cache", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .unwrap_or(-1)
 }
 
 /// 从 raids 表和 raid_bosses 表加载副本信息
@@ -1948,6 +1895,18 @@ fn map_boss_names_to_ids(
 /// 所有副本共用解析版本，确保曾将服务器文本作为击杀依据的旧结果不会命中。
 const JCL_ANALYSIS_CACHE_VERSION: &str = "jcl-analysis-v9|";
 
+/// JCL 解析缓存命中/未命中计数（跨线程累加，扫描开始时重置）
+static JCL_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static JCL_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// 重置并返回上一次扫描的缓存统计（命中数，未命中数）
+fn take_jcl_cache_stats() -> (u64, u64) {
+    (
+        JCL_CACHE_HITS.swap(0, Ordering::Relaxed),
+        JCL_CACHE_MISSES.swap(0, Ordering::Relaxed),
+    )
+}
+
 fn jcl_cache_key(jcl_path: &Path) -> String {
     format!(
         "{}{}",
@@ -2035,11 +1994,13 @@ fn analyze_jcl_cached(
     // 1. 查缓存
     if file_mtime > 0 {
         if let Some(cached) = get_jcl_cache(conn, &cache_key, file_mtime) {
+            JCL_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return Some(cached);
         }
     }
 
     // 2. 缓存未命中，解析文件
+    JCL_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
     let analysis = analyze_jcl(jcl_path, jcl_boss_name, boss_template_id, raid_bosses)?;
 
     // 3. 写回缓存
@@ -2369,6 +2330,10 @@ pub(super) fn analyze_jcl(
 /// - 有效伤害必须刚好等于唯一观测 maxHP，且没有有效治疗、重入或另一轮战斗。
 ///
 /// `None` 只表示不能安全补强，不会否定已有的 JCL 强击杀证据。
+///
+/// 生产扫描走 `analyze_completion_candidate_cached`（复用本轮证据包）；
+/// 本函数保留为不带缓存的一次性入口，目前仅测试与外部单次校验使用。
+#[allow(dead_code)]
 fn analyze_damage_completion_candidate(
     jcl_path: &Path,
     jcl_boss_name: &str,
@@ -2394,6 +2359,10 @@ enum CompletionProof {
 
 /// 两种外部补漏共用角色、实体、时间边界和有效伤害校验。
 /// 结算补漏还需调用方验证该副本的奖励和对应首领的物品记录，此处只校验战斗。
+///
+/// 生产扫描走 `analyze_completion_candidate_cached`（复用本轮证据包）；
+/// 本函数保留为不带缓存的一次性入口，目前仅测试与外部单次校验使用。
+#[allow(dead_code)]
 fn analyze_completion_candidate(
     jcl_path: &Path,
     jcl_boss_name: &str,
@@ -2417,6 +2386,273 @@ fn analyze_completion_candidate(
         return None;
     }
 
+    let scan = scan_completion_evidence(
+        jcl_path,
+        expected_uid,
+        jcl_boss_name,
+        boss_template_id,
+        raid_bosses,
+    )?;
+    evaluate_completion(&scan, proof, jcl_boss_name, expected_uid)
+}
+
+/// `analyze_completion_candidate` 的缓存版本：同一轮扫描内按 `(路径, mtime)`
+/// 复用解析结果，避免伤害补漏与结算补强各读一遍同一个 JCL。
+fn analyze_completion_candidate_cached(
+    evidence: &EvidenceCache,
+    jcl_path: &Path,
+    jcl_boss_name: &str,
+    boss_template_id: i64,
+    raid_bosses: &[(String, String)],
+    expected_uid: &str,
+    proof: CompletionProof,
+) -> Option<DamageCompletionCandidate> {
+    if expected_uid.is_empty() || boss_template_id == 0 {
+        return None;
+    }
+    if raid_bosses
+        .iter()
+        .filter(|(_, name)| name == jcl_boss_name)
+        .count()
+        != 1
+    {
+        return None;
+    }
+    // 走到这里 boss_template_id 必非 0，必须是带真实首领参数的完整结果。
+    // `anchors_only` 必须为 false：结束锚的轻量扫描 strict_ok 恒为 false，
+    // 交给 `evaluate_completion` 只会直接返回 None。
+    let scan = evidence.get_or_scan(
+        jcl_path,
+        expected_uid,
+        jcl_boss_name,
+        boss_template_id,
+        raid_bosses,
+        false,
+    )?;
+    evaluate_completion(&scan, proof, jcl_boss_name, expected_uid)
+}
+
+/// 单轮账号扫描内共享的 JCL 证据包缓存。
+///
+/// 同一个 JCL 在一次扫描里会被三个消费者读取：主循环的伤害补漏
+/// （`ExactDamage`）、结算补强（`EncounterSettlement`）、以及尝试结束锚
+/// （`collect_type1_end_anchors`）。此前三者各自全量逐行读文件，一个
+/// 139 文件 / 1.48 GB 的账号一轮会触发 400 次以上的重复读取。
+///
+/// 键是 `(路径, 文件 mtime)`。账号内同一文件的副本首领参数恒定，因此伤害补漏
+/// 与结算补强可以共用首趟结果；`type1_ends` / `anchors_ok` 只由 type=1 行决定，
+/// 与首领参数无关，未配置副本用占位参数扫描同样得到正确锚点。
+///
+/// `full` 标记该结果是否带真实首领参数：结束锚只需引用任何已有结果，
+/// 而补漏判定必须有 `full` 结果（占位扫描的 `boss_dwid` 为空，不能用于判定）。
+pub(super) struct EvidenceCache {
+    scans: Mutex<HashMap<(PathBuf, u64), (Arc<CompletionScan>, bool)>>,
+}
+
+impl EvidenceCache {
+    pub(super) fn new() -> Self {
+        Self {
+            scans: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 取缓存命中的证据包；未命中时扫描并写入。
+    ///
+    /// `anchors_only` 为真时只解析 type=1 结束锚（与旧版
+    /// `collect_type1_end_anchors` 成本一致），不对补漏判定可用；
+    /// 反之要求结果带真实首领参数，避免把结束锚的轻量扫描误用为补漏输入。
+    fn get_or_scan(
+        &self,
+        jcl_path: &Path,
+        expected_uid: &str,
+        jcl_boss_name: &str,
+        boss_template_id: i64,
+        raid_bosses: &[(String, String)],
+        anchors_only: bool,
+    ) -> Option<Arc<CompletionScan>> {
+        let require_full = !anchors_only;
+        let full = boss_template_id != 0;
+        let mtime = std::fs::metadata(jcl_path)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|elapsed| elapsed.as_nanos() as u64)
+            .unwrap_or(0);
+        let key = (jcl_path.to_path_buf(), mtime);
+        if let Ok(guard) = self.scans.lock() {
+            if let Some((cached, cached_full)) = guard.get(&key) {
+                if !require_full || *cached_full {
+                    return Some(cached.clone());
+                }
+            }
+        }
+        let raw = if anchors_only {
+            scan_type1_anchors(jcl_path, expected_uid)
+        } else {
+            scan_completion_evidence(
+                jcl_path,
+                expected_uid,
+                jcl_boss_name,
+                boss_template_id,
+                raid_bosses,
+            )
+        };
+        // 解析整体失败（文件打不开）时直接返回，不缓存：同一文件稍后可能被其它
+        // 消费者以不同参数再试，缓存 None 只会让语义变复杂。
+        let scan = Arc::new(raw?);
+        if let Ok(mut guard) = self.scans.lock() {
+            // 已有真实参数结果时不降级覆盖。
+            let keep_full = guard
+                .get(&key)
+                .map(|(_, cached_full)| *cached_full)
+                .unwrap_or(false);
+            if !keep_full {
+                guard.insert(key, (scan.clone(), full));
+            }
+        }
+        Some(scan)
+    }
+}
+
+/// 单次解析得到的补漏证据。
+///
+/// 此前 `analyze_completion_candidate`（两条证据通道各调一次）与
+/// `collect_type1_end_anchors` 各自把同一个 JCL 从头逐行读一遍，
+/// 一个 139 文件、1.48 GB 的账号一轮扫描里因此产生 400 次以上的全量读取。
+/// 这里把三者需要的字段一次解析完，再由 `evaluate_completion` /
+/// `scan_jcl_evidence` 分别出结论。
+struct CompletionScan {
+    /// 严格模式：所有相关行都能解析（completion 路径要求）
+    strict_ok: bool,
+    /// type=21 出现重复记录，completion 通道视为不可信
+    duplicate_type21: bool,
+    fight_start: Option<(i64, i64, String, usize)>,
+    fight_end: Option<(i64, i64, String, usize)>,
+    invalid_attempt: bool,
+    boss_dwid: Option<i64>,
+    has_multiple_boss_runtime: bool,
+    has_template_name_mismatch: bool,
+    fight_hints: Vec<(i64, i64, i64, bool, f64, i64, usize)>,
+    effects: Vec<(i64, i64, i64, i64, usize)>,
+    malformed_effect: bool,
+    chest_seen: bool,
+    /// 每条 type=1 行携带的 map_id（供 EncounterSettlement 校验）
+    type1_map_ids: Vec<Option<i64>>,
+    /// `collect_type1_end_anchors` 的严格性（只对 type=1 行敏感）
+    anchors_ok: bool,
+    type1_ends: Vec<i64>,
+}
+
+/// 只收集 type=1 结束锚的轻量扫描。
+///
+/// 旧版 `collect_type1_end_anchors` 在 `event_type != 1` 时会在 GBK 解码**之前**
+/// 直接 continue；若复用 `scan_completion_evidence`，每条 type=21 行
+/// （实测占本周 JCL 的 52–57%）都要解码 + 切分，单个 38 万行文件的光这一项
+/// 就让一个账号的补漏从秒级涨到分钟级。
+///
+/// 这里只解析 type=1，其余行直接跳过；严格性语义与
+/// `scan_completion_evidence` 的锚点部分完全一致（解析失败只把 `anchors_ok`
+/// 置 false，不中断读取），因此两者可以互相替代。
+/// `strict_ok` 恒为 false，确保它永远不会被当作补漏判定输入。
+fn scan_type1_anchors(jcl_path: &Path, expected_uid: &str) -> Option<CompletionScan> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(jcl_path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let gbk = encoding_rs::GBK;
+    let mut ends: Vec<i64> = Vec::new();
+    let mut anchors_ok = true;
+    let mut last_event_ms = 0i64;
+    for line in reader.split(b'\n') {
+        let line = line.ok()?;
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&[u8]> = line.splitn(6, |byte| *byte == b'\t').collect();
+        if parts.len() < 6 {
+            anchors_ok = false;
+            continue;
+        }
+        if let Ok(raw) = std::str::from_utf8(parts[2]) {
+            if let Ok(ms) = raw.parse::<i64>() {
+                last_event_ms = ms.saturating_mul(1000);
+            }
+        }
+        let event_type = match std::str::from_utf8(parts[4])
+            .ok()
+            .and_then(|raw| raw.parse::<u8>().ok())
+        {
+            Some(event_type) => event_type,
+            None => {
+                anchors_ok = false;
+                continue;
+            }
+        };
+        if event_type != 1 {
+            continue;
+        }
+        let timestamp = match std::str::from_utf8(parts[2])
+            .ok()
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            Some(value) => value,
+            None => {
+                anchors_ok = false;
+                continue;
+            }
+        };
+        let (lua, _, errors) = gbk.decode(parts[5]);
+        if errors {
+            anchors_ok = false;
+            continue;
+        }
+        let inner = lua
+            .trim()
+            .strip_prefix('{')
+            .and_then(|value| value.strip_suffix('}'))
+            .unwrap_or(lua.trim());
+        let fields: Vec<&str> = inner.split(',').collect();
+        if fields.len() < 2 {
+            anchors_ok = false;
+            continue;
+        }
+        match fields[0].trim() {
+            "true" => {}
+            "false" if jcl_uuid_matches_uid(fields[1].trim().trim_matches('"'), expected_uid) => {
+                ends.push(timestamp.saturating_mul(1000))
+            }
+            "false" => {}
+            _ => anchors_ok = false,
+        }
+    }
+    if ends.is_empty() && last_event_ms > 0 {
+        ends.push(last_event_ms);
+    }
+    Some(CompletionScan {
+        strict_ok: false,
+        duplicate_type21: false,
+        fight_start: None,
+        fight_end: None,
+        invalid_attempt: false,
+        boss_dwid: None,
+        has_multiple_boss_runtime: false,
+        has_template_name_mismatch: false,
+        fight_hints: Vec::new(),
+        effects: Vec::new(),
+        malformed_effect: false,
+        chest_seen: false,
+        type1_map_ids: Vec::new(),
+        anchors_ok,
+        type1_ends: ends,
+    })
+}
+
+fn scan_completion_evidence(
+    jcl_path: &Path,
+    expected_uid: &str,
+    jcl_boss_name: &str,
+    boss_template_id: i64,
+    raid_bosses: &[(String, String)],
+) -> Option<CompletionScan> {
     use std::io::BufRead;
     type Effect = (i64, i64, i64, i64, usize);
     type PendingEffect = (i64, i64, i64, Option<i64>, Option<i64>, usize);
@@ -2441,42 +2677,95 @@ fn analyze_completion_candidate(
     // 结算补强的宝箱证据：JCL 内出现当前首领的专属宝箱 NPC。
     // 剧情演出/死亡事件丢失时主判定会漏记，但宝箱 NPC 仍会生成，是独立兜底证据。
     let mut chest_seen = false;
+    // 严格性改为「记录标记而不立即中断」：同一个文件既要供补漏判定使用，也要供
+    // `collect_type1_end_anchors` 的结束锚使用，两者容忍度不同。
+    // `strict_ok` 只影响补漏通道，`anchors_ok` 只影响 type=1 结束锚。
+    let mut strict_ok = true;
+    let mut anchors_ok = true;
+    let mut duplicate_type21 = false;
+    let mut type1_map_ids: Vec<Option<i64>> = Vec::new();
+    let mut type1_ends: Vec<i64> = Vec::new();
+    let mut last_event_ms = 0i64;
 
     for (line_number, line) in reader.split(b'\n').enumerate() {
         let line_bytes = match line {
             Ok(line) => line,
-            Err(_) => return None,
-        };
-        let mut parts: Vec<&[u8]> = Vec::with_capacity(6);
-        let mut start = 0;
-        for (index, &byte) in line_bytes.iter().enumerate() {
-            if byte == b'\t' {
-                parts.push(&line_bytes[start..index]);
-                start = index + 1;
-                if parts.len() >= 5 {
-                    break;
-                }
+            Err(_) => {
+                strict_ok = false;
+                anchors_ok = false;
+                break;
             }
-        }
-        if parts.len() >= 5 {
-            parts.push(&line_bytes[start..]);
-        }
+        };
+        // 用 `splitn` 切前 6 段：它内部走 memchr 批量找分隔符，比逐字节扫描
+        // 快一个量级。这里每个 JCL 动辄 30 万行、单行上 KB，逐字节循环会成为
+        // 整个账号扫描的主要成本（旧实现同样用 `splitn`）。
+        let parts: Vec<&[u8]> = line_bytes.splitn(6, |byte| *byte == b'\t').collect();
         if parts.len() < 6 {
             if !line_bytes.is_empty() {
-                return None;
+                strict_ok = false;
+                anchors_ok = false;
             }
             continue;
         }
 
-        let event_type = std::str::from_utf8(parts[4]).ok()?.parse::<u8>().ok()?;
+        // 末事件时间只做事后兜底，解析失败不影响主判定，也不放宽 type=1 的严格校验。
+        if let Ok(raw) = std::str::from_utf8(parts[2]) {
+            if let Ok(ms) = raw.parse::<i64>() {
+                last_event_ms = ms.saturating_mul(1000);
+            }
+        }
+
+        let event_type = match std::str::from_utf8(parts[4])
+            .ok()
+            .and_then(|raw| raw.parse::<u8>().ok())
+        {
+            Some(event_type) => event_type,
+            None => {
+                strict_ok = false;
+                anchors_ok = false;
+                continue;
+            }
+        };
         if !matches!(event_type, 1 | 8 | 9 | 21) {
             continue;
         }
-        let timestamp_sec = std::str::from_utf8(parts[2]).ok()?.parse::<i64>().ok()?;
-        let client_ms = std::str::from_utf8(parts[3]).ok()?.parse::<i64>().ok()?;
+        // 补漏判定已经不可信（strict_ok=false）时，除 type=1 外的行都不再产生
+        // 任何有用结果：`evaluate_completion` 会在入口直接返回 None，而结束锚只
+        // 依赖 type=1。此处提前跳过后面的 GBK 解码与逗号切分——单个 38 万行 JCL
+        // 里 type=21 往往占一半以上，这是最贵的一步。
+        if !strict_ok && event_type != 1 {
+            continue;
+        }
+        let timestamp_sec = match std::str::from_utf8(parts[2])
+            .ok()
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            Some(value) => value,
+            None => {
+                strict_ok = false;
+                if event_type == 1 {
+                    anchors_ok = false;
+                }
+                continue;
+            }
+        };
+        let client_ms = match std::str::from_utf8(parts[3])
+            .ok()
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            Some(value) => value,
+            None => {
+                strict_ok = false;
+                continue;
+            }
+        };
         let (lua_str, _, decode_errors) = gbk.decode(parts[5]);
         if decode_errors {
-            return None;
+            strict_ok = false;
+            if event_type == 1 {
+                anchors_ok = false;
+            }
+            continue;
         }
         let lua_trimmed = lua_str.trim();
         let lua_inner = lua_trimmed
@@ -2489,6 +2778,7 @@ fn analyze_completion_candidate(
             1 => {
                 if fields.len() < 2 {
                     invalid_attempt = true;
+                    anchors_ok = false;
                     continue;
                 }
                 let in_fight = match fields[0].trim() {
@@ -2496,54 +2786,65 @@ fn analyze_completion_candidate(
                     "false" => false,
                     _ => {
                         invalid_attempt = true;
+                        anchors_ok = false;
                         continue;
                     }
                 };
                 let uuid = fields[1].trim().trim_matches('"').to_string();
-                if let CompletionProof::EncounterSettlement { map_id } = proof {
-                    if fields
+                type1_map_ids.push(
+                    fields
                         .get(3)
-                        .and_then(|value| value.trim().parse::<i64>().ok())
-                        != Some(map_id)
-                    {
-                        return None;
-                    }
+                        .and_then(|value| value.trim().parse::<i64>().ok()),
+                );
+                let uuid_matches = jcl_uuid_matches_uid(&uuid, expected_uid);
+                if !in_fight && uuid_matches {
+                    type1_ends.push(timestamp_sec.saturating_mul(1000));
                 }
-                let target = if in_fight {
-                    &mut fight_start
-                } else {
-                    &mut fight_end
-                };
-                if target.is_some() || !jcl_uuid_matches_uid(&uuid, expected_uid) {
+                if in_fight {
+                    if fight_start.is_some() || !uuid_matches {
+                        invalid_attempt = true;
+                    } else {
+                        fight_start = Some((timestamp_sec, client_ms, uuid, line_number));
+                    }
+                } else if fight_end.is_some() || !uuid_matches {
                     invalid_attempt = true;
                 } else {
-                    *target = Some((timestamp_sec, client_ms, uuid, line_number));
+                    fight_end = Some((timestamp_sec, client_ms, uuid, line_number));
                 }
             }
             8 => {
                 if fields.len() < 3 {
-                    return None;
+                    strict_ok = false;
+                    continue;
                 }
-                let dwid = fields[0].trim().parse::<i64>().ok()?;
-                let template_id = fields[2].trim().parse::<i64>().ok()?;
+                let dwid = match fields[0].trim().parse::<i64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        strict_ok = false;
+                        continue;
+                    }
+                };
+                let template_id = match fields[2].trim().parse::<i64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        strict_ok = false;
+                        continue;
+                    }
+                };
                 // 结算补强宝箱证据：名字以“宝箱”结尾的 NPC，且前缀能唯一匹配
-                // 当前首领（完整名或唯一去点名）。只在结算补强路径采集，
-                // ExactDamage 路径保持原语义不受影响。
-                if matches!(proof, CompletionProof::EncounterSettlement { .. })
-                    && fields.len() >= 2
-                {
-                    let npc_name = fields[1].trim().trim_matches('"');
-                    if npc_name.ends_with("宝箱") {
-                        let prefix = &npc_name[..npc_name.len() - "宝箱".len()];
-                        let chest_owner = match_treasure_box_alias(template_id, prefix, raid_bosses)
-                            .or_else(|| match_treasure_box_boss(prefix, raid_bosses));
-                        if chest_owner == Some(jcl_boss_name) {
-                            chest_seen = true;
-                        }
+                // 当前首领（完整名或唯一去点名）。这只是补漏的旁证，
+                // 因此不再按通道裁剪，两条通道共享同一份解析结果。
+                let npc_name = fields[1].trim().trim_matches('"');
+                if npc_name.ends_with("宝箱") {
+                    let prefix = &npc_name[..npc_name.len() - "宝箱".len()];
+                    let chest_owner = match_treasure_box_alias(template_id, prefix, raid_bosses)
+                        .or_else(|| match_treasure_box_boss(prefix, raid_bosses));
+                    if chest_owner == Some(jcl_boss_name) {
+                        chest_seen = true;
                     }
                 }
                 if dwid != 0 && template_id == boss_template_id {
-                    if fields[1].trim().trim_matches('"') != jcl_boss_name {
+                    if npc_name != jcl_boss_name {
                         // 同模板但不同名字的实体不能借用文件名首领的伤害。
                         has_template_name_mismatch = true;
                     } else {
@@ -2584,28 +2885,51 @@ fn analyze_completion_candidate(
             }
             9 => {
                 if fields.len() < 4 {
-                    return None;
+                    strict_ok = false;
+                    continue;
                 }
-                let dwid = fields[0].trim().parse::<i64>().ok()?;
+                let dwid = match fields[0].trim().parse::<i64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        strict_ok = false;
+                        continue;
+                    }
+                };
                 let in_fight = match fields[1].trim() {
                     "true" => true,
                     "false" => false,
-                    _ => return None,
+                    _ => {
+                        strict_ok = false;
+                        continue;
+                    }
                 };
-                let current_hp = fields[2]
+                let current_hp = match fields[2]
                     .trim()
                     .parse::<f64>()
                     .ok()
-                    .filter(|value| value.is_finite() && *value >= 0.0)?;
-                let max_hp = fields[3]
+                    .filter(|value| value.is_finite() && *value >= 0.0)
+                {
+                    Some(value) => value,
+                    None => {
+                        strict_ok = false;
+                        continue;
+                    }
+                };
+                let max_hp = match fields[3]
                     .trim()
                     .parse::<f64>()
                     .ok()
                     .filter(|value| value.is_finite() && *value > 0.0)
                     .and_then(|value| {
-                    let rounded = value.round();
-                    ((value - rounded).abs() < 0.0001).then_some(rounded as i64)
-                })?;
+                        let rounded = value.round();
+                        ((value - rounded).abs() < 0.0001).then_some(rounded as i64)
+                    }) {
+                    Some(value) => value,
+                    None => {
+                        strict_ok = false;
+                        continue;
+                    }
+                };
                 fight_hints.push((
                     dwid,
                     timestamp_sec,
@@ -2618,23 +2942,38 @@ fn analyze_completion_candidate(
             }
             21 => {
                 // type=21: {sourceDwid, targetDwid, ..., result={[13]=damageEff,[14]=healEff}}
-                let mut duplicate_key = Vec::with_capacity(
-                    parts[0].len() + parts[1].len() + parts[3].len() + parts[5].len() + 3,
-                );
-                duplicate_key.extend_from_slice(parts[0]);
-                duplicate_key.push(0);
-                duplicate_key.extend_from_slice(parts[1]);
-                duplicate_key.push(0);
-                duplicate_key.extend_from_slice(parts[3]);
-                duplicate_key.push(0);
-                duplicate_key.extend_from_slice(parts[5]);
-                if !seen_type21_records.insert(duplicate_key) {
-                    return None;
+                // 判定已不可信时不再为后续 type=21 分配去重键，避免 20 万行的
+                // 大文件继续堆内存（type=21 常占单个 JCL 的一半以上）。
+                let mut skip_payload = false;
+                if strict_ok && !duplicate_type21 {
+                    let mut duplicate_key = Vec::with_capacity(
+                        parts[0].len() + parts[1].len() + parts[3].len() + parts[5].len() + 3,
+                    );
+                    duplicate_key.extend_from_slice(parts[0]);
+                    duplicate_key.push(0);
+                    duplicate_key.extend_from_slice(parts[1]);
+                    duplicate_key.push(0);
+                    duplicate_key.extend_from_slice(parts[3]);
+                    duplicate_key.push(0);
+                    duplicate_key.extend_from_slice(parts[5]);
+                    if !seen_type21_records.insert(duplicate_key) {
+                        duplicate_type21 = true;
+                        skip_payload = true;
+                    }
                 }
-                let target_dwid = fields
+                if skip_payload {
+                    continue;
+                }
+                let target_dwid = match fields
                     .get(1)
-                    .and_then(|value| value.trim().parse::<i64>().ok());
-                let target_dwid = target_dwid?;
+                    .and_then(|value| value.trim().parse::<i64>().ok())
+                {
+                    Some(value) => value,
+                    None => {
+                        strict_ok = false;
+                        continue;
+                    }
+                };
                 let damage = DAMAGE_EFF_RE
                     .captures(lua_inner)
                     .and_then(|captures| captures[1].parse::<i64>().ok());
@@ -2646,7 +2985,7 @@ fn analyze_completion_candidate(
                         (Some(damage), Some(heal)) if damage >= 0 && heal == 0 => {
                             effects.push((timestamp_sec, client_ms, damage, heal, line_number))
                         }
-                        (Some(_), Some(_)) => return None,
+                        (Some(_), Some(_)) => strict_ok = false,
                         _ => malformed_effect = true,
                     }
                 } else if boss_dwid.is_none() {
@@ -2664,29 +3003,75 @@ fn analyze_completion_candidate(
         }
     }
 
-    let (start_sec, start_client_ms, start_uuid, start_line) = fight_start?;
-    let (end_sec, _end_client_ms, end_uuid, end_line) = fight_end?;
-    if invalid_attempt
+    if type1_ends.is_empty() && last_event_ms > 0 {
+        type1_ends.push(last_event_ms);
+    }
+
+    Some(CompletionScan {
+        strict_ok,
+        duplicate_type21,
+        fight_start,
+        fight_end,
+        invalid_attempt,
+        boss_dwid,
+        has_multiple_boss_runtime,
+        has_template_name_mismatch,
+        fight_hints,
+        effects,
+        malformed_effect,
+        chest_seen,
+        type1_map_ids,
+        anchors_ok,
+        type1_ends,
+    })
+}
+
+/// 由 `scan_completion_evidence` 的单次解析结果判定是否可补强。
+///
+/// 所有与通道相关的严格性检查都在这里完成，解析层只负责收集事实。
+fn evaluate_completion(
+    scan: &CompletionScan,
+    proof: CompletionProof,
+    jcl_boss_name: &str,
+    expected_uid: &str,
+) -> Option<DamageCompletionCandidate> {
+    if !scan.strict_ok || scan.duplicate_type21 {
+        return None;
+    }
+    // 结算通道还要求所有 type=1 行都属于同一张地图。
+    if let CompletionProof::EncounterSettlement { map_id } = proof {
+        if scan
+            .type1_map_ids
+            .iter()
+            .any(|value| *value != Some(map_id))
+        {
+            return None;
+        }
+    }
+
+    let (start_sec, start_client_ms, start_uuid, start_line) = scan.fight_start.clone()?;
+    let (end_sec, _end_client_ms, end_uuid, end_line) = scan.fight_end.clone()?;
+    if scan.invalid_attempt
         || start_uuid != end_uuid
         || !jcl_uuid_matches_uid(&start_uuid, expected_uid)
         || !jcl_uuid_matches_uid(&end_uuid, expected_uid)
         || end_sec < start_sec
         || end_line <= start_line
-        || boss_dwid.is_none()
-        || has_multiple_boss_runtime
-        || has_template_name_mismatch
-        || malformed_effect
+        || scan.boss_dwid.is_none()
+        || scan.has_multiple_boss_runtime
+        || scan.has_template_name_mismatch
+        || scan.malformed_effect
     {
         return None;
     }
 
-    let boss_dwid = boss_dwid?;
+    let boss_dwid = scan.boss_dwid?;
     let mut saw_participation = false;
     let mut first_false_line: Option<usize> = None;
     let mut observed_max_hp: Option<i64> = None;
     let mut last_active_hp: Option<f64> = None;
     for (dwid, timestamp_sec, client_ms, in_fight, current_hp, max_hp, line_number) in
-        fight_hints.iter().copied()
+        scan.fight_hints.iter().copied()
     {
         if dwid != boss_dwid {
             continue;
@@ -2728,7 +3113,7 @@ fn analyze_completion_candidate(
         if matches!(proof, CompletionProof::ExactDamage) {
             return None;
         }
-        if fight_hints.iter().all(|(dwid, ..)| *dwid != boss_dwid) {
+        if scan.fight_hints.iter().all(|(dwid, ..)| *dwid != boss_dwid) {
             // 连一条 boss 状态行都没有：无法核对血量上限与血量单调性，拒绝。
             return None;
         }
@@ -2739,7 +3124,7 @@ fn analyze_completion_candidate(
     let mut total_heal = 0i64;
     let mut reached_max = false;
     let mut kill_sec = 0i64;
-    for (timestamp_sec, client_ms, damage, heal, line_number) in effects {
+    for (timestamp_sec, client_ms, damage, heal, line_number) in scan.effects.iter().copied() {
         // 文件头/尾不完整或跨战斗的伤害不能参与，也不能忽略后伪造完整击杀。
         let in_import_prefix = line_number < start_line
             && timestamp_sec >= start_sec.saturating_sub(1)
@@ -2798,7 +3183,7 @@ fn analyze_completion_candidate(
         boss_name: jcl_boss_name.to_string(),
         fight_end_ms: end_sec.saturating_mul(1000),
         kill_sec,
-        chest_seen,
+        chest_seen: scan.chest_seen,
     })
 }
 
@@ -2830,59 +3215,34 @@ fn jcl_uuid_matches_uid(jcl_uuid: &str, expected_uid: &str) -> bool {
 /// 真实日志中，有结束行的 386 份其「最后一条事件时间」与最后一条 `false` 完全同秒，
 /// 因此缺少结束行时改用最后一条事件时间兜底，避免把「读不到结束行」误判成
 /// 「战斗还没结束」而让同窗口内后续候选永久失格。
+///
+/// 生产扫描走 `collect_type1_end_anchors_cached`（复用本轮证据包）；
+/// 本函数保留为不带缓存的一次性入口，目前仅测试与外部单次校验使用。
+#[allow(dead_code)]
+/// 不带缓存的版本，仅测试与一次性调用使用；扫描主流程走 `anchors_of` + `EvidenceCache`。
 fn collect_type1_end_anchors(jcl_path: &Path, expected_uid: &str) -> Option<Vec<i64>> {
-    use std::io::BufRead;
-    let file = std::fs::File::open(jcl_path).ok()?;
-    let reader = std::io::BufReader::new(file);
-    let gbk = encoding_rs::GBK;
-    let mut ends = Vec::new();
-    let mut last_event_ms = 0i64;
-    for line in reader.split(b'\n') {
-        let line = line.ok()?;
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&[u8]> = line.splitn(6, |byte| *byte == b'\t').collect();
-        if parts.len() < 6 {
-            return None;
-        }
-        // 末事件时间只做事后兜底，解析失败不影响主判定，也不放宽 type=1 的严格校验。
-        if let Ok(raw) = std::str::from_utf8(parts[2]) {
-            if let Ok(ms) = raw.parse::<i64>() {
-                last_event_ms = ms.saturating_mul(1000);
-            }
-        }
-        let event_type = std::str::from_utf8(parts[4]).ok()?.parse::<u8>().ok()?;
-        if event_type != 1 {
-            continue;
-        }
-        let timestamp = std::str::from_utf8(parts[2]).ok()?.parse::<i64>().ok()?;
-        let (lua, _, errors) = gbk.decode(parts[5]);
-        if errors {
-            return None;
-        }
-        let inner = lua
-            .trim()
-            .strip_prefix('{')
-            .and_then(|value| value.strip_suffix('}'))
-            .unwrap_or(lua.trim());
-        let fields: Vec<&str> = inner.split(',').collect();
-        if fields.len() < 2 {
-            return None;
-        }
-        match fields[0].trim() {
-            "true" => {}
-            "false" if jcl_uuid_matches_uid(fields[1].trim().trim_matches('"'), expected_uid) => {
-                ends.push(timestamp.saturating_mul(1000))
-            }
-            "false" => {}
-            _ => return None,
-        }
+    let scan = scan_completion_evidence(jcl_path, expected_uid, "", 0, &[])?;
+    anchors_of(&scan)
+}
+
+/// 从证据包取出 type=1 结束锚。任一 type=1 行解析失败即视为不可用，
+/// 调用方必须禁用本轮补漏，不能把该文件附近的 10 金借给别的候选。
+fn anchors_of(scan: &CompletionScan) -> Option<Vec<i64>> {
+    if !scan.anchors_ok {
+        return None;
     }
-    if ends.is_empty() && last_event_ms > 0 {
-        ends.push(last_event_ms);
-    }
-    Some(ends)
+    Some(scan.type1_ends.clone())
+}
+
+/// `collect_type1_end_anchors` 的缓存版本：只走 type=1 轻量扫描，
+/// `type1_ends` / `anchors_ok` 只由 type=1 行决定，与首领参数无关。
+fn collect_type1_end_anchors_cached(
+    evidence: &EvidenceCache,
+    jcl_path: &Path,
+    expected_uid: &str,
+) -> Option<Vec<i64>> {
+    let scan = evidence.get_or_scan(jcl_path, expected_uid, "", 0, &[], true)?;
+    anchors_of(&scan)
 }
 
 /// BOSS 击杀奖励（单位：金）。JX3 金币单位为 砖/金/银/铜，
@@ -2959,7 +3319,7 @@ fn is_xiaxing_gain(text: &str) -> bool {
 /// 统计，而这里逐库要求 ChatInfo.user_global_id 与当前 JCL UUID 精确相同。未知、缺失
 /// 或不匹配的 DB 整库跳过，且不影响现有收入/掉落逻辑。
 fn read_role_verified_completion_reward_times(
-    chatlog_files: &[PathBuf],
+    chatlogs: &[ChatlogMeta],
     expected_uid: &str,
     candidates: &[DamageCompletionCandidate],
 ) -> Vec<i64> {
@@ -2981,7 +3341,19 @@ fn read_role_verified_completion_reward_times(
         .saturating_add(COMPLETION_REWARD_AFTER_SECS);
 
     let mut reward_times = Vec::new();
-    for path in chatlog_files {
+    for meta in chatlogs {
+        let path = &meta.path;
+        // 先用元数据排除时间范围不覆盖与角色不匹配的库，避免无谓开库
+        if !meta.covers_range(first_sec.saturating_mul(1000), last_sec.saturating_mul(1000)) {
+            continue;
+        }
+        if !meta.matches_uid(expected_uid) {
+            log::debug!(
+                "[DropScanner] 补漏跳过非当前角色或未标识 chatlog: {}",
+                path.display()
+            );
+            continue;
+        }
         let conn =
             match Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
             Ok(conn) => conn,
@@ -2994,22 +3366,6 @@ fn read_role_verified_completion_reward_times(
                 continue;
             }
         };
-        let user_global_id: Option<String> = conn
-            .query_row(
-            "SELECT value FROM ChatInfo WHERE key = 'user_global_id'",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-            )
-            .ok()
-            .flatten()
-            .and_then(|value| normalize_chatlog_user_global_id(&value));
-        if user_global_id.as_deref() != Some(expected_uid) {
-            log::debug!(
-                "[DropScanner] 补漏跳过非当前角色或未标识 chatlog: {}",
-                path.display()
-            );
-            continue;
-        }
 
         let mut statement = match conn.prepare(
             "SELECT type, text, msg, time FROM ChatLog WHERE time BETWEEN ?1 AND ?2 AND ( \
@@ -3279,8 +3635,7 @@ fn extract_drops_from_chatlog(
 /// 时间范围：[scan_start_ms, scan_end_ms + 2h]，2h 缓冲用于覆盖最后一个副本实例
 /// 的 chatlog_end 扩展（last_jcl_time + 2h 或 now_ms）。
 fn preload_chatlog_records(
-    chatlog_files: &[PathBuf],
-    chatlog_range_cache: &HashMap<PathBuf, Option<(i64, i64)>>,
+    chatlogs: &[ChatlogMeta],
     scan_start_ms: i64,
     scan_end_ms: i64,
     expected_uid: &str,
@@ -3294,18 +3649,14 @@ fn preload_chatlog_records(
     let mut all_records: Vec<ChatlogRecord> = Vec::new();
     let mut total_files_queried = 0u32;
 
-    for path in chatlog_files {
-        // 用 chatlog_range_cache 过滤不覆盖预加载范围的文件
-        if !chatlog_file_covers_range_cached(
-            path,
-            scan_start_ms,
-            preload_end_ms,
-            chatlog_range_cache,
-        ) {
+    for meta in chatlogs {
+        // 用 ChatlogMeta 里已缓存的时间范围过滤不覆盖预加载范围的文件
+        if !meta.covers_range(scan_start_ms, preload_end_ms) {
             continue;
         }
         total_files_queried += 1;
 
+        let path = &meta.path;
         let conn = match Connection::open(path) {
             Ok(c) => c,
             Err(e) => {
@@ -3320,17 +3671,7 @@ fn preload_chatlog_records(
 
         // 财务与掉落候选必须来自当前角色的聊天库。ChatInfo 缺失或 UID 不匹配时整库跳过，
         // 避免同一账号多角色的金币/工资串入当前记录。
-        let chatlog_uid = conn
-            .query_row(
-                "SELECT value FROM ChatInfo WHERE key = 'user_global_id'",
-                [],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .ok()
-            .flatten()
-            .and_then(|value| normalize_chatlog_user_global_id(&value));
-        let identity_verified = !expected_uid.is_empty()
-            && chatlog_uid.as_deref() == Some(expected_uid);
+        let identity_verified = meta.matches_uid(expected_uid);
         if !identity_verified {
             log::debug!(
                 "[DropScanner] 预加载保留未核验 chatlog（仅 legacy 使用）: {}",
@@ -3690,6 +4031,86 @@ fn resolve_income_amount(
     }
 }
 
+/// chatlog 文件的元数据：每个文件只打开一次，读取时间范围与角色 UID。
+///
+/// 早前每个副本实例都会重新枚举并打开全部 chatlog 文件查询 `ChatInfo`，
+/// 在 41 个文件 × 数十个候选首领的场景下会累积成数十秒的开库成本。
+/// 这里把「文件 → 时间范围 / UID」在账号级构建一次，供预加载、补漏与结算复用。
+#[derive(Clone, Debug)]
+pub(super) struct ChatlogMeta {
+    pub path: PathBuf,
+    /// (min_time, max_time) 秒级；None 表示无法读取，调用方应保守保留
+    pub time_range: Option<(i64, i64)>,
+    /// ChatInfo.user_global_id 归一化后的角色 UID；None 表示未标识
+    pub uid: Option<String>,
+}
+
+impl ChatlogMeta {
+    /// 判断该文件是否可能包含 [start_ms, end_ms] 的记录（毫秒入参）。
+    fn covers_range(&self, start_ms: i64, end_ms: i64) -> bool {
+        let start_sec = start_ms / 1000;
+        let end_sec = end_ms / 1000;
+        match self.time_range {
+            Some((min_time, max_time)) => {
+                let effective_max = if max_time == 0 { i64::MAX } else { max_time };
+                min_time <= end_sec && effective_max >= start_sec
+            }
+            None => true, // 无法读取 ChatInfo 时保守保留
+        }
+    }
+
+    /// 该文件是否属于指定角色；文件未标识 UID 时返回 false（与结算语义一致）。
+    fn matches_uid(&self, expected_uid: &str) -> bool {
+        !expected_uid.is_empty() && self.uid.as_deref() == Some(expected_uid)
+    }
+}
+
+/// 一次性扫描账号目录下的全部 chatlog 文件，构建元数据列表。
+///
+/// 每个文件只建立一次连接，同时读取 min_time / max_time / user_global_id，
+/// 相比逐项重复开库可以减少约 2/3 的连接开销。
+pub(super) fn build_chatlog_meta(chatlog_files: &[PathBuf]) -> Vec<ChatlogMeta> {
+    let mut metas = Vec::with_capacity(chatlog_files.len());
+    for path in chatlog_files {
+        let Ok(conn) = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
+            log::debug!(
+                "[DropScanner] chatlog 元数据读取跳过（无法打开）: {}",
+                path.display()
+            );
+            metas.push(ChatlogMeta {
+                path: path.clone(),
+                time_range: None,
+                uid: None,
+            });
+            continue;
+        };
+        let read_info = |key: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT value FROM ChatInfo WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        };
+        let min_time = read_info("min_time").and_then(|v| v.parse::<i64>().ok());
+        let max_time = read_info("max_time").and_then(|v| v.parse::<i64>().ok());
+        let uid = read_info("user_global_id")
+            .as_deref()
+            .and_then(normalize_chatlog_user_global_id);
+        let time_range = match (min_time, max_time) {
+            (Some(min_time), Some(max_time)) => Some((min_time, max_time)),
+            _ => None,
+        };
+        metas.push(ChatlogMeta {
+            path: path.clone(),
+            time_range,
+            uid,
+        });
+    }
+    metas
+}
+
 /// 扫描账号目录下所有 chatlog 数据库文件
 pub(super) fn find_chatlog_files(account_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
     let chat_log_dir = account_dir.join("userdata").join("chat_log");
@@ -3712,79 +4133,6 @@ pub(super) fn find_chatlog_files(account_dir: &PathBuf) -> Result<Vec<PathBuf>, 
     }
 
     Ok(files)
-}
-
-/// 查询 chatlog 文件的 ChatInfo.min_time 和 ChatInfo.max_time（秒级时间戳）
-///
-/// 用于预过滤：只对覆盖副本时间范围的 chatlog 文件执行完整 ChatLog 查询。
-/// ChatInfo 表是 key-value 结构，只有几行，查询成本远低于扫描 ChatLog 表。
-///
-/// 返回 None 表示无法读取（文件损坏或无 ChatInfo 表），调用方应保守保留。
-fn get_chatlog_time_range(path: &Path) -> Option<(i64, i64)> {
-    let conn = Connection::open(path).ok()?;
-    let min_time: i64 = conn
-        .query_row(
-            "SELECT value FROM ChatInfo WHERE key = 'min_time'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()?
-        .parse()
-        .ok()?;
-    let max_time: i64 = conn
-        .query_row(
-            "SELECT value FROM ChatInfo WHERE key = 'max_time'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()?
-        .parse()
-        .ok()?;
-    Some((min_time, max_time))
-}
-
-/// 判断 chatlog 文件是否可能包含指定时间范围 [start_ms, end_ms] 的记录
-///
-/// 通过查询 ChatInfo 表的 min_time / max_time 判断文件覆盖的时间范围。
-/// chatlog 文件名为 hex hash（如 `chatlog_16faed.v2.db`），无法从文件名解析日期，
-/// 必须查询 SQLite ChatInfo 表获取时间范围。
-///
-/// 特殊处理：max_time=0 表示文件仍在写入（活跃文件），max_time 视为无穷大；
-/// min_time=0 表示文件可能为空或刚创建，min_time 视为 0（始终匹配）。
-#[allow(dead_code)]
-fn chatlog_file_covers_range(path: &Path, start_ms: i64, end_ms: i64) -> bool {
-    // ChatInfo 时间是秒级，参数是毫秒级，统一转换为秒级比较
-    let start_sec = start_ms / 1000;
-    let end_sec = end_ms / 1000;
-    match get_chatlog_time_range(path) {
-        Some((min_time, max_time)) => {
-            // max_time=0 表示活跃文件（仍在写入），视为无穷大
-            let effective_max = if max_time == 0 { i64::MAX } else { max_time };
-            // min_time=0 视为 0（始终匹配下界）
-            let effective_min = min_time;
-            // 文件时间范围 [effective_min, effective_max] 与查询范围 [start_sec, end_sec] 有交集
-            effective_min <= end_sec && effective_max >= start_sec
-        }
-        None => true, // 无法读取 ChatInfo 时保守保留
-    }
-}
-
-/// 带缓存的 chatlog 文件时间范围检查
-fn chatlog_file_covers_range_cached(
-    path: &Path,
-    start_ms: i64,
-    end_ms: i64,
-    cache: &HashMap<PathBuf, Option<(i64, i64)>>,
-) -> bool {
-    let start_sec = start_ms / 1000;
-    let end_sec = end_ms / 1000;
-    match cache.get(path).and_then(|v| v.as_ref()) {
-        Some(&(min_time, max_time)) => {
-            let effective_max = if max_time == 0 { i64::MAX } else { max_time };
-            min_time <= end_sec && effective_max >= start_sec
-        }
-        None => true, // 无法读取时保守保留
-    }
 }
 
 /// 从 chatlog 数据库提取角色 ID（user_global_id）
@@ -3865,10 +4213,110 @@ fn calculate_cd_window(record_time_ms: i64, is_ten_person: bool) -> (i64, i64) {
 
 /// 角色在线判断阈值：chatlog 最新 mtime 在此窗口内视为在线（毫秒）
 const ROLE_ONLINE_THRESHOLD_MS: i64 = 5 * 60 * 1000; // 5 分钟
-
 /// 副本"过期"阈值：副本最后一个 JCL 距今超过此值，视为已完成（毫秒）
 /// 6 小时足以覆盖绝大多数副本时长（含多次拉托），超过此时间说明副本早已结束
 const RAID_STALE_THRESHOLD_MS: i64 = 6 * 60 * 60 * 1000; // 6 小时
+
+/// 判断该副本在本次扫描的 CD 窗口内是否已被手工记录覆盖。
+///
+/// 用于在补漏与结算补强之前做预判：同一角色同一副本同一 CD 周期只要已有
+/// confirmed 手工记录，无论补强能否找到新击杀，最终写入都会被 CD 检查丢弃。
+/// 实测一个账号 5 个实例全部命中该情形时，settlement 仍会花 20~50 秒重读
+/// 全部 JCL 并逐候选查 chatlog，产出 4 条补强击杀后又被全部丢弃。
+///
+/// `raid_full_name` 是 `match_raid_name` 得到的完整副本名（如 "10人普通洛阳之战"），
+/// 与手工记录 `data.raidName` 同一格式；`role_filter` 为空串时不按角色过滤。
+fn is_cd_window_covered_by_manual_record(
+    conn: &Connection,
+    account_id: &str,
+    raid_full_name: &str,
+    record_time_ms: i64,
+    role_filter: &str,
+) -> bool {
+    let is_ten_person = raid_full_name.contains("10人");
+    let (window_start, window_end) = calculate_cd_window(record_time_ms, is_ten_person);
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT data FROM records
+         WHERE account_id = ?1
+           AND record_date >= ?2
+           AND record_date < ?3
+           AND status = 'confirmed'
+           AND (?4 = '' OR role_id = ?4)",
+    ) else {
+        return false;
+    };
+    let Ok(rows) = stmt.query_map(
+        params![account_id, window_start, window_end, role_filter],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return false;
+    };
+    for row in rows.flatten() {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&row) else {
+            continue;
+        };
+        if json["raidName"].as_str() == Some(raid_full_name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 预判本轮哪些副本实例的 CD 已被手工记录覆盖。
+///
+/// 返回被完全覆盖的完整副本名。调用方据此跳过伤害补漏与结算补强，
+/// 避免做完全部重读后才发现结果会被 CD 检查丢弃。
+///
+/// 判定刻意保守，只有同时满足以下条件才算覆盖：
+/// 1. 该副本本轮的**所有** JCL 落在同一个 CD 窗口内（跨窗口即放弃预判）；
+/// 2. 该窗口内已存在同角色的 confirmed 手工记录。
+///
+/// 第 1 条是为了与 `upsert_raid_drop_record` 的窗口基准对齐：那边用
+/// `instance.start_time`（本组最早 JCL）计算窗口，若本轮 JCL 跨了 CD 边界，
+/// 用任意单个 JCL 时间推出的窗口可能与写入时不同，此时宁可放弃优化。
+fn covered_raid_full_names(
+    conn: &Connection,
+    account_id: &str,
+    jcl_files: &[JclFileInfo],
+    raids: &[RaidEntry],
+    role_filter: &str,
+) -> HashSet<String> {
+    // 副本名 → (最早 JCL 时间, 最晚 JCL 时间)
+    let mut anchors: HashMap<String, (i64, i64)> = HashMap::new();
+    for jcl in jcl_files {
+        let Some(raid) = match_raid_name(&jcl.raid_display_name, raids) else {
+            continue;
+        };
+        anchors
+            .entry(raid.raid_id.clone())
+            .and_modify(|(min_ts, max_ts)| {
+                *min_ts = (*min_ts).min(jcl.timestamp);
+                *max_ts = (*max_ts).max(jcl.timestamp);
+            })
+            .or_insert((jcl.timestamp, jcl.timestamp));
+    }
+
+    let mut covered: HashSet<String> = HashSet::new();
+    for (raid_full_name, (min_ts, max_ts)) in anchors {
+        let is_ten_person = raid_full_name.contains("10人");
+        let (min_window, _) = calculate_cd_window(min_ts, is_ten_person);
+        let (max_window, _) = calculate_cd_window(max_ts, is_ten_person);
+        // 本轮 JCL 跨了 CD 边界：写入时的窗口基准与这里不一致，放弃优化。
+        if min_window != max_window {
+            continue;
+        }
+        if is_cd_window_covered_by_manual_record(
+            conn,
+            account_id,
+            &raid_full_name,
+            min_ts,
+            role_filter,
+        ) {
+            covered.insert(raid_full_name);
+        }
+    }
+    covered
+}
 
 /// 判断角色是否在线（基于 chatlog 最新 mtime）
 ///
@@ -4152,6 +4600,8 @@ fn upsert_raid_drop_record(
 
     let mut manual_count = 0;
     let mut matched = false;
+    // 逐条手工记录合并成一行 debug，避免单实例刷屏（此前每条记录打一行 info）
+    let mut manual_lines: Vec<String> = Vec::new();
     for row in rows {
         let data_json = match row {
             Ok(d) => d,
@@ -4164,34 +4614,55 @@ fn upsert_raid_drop_record(
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data_json) {
             let manual_raid_name = json["raidName"].as_str().unwrap_or("");
             let manual_date = json["date"].as_i64().unwrap_or(0);
-            log::info!(
-                "[DropScanner] CD 检查: 手工记录 #{}: raidName='{}', date={}, match={}",
-                manual_count,
-                manual_raid_name,
-                manual_date,
-                manual_raid_name == raid_full_name
-            );
-            if manual_raid_name == raid_full_name {
+            let is_match = manual_raid_name == raid_full_name;
+            manual_lines.push(format!(
+                "#{} raidName='{}' date={} match={}",
+                manual_count, manual_raid_name, manual_date, is_match
+            ));
+            if is_match {
                 matched = true;
             }
         }
     }
+    if !manual_lines.is_empty() {
+        log::debug!(
+            "[DropScanner] CD 检查手工记录: raid_display='{}', 共 {} 条 [{}]",
+            instance.raid_display_name,
+            manual_count,
+            manual_lines.join("; ")
+        );
+    }
 
     if matched {
-        // 若存在 pending auto_scan 记录但已有手工记录，删除多余的 pending 记录
-        if let Some((existing_id, _)) = &existing {
-            conn.execute(
-                "DELETE FROM records WHERE id = ?1 AND status = 'pending' AND source = 'auto_scan'",
-                params![existing_id],
-            )
-            .map_err(|e| format!("删除重复 pending 记录失败: {}", e))?;
-            log::info!(
-                "[DropScanner] CD 窗口内已存在手工记录，删除多余 pending: {} (window: {}~{}, pending_id={})",
-                instance.raid_display_name,
-                window_start,
-                window_end,
-                existing_id
-            );
+        // 若存在 pending/scanning auto_scan 记录但已有手工记录，删除多余的自动记录。
+        // 注意：此前只匹配 status = 'pending'，而上面的 existing 查询按
+        // CASE status WHEN 'scanning' THEN 0 ... 会优先返回 scanning，
+        // 导致 scanning 记录命中手工记录后既没被删除也没有其它翻转路径，一直卡在「扫描中」。
+        if let Some((existing_id, existing_status)) = &existing {
+            let deleted = conn
+                .execute(
+                    "DELETE FROM records
+                     WHERE id = ?1 AND status IN ('pending', 'scanning') AND source = 'auto_scan'",
+                    params![existing_id],
+                )
+                .map_err(|e| format!("删除重复 pending 记录失败: {}", e))?;
+            if deleted > 0 {
+                log::info!(
+                    "[DropScanner] CD 窗口内已存在手工记录，清除多余 {} 记录: {} (window: {}~{}, pending_id={})",
+                    existing_status,
+                    instance.raid_display_name,
+                    window_start,
+                    window_end,
+                    existing_id
+                );
+            } else {
+                log::warn!(
+                    "[DropScanner] CD 窗口内已存在手工记录，但未能清除自动记录 {}（状态 {}）: {}",
+                    existing_id,
+                    existing_status,
+                    instance.raid_display_name
+                );
+            }
         } else {
             log::info!(
                 "[DropScanner] CD 窗口内已存在手工记录，跳过 pending: {} (window: {}~{}, 共 {} 条手工记录)",
@@ -5027,22 +5498,14 @@ pub fn scan_raid_drops_with_raids(
     // 2. 查找 chatlog 文件
     let chatlog_files = find_chatlog_files(&account_dir)?;
 
-    // 预缓存所有 chatlog 文件的时间范围，避免后续每个副本实例重复打开 SQLite
-    let chatlog_range_cache: HashMap<PathBuf, Option<(i64, i64)>> = chatlog_files
-        .iter()
-        .map(|path| (path.clone(), get_chatlog_time_range(path)))
-        .collect();
+    // 预缓存所有 chatlog 文件的元数据（时间范围 + 角色 UID），
+    // 避免后续预加载、补漏与结算阶段重复打开同一批 SQLite 文件
+    let chatlogs = build_chatlog_meta(&chatlog_files);
 
     // 2.5 预加载所有 chatlog 文件中的相关记录到内存
     //     避免后续每个副本实例重复打开 SQLite 连接和全表扫描
     //     性能优化：将 O(N*M) 次 SQLite 查询降为 O(M) 次（M=chatlog文件数）
-    let preloaded_records = preload_chatlog_records(
-        &chatlog_files,
-        &chatlog_range_cache,
-        start_ms,
-        end_ms,
-        &account_id,
-    );
+    let preloaded_records = preload_chatlog_records(&chatlogs, start_ms, end_ms, &account_id);
 
     // 3. 分析每个 JCL 文件内容，提取战斗时间和击杀状态
     //    替代原 10金查询方案：通过 JCL 的运行时实体证据判定通关
@@ -5051,6 +5514,28 @@ pub fn scan_raid_drops_with_raids(
     let combat_logs_dir = account_dir.join("userdata").join("combat_logs");
     let mut jcl_analyses: HashMap<String, JclAnalysis> = HashMap::new();
     let mut damage_candidates: HashMap<String, DamageCompletionCandidate> = HashMap::new();
+    // 本轮账号扫描共享的证据包缓存：伤害补漏、结算补强、尝试结束锚三者复用同一次解析。
+    let evidence = EvidenceCache::new();
+    // CD 预判：先算出本轮哪些副本的 CD 周期已被手工记录覆盖。
+    // 被覆盖的副本即使补漏找到新击杀，写入时也会被 CD 检查丢弃，
+    // 因此提前剔除，省掉几十分钟级的 JCL 重读与 chatlog 逐候选查询。
+    let covered_raids = covered_raid_full_names(
+        &conn,
+        &db_identity.account_id,
+        &jcl_files,
+        &raids,
+        &db_identity.role_id,
+    );
+    if !covered_raids.is_empty() {
+        let mut names: Vec<&str> = covered_raids.iter().map(|name| name.as_str()).collect();
+        names.sort_unstable();
+        log::info!(
+            "[DropScanner] CD 预判: {} 个副本本周期已有手工记录，跳过其补漏与结算补强: {}",
+            covered_raids.len(),
+            names.join(", ")
+        );
+    }
+    let is_covered = |raid_full_name: &str| covered_raids.contains(raid_full_name);
     for jcl in &configured_jcl_files {
         // 查找 JCL 对应的 raid_entry，获取 raid_bosses 配置
         let raid_entry = match match_raid_name(&jcl.raid_display_name, &raids) {
@@ -5072,7 +5557,9 @@ pub fn scan_raid_drops_with_raids(
         if is_valid_boss(&jcl.boss_name, raid_bosses) {
             analysis.boss_name = Some(jcl.boss_name.clone());
         }
-        log::info!(
+        // 逐 JCL 诊断降到 debug：一周 200 个 JCL 时这行会占满 INFO 日志，
+        // 真正需要看的是结尾的聚类结果、补强击杀与缓存命中统计。
+        log::debug!(
             "[DropScanner] JCL 分析: 文件='{}', BOSS='{}', is_kill={}, fight_start={}, fight_end={}, content_boss={:?}",
             jcl.file_name,
             jcl.boss_name,
@@ -5082,14 +5569,17 @@ pub fn scan_raid_drops_with_raids(
             analysis.boss_name
         );
         // 强证据已足够时不需要金币；否则只为满足完整通用门槛的直接配置首领建立候选。
-        // 候选独立重读文件，确保 SQLite 缓存命中也不会丢失本轮补漏所需的 type=21 证据。
-        if !analysis.is_kill {
-            if let Some(candidate) = analyze_damage_completion_candidate(
+        // 候选走共享证据包，确保 SQLite 缓存命中时也能拿到本轮补漏所需的 type=21 证据。
+        // CD 已被手工记录覆盖的副本不再建候选：补强结果最后一定会被 CD 检查丢弃。
+        if !analysis.is_kill && !is_covered(&raid_entry.raid_id) {
+            if let Some(candidate) = analyze_completion_candidate_cached(
+                &evidence,
                 &jcl_path,
                 &jcl.boss_name,
                 jcl.boss_id,
                 raid_bosses,
                 account_id,
+                CompletionProof::ExactDamage,
             ) {
                 damage_candidates.insert(jcl.file_name.clone(), candidate);
             }
@@ -5105,14 +5595,18 @@ pub fn scan_raid_drops_with_raids(
         let candidate_values: Vec<DamageCompletionCandidate> =
             damage_candidates.values().cloned().collect();
         let verified_reward_times = read_role_verified_completion_reward_times(
-            &chatlog_files,
+            &chatlogs,
             account_id,
             &candidate_values,
         );
         let mut attempt_end_times = Vec::new();
         let mut anchors_complete = true;
         for jcl in &jcl_files {
-            match collect_type1_end_anchors(&combat_logs_dir.join(&jcl.file_name), account_id) {
+            match collect_type1_end_anchors_cached(
+                &evidence,
+                &combat_logs_dir.join(&jcl.file_name),
+                account_id,
+            ) {
                 Some(ends) => attempt_end_times.extend(ends),
                 None => {
                     anchors_complete = false;
@@ -5172,8 +5666,12 @@ pub fn scan_raid_drops_with_raids(
         ts.sort_unstable();
         ts
     };
+    // CD 预判命中时把「已被手工记录覆盖的副本」传给结算补强，让它在候选阶段直接跳过。
+    // 不在这里裁剪 all_jcl_files：那份列表还用于 settlement_end_ms 计算
+    // 「下一场 JCL 的切换点」，少一个文件会放宽其余副本的结算窗口，
+    // 反而可能让本该拒绝的候选通过。
     let settlement_promotions = settlement::select_settlement_promotions(
-        &chatlog_files,
+        &chatlogs,
         account_id,
         &jcl_files,
         &jcl_analyses,
@@ -5181,6 +5679,8 @@ pub fn scan_raid_drops_with_raids(
         &combat_logs_dir,
         end_ms,
         known_next_jcl_time,
+        &evidence,
+        &covered_raids,
     );
     for file_name in &settlement_promotions {
         if let Some(analysis) = effective_jcl_analyses.get_mut(file_name) {
@@ -5228,34 +5728,23 @@ pub fn scan_raid_drops_with_raids(
         let raid_name = &raid_entry.name;
         let raid_bosses = &raid_entry.bosses;
 
-        log::info!(
-            "[DropScanner] BOSS 匹配调试: raid_display='{}', matched_raid_id='{}', matched_raid_name='{}', raid_bosses_count={}, jcl_bosses_count={}, boss_kill_count={}",
-            instance.raid_display_name,
-            raid_entry.raid_id,
-            raid_entry.name,
-            raid_bosses.len(),
-            instance.bosses_killed.len(),
-            instance.boss_kill_count
-        );
-        if !raid_bosses.is_empty() {
-            log::info!(
-                "[DropScanner] 配置 BOSS: {:?}",
-                raid_bosses
-                    .iter()
-                    .map(|(id, name)| format!("{}={}", id, name))
-                    .collect::<Vec<_>>()
-            );
-        }
-        if !instance.bosses_killed.is_empty() {
-            log::info!("[DropScanner] JCL BOSS: {:?}", instance.bosses_killed);
-        }
-
         // BOSS 识别：将 jcl_boss_names 映射到 raid_bosses 表的 BOSS ID
         // （JCL 内容解析已在聚类前完成，boss_name 已是最佳值）
         let (boss_ids, boss_names) = map_boss_names_to_ids(&instance.bosses_killed, &raid_bosses);
 
-        log::info!(
-            "[DropScanner] BOSS 映射结果: boss_ids={:?}, boss_names={:?}",
+        // 诊断信息合并为一条 debug：此前每个实例固定输出 4 行 info（匹配调试 /
+        // 配置 BOSS / JCL BOSS / 映射结果），一个账号几十个实例就会把日志刷满。
+        log::debug!(
+            "[DropScanner] BOSS 匹配: raid_display='{}', matched_raid_id='{}', matched_raid_name='{}', 配置BOSS={:?}, JCL_BOSS={:?}, 击杀数={}, 映射结果={:?}={:?}",
+            instance.raid_display_name,
+            raid_entry.raid_id,
+            raid_entry.name,
+            raid_bosses
+                .iter()
+                .map(|(id, name)| format!("{}={}", id, name))
+                .collect::<Vec<_>>(),
+            instance.bosses_killed,
+            instance.boss_kill_count,
             boss_ids,
             boss_names
         );
@@ -5346,7 +5835,9 @@ pub fn scan_raid_drops_with_raids(
         all_income_records.extend(income_records);
         all_boss_kill_times.extend(boss_kill_times);
         income_candidates = collect_income_candidates(&preloaded_records, chatlog_start, chatlog_end);
-        log::info!(
+        // 以下逐实例诊断信息统一降到 debug：一个账号几十个实例时，这些行会把
+        // INFO 级日志刷满，真正需要关注的是写入结果与 CD 结论。
+        log::debug!(
             "[DropScanner] chatlog 内存处理: 预加载 {} 条记录, 查询 1 次",
             preloaded_records.len()
         );
@@ -5364,7 +5855,7 @@ pub fn scan_raid_drops_with_raids(
             killed_configured >= raid_bosses.len() as u32
         };
 
-        log::info!(
+        log::debug!(
             "[DropScanner] 副本 {} 击杀证据: JCL有效={}, chatlog 10金诊断={}，不以10金反向裁剪",
             instance.raid_display_name,
             instance.boss_kill_count,
@@ -5400,7 +5891,7 @@ pub fn scan_raid_drops_with_raids(
                 total_gold
             );
         }
-        log::info!(
+        log::debug!(
             "[DropScanner] 收入汇总: 底薪={:?}, 其他收入总和={}, 最终收入={}, 支出={}, 收入记录数={}",
             base_salary,
             other_income,
@@ -5419,7 +5910,7 @@ pub fn scan_raid_drops_with_raids(
             .map(|(file, _)| file.clone())
             .collect();
 
-        log::info!(
+        log::debug!(
             "[DropScanner] JCL 过滤: 原始 {} 个, 过滤后 {} 个",
             instance.jcl_files.len(),
             filtered_jcl_files.len()
@@ -5441,7 +5932,7 @@ pub fn scan_raid_drops_with_raids(
         );
         let record_status = if raid_complete { "pending" } else { "scanning" };
 
-        log::info!(
+        log::debug!(
             "[DropScanner] 副本完成判断: raid='{}', boss_kill={}/{}, boss_all_killed={}, has_salary={}, jx3_running={}, role_online={}, has_next_jcl={}, income_matched={}, has_drops={} -> status='{}'",
             instance.raid_display_name,
             instance.boss_kill_count,
@@ -5942,6 +6433,119 @@ fn flip_expired_scanning_records(conn: &Connection) -> Result<usize, String> {
     .map_err(|e| format!("翻转过期 scanning 记录失败: {}", e))
 }
 
+/// 打印 JCL 缓存现场快照（表行数 + 数据库文件大小 / mtime）。
+///
+/// 用于区分「缓存被代码清空」与「数据库文件被外部替换」这两种情况：
+/// 后者会表现为行数归零、文件尺寸与目录里的备份副本完全一致、且没有任何清空日志。
+pub fn log_jcl_cache_snapshot(context: &str) {
+    let conn = match db::init_db() {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::warn!("[DropScanner] {} 读取 JCL 缓存现场失败: {}", context, e);
+            return;
+        }
+    };
+    let rows = count_jcl_cache_rows(&conn);
+    drop(conn);
+    match db::get_db_path() {
+        Ok(path) => {
+            let meta = std::fs::metadata(&path).ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let mtime = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .map(|t| {
+                    chrono::DateTime::<chrono::Local>::from(t)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "未知".to_string());
+            log::info!(
+                "[DropScanner] {} JCL 缓存现场: 表内 {} 行，数据库 {} 字节，mtime {}",
+                context,
+                rows,
+                size,
+                mtime
+            );
+        }
+        Err(e) => log::info!(
+            "[DropScanner] {} JCL 缓存现场: 表内 {} 行（读取数据库路径失败: {}）",
+            context,
+            rows,
+            e
+        ),
+    }
+}
+
+/// 不依赖游戏运行状态的兜底翻转入口（7 天阈值）。
+///
+/// 此前 `flip_expired_scanning_records` 只在 `verify_stale_records` 里调用，
+/// 而 `verify_stale_records` 的唯一调用点 `scan_all_active_raid_drops_internal`
+/// 开头就有 `if !jx3_running { return Err("JX3 进程未运行") }`，
+/// 因此游戏一关，卡在 scanning 的记录就再没有任何翻转机会，
+/// 界面上会长期显示「扫描中」（用户实测遇到过）。
+///
+/// 现在在每次「扫描本周」开始时跑一次，保证游戏没开也能收敛。
+pub fn settle_stale_scanning_records() {
+    let conn = match db::init_db() {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::warn!("[DropScanner] 兜底翻转过期 scanning 记录失败（数据库不可用）: {}", e);
+            return;
+        }
+    };
+    match flip_expired_scanning_records(&conn) {
+        Ok(0) => log::debug!("[DropScanner] 无超过 7 天的 scanning 记录需要翻转"),
+        Ok(flipped) => log::info!(
+            "[DropScanner] {} 条超过 7 天的 scanning 记录已直接标记为扫描完成（pending）",
+            flipped
+        ),
+        Err(e) => log::warn!("[DropScanner] 兜底翻转过期 scanning 记录失败: {}", e),
+    }
+}
+
+/// 不加时间阈值，把当前所有 scanning 记录翻成 pending。
+///
+/// 用于应用启动时收敛「上一轮扫描被中断」的残留状态：应用重启意味着扫描流程
+/// 已结束、内存里的进度也丢了，这条记录不可能再自行走到完成。只改状态，
+/// 不动 data/drops，用户可在待确认列表里自行确认或拒绝。
+/// 返回翻转的记录数。
+fn flip_all_scanning_records(conn: &Connection) -> Result<usize, String> {
+    let timestamp = db::get_local_timestamp();
+    conn.execute(
+        "UPDATE records SET status = 'pending', updated_at = ?1 WHERE status = 'scanning'",
+        rusqlite::params![timestamp],
+    )
+    .map(|n| n as usize)
+    .map_err(|e| format!("翻转残留 scanning 记录失败: {}", e))
+}
+
+/// 应用启动时翻转全部残留的 scanning 记录。
+///
+/// 应用重新启动意味着上一次扫描流程被中断，「扫描中」这个中间状态不可能再
+/// 自行走到完成：扫描已结束、内存里的进度也丢了。若继续留在 scanning，
+/// 界面上会长期显示「扫描中」且按钮不可用（用户反馈：关掉游戏后一直卡着）。
+///
+/// 这里不加时间阈值直接翻成 pending，把决定权交给用户确认或拒绝；
+/// 只改状态不动 data/drops，不会丢失已识别的内容。
+pub fn flip_interrupted_scanning_records() {
+    let conn = match db::init_db() {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::warn!("[DropScanner] 启动时翻转 scanning 记录失败（数据库不可用）: {}", e);
+            return;
+        }
+    };
+    match flip_all_scanning_records(&conn) {
+        Ok(0) => log::debug!("[DropScanner] 启动时无遗留的 scanning 记录"),
+        Ok(flipped) => log::info!(
+            "[DropScanner] 启动时发现 {} 条上次未完成的 scanning 记录，已转为待确认（pending）",
+            flipped
+        ),
+        Err(e) => log::warn!("[DropScanner] 启动时翻转 scanning 记录失败: {}", e),
+    }
+}
+
 /// 复核历史遗留记录的入口函数
 ///
 /// 在 `scan_all_active_raid_drops_internal` 的本次会话扫描之前调用。
@@ -6328,6 +6932,47 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
     .map_err(|e| format!("批量扫描线程异常: {}", e))?
 }
 
+/// 判断某个角色目录是否应当参与扫描（满级过滤）。
+///
+/// 与前端 `shouldShowRoleByLevel` 保持同一语义：
+/// - 未配置等级上限（`level_cap` 为 None / <= 0）时不过滤；
+/// - 查不到该 uid 的等级时保守保留，避免 `OwnerInfo` 缺行把本该扫的角色整批吞掉；
+/// - 否则只有 `等级 == 上限` 才算满级，低于上限的练级号与高于上限的旧赛季
+///   遗留角色都跳过。
+fn should_scan_account_level(
+    uid: &str,
+    owner_levels: &HashMap<String, i64>,
+    level_cap: Option<i64>,
+) -> bool {
+    let Some(cap) = level_cap.filter(|cap| *cap > 0) else {
+        return true;
+    };
+    match owner_levels.get(uid).copied() {
+        Some(level) => level == cap,
+        None => true,
+    }
+}
+
+/// 读取当前赛季的等级上限。
+///
+/// 取 `game_versions` 里 `sort_order` 最大的那条记录的 `level_cap`，
+/// 与前端 `getCurrentVersionLevelCap` 的语义保持一致。
+/// 返回 None 表示无法确定，调用方应跳过满级过滤而不是把所有角色都过滤掉。
+fn latest_level_cap(conn: &Connection) -> Option<i64> {
+    match conn.query_row(
+        "SELECT level_cap FROM game_versions ORDER BY sort_order DESC LIMIT 1",
+        [],
+        |row| row.get::<_, Option<i64>>(0),
+    ) {
+        Ok(Some(cap)) if cap > 0 => Some(cap),
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("[DropScanner] 读取当前赛季等级上限失败，跳过满级过滤: {}", e);
+            None
+        }
+    }
+}
+
 /// 按时间范围扫描所有账号的掉落记录（离线扫描，不依赖 JX3 进程状态）
 ///
 /// 用于"扫描本周"等离线场景：扫描 `interface/my#data/` 下所有 `{uid}@zhcn_hd` 目录，
@@ -6356,11 +7001,25 @@ pub async fn scan_raids_in_range(
             start_ms, end_ms, process_start_ms
         );
 
+        // 0. 兜底翻转过期 scanning 记录（不依赖游戏运行状态）。
+        // 历史遗留的 scanning 记录若只在 live 复核路径里翻转，游戏关闭后就永远卡在「扫描中」，
+        // 这里在每次「扫描本周」开始时先收敛一次：超过 7 天的直接翻转，
+        // 本次扫描真正开始前也把上一轮残留的清成待确认（本轮会重新写回结果）。
+        settle_stale_scanning_records();
+
+        // 0.1 jcl_cache 现场快照：区分「代码主动清空」与「数据库文件被外部替换」。
+        // 历史上出现过命中率突然从 100% 掉到 0% 却查不到任何清空日志的情况，
+        // 根因是库文件被同名副本覆盖，只能靠行数 + 文件大小 + mtime 三者对照才能看出来。
+        log_jcl_cache_snapshot("扫描本周开始前");
+
         // 1. 扫描茗伊账号目录，提取所有 uid
         let game_dir = get_game_directory()?;
         let game_path = PathBuf::from(&game_dir);
         let accounts_base = game_path.join(MINGYI_ACCOUNTS_BASE_PATH);
 
+        // 只有形如纯数字的 `{uid}@zhcn_hd` 才是真实角色目录；`#` 前缀的分区目录、
+        // `all-users`、`!all-users` 等是茗伊自己维护的合成目录，里面没有角色数据，
+        // 扫它们只会白跑一遍目录枚举与数据库初始化。
         let mut account_ids: Vec<String> = Vec::new();
         if accounts_base.exists() {
             let entries = std::fs::read_dir(&accounts_base).map_err(|e| {
@@ -6377,15 +7036,16 @@ pub async fn scan_raids_in_range(
                 };
                 // 茗伊账号目录格式：{uid}@zhcn_hd
                 if let Some(uid) = dir_name.strip_suffix("@zhcn_hd") {
-                    if !uid.is_empty() {
+                    if !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit()) {
                         account_ids.push(uid.to_string());
                     }
                 }
             }
         }
+        let real_account_total = account_ids.len();
 
         log::info!(
-            "[DropScanner] 时间范围扫描: 共 {} 个茗伊账号",
+            "[DropScanner] 时间范围扫描: 共 {} 个茗伊账号（已排除合成目录）",
             account_ids.len()
         );
 
@@ -6399,38 +7059,87 @@ pub async fn scan_raids_in_range(
             Ok(r) => r,
             Err(e) => return Err(format!("预加载副本配置失败: {}", e)),
         };
+
+        // 2.1 过滤非满级角色。茗伊的 OwnerInfo 表是唯一能拿到 uid → 角色等级的来源
+        //（roles 表的主键是应用内 UUID，和茗伊 uid 不是同一套编号）。
+        // 最新赛季的等级上限从 game_versions 里 sort_order 最大的那条读，例如
+        //「苍生铸世」把等级上限压到 50。判定与前端 `shouldShowRoleByLevel` 保持一致：
+        // 只有 `等级 == 上限` 才算满级，等级低于以及高于上限（旧赛季遗留的高等级角色）
+        // 都不参与扫描。
+        let level_cap = latest_level_cap(&pre_loaded_conn);
+        let owner_levels = read_mingyi_owner_levels(&game_path);
         drop(pre_loaded_conn); // 释放连接，各线程按需创建自己的写连接
+
+        if let Some(cap) = level_cap {
+            let mut skipped: Vec<String> = Vec::new();
+            account_ids.retain(|uid| {
+                let keep = should_scan_account_level(uid, &owner_levels, Some(cap));
+                if !keep {
+                    let level = owner_levels.get(uid).copied().unwrap_or(0);
+                    skipped.push(format!("{}({}级)", uid, level));
+                }
+                keep
+            });
+            if skipped.is_empty() {
+                log::info!(
+                    "[DropScanner] 满级过滤（等级上限 {}）: {} 个角色全部保留",
+                    cap,
+                    real_account_total
+                );
+            } else {
+                log::info!(
+                    "[DropScanner] 满级过滤（等级上限 {}）: 保留 {} 个，跳过 {} 个非满级角色: {}",
+                    cap,
+                    account_ids.len(),
+                    skipped.len(),
+                    skipped.join(", ")
+                );
+            }
+        } else {
+            log::info!("[DropScanner] 未取到当前赛季等级上限，跳过满级过滤");
+        }
+        if account_ids.len() != real_account_total {
+            log::info!(
+                "[DropScanner] 本轮实际扫描 {} 个角色（原始账号目录 {} 个）",
+                account_ids.len(),
+                real_account_total
+            );
+        }
+
         log::info!(
             "[DropScanner] 预加载 {} 个副本配置，将共享给各扫描线程",
             pre_loaded_raids.len()
         );
 
         // 3. 对每个账号执行扫描（离线模式：jx3_running=false, role_online=false）
-        // 并行化：将账号分块到多个线程处理，块内顺序执行。
-        // 并发度选择 4：SQLite journal_mode=DELETE 下写入互斥，
-        // 过高并发反而增加 busy 等待；JCL/chatlog 读取是 I/O 密集型，4 并发已能显著加速。
+        //
+        // 动态派发而不是静态切块：账号耗时差异极大（实测同一轮里普通账号 <1s，
+        // 单个热门账号要 30s+），静态分块会让最慢账号所在的那条线程成为唯一瓶颈，
+        // 其余线程早早空转。这里用共享的下标计数器，谁先做完谁取下一个账号。
         const NUM_THREADS: usize = 4;
-        let chunk_size = account_ids.len().div_ceil(NUM_THREADS).max(1);
-        let chunks: Vec<Vec<String>> = account_ids
-            .chunks(chunk_size)
-            .map(|c| c.to_vec())
-            .collect();
+        let worker_count = NUM_THREADS.min(account_ids.len()).max(1);
+        let next_account = std::sync::atomic::AtomicUsize::new(0);
 
         let raids_ref = &pre_loaded_raids;
+        let account_ref = &account_ids;
         let chunk_results: Vec<Vec<AccountScanResult>> = std::thread::scope(|s| {
-            let handles: Vec<_> = chunks
-                .into_iter()
-                .map(|chunk| {
+            let handles: Vec<_> = (0..worker_count)
+                .map(|_| {
+                    let next_account_ref = &next_account;
                     s.spawn(move || {
-                        let mut local_results: Vec<AccountScanResult> = Vec::with_capacity(chunk.len());
-                        for account_id in chunk {
+                        let mut local_results: Vec<AccountScanResult> = Vec::new();
+                        loop {
+                            let index = next_account_ref.fetch_add(1, Ordering::Relaxed);
+                            let Some(account_id) = account_ref.get(index) else {
+                                break;
+                            };
                             log::info!(
                                 "[DropScanner] 时间范围扫描账号: {} (start_ms={}, end_ms={})",
                                 account_id, start_ms, end_ms
                             );
                             let draw_revision_before = trial_draw_revision();
                             let result = scan_raid_drops_with_raids(
-                                &account_id,
+                                account_id,
                                 false, // 离线扫描：JX3 进程未运行
                                 false, // 离线扫描：角色不在线
                                 process_start_ms, // > 0 时按 mtime 过滤本次会话 JCL
@@ -6446,7 +7155,7 @@ pub async fn scan_raids_in_range(
                                         account_id, outcome.inserted_count
                                     );
                                     local_results.push(AccountScanResult {
-                                        account_id,
+                                        account_id: account_id.clone(),
                                         success: true,
                                         instance_count: Some(outcome.inserted_count),
                                         trial_draws_changed: trial_draw_revision()
@@ -6461,7 +7170,7 @@ pub async fn scan_raids_in_range(
                                         account_id, e
                                     );
                                     local_results.push(AccountScanResult {
-                                        account_id,
+                                        account_id: account_id.clone(),
                                         success: false,
                                         instance_count: None,
                                         trial_draws_changed: trial_draw_revision()
@@ -6499,6 +7208,21 @@ pub async fn scan_raids_in_range(
             failed_count,
             total_instances,
             elapsed_ms
+        );
+
+        // JCL 解析缓存观测：命中率高说明跨会话复用在生效，命中率归零往往意味着
+        // 缓存表被清空（副本配置变更、手动清理、库文件被替换），下一轮会退化成全量解析。
+        let (cache_hits, cache_misses) = take_jcl_cache_stats();
+        let cache_total = cache_hits + cache_misses;
+        log::info!(
+            "[DropScanner] JCL 解析缓存：命中 {}，未命中 {}，命中率 {:.1}%",
+            cache_hits,
+            cache_misses,
+            if cache_total == 0 {
+                0.0
+            } else {
+                cache_hits as f64 * 100.0 / cache_total as f64
+            }
         );
 
         Ok(results)
@@ -6615,11 +7339,18 @@ fn confirm_record_with_conn(
 #[tauri::command]
 pub fn clear_jcl_cache() -> Result<i64, String> {
     let conn = db::init_db()?;
+    let before = count_jcl_cache_rows(&conn);
     let deleted = conn
         .execute("DELETE FROM jcl_cache", [])
         .map_err(|e| format!("清空 JCL 缓存失败: {}", e))?;
     let total = deleted + trial::clear_cache()?;
-    log::info!("[DropScanner] 已清空 JCL 缓存，删除 {} 条记录", total);
+    // 手动清缓存会让下一次「扫描本周」全部冷解析，属于用户可感知的性能事件，用 WARN 记录
+    log::warn!(
+        "[DropScanner] 用户手动清空 JCL 缓存，删除 {} 条记录（清空前 {} 条，其中 jcl_cache 表 {} 条）",
+        total,
+        before,
+        deleted
+    );
     Ok(total as i64)
 }
 
@@ -7926,6 +8657,187 @@ mod tests {
         // 幂等：再次执行不产生新的翻转
         let flipped_again = flip_expired_scanning_records(&conn).expect("二次翻转应成功");
         assert_eq!(flipped_again, 0, "二次执行应无翻转（幂等）");
+    }
+
+    /// 验证启动时的全量翻转：不看记录年龄，所有 scanning 都转 pending，
+    /// 只改状态不动 drops/data。
+    #[test]
+    fn test_flip_interrupted_scanning_records() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let (account_id, role_id) = create_test_account_role(&conn);
+
+        let now_ms = chrono::Local::now().timestamp_millis();
+        let two_days_ago = now_ms - 2 * 24 * 3600 * 1000;
+
+        // 两天前的 scanning：7 天阈值不会碰它，但启动翻转必须处理
+        let recent_scanning = insert_scan_record_with_status(
+            &conn,
+            &account_id,
+            &role_id,
+            "scanning",
+            two_days_ago,
+            r#"["掉落A"]"#,
+        );
+        // 已确认的记录不受影响
+        let confirmed_id = insert_scan_record_with_status(
+            &conn,
+            &account_id,
+            &role_id,
+            "confirmed",
+            two_days_ago,
+            "[]",
+        );
+
+        let flipped = flip_all_scanning_records(&conn).expect("启动翻转应成功");
+        assert_eq!(flipped, 1, "应翻转全部 scanning 记录，不看年龄");
+
+        let status_of = |id: &str| -> String {
+            conn.query_row(
+                "SELECT status FROM records WHERE id = ?1",
+                sql_params![id],
+                |row| row.get(0),
+            )
+            .expect("should query status")
+        };
+        assert_eq!(
+            status_of(&recent_scanning),
+            "pending",
+            "残留的 scanning 记录应转为待确认"
+        );
+        assert_eq!(status_of(&confirmed_id), "confirmed", "已确认记录不应被改动");
+
+        let drops: String = conn
+            .query_row(
+                "SELECT drops FROM records WHERE id = ?1",
+                sql_params![&recent_scanning],
+                |row| row.get(0),
+            )
+            .expect("should query drops");
+        assert_eq!(drops, r#"["掉落A"]"#, "翻转只改状态，不应丢失已识别掉落");
+
+        // 幂等
+        assert_eq!(
+            flip_all_scanning_records(&conn).expect("二次翻转应成功"),
+            0,
+            "二次执行应无翻转"
+        );
+    }
+
+    #[test]
+    fn level_filter_keeps_only_max_level_roles() {
+        let mut levels: HashMap<String, i64> = HashMap::new();
+        levels.insert("1001".into(), 50); // 当前赛季满级
+        levels.insert("1002".into(), 30); // 练级中
+        levels.insert("1003".into(), 130); // 旧赛季遗留的高等级角色
+        // 1004 不在 OwnerInfo 里，等级未知
+
+        assert!(
+            should_scan_account_level("1001", &levels, Some(50)),
+            "等级等于上限的角色必须扫描"
+        );
+        assert!(
+            !should_scan_account_level("1002", &levels, Some(50)),
+            "低于上限的角色不应扫描"
+        );
+        assert!(
+            !should_scan_account_level("1003", &levels, Some(50)),
+            "高于上限的旧赛季角色不应扫描"
+        );
+        assert!(
+            should_scan_account_level("1004", &levels, Some(50)),
+            "查不到等级的账号应保守保留"
+        );
+        assert!(
+            should_scan_account_level("1002", &levels, None),
+            "没有等级上限时不应过滤任何角色"
+        );
+        assert!(
+            should_scan_account_level("1002", &levels, Some(0)),
+            "等级上限非法时不应过滤任何角色"
+        );
+    }
+
+    /// 验证 CD 预判：只有「同一 CD 窗口内已有手工记录」的副本才会被跳过。
+    #[test]
+    fn cd_preview_skips_only_raids_covered_by_manual_record() {
+        let (conn, _temp_dir) = create_scan_test_db();
+        let (account_id, role_id) = create_test_account_role(&conn);
+
+        let raids = vec![
+            RaidEntry {
+                name: "洛阳之战".to_string(),
+                raid_id: "10人普通洛阳之战".to_string(),
+                bosses: vec![("luoyangzhizhan_3".to_string(), "伊曼·寂夜".to_string())],
+            },
+            RaidEntry {
+                name: "范阳夜变".to_string(),
+                raid_id: "10人普通范阳夜变".to_string(),
+                bosses: vec![("fanyangyebian_1".to_string(), "史朝义".to_string())],
+            },
+        ];
+
+        // 手工记录：10人普通洛阳之战，日期落在本周 CD 窗口内
+        let now_ms = chrono::Local::now().timestamp_millis();
+        let record_id = Uuid::new_v4().to_string();
+        let now = chrono::Local::now().to_rfc3339();
+        let data = serde_json::json!({
+            "id": record_id,
+            "accountId": account_id,
+            "roleId": role_id,
+            "roleName": "少年白了发",
+            "server": "测试服",
+            "raidName": "10人普通洛阳之战",
+            "date": now_ms,
+            "type": "raid",
+            "source": "manual",
+            "status": "confirmed",
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO records (id, data, raid_name, account_id, role_id, record_date, record_type, source, status, drops, created_at, updated_at)
+             VALUES (?1, ?2, '洛阳之战', ?3, ?4, ?5, 'raid', 'manual', 'confirmed', '[]', ?6, ?6)",
+            sql_params![record_id, data, account_id, role_id, now_ms, now],
+        )
+        .expect("should insert manual record");
+
+        let jcl_of = |raid_full_name: &str| JclFileInfo {
+            file_name: format!("{}.jcl", raid_full_name),
+            timestamp: now_ms,
+            raid_display_name: raid_full_name.to_string(),
+            raid_id: 0,
+            boss_name: "伊曼·寂夜".to_string(),
+            boss_id: 0,
+        };
+
+        // 只有洛阳之战有手工记录；范阳夜变不在 covered 里
+        let covered = covered_raid_full_names(
+            &conn,
+            &account_id,
+            &[jcl_of("10人普通洛阳之战"), jcl_of("10人普通范阳夜变")],
+            &raids,
+            &role_id,
+        );
+        assert!(
+            covered.contains("10人普通洛阳之战"),
+            "本周已有手工记录的副本应被预判命中"
+        );
+        assert!(
+            !covered.contains("10人普通范阳夜变"),
+            "没有手工记录的副本不能被跳过"
+        );
+
+        // 换一个角色 ID 查询：CD 按角色隔离，不应命中
+        let other_covered = covered_raid_full_names(
+            &conn,
+            &account_id,
+            &[jcl_of("10人普通洛阳之战")],
+            &raids,
+            "another-role-id",
+        );
+        assert!(
+            other_covered.is_empty(),
+            "CD 按角色隔离，其他角色的手工记录不应影响本角色"
+        );
     }
 
     /// 验证复核兜底：无法定位账号目录时直接标记扫描完成，保留原 data/drops
@@ -9649,7 +10561,7 @@ mod tests {
             .unwrap();
         }
         drop(conn);
-        let files = [path.clone()];
+        let files = build_chatlog_meta(&[path.clone()]);
         let candidate = DamageCompletionCandidate {
             boss_name: "首领".into(),
             fight_end_ms: 1_000_000,
