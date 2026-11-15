@@ -647,12 +647,11 @@ fn group(uid: &str, files: Vec<TrialFile>, start_ms: i64, end_ms: i64) -> TrialS
                 occurred_at_ms: file.meta.battle_activity_ms,
             });
         }
-        if active
-            .as_ref()
-            .is_some_and(|run| run.map_id != file.meta.map_id)
-        {
-            active = None;
-        }
+        // 实例号（JCL 文件名里的副本编号）随每次进本重新分配，同一层跨天续打
+        // 完全可能落在不同实例上，因此它不是「换了新一轮」的依据。真正的边界
+        // 由 can_resume 的周/层/关卡递进/重试首领判定，外加 45 分钟战斗间隔与
+        // 周任务结算。这里只让进度链跟随当前文件的实例号，供终局键与截图归档
+        // 绑定到真正结束这一轮的那个实例。
         for event in file.events {
             let nearby = active.as_ref().is_some_and(|run| {
                 event.timestamp_ms >= run.last_ms
@@ -684,6 +683,7 @@ fn group(uid: &str, files: Vec<TrialFile>, start_ms: i64, end_ms: i64) -> TrialS
                         active = Some(Run::new(file.meta.map_id, event.timestamp_ms));
                     }
                     let run = active.as_mut().expect("trial run initialized");
+                    run.map_id = file.meta.map_id;
                     run.layer = Some(layer);
                     run.last_stage = stage;
                     run.bosses[stage - 1] = file.meta.boss_name.clone();
@@ -703,6 +703,7 @@ fn group(uid: &str, files: Vec<TrialFile>, start_ms: i64, end_ms: i64) -> TrialS
                         run.layer = Some(layer);
                     }
                     run.bosses[2] = file.meta.boss_name.clone();
+                    run.map_id = file.meta.map_id;
                     run.last_ms = event.timestamp_ms;
                     if (start_ms <= 0 || event.timestamp_ms >= start_ms)
                         && (end_ms <= 0 || event.timestamp_ms < end_ms)
@@ -1118,8 +1119,12 @@ mod tests {
                 6,
             ),
             (
-                "已在另一张试炼地图参战",
-                Some(file(147, "濯尘", vec![])),
+                "重打了已通过的第二关",
+                Some(file(
+                    146,
+                    "苏髓",
+                    vec![event(t + 1000, Kind::Stage { layer: 6, stage: 2 })],
+                )),
                 later,
                 6,
             ),
@@ -1356,6 +1361,71 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].status, TrialCandidateStatus::Pending);
         assert_eq!(records[0].bosses, ["", "方鹤影", "叶冬辰"]);
+    }
+
+    /// 跨天续打时副本实例号会重新分配（JCL 文件名括号里的编号每次进本都变）。
+    /// 实例号不是轮次边界：同一层第 1 关在 146 打完、隔天在 143 接着打第 2 关和
+    /// 终局，仍应合成一条完整记录，而不是把第一关丢掉变成待确认。
+    #[test]
+    fn cross_instance_same_layer_resumes_and_keeps_first_boss() {
+        let t = 1_793_638_576_000; // 2026-11-09 22:16 UTC+8
+        let next_day = t + 16 * 3_600_000;
+        let records = group(
+            "123456",
+            vec![
+                file(146, "寅", vec![saved_stage(t, 1)]),
+                file(
+                    143,
+                    "濯尘",
+                    vec![event(next_day, Kind::Stage { layer: 6, stage: 2 })],
+                ),
+                file(
+                    143,
+                    "藤原樱奈",
+                    vec![event(next_day + 300_000, Kind::Finish { layer: Some(6) })],
+                ),
+            ],
+            0,
+            0,
+        );
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, TrialCandidateStatus::Confirmed);
+        assert_eq!(records[0].bosses, ["寅", "濯尘", "藤原樱奈"]);
+        assert_eq!(records[0].layer, Some(6));
+        // 终局键跟随真正结束这一轮的实例，避免与旧实例上的待确认记录抢同一个键。
+        assert_eq!(records[0].map_id, 143);
+        assert_eq!(
+            records[0].dedupe_key,
+            format!("trial:123456:143:{}", next_day + 300_000)
+        );
+    }
+
+    /// 实例号变化不能把上一轮的进度续到跨周的新一轮里，周界仍是硬边界。
+    #[test]
+    fn cross_instance_never_resumes_across_game_week() {
+        let week_start = 1_793_574_000_000; // 2026-11-02 07:00 UTC+8
+        let next_reset = week_start + 7 * 24 * 3_600_000;
+        let records = group(
+            "123456",
+            vec![
+                file(146, "寅", vec![saved_stage(next_reset - 600_000, 1)]),
+                file(
+                    143,
+                    "濯尘",
+                    vec![event(next_reset + 3_600_000, Kind::Stage { layer: 6, stage: 2 })],
+                ),
+                file(
+                    143,
+                    "藤原樱奈",
+                    vec![event(next_reset + 3_900_000, Kind::Finish { layer: Some(6) })],
+                ),
+            ],
+            0,
+            0,
+        );
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, TrialCandidateStatus::Pending);
+        assert_eq!(records[0].bosses, ["", "濯尘", "藤原樱奈"]);
     }
 
     #[test]
