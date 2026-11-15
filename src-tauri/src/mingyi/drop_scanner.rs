@@ -5162,10 +5162,13 @@ pub fn scan_raid_drops_with_raids(
 
     // 4. 聚类（按 JCL 顺序，使用 is_kill 筛选已确认击杀，2小时阈值智能分组）
     //    使用预加载的 chatlog 记录进行工资检测，避免重复打开 SQLite
-    //    预提取所有已配置 JCL 的时间戳（排序），用于后续 chatlog_end 截断：
-    //    不管下一个副本是否通关，只要有 JCL 产生就说明新副本活动已开始，应截断 chatlog
+    //    预提取全部 JCL（含未配置副本与试炼）的时间戳（排序），用于后续 chatlog_end 截断：
+    //    不管下一个副本是否通关、是否配置，只要有 JCL 产生就说明新副本活动已开始，
+    //    应截断 chatlog。若只用已配置 JCL，中间穿插的 5 人小本（如英雄昊渊极）会被
+    //    过滤掉，其切换点缺失导致前一副本窗口被放宽到 +2h，把小本期间的入账
+    //    误并入前一副本的收入候选（表现为"多笔待核对"）。
     let all_jcl_timestamps: Vec<i64> = {
-        let mut ts: Vec<i64> = configured_jcl_files.iter().map(|j| j.timestamp).collect();
+        let mut ts: Vec<i64> = all_session_jcl_files.iter().map(|j| j.timestamp).collect();
         ts.sort_unstable();
         ts
     };
