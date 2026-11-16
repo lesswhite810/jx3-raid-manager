@@ -510,9 +510,9 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
                         const statusClass = isInProgress
                           ? 'bg-ds-accent-soft text-ds-accent-strong border-ds-accent-soft hover:border-ds-accent'
                           : `${CELL_CLASS[cell.status]} ${CELL_HOVER_CLASS[cell.status]}`;
-                        const statusText = isInProgress
-                          ? `进行中${cell.inProgressLabel ? `·${cell.inProgressLabel}` : ''}`
-                          : renderActivityText(cell);
+                        // 单元格宽度按「2/3」这类短文案设计，进行中只显示 3 个字；
+                        // 层/关细节放悬停提示，避免撑宽整列
+                        const statusText = isInProgress ? '进行中' : renderActivityText(cell);
                         return (
                           <button
                             type="button"
