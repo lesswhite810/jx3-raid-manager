@@ -7,6 +7,7 @@ import { buildWeeklyRaidGroups, isCurrentSeasonRaid, SeasonContext } from './wee
 import { getTrialWeeklyDrawProgress } from './trialWeeklyDrawProgress';
 import { TrialProgressPeriod } from './trialProgress';
 import { shouldShowRoleByLevel } from './roleLevelFilter';
+import { TrialInProgressWithAccount } from '../services/dropScanner';
 
 /**
  * CD 概览单元格状态。
@@ -56,6 +57,13 @@ export interface CdActivityCell {
   clearedCount: number;
   /** 本周目标次数 */
   totalCount: number;
+  /**
+   * 试炼列专用：该角色是否有正在打但尚未出终局的试炼。
+   * 进行中还没出终局，与翻牌次数是正交信息，叠加在四态之上展示。
+   */
+  inProgress?: boolean;
+  /** 试炼列专用：进行中进度文案，如「第9层第1关」；无层信息时为 undefined */
+  inProgressLabel?: string;
 }
 
 export interface CdOverviewRow {
@@ -131,6 +139,11 @@ export interface BuildRaidCdOverviewOptions {
    * 不进入概览行；等级未知（老数据）的角色保留。
    */
   hideNonMaxLevelRoles?: boolean;
+  /**
+   * 各账号正在进行的试炼（自动扫描得到）。用于在试炼列以独立颜色
+   * 标出「正在打但尚未出终局」的角色；缺省或为空时不显示进行中状态。
+   */
+  trialInProgressList?: TrialInProgressWithAccount[];
   now?: Date;
 }
 
@@ -142,6 +155,56 @@ export const TRIAL_WEEKLY_TARGET = 3;
 
 /** 百战每周目标次数 */
 export const BAIZHAN_WEEKLY_TARGET = 1;
+
+/** 名称归一化：去空白并统一全角/半角，供角色名宽松匹配 */
+const normalizeRoleName = (value: string): string =>
+  value.replace(/\s+/g, '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+
+/**
+ * 生成进行中试炼的进度文案（如「第9层第1关」）。
+ * 无层信息（试炼尚未报告层数）时返回 undefined，仅显示「进行中」。
+ */
+const formatTrialProgressLabel = (item: TrialInProgressWithAccount): string | undefined =>
+  typeof item.layer === 'number' && item.layer > 0 ? `第${item.layer}层第${item.stage}关` : undefined;
+
+/**
+ * 建立进行中试炼到概览行角色（按账号 + 角色名 + 服务器）的映射。
+ *
+ * 自动扫描结果里只有茗伊 UID 与角色名/服务器，而概览行只有数据库角色 ID，
+ * 因此这里按「账号 ID + 归一化角色名」匹配，服务器一致或任一方缺省都接受：
+ * 角色名在同一账号内足够区分，服务器仅作加分校验。
+ */
+const buildTrialInProgressRoleMap = (
+  trialInProgressList: TrialInProgressWithAccount[],
+  accounts: Account[],
+): Map<string, TrialInProgressWithAccount> => {
+  const map = new Map<string, TrialInProgressWithAccount>();
+  if (!Array.isArray(trialInProgressList) || trialInProgressList.length === 0) return map;
+
+  // accountId -> [(归一化角色名, server)] 的账号内角色索引
+  const rolesByAccount = new Map<string, { name: string; server: string }[]>();
+  accounts.forEach(account => {
+    const roles = (Array.isArray(account.roles) ? account.roles : [])
+      .filter(role => !role.disabled)
+      .map(role => ({ name: normalizeRoleName(role.name), server: role.server }));
+    rolesByAccount.set(account.id, roles);
+  });
+
+  trialInProgressList.forEach(item => {
+    if (typeof item.stage !== 'number') return; // 防御异常数据（stage 必有）
+    const candidates = rolesByAccount.get(item.accountId);
+    if (!candidates) return;
+    const scannedName = normalizeRoleName(item.roleName ?? '');
+    if (!scannedName) return;
+    const hit = candidates.find(
+      candidate =>
+        candidate.name === scannedName &&
+        (!item.server || !candidate.server || candidate.server === item.server),
+    );
+    if (hit) map.set(`${item.accountId}:${scannedName}`, item);
+  });
+  return map;
+};
 
 const compareRaidInstance = (a: Raid, b: Raid): number => {
   const playerCountDiff = (PLAYER_COUNT_ORDER[a.playerCount] ?? 99) - (PLAYER_COUNT_ORDER[b.playerCount] ?? 99);
@@ -374,7 +437,15 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
   // 周期未就绪（加载中或无法确定）时不参与统计，避免把「还不知道」显示成「本周没打」
   const trialPeriodPending = trialProgressPeriod === undefined || trialProgressPeriod === null;
 
-  rowSources.forEach(({ roleId, inTrial, inBaizhan }) => {
+  // 进行中的试炼按「账号 + 角色名」映射到概览行，供试炼列叠加显示
+  const trialInProgressByRole = buildTrialInProgressRoleMap(
+    options.trialInProgressList ?? [],
+    safeAccounts,
+  );
+  const findTrialInProgress = (account: Account, roleName: string): TrialInProgressWithAccount | undefined =>
+    trialInProgressByRole.get(`${account.id}:${normalizeRoleName(roleName)}`);
+
+  rowSources.forEach(({ account, roleId, roleName, inTrial, inBaizhan }) => {
     if (!inTrial || trialPeriodPending) {
       trialCells.set(roleId, { status: 'na', clearedCount: 0, totalCount: TRIAL_WEEKLY_TARGET });
     } else {
@@ -382,10 +453,13 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
         safeTrialRecords.filter(record => record.roleId === roleId),
         { weekStart: getLastMonday(now), progressPeriod: trialProgressPeriod },
       );
-      trialCells.set(
-        roleId,
-        resolveActivityCell(progress.drawCount, TRIAL_WEEKLY_TARGET, progress.pendingRunCount > 0),
-      );
+      const cell = resolveActivityCell(progress.drawCount, TRIAL_WEEKLY_TARGET, progress.pendingRunCount > 0);
+      const inProgress = findTrialInProgress(account, roleName);
+      if (inProgress) {
+        cell.inProgress = true;
+        cell.inProgressLabel = formatTrialProgressLabel(inProgress);
+      }
+      trialCells.set(roleId, cell);
     }
 
     if (!inBaizhan) {

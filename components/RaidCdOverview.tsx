@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Copy, KeyRound, Star, X } from 'lucide-react';
+import { Copy, KeyRound, Loader2, Star, X } from 'lucide-react';
 import { Account, BaizhanRecord, Raid, RaidRecord, TrialPlaceRecord } from '../types';
 import { CdActivityCell, CdCell, CdCellStatus, CdOverviewRow, buildRaidCdOverview, resolveCdCellClickTarget } from '../utils/raidCdOverview';
+import { TrialInProgressWithAccount } from '../services/dropScanner';
 import { SeasonContext } from '../utils/weeklyRaids';
 import { getBaseServerName } from '../utils/serverUtils';
 import { TrialProgressPeriod } from '../utils/trialProgress';
@@ -17,6 +18,8 @@ interface RaidCdOverviewProps {
   baizhanRecords: BaizhanRecord[];
   /** undefined 表示试炼周期仍在加载，此时试炼列不参与统计 */
   trialProgressPeriod?: TrialProgressPeriod | null;
+  /** 各账号正在进行的试炼（自动扫描得到），用于试炼列标出「进行中」状态 */
+  trialInProgressList?: TrialInProgressWithAccount[];
   weeklyRaidNames: string[];
   favoriteRaids: ReadonlySet<string>;
   seasonContext: SeasonContext;
@@ -125,6 +128,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
   trialRecords,
   baizhanRecords,
   trialProgressPeriod,
+  trialInProgressList,
   weeklyRaidNames,
   favoriteRaids,
   seasonContext,
@@ -153,6 +157,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       trialRecords,
       baizhanRecords,
       trialProgressPeriod,
+      trialInProgressList,
       weeklyRaidNames,
       favoriteRaids,
       seasonContext,
@@ -168,6 +173,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       trialRecords,
       baizhanRecords,
       trialProgressPeriod,
+      trialInProgressList,
       weeklyRaidNames,
       favoriteRaids,
       seasonContext,
@@ -315,7 +321,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       <div className="px-4 pb-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-ds-xs text-muted">
-            绿=本周未清，雾蓝=部分清，棕=待确认，灰=已清；列头 0/7 为该副本本周已清角色数。点击列头进入详情，点击「待确认」按所在模块分别处理对应记录。
+            绿=本周未清，雾蓝=部分清，棕=待确认，灰=已清，褐=试炼进行中（尚无翻牌）；列头 0/7 为该副本本周已清角色数。点击列头进入详情，点击「待确认」按所在模块分别处理对应记录。
           </p>
           <div className="flex items-center gap-2 shrink-0">
             {martialOptions.length > 0 && (
@@ -496,19 +502,38 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
                   })}
                   {hasTrialParticipants && (
                     <td className="border-b border-l border-base p-0.5 text-center bg-ds-surface-2/20">
-                      <button
-                        type="button"
-                        onClick={() => handleCellClick('trial', row.trial.status, row)}
-                        disabled={row.trial.status === 'na'}
-                        className={`w-full min-w-[3.2rem] px-1 py-1 rounded-tag border text-ds-xs font-mono transition-colors duration-ds-fast ${CELL_CLASS[row.trial.status]} ${CELL_HOVER_CLASS[row.trial.status]} ${row.trial.status === 'na' ? 'cursor-default' : ''}`}
-                        title={row.trial.status === 'na'
-                          ? `${cleanRoleName(row.roleName)} 未参与试炼之地`
-                          : row.trial.status === 'pending'
-                            ? `${cleanRoleName(row.roleName)} · 试炼之地有记录待确认（点击查看并确认）`
-                            : `${cleanRoleName(row.roleName)} · 试炼之地本周翻牌 ${row.trial.clearedCount}/${row.trial.totalCount}（${cellActionHint(row.trial.status)}）`}
-                      >
-                        {renderActivityText(row.trial)}
-                      </button>
+                      {(() => {
+                        const cell = row.trial;
+                        // 进行中的试炼还没出终局、与翻牌次数是正交信息，
+                        // 用强调色（沉香褐）+ spinner 覆盖在四态之上，一眼区分「正在打」
+                        const isInProgress = cell.inProgress === true;
+                        const statusClass = isInProgress
+                          ? 'bg-ds-accent-soft text-ds-accent-strong border-ds-accent-soft hover:border-ds-accent'
+                          : `${CELL_CLASS[cell.status]} ${CELL_HOVER_CLASS[cell.status]}`;
+                        const statusText = isInProgress
+                          ? `进行中${cell.inProgressLabel ? `·${cell.inProgressLabel}` : ''}`
+                          : renderActivityText(cell);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => handleCellClick('trial', cell.status, row)}
+                            disabled={cell.status === 'na'}
+                            className={`w-full min-w-[3.2rem] px-1 py-1 rounded-tag border text-ds-xs font-mono transition-colors duration-ds-fast ${statusClass} ${cell.status === 'na' ? 'cursor-default' : ''}`}
+                            title={cell.status === 'na'
+                              ? `${cleanRoleName(row.roleName)} 未参与试炼之地`
+                              : isInProgress
+                                ? `${cleanRoleName(row.roleName)} · 试炼之地进行中${cell.inProgressLabel ? `（${cell.inProgressLabel}）` : ''}，尚未出终局${cell.status === 'pending' ? '；另有记录待确认' : ''}（点击查看试炼记录）`
+                                : cell.status === 'pending'
+                                  ? `${cleanRoleName(row.roleName)} · 试炼之地有记录待确认（点击查看并确认）`
+                                  : `${cleanRoleName(row.roleName)} · 试炼之地本周翻牌 ${cell.clearedCount}/${cell.totalCount}（${cellActionHint(cell.status)}）`}
+                          >
+                            <span className="inline-flex items-center justify-center gap-1">
+                              {isInProgress && <Loader2 size={12} className="animate-spin shrink-0" />}
+                              {statusText}
+                            </span>
+                          </button>
+                        );
+                      })()}
                     </td>
                   )}
                   {hasBaizhanParticipants && (

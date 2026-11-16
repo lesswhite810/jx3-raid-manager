@@ -794,6 +794,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 trialRecords={trialRecords}
                 baizhanRecords={baizhanRecords}
                 trialProgressPeriod={trialProgressPeriod}
+                trialInProgressList={trialInProgressList}
                 weeklyRaidNames={weeklyRaidNames}
                 favoriteRaids={favoriteRaids}
                 seasonContext={seasonContext}

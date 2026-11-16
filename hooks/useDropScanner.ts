@@ -79,6 +79,8 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
         .filter(result => result.success && result.trialInProgress)
         .map(result => ({
           accountId: result.accountId,
+          roleName: result.roleName,
+          server: result.server,
           ...(result.trialInProgress as NonNullable<AccountScanResult['trialInProgress']>),
         })),
     );

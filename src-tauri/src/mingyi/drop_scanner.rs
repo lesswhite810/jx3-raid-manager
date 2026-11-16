@@ -2555,29 +2555,49 @@ struct CompletionScan {
 /// 置 false，不中断读取），因此两者可以互相替代。
 /// `strict_ok` 恒为 false，确保它永远不会被当作补漏判定输入。
 fn scan_type1_anchors(jcl_path: &Path, expected_uid: &str) -> Option<CompletionScan> {
-    use std::io::BufRead;
     let file = std::fs::File::open(jcl_path).ok()?;
-    let reader = std::io::BufReader::new(file);
+    let mut reader = std::io::BufReader::new(file);
     let gbk = encoding_rs::GBK;
     let mut ends: Vec<i64> = Vec::new();
     let mut anchors_ok = true;
     let mut last_event_ms = 0i64;
-    for line in reader.split(b'\n') {
-        let line = line.ok()?;
+    // 复用同一个行缓冲，避免每行新分配一个 Vec<u8>：单个账号一周上千万行，
+    // 每行一次分配足以把「只找 type=1」这件小事拖成秒级开销。
+    let mut line: Vec<u8> = Vec::with_capacity(1024);
+    loop {
+        line.clear();
+        match std::io::BufRead::read_until(&mut reader, b'\n', &mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+        while line.last() == Some(&b'\r') || line.last() == Some(&b'\n') {
+            line.pop();
+        }
         if line.is_empty() {
             continue;
         }
-        let parts: Vec<&[u8]> = line.splitn(6, |byte| *byte == b'\t').collect();
-        if parts.len() < 6 {
+        // 只切前 6 段并惰性取值：`collect::<Vec<_>>()` 每行都要堆分配，
+        // 这里改成迭代器逐个取，用不到的段直接丢弃。
+        let mut split = line.splitn(6, |byte| *byte == b'\t');
+        let (_crc, _frame, ts, _client_ms, event_type, payload) = (
+            split.next(),
+            split.next(),
+            split.next(),
+            split.next(),
+            split.next(),
+            split.next(),
+        );
+        let (Some(ts), Some(event_type), Some(payload)) = (ts, event_type, payload) else {
             anchors_ok = false;
             continue;
-        }
-        if let Ok(raw) = std::str::from_utf8(parts[2]) {
+        };
+        if let Ok(raw) = std::str::from_utf8(ts) {
             if let Ok(ms) = raw.parse::<i64>() {
                 last_event_ms = ms.saturating_mul(1000);
             }
         }
-        let event_type = match std::str::from_utf8(parts[4])
+        let event_type = match std::str::from_utf8(event_type)
             .ok()
             .and_then(|raw| raw.parse::<u8>().ok())
         {
@@ -2587,10 +2607,12 @@ fn scan_type1_anchors(jcl_path: &Path, expected_uid: &str) -> Option<CompletionS
                 continue;
             }
         };
+        // 只有 type=1 需要 GBK 解码；这一步必须放在类型判定之后，
+        // 否则每条 type=21 的伤害记录都会白白解码一次。
         if event_type != 1 {
             continue;
         }
-        let timestamp = match std::str::from_utf8(parts[2])
+        let timestamp = match std::str::from_utf8(ts)
             .ok()
             .and_then(|raw| raw.parse::<i64>().ok())
         {
@@ -2600,7 +2622,7 @@ fn scan_type1_anchors(jcl_path: &Path, expected_uid: &str) -> Option<CompletionS
                 continue;
             }
         };
-        let (lua, _, errors) = gbk.decode(parts[5]);
+        let (lua, _, errors) = gbk.decode(payload);
         if errors {
             anchors_ok = false;
             continue;
@@ -2610,14 +2632,14 @@ fn scan_type1_anchors(jcl_path: &Path, expected_uid: &str) -> Option<CompletionS
             .strip_prefix('{')
             .and_then(|value| value.strip_suffix('}'))
             .unwrap_or(lua.trim());
-        let fields: Vec<&str> = inner.split(',').collect();
-        if fields.len() < 2 {
+        let mut fields = inner.splitn(3, ',');
+        let (Some(flag), Some(uuid)) = (fields.next(), fields.next()) else {
             anchors_ok = false;
             continue;
-        }
-        match fields[0].trim() {
+        };
+        match flag.trim() {
             "true" => {}
-            "false" if jcl_uuid_matches_uid(fields[1].trim().trim_matches('"'), expected_uid) => {
+            "false" if jcl_uuid_matches_uid(uuid.trim().trim_matches('"'), expected_uid) => {
                 ends.push(timestamp.saturating_mul(1000))
             }
             "false" => {}
@@ -2653,12 +2675,11 @@ fn scan_completion_evidence(
     boss_template_id: i64,
     raid_bosses: &[(String, String)],
 ) -> Option<CompletionScan> {
-    use std::io::BufRead;
     type Effect = (i64, i64, i64, i64, usize);
     type PendingEffect = (i64, i64, i64, Option<i64>, Option<i64>, usize);
     type FightHint = (i64, i64, i64, bool, f64, i64, usize);
     let file = std::fs::File::open(jcl_path).ok()?;
-    let reader = std::io::BufReader::new(file);
+    let mut reader = std::io::BufReader::new(file);
     let gbk = encoding_rs::GBK;
 
     let mut fight_start: Option<(i64, i64, String, usize)> = None;
@@ -2687,20 +2708,36 @@ fn scan_completion_evidence(
     let mut type1_ends: Vec<i64> = Vec::new();
     let mut last_event_ms = 0i64;
 
-    for (line_number, line) in reader.split(b'\n').enumerate() {
-        let line_bytes = match line {
-            Ok(line) => line,
+    // 复用同一个行缓冲逐行读取：`BufRead::split` 会给每一行新分配一个 `Vec<u8>`，
+    // 单个 38 万行的 JCL 就要分配 38 万次，这部分开销在慢账号上会直接把解析
+    // 时间放大到秒级。分列结果也用定长数组承接，避免每行再分配一个 `Vec`。
+    let mut line_bytes: Vec<u8> = Vec::with_capacity(1024);
+    let mut line_number = 0usize;
+    loop {
+        line_bytes.clear();
+        match std::io::BufRead::read_until(&mut reader, b'\n', &mut line_bytes) {
+            Ok(0) => break,
+            Ok(_) => {}
             Err(_) => {
                 strict_ok = false;
                 anchors_ok = false;
                 break;
             }
-        };
+        }
+        while line_bytes.last() == Some(&b'\r') || line_bytes.last() == Some(&b'\n') {
+            line_bytes.pop();
+        }
+        line_number += 1;
         // 用 `splitn` 切前 6 段：它内部走 memchr 批量找分隔符，比逐字节扫描
         // 快一个量级。这里每个 JCL 动辄 30 万行、单行上 KB，逐字节循环会成为
         // 整个账号扫描的主要成本（旧实现同样用 `splitn`）。
-        let parts: Vec<&[u8]> = line_bytes.splitn(6, |byte| *byte == b'\t').collect();
-        if parts.len() < 6 {
+        let mut parts: [&[u8]; 6] = [&[]; 6];
+        let mut part_count = 0usize;
+        for (index, part) in line_bytes.splitn(6, |byte| *byte == b'\t').enumerate() {
+            parts[index] = part;
+            part_count = index + 1;
+        }
+        if part_count < 6 {
             if !line_bytes.is_empty() {
                 strict_ok = false;
                 anchors_ok = false;
@@ -5496,16 +5533,24 @@ pub fn scan_raid_drops_with_raids(
     }
 
     // 2. 查找 chatlog 文件
+    // 阶段耗时：慢账号一轮能跑几十秒，凭日志看不出钱花在哪一阶段。
+    // 这里只记录毫秒数，末尾汇总成一条 INFO，正常日志量几乎不受影响。
+    let mut phase_marks: Vec<(&'static str, u128)> = Vec::new();
+    let mut phase_started = std::time::Instant::now();
     let chatlog_files = find_chatlog_files(&account_dir)?;
 
     // 预缓存所有 chatlog 文件的元数据（时间范围 + 角色 UID），
     // 避免后续预加载、补漏与结算阶段重复打开同一批 SQLite 文件
     let chatlogs = build_chatlog_meta(&chatlog_files);
+    phase_marks.push(("chatlog_meta", phase_started.elapsed().as_millis()));
+    phase_started = std::time::Instant::now();
 
     // 2.5 预加载所有 chatlog 文件中的相关记录到内存
     //     避免后续每个副本实例重复打开 SQLite 连接和全表扫描
     //     性能优化：将 O(N*M) 次 SQLite 查询降为 O(M) 次（M=chatlog文件数）
     let preloaded_records = preload_chatlog_records(&chatlogs, start_ms, end_ms, &account_id);
+    phase_marks.push(("preload", phase_started.elapsed().as_millis()));
+    phase_started = std::time::Instant::now();
 
     // 3. 分析每个 JCL 文件内容，提取战斗时间和击杀状态
     //    替代原 10金查询方案：通过 JCL 的运行时实体证据判定通关
@@ -5586,6 +5631,8 @@ pub fn scan_raid_drops_with_raids(
         }
         jcl_analyses.insert(jcl.file_name.clone(), analysis);
     }
+    phase_marks.push(("jcl_analyze", phase_started.elapsed().as_millis()));
+    phase_started = std::time::Instant::now();
 
     // 同角色的精确 10 金或侠行点入账只补强完整伤害候选。这里的结果仅用于本次聚类；JCL 强证据
     // `is_kill`、SQLite 缓存和后续财务收入统计都不被改写。
@@ -5653,6 +5700,8 @@ pub fn scan_raid_drops_with_raids(
             promoted_files.len()
         );
     }
+    phase_marks.push(("damage_topup", phase_started.elapsed().as_millis()));
+    phase_started = std::time::Instant::now();
 
     // 4. 聚类（按 JCL 顺序，使用 is_kill 筛选已确认击杀，2小时阈值智能分组）
     //    使用预加载的 chatlog 记录进行工资检测，避免重复打开 SQLite
@@ -5688,6 +5737,8 @@ pub fn scan_raid_drops_with_raids(
             log::info!("[DropScanner] 独立结算补强击杀: 文件='{}'", file_name);
         }
     }
+    phase_marks.push(("settlement", phase_started.elapsed().as_millis()));
+    phase_started = std::time::Instant::now();
     let mut instances = cluster_raid_instances(
         account_id,
         configured_jcl_files,
@@ -5699,6 +5750,20 @@ pub fn scan_raid_drops_with_raids(
         account_id,
         instances.len()
     );
+    phase_marks.push(("cluster", phase_started.elapsed().as_millis()));
+    if !phase_marks.is_empty() {
+        let total: u128 = phase_marks.iter().map(|(_, ms)| *ms).sum();
+        let detail: Vec<String> = phase_marks
+            .iter()
+            .map(|(name, ms)| format!("{}={}ms", name, ms))
+            .collect();
+        log::info!(
+            "[DropScanner] 账号 {} 阶段耗时: {}（合计 {}ms）",
+            account_id,
+            detail.join(", "),
+            total
+        );
+    }
 
     // 用 UUID 覆盖每个实例的 account_id（聚类时用的是数字 uid，仅用于日志）
     for instance in instances.iter_mut() {
@@ -6062,8 +6127,23 @@ pub struct AccountScanResult {
     /// 该账号正在打但尚未出终局的试炼（None 表示没有），仅用于 UI 提示。
     #[serde(default)]
     pub trial_in_progress: Option<trial::TrialInProgress>,
+    /// 扫描到的角色名（批量实时扫描路径可提供，用于前端按角色定位；离线范围扫描为 None）。
+    #[serde(default)]
+    pub role_name: Option<String>,
+    /// 扫描到的角色所在服务器（与 role_name 配套，用于前端匹配）。
+    #[serde(default)]
+    pub server: Option<String>,
     /// 失败原因（失败时）
     pub error: Option<String>,
+}
+
+/// 批量扫描的单个角色条目：在扫描结果外附带角色名与服务器，
+/// 供命令层组装 `AccountScanResult` 时一并返回给前端。
+pub struct BatchScanEntry {
+    pub account_id: String,
+    pub role_name: Option<String>,
+    pub server: Option<String>,
+    pub result: Result<RaidScanOutcome, String>,
 }
 
 /// 已扫描的 Recent 角色 UID 集合（内存态，每次应用启动重置）
@@ -6101,7 +6181,7 @@ fn scanned_recent_uids() -> &'static Mutex<HashSet<String>> {
 /// - `jx3_running`: 整个批量扫描共用，来自 JX3 进程状态
 /// - `role_online`: 每个账号独立计算，基于该账号 chatlog 最新 mtime（5 分钟阈值）
 pub fn scan_all_active_raid_drops_internal()
--> Result<Vec<(String, Result<RaidScanOutcome, String>)>, String>
+-> Result<Vec<BatchScanEntry>, String>
 {
     let scan_started_at_outer = std::time::Instant::now();
     let game_dir_outer = get_game_directory()?;
@@ -6185,7 +6265,7 @@ fn scan_all_active_raid_drops_internal_impl(
     active_result: crate::mingyi::active_detector::BatchActiveResult,
     preloaded_raids: Option<&[RaidEntry]>,
     scan_started_at: std::time::Instant,
-) -> Result<Vec<(String, Result<RaidScanOutcome, String>)>, String> {
+) -> Result<Vec<BatchScanEntry>, String> {
     let jx3_running = active_result.jx3_running;
 
     // 从 active_result 获取进程启动时间（用于过滤 JCL 文件，只扫描本次会话产生的）
@@ -6240,7 +6320,7 @@ fn scan_all_active_raid_drops_internal_impl(
     );
 
     // 3. 对每个活跃角色执行扫描
-    let mut results: Vec<(String, Result<RaidScanOutcome, String>)> = Vec::new();
+    let mut results: Vec<BatchScanEntry> = Vec::new();
     let game_path = PathBuf::from(&game_dir);
     let accounts_base = game_path.join(MINGYI_ACCOUNTS_BASE_PATH);
 
@@ -6302,7 +6382,14 @@ fn scan_all_active_raid_drops_internal_impl(
             preloaded_raids,
             None, // 批量路径：区间覆盖整个 CD 窗口，可自行观察到后续 JCL
         );
-        results.push((uid.clone(), result));
+        results.push(BatchScanEntry {
+            account_id: uid.clone(),
+            // 角色名/服务器用于前端把「试炼进行中」匹配到概览表对应角色行；
+            // 名字可能为空（如 OwnerInfo 缺行），此时前端退化为不匹配。
+            role_name: (!role.role_name.trim().is_empty()).then(|| role.role_name.clone()),
+            server: (!role.server.trim().is_empty()).then(|| role.server.clone()),
+            result,
+        });
 
         // Recent 角色扫描完成后记入集合，后续轮询跳过
         if !is_active {
@@ -6310,11 +6397,14 @@ fn scan_all_active_raid_drops_internal_impl(
         }
     }
 
-    let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
+    let success_count = results
+        .iter()
+        .filter(|entry| entry.result.is_ok())
+        .count();
     let failed_count = results.len() - success_count;
     let total_instances: usize = results
         .iter()
-        .filter_map(|(_, r)| r.as_ref().ok().map(|outcome| outcome.inserted_count))
+        .filter_map(|entry| entry.result.as_ref().ok().map(|outcome| outcome.inserted_count))
         .sum();
     let elapsed_ms = scan_started_at.elapsed().as_millis();
 
@@ -6906,25 +6996,37 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
         let trial_draws_changed = trial_draw_revision() != draw_revision_before;
         Ok(raw
             .into_iter()
-            .map(|(uid, res)| match res {
-                Ok(outcome) => AccountScanResult {
-                    account_id: uid,
-                    success: true,
-                    instance_count: Some(outcome.inserted_count),
-                    trial_draws_changed,
-                    trial_in_progress: outcome.trial_in_progress,
-                    error: None,
-                },
-                Err(e) => AccountScanResult {
-                    account_id: uid,
-                    success: false,
-                    instance_count: None,
-                    // 子翻牌可能已部分写入后才报告剩余一笔失败，前端仍应刷新以
-                    // 展示已持久化的部分，并把错误交给用户重扫补齐。
-                    trial_draws_changed,
-                    trial_in_progress: None,
-                    error: Some(e),
-                },
+            .map(|entry| {
+                let BatchScanEntry {
+                    account_id,
+                    role_name,
+                    server,
+                    result,
+                } = entry;
+                match result {
+                    Ok(outcome) => AccountScanResult {
+                        account_id,
+                        success: true,
+                        instance_count: Some(outcome.inserted_count),
+                        trial_draws_changed,
+                        trial_in_progress: outcome.trial_in_progress,
+                        role_name,
+                        server,
+                        error: None,
+                    },
+                    Err(e) => AccountScanResult {
+                        account_id,
+                        success: false,
+                        instance_count: None,
+                        // 子翻牌可能已部分写入后才报告剩余一笔失败，前端仍应刷新以
+                        // 展示已持久化的部分，并把错误交给用户重扫补齐。
+                        trial_draws_changed,
+                        trial_in_progress: None,
+                        role_name,
+                        server,
+                        error: Some(e),
+                    },
+                }
             })
             .collect())
     })
@@ -7161,6 +7263,8 @@ pub async fn scan_raids_in_range(
                                         trial_draws_changed: trial_draw_revision()
                                             != draw_revision_before,
                                         trial_in_progress: outcome.trial_in_progress,
+                                        role_name: None,
+                                        server: None,
                                         error: None,
                                     });
                                 }
@@ -7176,6 +7280,8 @@ pub async fn scan_raids_in_range(
                                         trial_draws_changed: trial_draw_revision()
                                             != draw_revision_before,
                                         trial_in_progress: None,
+                                        role_name: None,
+                                        server: None,
                                         error: Some(e),
                                     });
                                 }

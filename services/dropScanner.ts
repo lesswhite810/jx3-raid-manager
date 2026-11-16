@@ -43,6 +43,10 @@ export interface AccountScanResult {
   trialDrawsChanged?: boolean;
   /** 正在打但尚未出终局的试炼（无则为空） */
   trialInProgress?: TrialInProgress;
+  /** 扫描到的角色名（批量实时扫描时提供，用于 UI 按角色定位；可能缺省） */
+  roleName?: string;
+  /** 扫描到的角色所在服务器（与 roleName 配套） */
+  server?: string;
   /** 失败原因（失败时） */
   error?: string;
 }
@@ -53,6 +57,10 @@ export interface AccountScanResult {
 export interface TrialInProgressWithAccount extends TrialInProgress {
   /** 茗伊账号 UID */
   accountId: string;
+  /** 扫描到的角色名（用于概览表按角色匹配；可能缺省） */
+  roleName?: string;
+  /** 扫描到的角色所在服务器（与 roleName 配套） */
+  server?: string;
 }
 
 /**
