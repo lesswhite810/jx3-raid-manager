@@ -363,9 +363,6 @@ fn main() {
             db::db_get_baizhan_records,
             db::db_delete_baizhan_record,
             db::db_update_baizhan_record,
-            // 备份恢复
-            db::db_backup,
-            db::db_restore,
             db::db_delete_directory,
             // 副本收藏
             db::db_get_favorite_raids,

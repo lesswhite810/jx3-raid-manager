@@ -408,26 +408,6 @@ class DatabaseService {
     }
   }
 
-  async backup(backupPath: string): Promise<void> {
-    await this.init();
-    try {
-      await invoke('db_backup', { backupPath });
-    } catch (error) {
-      console.error('Failed to backup database:', error);
-      throw error;
-    }
-  }
-
-  async restore(restorePath: string): Promise<void> {
-    await this.init();
-    try {
-      await invoke('db_restore', { restorePath });
-    } catch (error) {
-      console.error('Failed to restore database:', error);
-      throw error;
-    }
-  }
-
   async getConfigDebug(): Promise<string> {
     await this.init();
     try {
