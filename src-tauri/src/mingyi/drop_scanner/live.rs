@@ -858,7 +858,7 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, Parsed::Terminal(_))));
             assert_eq!(reader.identity, Identity::Rejected);
-            fs::remove_file(path).unwrap();
+            
         }
         let path = fixture_path();
         let mut content = terminal(2_000);
@@ -876,7 +876,7 @@ mod tests {
                 .count(),
             1
         );
-        fs::remove_file(path).unwrap();
+        
     }
 
     #[test]
@@ -906,13 +906,9 @@ mod tests {
         assert!(engine.accept_boundary(13_000));
     }
 
-    fn fixture_path() -> PathBuf {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("workspace parent")
-            .join("tmp");
-        fs::create_dir_all(&base).expect("create workspace tmp");
-        base.join(format!("trial-live-{}.jcl", uuid::Uuid::new_v4()))
+    /// 夹具放在系统临时目录，并由守卫在用例结束时自动删除。
+    fn fixture_path() -> crate::test_support::TestTempFile {
+        crate::test_support::TestTempFile::new("trial-live", "jcl")
     }
 
     fn line(at: i64, event_type: u8, payload: &str) -> Vec<u8> {
@@ -966,7 +962,7 @@ mod tests {
             tail.read(&path, "123456", 256 * 1024).0.as_slice(),
             [Parsed::Terminal(value)] if *value == at + 1_000
         ));
-        fs::remove_file(path).expect("remove fixture");
+        
     }
 
     #[test]
@@ -979,7 +975,7 @@ mod tests {
         bytes.extend(terminal(at + 3_000));
         fs::write(&path, bytes).expect("write fixture");
         assert!(tail().read(&path, "123456", 256 * 1024).0.is_empty());
-        fs::remove_file(path).expect("remove fixture");
+        
     }
 
     #[test]
@@ -995,7 +991,7 @@ mod tests {
             [Parsed::Battle(_), Parsed::Stage(_)]
         ));
         assert!(tail.read(&path, "123456", 256 * 1024).0.is_empty());
-        fs::remove_file(path).expect("remove fixture");
+        
     }
 
     #[test]
@@ -1011,7 +1007,7 @@ mod tests {
             tail().read(&path, "123456", 256 * 1024).0.as_slice(),
             [Parsed::Battle(_), Parsed::Terminal(_), Parsed::Stage(_)]
         ));
-        fs::remove_file(path).expect("remove fixture");
+        
     }
 
     #[test]
@@ -1025,7 +1021,7 @@ mod tests {
         let _ = tail.read(&path, "123456", 256 * 1024);
         fs::write(&path, terminal(at + 2_000)).expect("replace fixture");
         assert!(tail.read(&path, "123456", 256 * 1024).0.is_empty());
-        fs::remove_file(path).expect("remove fixture");
+        
     }
 
     #[test]
@@ -1043,7 +1039,7 @@ mod tests {
             [Parsed::Battle(_), Parsed::Terminal(_)]
         ));
         assert!(tail.line.capacity() <= MAX_LINE_BYTES * 2);
-        fs::remove_file(path).expect("remove fixture");
+        
     }
 
     #[test]

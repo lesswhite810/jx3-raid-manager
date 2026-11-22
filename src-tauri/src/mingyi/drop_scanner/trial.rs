@@ -783,6 +783,8 @@ fn candidate(uid: &str, run: &Run, completed_at_ms: i64) -> TrialScanCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestTempFile;
+
     fn file(map: i64, boss: &str, events: Vec<Event>) -> TrialFile {
         let has_terminal = events
             .iter()
@@ -1460,7 +1462,7 @@ mod tests {
             "1\t1\t120\t0\t18\t{\"恭喜你通过了所有的关卡。\\n\",\"MSG_SYS\"}\n"
         );
         let (gbk, _, _) = encoding_rs::GBK.encode(content);
-        let path = std::env::temp_dir().join(format!("trial-gbk-{}.jcl", uuid::Uuid::new_v4()));
+        let path = TestTempFile::new("trial-gbk", "jcl");
         fs::write(&path, gbk.as_ref()).expect("GBK fixture should be written");
         let parsed = parse_file(
             &path,
@@ -1474,7 +1476,6 @@ mod tests {
         )
         .expect("fixture should parse")
         .expect("fixture should match uid");
-        let _ = fs::remove_file(path);
         assert_eq!(parsed.events.len(), 1);
         assert_eq!(parsed.events[0].kind, Kind::Finish { layer: None });
     }
@@ -1486,8 +1487,7 @@ mod tests {
             "1\t1\t250\t0\t21\t{1,2,0,0,0,0,0,0,{[13]=5,[14]=0}}\n"
         );
         let (gbk, _, _) = encoding_rs::GBK.encode(content);
-        let path =
-            std::env::temp_dir().join(format!("trial-activity-{}.jcl", uuid::Uuid::new_v4()));
+        let path = TestTempFile::new("trial-activity", "jcl");
         fs::write(&path, gbk.as_ref()).expect("GBK fixture should be written");
         let current_third = parse_file(
             &path,
@@ -1501,7 +1501,6 @@ mod tests {
         )
         .expect("fixture should parse")
         .expect("fixture should match uid");
-        let _ = fs::remove_file(path);
         assert!(current_third.events.is_empty());
 
         let old_second = file(
@@ -1539,8 +1538,7 @@ mod tests {
             "1\t1\t180\t0\t18\t{\"你通过了第6层的所有关卡。\",\"MSG_SYS\"}\n"
         );
         let (gbk, _, _) = encoding_rs::GBK.encode(content);
-        let path =
-            std::env::temp_dir().join(format!("trial-ambiguous-{}.jcl", uuid::Uuid::new_v4()));
+        let path = TestTempFile::new("trial-ambiguous", "jcl");
         fs::write(&path, gbk.as_ref()).expect("GBK fixture should be written");
         let parsed = parse_file(
             &path,
@@ -1554,7 +1552,6 @@ mod tests {
         )
         .expect("fixture should parse")
         .expect("terminal evidence should be retained");
-        let _ = fs::remove_file(path);
         assert_eq!(parsed.meta.boss_name, None);
         let candidates = group("123456", vec![parsed], 0, 0);
         assert_eq!(candidates.len(), 1);

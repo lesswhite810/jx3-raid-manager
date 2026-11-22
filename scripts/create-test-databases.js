@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -6,7 +7,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const TestDir = path.join(process.env.APPDATA, 'com.jx3raidmanager.app', 'upgrade-tests');
+// 升级夹具统一放在系统临时目录，与 Rust 侧
+// `src-tauri/src/db/upgrade_tests.rs` 的 `get_test_dir()` 保持同一路径：
+// 两者都是 `os.tmpdir()/jx3-raid-manager-upgrade-tests`。不要在末尾拼分隔符，
+// 也不要再写进 `%APPDATA%\com.jx3raidmanager.app`，否则会污染用户真实配置目录。
+const TestDir = path.join(os.tmpdir(), 'jx3-raid-manager-upgrade-tests');
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {

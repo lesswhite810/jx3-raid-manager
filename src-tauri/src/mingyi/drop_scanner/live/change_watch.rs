@@ -14,12 +14,7 @@ mod filesystem_tests {
 
     #[test]
     fn native_watch_observes_a_new_file_without_blocking() {
-        let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("tmp")
-            .join(format!("trial-notify-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&directory).unwrap();
+        let directory = crate::test_support::TestTempDir::new("trial-notify");
         let mut watch = ChangeWatch::new(&directory).expect("Windows directory notification");
         assert!(!watch.changed());
         let file = directory.join("new.jcl");
@@ -31,9 +26,8 @@ mod filesystem_tests {
             changed = watch.changed();
         }
         assert!(changed && watch.is_valid());
+        // 目录监听句柄必须先释放，否则 Windows 上目录仍被占用。
         drop(watch);
-        std::fs::remove_file(file).unwrap();
-        std::fs::remove_dir(directory).unwrap();
     }
 }
 

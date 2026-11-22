@@ -52,43 +52,13 @@ pub fn detect_current_runtime_mode() -> Result<RuntimeMode, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    struct TestTempDir {
-        path: PathBuf,
-    }
-
-    impl TestTempDir {
-        fn new() -> Self {
-            let unique = format!(
-                "jx3-runtime-mode-test-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system time should be after unix epoch")
-                    .as_nanos()
-            );
-            let path = std::env::temp_dir().join(unique);
-            fs::create_dir_all(&path).expect("temp dir should be created");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestTempDir {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.path).ok();
-        }
-    }
+    use crate::test_support::TestTempDir;
 
     #[test]
     fn treats_versioned_release_executable_as_portable_even_if_uninstall_exists() {
-        let temp_dir = TestTempDir::new();
-        let exe_path = temp_dir.path().join("JX3RaidManager_v2.1.18.exe");
-        fs::write(temp_dir.path().join("uninstall.exe"), "").expect("uninstall marker should exist");
+        let temp_dir = TestTempDir::new("jx3-runtime-mode-test");
+        let exe_path = temp_dir.join("JX3RaidManager_v2.1.18.exe");
+        fs::write(temp_dir.join("uninstall.exe"), "").expect("uninstall marker should exist");
 
         assert_eq!(
             detect_runtime_mode_for_executable(&exe_path),
@@ -98,9 +68,9 @@ mod tests {
 
     #[test]
     fn treats_unversioned_executable_with_uninstall_marker_as_installer() {
-        let temp_dir = TestTempDir::new();
-        let exe_path = temp_dir.path().join("JX3RaidManager.exe");
-        fs::write(temp_dir.path().join("uninstall.exe"), "").expect("uninstall marker should exist");
+        let temp_dir = TestTempDir::new("jx3-runtime-mode-test");
+        let exe_path = temp_dir.join("JX3RaidManager.exe");
+        fs::write(temp_dir.join("uninstall.exe"), "").expect("uninstall marker should exist");
 
         assert_eq!(
             detect_runtime_mode_for_executable(&exe_path),
@@ -110,8 +80,8 @@ mod tests {
 
     #[test]
     fn treats_directory_without_uninstall_marker_as_portable() {
-        let temp_dir = TestTempDir::new();
-        let exe_path = temp_dir.path().join("JX3RaidManager.exe");
+        let temp_dir = TestTempDir::new("jx3-runtime-mode-test");
+        let exe_path = temp_dir.join("JX3RaidManager.exe");
 
         assert_eq!(
             detect_runtime_mode_for_executable(&exe_path),

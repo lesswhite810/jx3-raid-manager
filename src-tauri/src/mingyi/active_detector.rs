@@ -942,8 +942,7 @@ mod tests {
 
         // 用临时文件构造"缺失 name"的 info.jx3dat（复现 7-25 23:23 的文件版本）
         // 注意：茗伊 info.jx3dat 是 GBK 编码，临时文件也必须用 GBK 编码写入
-        let temp_dir = std::env::temp_dir().join("jx3-test-nuoshan-fallback");
-        std::fs::create_dir_all(&temp_dir).expect("创建临时目录失败");
+        let temp_dir = crate::test_support::TestTempDir::new("jx3-test-nuoshan-fallback");
         let temp_info_path = temp_dir.join("info.jx3dat");
         // 模拟缺失 name 字段的 info.jx3dat（与 7-25 23:23 版本一致）
         let info_content_no_name = "return {region=\"电信区\",time_str=\"20260725232306\",time=1784992986,region_origin=\"梦江南\",uid=\"342273571708094124\",version=\"1.5.0.9878\",server_origin=\"电信区\",server=\"梦江南\",branch=\"remake\",lang=\"zhcn\",edition=\"zhcn_hd\"}";
@@ -985,8 +984,5 @@ mod tests {
             assert_eq!(identity_real.role_name, "糯闪",
                 "真实 info.jx3dat 应直接包含 name='糯闪'");
         }
-
-        // 清理临时文件
-        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -78,9 +78,29 @@ fn ensure_directory_exists(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| format!("无法创建目录 {}: {}", path.display(), e))
 }
 
+/// 便携版默认数据目录（`~/.jx3-raid-manager`）。
+///
+/// 单元测试必须完全隔离：测试构建下返回进程级临时目录，否则任何调用 `init_db()` /
+/// `get_db_path()` / `get_app_dir()` 的测试都会在用户主目录真实落库。
 fn get_home_app_dir() -> Result<PathBuf, String> {
-    let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
-    Ok(home_dir.join(".jx3-raid-manager"))
+    #[cfg(test)]
+    {
+        static TEST_HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        let dir = TEST_HOME.get_or_init(|| {
+            std::env::temp_dir().join(format!(
+                "jx3-raid-manager-test-home-{}",
+                std::process::id()
+            ))
+        });
+        ensure_directory_exists(dir)?;
+        return Ok(dir.clone());
+    }
+
+    #[cfg(not(test))]
+    {
+        let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
+        Ok(home_dir.join(".jx3-raid-manager"))
+    }
 }
 
 /// 一次性从旧版共享 bootstrap 文件迁移到 mode-specific 文件
@@ -129,13 +149,39 @@ fn migrate_legacy_bootstrap_if_needed(mode_specific_path: &Path) -> Result<(), S
     Ok(())
 }
 
-fn get_data_dir_bootstrap_path() -> Result<PathBuf, String> {
-    let base_dir = dirs::data_local_dir()
-        .or_else(dirs::config_local_dir)
-        .ok_or_else(|| "无法获取本地配置目录".to_string())?;
+/// 数据目录 bootstrap 配置（`data-dir-*.json` / `data-dir-*.ini`）所在目录。
+///
+/// 单元测试必须完全隔离：测试构建下固定返回进程级临时目录，绝不落到用户真实的
+/// `%LOCALAPPDATA%\jx3-raid-manager`。否则 `maybe_migrate_app_data` 里的
+/// `read_previous_effective_data_dir()` 会读到真实安装版的 `effectiveDataDir`，
+/// 把用户真实数据目录当成迁移源搬走。
+fn get_bootstrap_base_dir() -> Result<PathBuf, String> {
+    #[cfg(test)]
+    {
+        static TEST_BASE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        let base = TEST_BASE.get_or_init(|| {
+            std::env::temp_dir().join(format!(
+                "jx3-raid-manager-test-bootstrap-{}",
+                std::process::id()
+            ))
+        });
+        ensure_directory_exists(base)?;
+        Ok(base.clone())
+    }
 
-    let bootstrap_dir = base_dir.join("jx3-raid-manager");
-    ensure_directory_exists(&bootstrap_dir)?;
+    #[cfg(not(test))]
+    {
+        let base_dir = dirs::data_local_dir()
+            .or_else(dirs::config_local_dir)
+            .ok_or_else(|| "无法获取本地配置目录".to_string())?;
+        let bootstrap_dir = base_dir.join("jx3-raid-manager");
+        ensure_directory_exists(&bootstrap_dir)?;
+        Ok(bootstrap_dir)
+    }
+}
+
+fn get_data_dir_bootstrap_path() -> Result<PathBuf, String> {
+    let bootstrap_dir = get_bootstrap_base_dir()?;
 
     let mode_specific_name = format!("data-dir-{}.json", runtime_mode_suffix());
     let mode_specific_path = bootstrap_dir.join(&mode_specific_name);
@@ -452,6 +498,17 @@ fn read_previous_effective_data_dir() -> Result<Option<PathBuf>, String> {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
                 let path = PathBuf::from(trimmed);
+                // 测试隔离兜底：单元测试只承认临时目录内的历史目录作为迁移源，
+                // 即使临时 bootstrap 状态文件里残留了真实路径（例如用户主目录），
+                // 也不会把真实数据搬到测试目录或反过来搬走真实数据。
+                #[cfg(test)]
+                if !path.starts_with(std::env::temp_dir()) {
+                    log::warn!(
+                        "测试构建忽略临时目录之外的历史数据目录: {}",
+                        path.display()
+                    );
+                    return Ok(None);
+                }
                 if path.exists() && has_persisted_app_data(&path) {
                     return Ok(Some(path));
                 }
@@ -7435,37 +7492,7 @@ pub fn db_reset_custom_data_dir(force_overwrite: Option<bool>) -> Result<String,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    struct TestTempDir {
-        path: PathBuf,
-    }
-
-    impl TestTempDir {
-        fn new() -> Self {
-            let unique = format!(
-                "jx3-raid-manager-test-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("system time should be after unix epoch")
-                    .as_nanos()
-            );
-            let path = std::env::temp_dir().join(unique);
-            fs::create_dir_all(&path).expect("temp dir should be created");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestTempDir {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.path).ok();
-        }
-    }
+    use crate::test_support::TestTempDir;
 
     #[test]
     fn preserves_account_without_roles_as_empty_roles_array() {
@@ -7548,10 +7575,43 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_paths_are_isolated_from_real_installation() {
+        let bootstrap_path = get_data_dir_bootstrap_path().expect("bootstrap path should resolve");
+        let temp_root = std::env::temp_dir();
+
+        assert!(
+            bootstrap_path.starts_with(&temp_root),
+            "bootstrap 配置必须落在临时目录，实际为 {}",
+            bootstrap_path.display()
+        );
+        assert!(
+            bootstrap_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("data-dir-"))
+                .unwrap_or(false),
+            "bootstrap 配置文件名应为 data-dir-*，实际为 {}",
+            bootstrap_path.display()
+        );
+
+        // 隔离后的目录里没有真实安装版的 data-dir-*.ini，
+        // read_previous_effective_data_dir 不可能把用户真实数据目录当成迁移源。
+        match read_previous_effective_data_dir() {
+            Ok(Some(previous)) => assert!(
+                previous.starts_with(&temp_root),
+                "迁移源不得指向临时目录之外，实际为 {}",
+                previous.display()
+            ),
+            Ok(None) => {}
+            Err(err) => panic!("读取历史数据目录失败: {err}"),
+        }
+    }
+
+    #[test]
     fn migrates_data_files_by_removing_source_files() {
-        let temp_dir = TestTempDir::new();
-        let source_dir = temp_dir.path().join("source");
-        let target_dir = temp_dir.path().join("target");
+        let temp_dir = TestTempDir::new("jx3-raid-manager-test");
+        let source_dir = temp_dir.join("source");
+        let target_dir = temp_dir.join("target");
 
         fs::create_dir_all(&source_dir).expect("source dir should exist");
         fs::create_dir_all(&target_dir).expect("target dir should exist");
@@ -7591,8 +7651,8 @@ mod tests {
 
     #[test]
     fn migrates_only_managed_files_when_target_is_nested_in_source() {
-        let temp_dir = TestTempDir::new();
-        let source_dir = temp_dir.path().join("source");
+        let temp_dir = TestTempDir::new("jx3-raid-manager-test");
+        let source_dir = temp_dir.join("source");
         let target_dir = source_dir.join("nested-target");
         let unrelated_dir = source_dir.join("screenshots");
 
@@ -7636,8 +7696,8 @@ mod tests {
 
     #[test]
     fn skips_migration_when_target_is_same_directory_alias() {
-        let temp_dir = TestTempDir::new();
-        let source_dir = temp_dir.path().join("source");
+        let temp_dir = TestTempDir::new("jx3-raid-manager-test");
+        let source_dir = temp_dir.join("source");
         let target_dir = source_dir.join(".");
 
         fs::create_dir_all(&source_dir).expect("source dir should exist");
@@ -7670,13 +7730,13 @@ mod tests {
         assert!(filtered.iter().all(|record| record.contains("阕风悬城")));
     }
 
-    fn create_test_conn() -> (Connection, PathBuf) {
-        let temp_dir = TestTempDir::new();
-        let db_path = temp_dir.path().join("test.db");
-        let conn = Connection::open(&db_path).expect("should open test db");
+    /// 守卫必须排在连接之前返回：解构时连接先析构，临时目录随后才能被删除。
+    fn create_test_conn() -> (TestTempDir, Connection) {
+        let temp_dir = TestTempDir::new("jx3-raid-manager-test");
+        let conn = Connection::open(temp_dir.join("test.db")).expect("should open test db");
         apply_persistent_pragmas(&conn);
         apply_connection_pragmas(&conn);
-        (conn, db_path)
+        (temp_dir, conn)
     }
 
     fn get_table_names(conn: &Connection) -> Vec<String> {
@@ -7782,7 +7842,7 @@ mod tests {
 
     #[test]
     fn manual_trial_multiple_draws_are_independent_and_do_not_invent_log_facts() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let mut record = trial_record("manual-multiple", "manual", "confirmed", None);
@@ -7870,7 +7930,7 @@ mod tests {
 
     #[test]
     fn zero_draw_auto_parent_accepts_manual_flip_backfill_but_rejects_once_auto_draws_exist() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
 
@@ -7927,7 +7987,7 @@ mod tests {
 
     #[test]
     fn stale_manual_multi_draw_form_rolls_back_after_automatic_claim() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let mut record = trial_record("manual-stale-claim", "manual", "confirmed", None);
         record.draws = vec![manual_trial_draw(&record.id, "manual-draw", 1)];
@@ -7953,7 +8013,7 @@ mod tests {
 
     #[test]
     fn stale_legacy_manual_form_rolls_back_after_automatic_claim() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let mut stale_form = trial_record("legacy-stale-claim", "manual", "confirmed", None);
         stale_form.flipped_index = 5;
@@ -7977,7 +8037,7 @@ mod tests {
 
     #[test]
     fn manual_multi_draw_ipc_payload_persists_only_manual_card_evidence() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let value = serde_json::json!({
             "id": "manual-ipc-multiple",
@@ -8036,7 +8096,7 @@ mod tests {
 
     #[test]
     fn automatic_claim_snapshots_legacy_manual_parent_flip_in_both_claim_paths() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
 
         // Direct claim: no prior automatic parent exists.
@@ -8076,7 +8136,7 @@ mod tests {
 
     #[test]
     fn manual_trial_draw_protocol_rejects_invalid_source_key_without_partial_writes() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let mut record = trial_record("manual-protocol", "manual", "confirmed", None);
@@ -8092,7 +8152,7 @@ mod tests {
 
     #[test]
     fn auto_trial_records_are_idempotent_and_preserve_confirmation() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let record = auto_trial_record("terminal-event-1");
@@ -8133,7 +8193,7 @@ mod tests {
 
     #[test]
     fn confirmed_auto_trial_fields_survive_scanner_replay_and_legacy_save() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let original = auto_trial_record("terminal-confirmed");
@@ -8169,7 +8229,7 @@ mod tests {
 
     #[test]
     fn confirmed_evidence_merges_pending_auto_candidate_into_manual_record() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let mut pending = auto_trial_record("terminal-merge");
@@ -8204,7 +8264,7 @@ mod tests {
 
     #[test]
     fn deleting_keyed_trial_blocks_stale_save_and_rescan() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let record = auto_trial_record("terminal-deleted");
@@ -8230,7 +8290,7 @@ mod tests {
 
     #[test]
     fn manual_scan_clears_tombstones_and_revives_deleted_trial_records() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let record = auto_trial_record("terminal-revive");
@@ -8292,7 +8352,7 @@ mod tests {
 
     #[test]
     fn clearing_named_tombstones_keeps_other_keys() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         for key in ["terminal-a", "terminal-b"] {
@@ -8316,7 +8376,7 @@ mod tests {
 
     #[test]
     fn auto_trial_records_do_not_replace_exact_manual_or_tombstoned_records() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         let record = auto_trial_record("terminal-event-manual");
@@ -8357,7 +8417,7 @@ mod tests {
 
     #[test]
     fn auto_trial_flip_fills_only_exact_unknown_position() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
 
@@ -8490,7 +8550,7 @@ mod tests {
 
     #[test]
     fn auto_trial_equipment_fills_only_empty_unreviewed_automatic_card() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
 
@@ -8642,7 +8702,7 @@ mod tests {
 
     #[test]
     fn incomplete_automatic_card_observations_survive_stale_form_save() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
         assert_eq!(
@@ -8718,7 +8778,7 @@ mod tests {
 
     #[test]
     fn trial_save_preserves_omitted_flip_but_accepts_explicit_choices() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         ensure_version_tables(&conn).unwrap();
         install_fresh_db(&conn).unwrap();
 
@@ -8767,7 +8827,7 @@ mod tests {
 
     #[test]
     fn fresh_install_creates_all_tables_and_indexes() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         install_fresh_db(&conn).expect("fresh install should succeed");
@@ -8832,7 +8892,7 @@ mod tests {
 
     #[test]
     fn static_sync_restores_gongyuecheng_25_normal() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         install_fresh_db(&conn).expect("fresh install should succeed");
@@ -8860,7 +8920,7 @@ mod tests {
 
     #[test]
     fn fresh_install_equipments_has_all_columns() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         install_fresh_db(&conn).expect("fresh install should succeed");
@@ -8894,7 +8954,7 @@ mod tests {
 
     #[test]
     fn v0_upgrade_creates_all_tables() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
 
@@ -8936,7 +8996,7 @@ mod tests {
 
     #[test]
     fn v0_upgrade_equipments_has_all_columns() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
@@ -8970,7 +9030,7 @@ mod tests {
 
     #[test]
     fn intermediate_version_upgrade_succeeds() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         ensure_baseline_tables(&conn).expect("baseline tables should be created");
@@ -8993,7 +9053,7 @@ mod tests {
 
     #[test]
     fn pre_upgrade_validation_rejects_corrupt_database() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         let result = validate_pre_upgrade(&conn, -1);
         assert!(result.is_err(), "负版本号应被拒绝");
@@ -9004,7 +9064,7 @@ mod tests {
 
     #[test]
     fn post_upgrade_validation_detects_missing_table() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         set_schema_version(&conn, CURRENT_SCHEMA_VERSION, "测试").expect("set version");
@@ -9015,7 +9075,7 @@ mod tests {
 
     #[test]
     fn ensure_equipment_columns_adds_missing_columns() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         conn.execute_batch(
             r#"
@@ -9047,7 +9107,7 @@ mod tests {
 
     #[test]
     fn ensure_equipment_columns_idempotent() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         install_fresh_db(&conn).expect("fresh install should succeed");
@@ -9058,7 +9118,7 @@ mod tests {
 
     #[test]
     fn schema_version_records_all_migrations() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         upgrade_db(&conn, 0).expect("V0 upgrade should succeed");
@@ -9151,91 +9211,91 @@ mod tests {
 
     #[test]
     fn upgrade_from_v1_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 1).expect("V1 升级应成功");
         verify_final_database_state(&conn).expect("V1 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v2_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 2).expect("V2 升级应成功");
         verify_final_database_state(&conn).expect("V2 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v3_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 3).expect("V3 升级应成功");
         verify_final_database_state(&conn).expect("V3 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v4_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 4).expect("V4 升级应成功");
         verify_final_database_state(&conn).expect("V4 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v5_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 5).expect("V5 升级应成功");
         verify_final_database_state(&conn).expect("V5 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v6_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 6).expect("V6 升级应成功");
         verify_final_database_state(&conn).expect("V6 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v7_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 7).expect("V7 升级应成功");
         verify_final_database_state(&conn).expect("V7 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v8_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 8).expect("V8 升级应成功");
         verify_final_database_state(&conn).expect("V8 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v9_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 9).expect("V9 升级应成功");
         verify_final_database_state(&conn).expect("V9 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v10_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 10).expect("V10 升级应成功");
         verify_final_database_state(&conn).expect("V10 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v11_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 11).expect("V11 升级应成功");
         verify_final_database_state(&conn).expect("V11 升级后数据库状态验证失败");
     }
 
     #[test]
     fn upgrade_from_v12_to_latest() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         simulate_upgrade_from_version(&conn, 12).expect("V12 升级应成功");
         verify_final_database_state(&conn).expect("V12 升级后数据库状态验证失败");
     }
 
     #[test]
     fn v1_migration_preserves_account_data() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         conn.execute_batch(
             r#"
@@ -9284,7 +9344,7 @@ mod tests {
 
     #[test]
     fn v3_migration_converts_date_to_integer() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         conn.execute_batch(
             r#"
@@ -9340,7 +9400,7 @@ mod tests {
 
     #[test]
     fn v10_migration_creates_season_data() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
         ensure_baseline_tables(&conn).expect("baseline tables should be created");
@@ -9380,7 +9440,7 @@ mod tests {
 
     #[test]
     fn full_upgrade_preserves_data_integrity() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         conn.execute_batch(
             r#"
@@ -9442,7 +9502,7 @@ mod tests {
 
     #[test]
     fn migration_logs_no_errors() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         ensure_version_tables(&conn).expect("version tables should be created");
 
@@ -9482,7 +9542,7 @@ mod tests {
 
     #[test]
     fn automatic_receipt_renumbering_preserves_manual_draw_sequences_after_claim() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let mut manual = trial_record("manual-claimed-with-draws", "manual", "confirmed", None);
         manual.draws = vec![
@@ -9518,7 +9578,7 @@ mod tests {
 
     #[test]
     fn auto_trial_draws_are_independent_idempotent_and_do_not_recount_completion() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-multiple-draws");
         assert_eq!(
@@ -9573,7 +9633,7 @@ mod tests {
 
     #[test]
     fn draw_manual_edit_and_parent_delete_preserve_tombstone_semantics() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-draw-tombstone");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9623,7 +9683,7 @@ mod tests {
 
     #[test]
     fn late_same_draw_stamina_parts_are_merged_and_total_recomputed() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-late-stamina");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9653,7 +9713,7 @@ mod tests {
 
     #[test]
     fn a_late_same_second_receipt_keeps_only_its_own_leaf_on_each_draw() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("same-second-draws");
         db_upsert_auto_trial_records_with_connection(&mut conn, std::slice::from_ref(&parent)).unwrap();
@@ -9678,7 +9738,7 @@ mod tests {
 
     #[test]
     fn arbitrary_stamina_parts_merge_by_message_hash_without_guessing_total() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-arbitrary-stamina");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9713,7 +9773,7 @@ mod tests {
 
     #[test]
     fn confirming_manual_match_moves_pending_draws_without_losing_ocr_state() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let mut pending = auto_trial_record("terminal-pending-manual-merge");
         pending.status = "pending".to_string();
@@ -9757,7 +9817,7 @@ mod tests {
 
     #[test]
     fn late_sibling_invalidates_only_overlapping_automatic_observation() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-observation-overlap");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9784,7 +9844,7 @@ mod tests {
 
     #[test]
     fn multiple_equipment_observations_fill_independent_cards() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-multiple-equipment");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9813,7 +9873,7 @@ mod tests {
 
     #[test]
     fn manual_draw_equipment_is_per_card_and_blocks_late_automatic_changes() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-manual-equipment");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9964,7 +10024,7 @@ mod tests {
 
     #[test]
     fn deleting_parent_removes_manual_draw_equipment_overrides() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-delete-manual-equipment");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -9986,7 +10046,7 @@ mod tests {
 
     #[test]
     fn late_sibling_keeps_manual_position_but_clears_automatic_cards() {
-        let (mut conn, _path) = create_test_conn();
+        let (_temp_dir, mut conn) = create_test_conn();
         install_fresh_db_for_test(&conn).unwrap();
         let parent = auto_trial_record("terminal-manual-position-late-sibling");
         db_upsert_auto_trial_records_with_connection(&mut conn, &[parent.clone()]).unwrap();
@@ -10027,7 +10087,7 @@ mod tests {
 
     #[test]
     fn v24_fresh_install_seeds_level_caps() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         install_fresh_db_for_test(&conn).expect("新装库应初始化成功");
 
@@ -10060,7 +10120,7 @@ mod tests {
 
     #[test]
     fn v24_upgrade_backfills_level_caps_and_keeps_role_rows() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
 
         // 通过真实迁移链构造 V23 结构旧库（roles/game_versions 无新列，
         // 但 seasons/raids 等结构与真实 V23 完全一致，保证 init_static_raids 可执行）
@@ -10148,7 +10208,7 @@ mod tests {
 
     #[test]
     fn role_level_roundtrip_with_and_without_level_json() {
-        let (conn, _path) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         install_fresh_db_for_test(&conn).expect("测试库应初始化成功");
 
         let timestamp = get_local_timestamp();
@@ -10264,7 +10324,7 @@ mod tests {
     #[test]
     fn backfill_fills_middle_frame_between_two_anchors() {
         // 3 → 识别不到 → 1: 中间帧补 2（用户给定的示例场景）。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let run_key = "trial-auto:trial:1:143:1000";
         for (at, count) in [(1000, 3i64), (2000, -1), (3000, 1)] {
@@ -10288,7 +10348,7 @@ mod tests {
     #[test]
     fn backfill_fills_same_value_when_anchors_equal() {
         // 3 → 识别不到 → 3: 中间帧补 3。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let run_key = "trial-auto:trial:1:143:2000";
         for (at, count) in [(1000, 3i64), (1500, -1), (2000, 3)] {
@@ -10308,7 +10368,7 @@ mod tests {
     #[test]
     fn backfill_skips_when_only_one_anchor_exists() {
         // 只有前锚点（面板刚出现）→ 不补。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let run_key = "trial-auto:trial:1:143:3000";
         for (at, count) in [(1000, 3i64), (1100, -1)] {
@@ -10325,7 +10385,7 @@ mod tests {
 
     #[test]
     fn backfill_is_idempotent_on_repeat_calls() {
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let run_key = "trial-auto:trial:1:143:4000";
         for (at, count) in [(1000, 3i64), (2000, -1), (3000, 1)] {
@@ -10346,7 +10406,7 @@ mod tests {
     #[test]
     fn backfill_never_crosses_run_keys() {
         // 相邻两个 run_key 的观测不得互相插值（快速连打时帧交错）。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let run_a = "trial-auto:trial:1:143:5000";
         let run_b = "trial-auto:trial:1:143:6000";
@@ -10371,7 +10431,7 @@ mod tests {
     fn backfill_cross_session_fills_middle_run_with_nearest_anchor() {
         // 用户场景：周一打剩 3 次（run_a 全识别），中间 run_b 全没识别到，
         // 周五打识别到 1 次（run_c）。run_b 的帧应按「最近的识别」补值。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let uid = "432345564243886337";
         let run_a = "trial-auto:trial:1:143:1000"; // 周一
@@ -10417,7 +10477,7 @@ mod tests {
     #[test]
     fn backfill_cross_session_fills_first_run_with_after_anchor() {
         // 第一轮只有后锚点：本周第一轮没识别到的帧用后会话锚点兜底。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let uid = "432345564243886337";
         let run_a = "trial-auto:trial:1:143:1000";
@@ -10457,7 +10517,7 @@ mod tests {
     #[test]
     fn backfill_cross_session_refuses_when_count_resets_upward() {
         // 跨周重置（后会话次数回升 5）不得兜底。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let uid = "432345564243886337";
         let run_a = "trial-auto:trial:1:143:1000";
@@ -10503,7 +10563,7 @@ mod tests {
         // 用户明确要求：同一周才插值，不同周不补。前会话在上一游戏周
         // （terminal_ms 在周一 07:00 刷新之前），后会话在新游戏周，
         // 即使次数递减（3 → 1）也不得跨周兜底。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let uid = "432345564243886337";
         // game_week_start_ms 按北京时间周一 07:00 刷新。
@@ -10552,7 +10612,7 @@ mod tests {
     fn backfill_handles_multi_frame_gap_with_linear_interpolation() {
         // 3 → 两帧识别不到 → 0: 线性插值分摊递减（3,2,1 或 3,1,2 均单调，
         // 实现取「按帧距线性」→ 靠近前锚点的帧接近 3）。
-        let (conn, _dir) = create_test_conn();
+        let (_temp_dir, conn) = create_test_conn();
         ensure_trial_capture_tables(&conn).expect("tables");
         let run_key = "trial-auto:trial:1:143:7000";
         for (at, count) in [(1000, 3i64), (2000, -1), (3000, -1), (4000, 0)] {

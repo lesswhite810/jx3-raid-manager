@@ -14,6 +14,8 @@ mod jx3_process;
 mod kungfu_data;
 mod mingyi;
 mod runtime_mode;
+#[cfg(test)]
+mod test_support;
 mod trial_capture;
 mod updater;
 

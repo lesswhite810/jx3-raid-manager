@@ -1,10 +1,11 @@
 //! 结合角色的秘境结算奖励（10 金）或首领专属宝箱证据，补记本轮扫描的首领进度。
 //!
-//! 两条证据通道相互独立、任一成立即判击杀：
+//! 两条证据通道相互独立、任一成立即判击杀，**但顺序是奖励优先**：
 //! - 通道 A：角色 chatlog 在 JCL fight_end 前 15 秒到后 60 秒内出现精确 10 金
-//!   的击杀结算奖励（boss 必定发放，但可能因剧情演出或落盘延迟迟到）；
+//!   的击杀结算奖励（boss 必定发放，但可能因剧情演出或落盘延迟迟到）。
+//!   查到即确认，**不再读 JCL**——再读一遍三四十万行的 type=21 也改变不了结论；
 //! - 通道 B：JCL 内出现了该首领的专属宝箱 NPC（茗伊可能漏写死亡事件，但
-//!   击杀后宝箱仍会生成）。
+//!   击杀后宝箱仍会生成）。只在通道 A 失败时才读 JCL 全文去取这份证据。
 //!
 //! 不依赖副本/首领白名单：`match_raid_name` 命中的任何副本、且首领在副本
 //! 配置中的 JCL 都按同一套规则补强。
@@ -123,42 +124,57 @@ pub(super) fn select_settlement_promotions(
         ) else {
             continue;
         };
-        // 先取 JCL 战斗完整性证据，同时采集宝箱证据：打完有剧情演出的
-        // BOSS（如史朝义）结算奖励最早出现在击杀瞬间附近，远早于 type=1 false。
-        // 走本轮扫描共享的证据包，与主循环的伤害补漏复用同一次解析。
-        let Some(proof) = analyze_completion_candidate_cached(
-            evidence,
-            &combat_logs_dir.join(&jcl.file_name),
-            &jcl.boss_name,
-            jcl.boss_id,
-            &raid.bosses,
+        // 通道 A 优先：只查 chatlog 里的精确 10 金，完全不动 JCL。
+        //
+        // 一条 10 金只可能由一个战斗结束点领取（`exclusive` 的归属唯一性由
+        // 下面的邻近边界判定兜住），拿到它就已经能确认这一场打通了；此时再去
+        // 逐行解析 type=21 伤害不可能改变结论，是纯粹的白读——而这些大 JCL
+        // 单份就有三四十万行，重读一次的代价是秒级。
+        //
+        // 只有拿不到 10 金（击杀奖励可能因剧情演出延迟、或尚未随 chatlog 落盘）
+        // 时，才读全文去找通道 B 的「专属宝箱」证据。
+        //
+        // 顺带说明：读全文时原本还有一道 `proof.fight_end_ms != analysis.fight_end_ms`
+        // 的一致性校验。通道 A 走通时我们没读 JCL，自然也没有这份校验；但奖励
+        // 窗口本身就是按 `analysis.fight_end_ms` 算的，且后面还有邻近边界歧义
+        // 判定兜底，所以这里不再重复读取只为校验一次相等。
+        let reward_reject = match settlement_check(
+            chatlogs,
             expected_uid,
-            CompletionProof::EncounterSettlement {
-                map_id: jcl.raid_id,
-            },
-        ) else {
-            log::debug!(
-                "[DropScanner] 结算补强拒绝: BOSS={} 原因=战斗候选验证未通过",
-                jcl.boss_name
-            );
-            continue;
+            candidate.end_sec,
+            settlement_end_ms / 1000,
+        ) {
+            Ok(()) => None,
+            Err(reason) => Some(reason),
         };
-        if proof.fight_end_ms != analysis.fight_end_ms {
-            log::debug!(
-                "[DropScanner] 结算补强拒绝: BOSS={} 原因=战斗结束时间不一致",
-                jcl.boss_name
-            );
-            continue;
-        }
-        // 通道 A：窗口内精确 10 金；通道 B：JCL 内本首领专属宝箱。
-        // 两条证据独立兜底，任一成立即判击杀；都没有才记录拒绝原因。
-        if !proof.chest_seen {
-            if let Err(reason) = settlement_check(
-                chatlogs,
+        if let Some(reason) = reward_reject {
+            // 走本轮扫描共享的证据包，与主循环的伤害补漏复用同一次解析。
+            let Some(proof) = analyze_completion_candidate_cached(
+                evidence,
+                &combat_logs_dir.join(&jcl.file_name),
+                &jcl.boss_name,
+                jcl.boss_id,
+                &raid.bosses,
                 expected_uid,
-                candidate.end_sec,
-                settlement_end_ms / 1000,
-            ) {
+                CompletionProof::EncounterSettlement {
+                    map_id: jcl.raid_id,
+                },
+            ) else {
+                log::debug!(
+                    "[DropScanner] 结算补强拒绝: BOSS={} 原因=战斗候选验证未通过",
+                    jcl.boss_name
+                );
+                continue;
+            };
+            if proof.fight_end_ms != analysis.fight_end_ms {
+                log::debug!(
+                    "[DropScanner] 结算补强拒绝: BOSS={} 原因=战斗结束时间不一致",
+                    jcl.boss_name
+                );
+                continue;
+            }
+            // 通道 B：JCL 内本首领专属宝箱。没有 10 金也没有宝箱，才记录拒绝原因。
+            if !proof.chest_seen {
                 log::debug!(
                     "[DropScanner] 结算补强拒绝: BOSS={} 原因={}",
                     jcl.boss_name,
@@ -351,9 +367,9 @@ mod tests {
     const BOSS_NAME: &str = "史朝义";
     const BOSS_TEMPLATE_ID: i64 = 139_312;
     use super::*;
+    use crate::test_support::{TestTempDir, TestTempFile};
     use std::collections::HashMap;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     /// 目标 JCL 的 fight_end=105 秒；奖励窗口为 [90, min(165, 结算上限)]。
     #[test]
@@ -386,7 +402,6 @@ mod tests {
                 expected,
                 "奖励时间 {reward_time}"
             );
-            fs::remove_file(path).unwrap();
         }
     }
 
@@ -422,8 +437,6 @@ mod tests {
             &HashSet::new(),
         );
         assert_eq!(promotions, HashSet::from([file_name]));
-        fs::remove_file(path).unwrap();
-        fs::remove_dir_all(dir).unwrap();
     }
 
     /// 通道 B：JCL 内出现本首领的专属宝箱 NPC 时，即使没有任何 chatlog
@@ -449,7 +462,6 @@ mod tests {
             HashSet::from([file_name]),
             "宝箱证据应独立补记击杀"
         );
-        fs::remove_dir_all(dir).unwrap();
     }
 
     /// 两条通道都不成立时不得补记：无宝箱 JCL + chatlog 只有窗口外的 10 金。
@@ -488,8 +500,6 @@ mod tests {
             .is_empty(),
             "窗口外的 10 金不能补记"
         );
-        fs::remove_file(path).unwrap();
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -501,7 +511,6 @@ mod tests {
             end_sec: 100,
         };
         let dir = temp_jcl_dir("settlement-cached-unclosed");
-        fs::create_dir_all(&dir).unwrap();
         let stale = "unclosed-old.jcl";
         let stale_content =
             "crc\t1\t40\t0\t1\t{true,\"realm::U123456/1\",0,835}\ncrc\t2\t60\t0\t18\t{\"某条系统消息。\",\"MSG_SYS\"}\n";
@@ -562,7 +571,6 @@ mod tests {
             ),
             "末事件落在候选结束前 30 秒内仍须判歧义"
         );
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -638,8 +646,6 @@ mod tests {
             .is_empty(),
             "末事件落在候选结束前 30 秒内仍须视为歧义"
         );
-        fs::remove_file(path).unwrap();
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -663,7 +669,6 @@ mod tests {
             settlement_check(&metas_of(&[path.clone()]), "123456", 105, 200),
             Err(SettlementRejectReason::NoRoleChatlog)
         );
-        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1399,15 +1404,8 @@ mod tests {
         )
     }
 
-    fn temp_db_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "jx3-{label}-{}-{}.db",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+    fn temp_db_path(label: &str) -> TestTempFile {
+        TestTempFile::new(&format!("jx3-{label}"), "db")
     }
 
     /// 用测试数据库构建账号级 chatlog 元数据（与生产 build_chatlog_meta 同源）。
@@ -1415,19 +1413,11 @@ mod tests {
         super::super::build_chatlog_meta(paths)
     }
 
-    fn temp_jcl_dir(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "jx3-{label}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+    fn temp_jcl_dir(label: &str) -> TestTempDir {
+        TestTempDir::new(&format!("jx3-{label}"))
     }
-    fn write_target_jcl(label: &str) -> (PathBuf, PathBuf) {
+    fn write_target_jcl(label: &str) -> (TestTempDir, PathBuf) {
         let dir = temp_jcl_dir(label);
-        fs::create_dir_all(&dir).unwrap();
         let path = dir.join("target.jcl");
         let content = "crc\t1\t100\t0\t1\t{true,\"realm::U123456/1\",0,835}\ncrc\t2\t101\t0\t8\t{9,\"史朝义\",139312}\ncrc\t3\t102\t0\t9\t{9,true,100,100}\ncrc\t4\t103\t0\t21\t{1,9,0,0,0,0,0,0,{[13]=1,[14]=0}}\ncrc\t5\t104\t0\t9\t{9,false,100,100}\ncrc\t6\t105\t0\t1\t{false,\"realm::U123456/1\",0,835}\n";
         let (encoded, _, _) = encoding_rs::GBK.encode(content);
@@ -1436,9 +1426,8 @@ mod tests {
     }
 
     /// 在基础 JCL 上追加一条本首领的专属宝箱 NPC（type=8）。
-    fn write_target_jcl_with_chest(label: &str) -> (PathBuf, PathBuf) {
+    fn write_target_jcl_with_chest(label: &str) -> (TestTempDir, PathBuf) {
         let dir = temp_jcl_dir(label);
-        fs::create_dir_all(&dir).unwrap();
         let path = dir.join("target.jcl");
         let content = "crc\t1\t100\t0\t1\t{true,\"realm::U123456/1\",0,835}\ncrc\t2\t101\t0\t8\t{9,\"史朝义\",139312}\ncrc\t2\t101\t0\t8\t{30,\"史朝义宝箱\",140026}\ncrc\t3\t102\t0\t9\t{9,true,100,100}\ncrc\t4\t103\t0\t21\t{1,9,0,0,0,0,0,0,{[13]=1,[14]=0}}\ncrc\t5\t104\t0\t9\t{9,false,100,100}\ncrc\t6\t105\t0\t1\t{false,\"realm::U123456/1\",0,835}\n";
         let (encoded, _, _) = encoding_rs::GBK.encode(content);

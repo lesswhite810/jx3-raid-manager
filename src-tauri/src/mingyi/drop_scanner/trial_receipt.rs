@@ -629,12 +629,13 @@ fn is_numeric_uid(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestTempDir;
     use std::time::SystemTime;
 
-    fn temp_account() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("trial-receipt-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(path.join("userdata").join("chat_log")).unwrap();
-        path
+    fn temp_account() -> TestTempDir {
+        let account = TestTempDir::new("trial-receipt");
+        fs::create_dir_all(account.join("userdata").join("chat_log")).unwrap();
+        account
     }
 
     fn add_chatlog(account: &Path, uid: &str, rows: &[(i64, &str, &str, i64)], min: i64, max: i64) {
@@ -708,7 +709,6 @@ mod tests {
             collect_trial_receipt_times_ms(&account, "123456", terminal, None),
             vec![(second + 3) * 1000]
         );
-        let _ = fs::remove_dir_all(account);
     }
 
     #[test]
@@ -757,7 +757,6 @@ mod tests {
             collect_trial_receipt_times_ms(&account, "123456", terminal, None),
             vec![(second + 4) * 1000]
         );
-        let _ = fs::remove_dir_all(account);
     }
 
     #[test]
@@ -783,7 +782,6 @@ mod tests {
         );
         assert!(collect_trial_receipt_times_ms(&account, "123456", terminal, None).is_empty());
         assert!(collect_trial_receipt_times_ms(&account, "123456", -1, None).is_empty());
-        let _ = fs::remove_dir_all(account);
     }
 
     #[test]
@@ -865,7 +863,6 @@ mod tests {
         assert_eq!(persisted.stamina_costs, vec![125, 875]);
         assert_eq!(persisted.stamina_source_hashes, vec!["42", "43"]);
         assert!(draws.iter().all(|draw| !draw.ambiguous));
-        let _ = fs::remove_dir_all(account);
     }
 
     #[test]
@@ -941,7 +938,6 @@ mod tests {
         assert_eq!(draws.len(), 1);
         assert_eq!(draws[0].leaf_quantity, 31);
         assert_eq!(draws[0].stamina_cost, Some(1000));
-        let _ = fs::remove_dir_all(account);
     }
 
     #[test]
@@ -992,6 +988,5 @@ mod tests {
         assert!(draws.iter().all(|draw| draw.rewards.len() == 1));
         assert!(draws.iter().all(|draw| draw.stamina_cost.is_none()));
         assert!(draws.iter().all(|draw| draw.stamina_parts.is_empty()));
-        let _ = fs::remove_dir_all(account);
     }
 }

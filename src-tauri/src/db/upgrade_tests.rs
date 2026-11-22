@@ -8,12 +8,18 @@ mod tests {
 
     use crate::db::CURRENT_SCHEMA_VERSION;
 
+    /// 测试用的升级夹具目录。
+    ///
+    /// 必须落在系统临时目录里：早期实现在 `%APPDATA%\com.jx3raidmanager.app\upgrade-tests`
+    /// 下生成夹具，会污染用户真实配置目录，且跑完后残留大量 `vN-test.db`。
+    /// 这里固定为 `%TEMP%\jx3-raid-manager-upgrade-tests`，由 `scripts/create-test-databases.js`
+    /// 用同一个前缀预置夹具。
     fn get_test_dir() -> PathBuf {
-        let app_data = std::env::var("APPDATA").expect("无法获取 APPDATA 环境变量");
-        let test_dir = PathBuf::from(app_data)
-            .join("com.jx3raidmanager.app")
-            .join("upgrade-tests");
+        let test_dir = std::env::temp_dir().join("jx3-raid-manager-upgrade-tests");
         fs::create_dir_all(&test_dir).expect("创建测试目录失败");
+        // 夹具由 `node scripts/create-test-databases.js` 预置，属于用户/CI 提供的输入，
+        // 因此这里只注册进程退出时的"空目录"回收，绝不递归删除已有夹具。
+        crate::test_support::register_shared_temp_dir(&test_dir);
         test_dir
     }
 

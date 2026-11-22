@@ -441,6 +441,7 @@ pub fn set_theme(theme: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestTempFile;
 
     fn create_app_config_table(conn: &rusqlite::Connection) {
         conn.execute_batch(
@@ -548,8 +549,7 @@ mod tests {
 
     #[test]
     fn trial_screenshot_recognition_is_persisted_across_reopen() {
-        let path =
-            std::env::temp_dir().join(format!("jx3-app-config-{}.sqlite", uuid::Uuid::new_v4()));
+        let path = TestTempFile::new("jx3-app-config", "sqlite");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             create_app_config_table(&conn);
@@ -569,7 +569,6 @@ mod tests {
             assert!(!config.trial_screenshot_recognition_enabled);
             assert!(!is_trial_screenshot_capture_enabled(&config));
         }
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
@@ -605,8 +604,7 @@ mod tests {
 
     #[test]
     fn close_behavior_is_persisted_across_reopen() {
-        let path =
-            std::env::temp_dir().join(format!("jx3-close-behavior-{}.sqlite", uuid::Uuid::new_v4()));
+        let path = TestTempFile::new("jx3-close-behavior", "sqlite");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             create_app_config_table(&conn);
@@ -624,7 +622,6 @@ mod tests {
             let config = read_app_config(&conn).unwrap();
             assert_eq!(config.close_behavior, CloseBehavior::Ask);
         }
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
@@ -650,8 +647,7 @@ mod tests {
 
     #[test]
     fn hide_non_max_level_roles_is_persisted_across_reopen() {
-        let path =
-            std::env::temp_dir().join(format!("jx3-hide-non-max-{}.sqlite", uuid::Uuid::new_v4()));
+        let path = TestTempFile::new("jx3-hide-non-max", "sqlite");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             create_app_config_table(&conn);
@@ -671,6 +667,5 @@ mod tests {
             let config = read_app_config(&conn).unwrap();
             assert!(!config.hide_non_max_level_roles, "关闭后应保持关闭");
         }
-        std::fs::remove_file(&path).unwrap();
     }
 }
