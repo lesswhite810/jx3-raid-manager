@@ -92,9 +92,11 @@ pub fn get_process_sessions() -> Vec<ProcessSession> {
 
 /// 将 SystemTime 转为 RFC3339 字符串
 fn system_time_to_rfc3339_str(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0)
-        .unwrap_or_default();
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0).unwrap_or_default();
     dt.to_rfc3339()
 }
 
@@ -135,7 +137,10 @@ fn update_process_sessions(is_running: bool, start_time_unix: u64, start_time_rf
         if let Some(last) = sessions.last_mut() {
             if last.end_time_unix.is_none() {
                 let now = SystemTime::now();
-                let now_secs = now.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let now_secs = now
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 let now_rfc = system_time_to_rfc3339_str(now);
                 last.end_time_unix = Some(now_secs);
                 last.end_time = Some(now_rfc.clone());
@@ -173,9 +178,7 @@ pub struct BatchActiveResult {
 
 /// 获取文件或目录的 mtime（SystemTime）
 fn get_path_mtime(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
 /// 获取目录中最新文件的 mtime（用于 combat_logs/ 和 gkp/ 目录）
@@ -277,12 +280,8 @@ pub fn scan_account_activity(
         // 数据源 3: userdata/chat_log/ 目录 mtime + 最新 chatlog_*.v2.db 文件 mtime
         let chat_log_dir = account_dir.join("userdata").join("chat_log");
         let chat_log_dir_mtime = get_path_mtime(&chat_log_dir).filter(in_window);
-        let latest_chatlog_db_mtime = get_latest_file_mtime_in_dir(
-            &chat_log_dir,
-            Some(".v2.db"),
-            window_start,
-            window_end,
-        );
+        let latest_chatlog_db_mtime =
+            get_latest_file_mtime_in_dir(&chat_log_dir, Some(".v2.db"), window_start, window_end);
         let chat_log_candidate = match (chat_log_dir_mtime, latest_chatlog_db_mtime) {
             (Some(dir_m), Some(db_m)) => Some(if dir_m > db_m { dir_m } else { db_m }),
             (Some(m), None) | (None, Some(m)) => Some(m),
@@ -295,12 +294,8 @@ pub fn scan_account_activity(
         // 数据源 4: userdata/gkp/ 目录 mtime + 最新 .gkp.jx3dat mtime
         let gkp_dir = account_dir.join("userdata").join("gkp");
         let gkp_dir_mtime = get_path_mtime(&gkp_dir).filter(in_window);
-        let latest_gkp_mtime = get_latest_file_mtime_in_dir(
-            &gkp_dir,
-            Some(".gkp.jx3dat"),
-            window_start,
-            window_end,
-        );
+        let latest_gkp_mtime =
+            get_latest_file_mtime_in_dir(&gkp_dir, Some(".gkp.jx3dat"), window_start, window_end);
         let gkp_candidate = match (gkp_dir_mtime, latest_gkp_mtime) {
             (Some(dir_m), Some(gkp_m)) => Some(if dir_m > gkp_m { dir_m } else { gkp_m }),
             (Some(m), None) | (None, Some(m)) => Some(m),
@@ -313,12 +308,8 @@ pub fn scan_account_activity(
         // 数据源 5: userdata/combat_logs/ 目录 mtime + 最新 .jcl mtime
         let combat_logs_dir = account_dir.join("userdata").join("combat_logs");
         let combat_logs_mtime = get_path_mtime(&combat_logs_dir).filter(in_window);
-        let latest_jcl_mtime = get_latest_file_mtime_in_dir(
-            &combat_logs_dir,
-            Some(".jcl"),
-            window_start,
-            window_end,
-        );
+        let latest_jcl_mtime =
+            get_latest_file_mtime_in_dir(&combat_logs_dir, Some(".jcl"), window_start, window_end);
         let combat_logs_candidate = match (combat_logs_mtime, latest_jcl_mtime) {
             (Some(dir_m), Some(jcl_m)) => Some(if dir_m > jcl_m { dir_m } else { jcl_m }),
             (Some(m), None) | (None, Some(m)) => Some(m),
@@ -384,7 +375,9 @@ pub fn parse_info_jx3dat(path: &Path, game_directory: Option<&Path>) -> Option<M
     // 但 equip_stat.v4.db 的 OwnerInfo 表始终记录完整 ownerkey/ownername 映射
     if role_name.is_empty() {
         if let Some(game_dir) = game_directory {
-            if let Some(name_from_db) = crate::game_directory::lookup_role_name_by_uid(game_dir, &uid) {
+            if let Some(name_from_db) =
+                crate::game_directory::lookup_role_name_by_uid(game_dir, &uid)
+            {
                 log::info!(
                     "[ActiveDetector] info.jx3dat 缺失 name 字段，从装备数据库回退: uid={} -> name={} ({})",
                     uid,
@@ -461,7 +454,10 @@ fn report_trial_capture_activity(
     // 监听器在同一配置/会话锁内先投递Activity再允许终局投递，避免首个终局
     // 抢在角色归属消息之前到达截图线程。
     crate::mingyi::drop_scanner::live::activity(
-        game_directory, process_start_ms, active_uid, observed_at_ms,
+        game_directory,
+        process_start_ms,
+        active_uid,
+        observed_at_ms,
     );
 }
 
@@ -609,10 +605,7 @@ pub fn detect_accounts_active_internal(game_directory: &str) -> BatchActiveResul
 
         // 解析 info.jx3dat 获取角色身份
         // 传入 game_dir 用于在 info.jx3dat 缺失 name 字段时回退到装备数据库
-        let identity = parse_info_jx3dat(
-            &path.join("info.jx3dat"),
-            Some(&game_dir),
-        );
+        let identity = parse_info_jx3dat(&path.join("info.jx3dat"), Some(&game_dir));
 
         // 提取 uid（目录名去掉 @zhcn_hd 后缀）
         let uid = dir_name.trim_end_matches("@zhcn_hd").to_string();
@@ -884,7 +877,8 @@ mod tests {
 
     #[test]
     fn test_extract_lua_string_field() {
-        let text = r#"return {region="电信五区",uid="432345564243886337",name="角色名",server="梦江南"}"#;
+        let text =
+            r#"return {region="电信五区",uid="432345564243886337",name="角色名",server="梦江南"}"#;
         assert_eq!(
             extract_lua_string_field(text, "uid"),
             Some("432345564243886337".to_string())
@@ -948,12 +942,11 @@ mod tests {
         // 模拟缺失 name 字段的 info.jx3dat（与 7-25 23:23 版本一致）
         let info_content_no_name = "return {region=\"电信区\",time_str=\"20260725232306\",time=1784992986,region_origin=\"梦江南\",uid=\"342273571708094124\",version=\"1.5.0.9878\",server_origin=\"电信区\",server=\"梦江南\",branch=\"remake\",lang=\"zhcn\",edition=\"zhcn_hd\"}";
         let (gbk_bytes, _, _) = encoding_rs::GBK.encode(info_content_no_name);
-        std::fs::write(&temp_info_path, gbk_bytes.as_ref())
-            .expect("写入临时 info.jx3dat 失败");
+        std::fs::write(&temp_info_path, gbk_bytes.as_ref()).expect("写入临时 info.jx3dat 失败");
 
         // 1. 不传 game_directory：role_name 应为空（复现根因）
-        let identity_no_fallback = parse_info_jx3dat(&temp_info_path, None)
-            .expect("应能解析 info.jx3dat");
+        let identity_no_fallback =
+            parse_info_jx3dat(&temp_info_path, None).expect("应能解析 info.jx3dat");
         assert_eq!(identity_no_fallback.uid, "342273571708094124");
         assert_eq!(identity_no_fallback.server, "梦江南");
         assert_eq!(identity_no_fallback.region, "电信区");
@@ -964,8 +957,8 @@ mod tests {
         );
 
         // 2. 传 game_directory：role_name 应从装备数据库回退为 "糯闪"
-        let identity_with_fallback = parse_info_jx3dat(&temp_info_path, Some(game_dir))
-            .expect("应能解析 info.jx3dat");
+        let identity_with_fallback =
+            parse_info_jx3dat(&temp_info_path, Some(game_dir)).expect("应能解析 info.jx3dat");
         assert_eq!(identity_with_fallback.uid, "342273571708094124");
         assert_eq!(identity_with_fallback.server, "梦江南");
         assert_eq!(
@@ -980,10 +973,12 @@ mod tests {
             .join("342273571708094124@zhcn_hd")
             .join("info.jx3dat");
         if real_info_path.exists() {
-            let identity_real = parse_info_jx3dat(&real_info_path, None)
-                .expect("应能解析真实 info.jx3dat");
-            assert_eq!(identity_real.role_name, "糯闪",
-                "真实 info.jx3dat 应直接包含 name='糯闪'");
+            let identity_real =
+                parse_info_jx3dat(&real_info_path, None).expect("应能解析真实 info.jx3dat");
+            assert_eq!(
+                identity_real.role_name, "糯闪",
+                "真实 info.jx3dat 应直接包含 name='糯闪'"
+            );
         }
 
         // 清理临时文件

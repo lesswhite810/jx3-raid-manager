@@ -106,9 +106,7 @@ where
     match serde_json::Value::deserialize(deserializer)? {
         serde_json::Value::Null => Ok(None),
         serde_json::Value::Bool(b) => Ok(Some(b)),
-        serde_json::Value::Number(n) => Ok(Some(
-            n.as_f64().unwrap_or_default() != 0.0,
-        )),
+        serde_json::Value::Number(n) => Ok(Some(n.as_f64().unwrap_or_default() != 0.0)),
         serde_json::Value::String(s) => match s.to_lowercase().as_str() {
             "true" | "1" => Ok(Some(true)),
             "false" | "0" | "" => Ok(Some(false)),
@@ -155,9 +153,17 @@ pub struct ItemMerged {
     pub max_exist_time: Option<i64>,
     #[serde(rename = "MaxExistAmount", default)]
     pub max_exist_amount: Option<i64>,
-    #[serde(rename = "CanTrade", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanTrade",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_trade: Option<bool>,
-    #[serde(rename = "CanDestroy", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanDestroy",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_destroy: Option<bool>,
     #[serde(rename = "Quality", default)]
     pub quality: Option<i64>,
@@ -175,7 +181,11 @@ pub struct ItemMerged {
     pub get_type: Option<String>,
     #[serde(rename = "IconID", default)]
     pub icon_id: Option<i64>,
-    #[serde(rename = "CanSetColor", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanSetColor",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_set_color: Option<bool>,
     #[serde(rename = "AucGenre", default)]
     pub auc_genre: Option<i64>,
@@ -185,19 +195,39 @@ pub struct ItemMerged {
     pub require_camp: Option<i64>,
     #[serde(rename = "MaxStrengthLevel", default)]
     pub max_strength_level: Option<i64>,
-    #[serde(rename = "CanApart", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanApart",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_apart: Option<bool>,
     #[serde(rename = "CanExterior", default)]
     pub can_exterior: Option<serde_json::Value>,
-    #[serde(rename = "CanChangeMagic", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanChangeMagic",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_change_magic: Option<bool>,
-    #[serde(rename = "CanShared", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanShared",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_shared: Option<bool>,
     #[serde(rename = "RepairPriceRebate", default)]
     pub repair_price_rebate: Option<i64>,
-    #[serde(rename = "CanStack", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanStack",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_stack: Option<bool>,
-    #[serde(rename = "CanConsume", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanConsume",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_consume: Option<bool>,
     #[serde(rename = "RequireLevel", default)]
     pub require_level: Option<i64>,
@@ -205,15 +235,35 @@ pub struct ItemMerged {
     pub require_gender: Option<i64>,
     #[serde(rename = "RequireHomelandLevel", default)]
     pub require_homeland_level: Option<i64>,
-    #[serde(rename = "CanUseOnHorse", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanUseOnHorse",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_use_on_horse: Option<bool>,
-    #[serde(rename = "CanUseInFight", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanUseInFight",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_use_in_fight: Option<bool>,
-    #[serde(rename = "CanGoodCampUse", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanGoodCampUse",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_good_camp_use: Option<bool>,
-    #[serde(rename = "CanEvilCampUse", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanEvilCampUse",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_evil_camp_use: Option<bool>,
-    #[serde(rename = "CanNeutralCampUse", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "CanNeutralCampUse",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub can_neutral_camp_use: Option<bool>,
     #[serde(rename = "Diamonds", default)]
     pub diamonds: Option<serde_json::Value>,
@@ -231,13 +281,21 @@ pub struct ItemMerged {
     pub attribute_types: Option<serde_json::Value>,
     #[serde(rename = "CoolDown", default)]
     pub cool_down: Option<serde_json::Value>,
-    #[serde(rename = "IsQuest", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "IsQuest",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub is_quest: Option<bool>,
     #[serde(rename = "WuCaiHtml", default)]
     pub wu_cai_html: Option<String>,
     #[serde(rename = "Set", default)]
     pub set: Option<serde_json::Value>,
-    #[serde(rename = "IsEquip", default, deserialize_with = "deserialize_flexible_bool")]
+    #[serde(
+        rename = "IsEquip",
+        default,
+        deserialize_with = "deserialize_flexible_bool"
+    )]
     pub is_equip: Option<bool>,
     #[serde(rename = "EquipUsage", default)]
     pub equip_usage: Option<i64>,
@@ -296,9 +354,9 @@ pub fn classify_drops_sync(
     raid_name: Option<&str>,
     actual_drop_names: &[String],
 ) -> Result<std::collections::HashMap<String, String>, DropTableError> {
-    sync_runtime().handle().block_on(async {
-        classify_drops(map_id, raid_name, actual_drop_names).await
-    })
+    sync_runtime()
+        .handle()
+        .block_on(async { classify_drops(map_id, raid_name, actual_drop_names).await })
 }
 
 /// async 版本
@@ -318,7 +376,7 @@ pub async fn classify_drops(
         return Ok(std::collections::HashMap::new());
     }
 
-    let mut conn = crate::db::init_db().map_err(|e| DropTableError::Database(e))?;
+    let mut conn = crate::db::init_db().map_err(DropTableError::Database)?;
 
     // 1. 先按物品名称查 drop_items 缓存
     let mut cached_categories = query_categories_by_names(&conn, actual_drop_names)?;
@@ -330,11 +388,8 @@ pub async fn classify_drops(
     if !stale_equipment.is_empty() {
         for name in &stale_equipment {
             cached_categories.remove(name);
-            conn.execute(
-                "DELETE FROM drop_items WHERE item_name = ?1",
-                params![name],
-            )
-            .map_err(|e| DropTableError::Database(e.to_string()))?;
+            conn.execute("DELETE FROM drop_items WHERE item_name = ?1", params![name])
+                .map_err(|e| DropTableError::Database(e.to_string()))?;
         }
         info!(
             "[DropTable] 检测到 {} 条旧赛季装备缓存已失效，删除并重新获取: {:?}",
@@ -410,10 +465,7 @@ pub async fn classify_drops(
     )?;
 
     // 7. 查询新入库物品的分类
-    let new_names: Vec<String> = uncached_items
-        .iter()
-        .map(|d| d.item_name.clone())
-        .collect();
+    let new_names: Vec<String> = uncached_items.iter().map(|d| d.item_name.clone()).collect();
     let new_categories = query_categories_by_names(&conn, &new_names)?;
 
     // 8. 合并缓存分类和新分类
@@ -461,9 +513,7 @@ async fn fetch_drop_table_from_api(map_id: i64) -> Result<Vec<DropItem>, DropTab
 ///
 /// 接口：GET https://node.jx3box.com/item_merged/id/{ids}?per=50&page=N
 /// ids 为逗号分隔的 ItemType_ItemID 列表
-async fn fetch_item_merged_batch(
-    item_keys: &[String],
-) -> Result<Vec<ItemMerged>, DropTableError> {
+async fn fetch_item_merged_batch(item_keys: &[String]) -> Result<Vec<ItemMerged>, DropTableError> {
     let client = http_client();
 
     // 将 item_keys 合并为逗号分隔的字符串
@@ -475,10 +525,7 @@ async fn fetch_item_merged_batch(
     while page <= total_pages {
         let url = format!(
             "{}/{}?per={}&page={}",
-            JX3BOX_ITEM_MERGED_API_BASE,
-            ids_param,
-            ITEM_MERGED_PER_PAGE,
-            page
+            JX3BOX_ITEM_MERGED_API_BASE, ids_param, ITEM_MERGED_PER_PAGE, page
         );
 
         let resp = client
@@ -625,12 +672,12 @@ fn save_items_to_db(
     season_id: Option<i64>,
 ) -> Result<(), DropTableError> {
     let now = chrono::Local::now().to_rfc3339();
-    let merged_map: std::collections::HashMap<&str, &ItemMerged> = merged_items
-        .iter()
-        .map(|m| (m.id.as_str(), m))
-        .collect();
+    let merged_map: std::collections::HashMap<&str, &ItemMerged> =
+        merged_items.iter().map(|m| (m.id.as_str(), m)).collect();
 
-    let tx = conn.transaction().map_err(|e| DropTableError::Database(e.to_string()))?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| DropTableError::Database(e.to_string()))?;
 
     {
         let mut stmt = tx
@@ -681,15 +728,42 @@ fn save_items_to_db(
             let m = merged.cloned();
 
             // JSON 字段序列化
-            let diamonds_json = m.as_ref().and_then(|x| x.diamonds.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let requires_json = m.as_ref().and_then(|x| x.requires.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let recommend_json = m.as_ref().and_then(|x| x.recommend.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let recommend_xfs_json = m.as_ref().and_then(|x| x.recommend_xfs.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let attribute_types_json = m.as_ref().and_then(|x| x.attribute_types.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let set_info_json = m.as_ref().and_then(|x| x.set.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let get_source_json = m.as_ref().and_then(|x| x.get_source.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let attributes_json = m.as_ref().and_then(|x| x.attributes.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
-            let furniture_attributes_json = m.as_ref().and_then(|x| x.furniture_attributes.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default());
+            let diamonds_json = m
+                .as_ref()
+                .and_then(|x| x.diamonds.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let requires_json = m
+                .as_ref()
+                .and_then(|x| x.requires.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let recommend_json = m
+                .as_ref()
+                .and_then(|x| x.recommend.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let recommend_xfs_json = m
+                .as_ref()
+                .and_then(|x| x.recommend_xfs.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let attribute_types_json = m
+                .as_ref()
+                .and_then(|x| x.attribute_types.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let set_info_json = m
+                .as_ref()
+                .and_then(|x| x.set.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let get_source_json = m
+                .as_ref()
+                .and_then(|x| x.get_source.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let attributes_json = m
+                .as_ref()
+                .and_then(|x| x.attributes.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let furniture_attributes_json = m
+                .as_ref()
+                .and_then(|x| x.furniture_attributes.as_ref())
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
 
             stmt.execute(params![
                 map_id,
@@ -752,7 +826,9 @@ fn save_items_to_db(
                 m.as_ref().and_then(|x| x.can_neutral_camp_use),
                 m.as_ref().and_then(|x| x.type_label.clone()),
                 m.as_ref().and_then(|x| x.appearance.clone()),
-                m.as_ref().and_then(|x| x.cool_down.as_ref()).map(|v| serde_json::to_string(v).unwrap_or_default()),
+                m.as_ref()
+                    .and_then(|x| x.cool_down.as_ref())
+                    .map(|v| serde_json::to_string(v).unwrap_or_default()),
                 m.as_ref().and_then(|x| x.is_quest),
                 m.as_ref().and_then(|x| x.wu_cai_html.clone()),
                 m.as_ref().and_then(|x| x.is_equip),
@@ -779,7 +855,8 @@ fn save_items_to_db(
         }
     }
 
-    tx.commit().map_err(|e| DropTableError::Database(e.to_string()))?;
+    tx.commit()
+        .map_err(|e| DropTableError::Database(e.to_string()))?;
     info!(
         "[DropTable] drop_items 入库 {} 条 (raid={})",
         drop_items.len(),
@@ -907,7 +984,10 @@ async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, D
         let gold = copper_to_gold(avg);
         info!(
             "[DropTable] 物品 {} 前一天成交均价: {} 金 (server={}, {} 个聚合点)",
-            item_key, gold, server, prices.len()
+            item_key,
+            gold,
+            server,
+            prices.len()
         );
         return Ok(Some(gold));
     }
@@ -915,11 +995,9 @@ async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, D
     // 层级 2：近 7 天（含今日）成交量加权均价。
     // hourly 聚合覆盖近约 30 天，但低频物品前一天可能整日无成交，此时以近一周
     // 成交量加权的均价更接近真实市场价；仍无成交则落入中位数兜底。
-    if let Some(avg) = window_weighted_avg_copper(
-        &prices,
-        today_start - 6 * DAY_SECS,
-        today_start + DAY_SECS,
-    ) {
+    if let Some(avg) =
+        window_weighted_avg_copper(&prices, today_start - 6 * DAY_SECS, today_start + DAY_SECS)
+    {
         let gold = copper_to_gold(avg);
         info!(
             "[DropTable] 物品 {} 前一天无成交，取近 7 天(含今日)成交均价: {} 金 (server={}, {} 个聚合点)",
@@ -933,7 +1011,10 @@ async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, D
         Some(gold) => {
             info!(
                 "[DropTable] 物品 {} 近期无成交，回退全量中位价: {} 金 (server={}, {} 个聚合点)",
-                item_key, gold, server, prices.len()
+                item_key,
+                gold,
+                server,
+                prices.len()
             );
             Ok(Some(gold))
         }
@@ -967,7 +1048,7 @@ fn median_price_gold(prices: &[PriceRecord]) -> Option<i64> {
 
     valid.sort_unstable();
     let mid = valid.len() / 2;
-    let median = if valid.len() % 2 == 0 {
+    let median = if valid.len().is_multiple_of(2) {
         (valid[mid - 1] + valid[mid]) / 2
     } else {
         valid[mid]
@@ -1389,15 +1470,18 @@ mod tests {
     fn test_window_weighted_avg_copper_filters_invalid_and_sentinel() {
         // 剔除：窗口外、零值无效记录、1 砖封顶哨兵（1 亿铜）
         let prices = [
-            price_record_at(500, 100_000, 10),      // 窗口外
-            price_record_at(1000, 0, 10),           // 单价非法
-            price_record_at(1000, 100_000, 0),      // 数量非法
+            price_record_at(500, 100_000, 10),                // 窗口外
+            price_record_at(1000, 0, 10),                     // 单价非法
+            price_record_at(1000, 100_000, 0),                // 数量非法
             price_record_at(1500, BRICK_SENTINEL_COPPER, 85), // 哨兵值
             price_record_at(1800, 50_000, 2),
             price_record_at(1900, 70_000, 2),
         ];
         // 仅后两条参与：(50_000×2 + 70_000×2) / 4 = 60000 铜
-        assert_eq!(window_weighted_avg_copper(&prices, 1000, 2000), Some(60_000));
+        assert_eq!(
+            window_weighted_avg_copper(&prices, 1000, 2000),
+            Some(60_000)
+        );
     }
 
     #[test]
@@ -1420,11 +1504,7 @@ mod tests {
         ];
         // (300000×2 + 100000×1) / 3 = 233333 铜
         assert_eq!(
-            window_weighted_avg_copper(
-                &prices,
-                today_start - 6 * DAY_SECS,
-                today_start + DAY_SECS,
-            ),
+            window_weighted_avg_copper(&prices, today_start - 6 * DAY_SECS, today_start + DAY_SECS,),
             Some(233_333)
         );
     }
@@ -1534,27 +1614,67 @@ mod tests {
             id: "7_1".to_string(),
             source: Some("armor".to_string()),
             name: "流漓腰带".to_string(),
-            ui_id: None, source_id: None, desc: None, genre: None,
-            sub_type: Some(6), detail_type: None, price: None, level: None,
-            bind_type: None, max_durability: None, abrade_rate: None,
-            max_exist_time: None, max_exist_amount: None,
-            can_trade: None, can_destroy: None, quality: Some(4),
-            skill_id: None, skill_level: None,
-            belong_school: None, magic_kind: None, magic_type: None,
-            get_type: None, icon_id: None, can_set_color: None,
-            auc_genre: Some(3), auc_sub_type: Some(3), require_camp: None,
-            max_strength_level: None, can_apart: None, can_exterior: None,
-            can_change_magic: None, can_shared: None, repair_price_rebate: None,
-            can_stack: None, can_consume: None, require_level: None,
-            require_gender: None, require_homeland_level: None,
-            can_use_on_horse: None, can_use_in_fight: None,
-            can_good_camp_use: None, can_evil_camp_use: None, can_neutral_camp_use: None,
-            diamonds: None, requires: None, recommend: None, recommend_xfs: None,
-            type_label: Some("腰带".to_string()), appearance: None,
-            attribute_types: None, cool_down: None, is_quest: None,
-            wu_cai_html: None, set: None, is_equip: Some(true),
-            equip_usage: None, image_url: None, get_source: None,
-            attributes: None, furniture_attributes: None, id_key: None,
+            ui_id: None,
+            source_id: None,
+            desc: None,
+            genre: None,
+            sub_type: Some(6),
+            detail_type: None,
+            price: None,
+            level: None,
+            bind_type: None,
+            max_durability: None,
+            abrade_rate: None,
+            max_exist_time: None,
+            max_exist_amount: None,
+            can_trade: None,
+            can_destroy: None,
+            quality: Some(4),
+            skill_id: None,
+            skill_level: None,
+            belong_school: None,
+            magic_kind: None,
+            magic_type: None,
+            get_type: None,
+            icon_id: None,
+            can_set_color: None,
+            auc_genre: Some(3),
+            auc_sub_type: Some(3),
+            require_camp: None,
+            max_strength_level: None,
+            can_apart: None,
+            can_exterior: None,
+            can_change_magic: None,
+            can_shared: None,
+            repair_price_rebate: None,
+            can_stack: None,
+            can_consume: None,
+            require_level: None,
+            require_gender: None,
+            require_homeland_level: None,
+            can_use_on_horse: None,
+            can_use_in_fight: None,
+            can_good_camp_use: None,
+            can_evil_camp_use: None,
+            can_neutral_camp_use: None,
+            diamonds: None,
+            requires: None,
+            recommend: None,
+            recommend_xfs: None,
+            type_label: Some("腰带".to_string()),
+            appearance: None,
+            attribute_types: None,
+            cool_down: None,
+            is_quest: None,
+            wu_cai_html: None,
+            set: None,
+            is_equip: Some(true),
+            equip_usage: None,
+            image_url: None,
+            get_source: None,
+            attributes: None,
+            furniture_attributes: None,
+            id_key: None,
         };
         assert_eq!(classify_item(&item), "equipment");
     }
@@ -1565,27 +1685,67 @@ mod tests {
             id: "5_1".to_string(),
             source: Some("other".to_string()),
             name: "昆玉玄晶".to_string(),
-            ui_id: None, source_id: None, desc: None, genre: None,
-            sub_type: Some(0), detail_type: None, price: None, level: None,
-            bind_type: None, max_durability: None, abrade_rate: None,
-            max_exist_time: None, max_exist_amount: None,
-            can_trade: None, can_destroy: None, quality: Some(5),
-            skill_id: None, skill_level: None,
-            belong_school: None, magic_kind: None, magic_type: None,
-            get_type: None, icon_id: None, can_set_color: None,
-            auc_genre: Some(20), auc_sub_type: Some(2), require_camp: None,
-            max_strength_level: None, can_apart: None, can_exterior: None,
-            can_change_magic: None, can_shared: None, repair_price_rebate: None,
-            can_stack: None, can_consume: None, require_level: None,
-            require_gender: None, require_homeland_level: None,
-            can_use_on_horse: None, can_use_in_fight: None,
-            can_good_camp_use: None, can_evil_camp_use: None, can_neutral_camp_use: None,
-            diamonds: None, requires: None, recommend: None, recommend_xfs: None,
-            type_label: None, appearance: None,
-            attribute_types: None, cool_down: None, is_quest: None,
-            wu_cai_html: None, set: None, is_equip: Some(false),
-            equip_usage: None, image_url: None, get_source: None,
-            attributes: None, furniture_attributes: None, id_key: None,
+            ui_id: None,
+            source_id: None,
+            desc: None,
+            genre: None,
+            sub_type: Some(0),
+            detail_type: None,
+            price: None,
+            level: None,
+            bind_type: None,
+            max_durability: None,
+            abrade_rate: None,
+            max_exist_time: None,
+            max_exist_amount: None,
+            can_trade: None,
+            can_destroy: None,
+            quality: Some(5),
+            skill_id: None,
+            skill_level: None,
+            belong_school: None,
+            magic_kind: None,
+            magic_type: None,
+            get_type: None,
+            icon_id: None,
+            can_set_color: None,
+            auc_genre: Some(20),
+            auc_sub_type: Some(2),
+            require_camp: None,
+            max_strength_level: None,
+            can_apart: None,
+            can_exterior: None,
+            can_change_magic: None,
+            can_shared: None,
+            repair_price_rebate: None,
+            can_stack: None,
+            can_consume: None,
+            require_level: None,
+            require_gender: None,
+            require_homeland_level: None,
+            can_use_on_horse: None,
+            can_use_in_fight: None,
+            can_good_camp_use: None,
+            can_evil_camp_use: None,
+            can_neutral_camp_use: None,
+            diamonds: None,
+            requires: None,
+            recommend: None,
+            recommend_xfs: None,
+            type_label: None,
+            appearance: None,
+            attribute_types: None,
+            cool_down: None,
+            is_quest: None,
+            wu_cai_html: None,
+            set: None,
+            is_equip: Some(false),
+            equip_usage: None,
+            image_url: None,
+            get_source: None,
+            attributes: None,
+            furniture_attributes: None,
+            id_key: None,
         };
         assert_eq!(classify_item(&item), "xuanjing");
     }
@@ -1624,11 +1784,11 @@ mod tests {
         let map_id: i64 = 795;
         let raid_name = "25人普通阆风悬城";
         let drop_names = vec![
-            "昆玉玄晶".to_string(),         // ItemType=5, ItemID=71569, Source=other
-            "鸣沙陨铁".to_string(),         // ItemType=5, ItemID=71568, Source=other
-            "阆风炎魄".to_string(),         // ItemType=5, ItemID=85795, Source=other
-            "暗渡无声".to_string(),         // ItemType=7, ItemID=109404, Source=armor
-            "白骨成霜".to_string(),         // ItemType=7, ItemID=109419, Source=armor
+            "昆玉玄晶".to_string(), // ItemType=5, ItemID=71569, Source=other
+            "鸣沙陨铁".to_string(), // ItemType=5, ItemID=71568, Source=other
+            "阆风炎魄".to_string(), // ItemType=5, ItemID=85795, Source=other
+            "暗渡无声".to_string(), // ItemType=7, ItemID=109404, Source=armor
+            "白骨成霜".to_string(), // ItemType=7, ItemID=109419, Source=armor
         ];
 
         // 0. 初始化隔离测试数据库并清空 drop_items 表
@@ -1678,23 +1838,22 @@ mod tests {
         drop(conn);
 
         // 验证两次返回的分类结果一致
-        assert_eq!(
-            result1, result2,
-            "两次调用的分类结果应完全一致"
-        );
+        assert_eq!(result1, result2, "两次调用的分类结果应完全一致");
 
         // 验证每个输入物品都有分类结果
         for name in &drop_names {
-            assert!(
-                result2.contains_key(name),
-                "物品 '{}' 应在分类结果中",
-                name
-            );
+            assert!(result2.contains_key(name), "物品 '{}' 应在分类结果中", name);
         }
 
         println!("========== 端到端验证通过 ==========");
-        println!("  - 第一次调用: {} 条物品从 API 获取并缓存", count_after_first);
-        println!("  - 第二次调用: {} 条物品全命中缓存，0 次 API 调用", count_after_second);
+        println!(
+            "  - 第一次调用: {} 条物品从 API 获取并缓存",
+            count_after_first
+        );
+        println!(
+            "  - 第二次调用: {} 条物品全命中缓存，0 次 API 调用",
+            count_after_second
+        );
         println!("  - 两次分类结果一致: ✓");
     }
 
@@ -1717,7 +1876,7 @@ mod tests {
         ];
 
         // 未缓存的物品（真实存在于 drop/v2 API 中）
-        let uncached_items = vec![
+        let uncached_items = [
             "阆风炎魄".to_string(),
             "暗渡无声".to_string(),
             "白骨成霜".to_string(),
@@ -1753,8 +1912,12 @@ mod tests {
         drop(conn);
 
         println!("========== 部分缓存命中测试 ==========");
-        println!("  缓存: {} 条, 未缓存: {} 条, 总计: {} 条",
-            cached_items.len(), uncached_items.len(), all_items.len());
+        println!(
+            "  缓存: {} 条, 未缓存: {} 条, 总计: {} 条",
+            cached_items.len(),
+            uncached_items.len(),
+            all_items.len()
+        );
 
         let result = classify_drops_sync(map_id, Some(raid_name), &all_items)
             .expect("classify_drops_sync 失败");
@@ -1764,16 +1927,16 @@ mod tests {
         let count_after: i64 = conn
             .query_row("SELECT COUNT(*) FROM drop_items", [], |row| row.get(0))
             .unwrap_or(0);
-        println!("  调用后 drop_items: {} 条（新增 {} 条）", count_after, count_after - count_before);
+        println!(
+            "  调用后 drop_items: {} 条（新增 {} 条）",
+            count_after,
+            count_after - count_before
+        );
         drop(conn);
 
         // 验证所有物品都有分类
         for name in &all_items {
-            assert!(
-                result.contains_key(name),
-                "物品 '{}' 应在分类结果中",
-                name
-            );
+            assert!(result.contains_key(name), "物品 '{}' 应在分类结果中", name);
         }
 
         // 验证缓存物品的分类未被覆盖

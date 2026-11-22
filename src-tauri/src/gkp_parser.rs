@@ -30,11 +30,7 @@ pub fn parse_binary_gkp(request: GkpParseRequest) -> Result<GkpParseResponse, St
     if request.buffer.len() >= 8 {
         // 检查二进制标识
         let mut sig = [0u8; 8];
-        for i in 0..8 {
-            if i < request.buffer.len() {
-                sig[i] = request.buffer[i];
-            }
-        }
+        sig.copy_from_slice(&request.buffer[..8]);
 
         // 检查常见二进制标识
         if sig == [0x20, 0x61, 0x74, 0x17, 0x46, 0x14, 0x46, 0x17] {
@@ -46,20 +42,16 @@ pub fn parse_binary_gkp(request: GkpParseRequest) -> Result<GkpParseResponse, St
     if is_binary {
         // 尝试解析为Lua表
         match parse_lua_from_binary(&request.buffer) {
-            Ok(data) => {
-                return Ok(GkpParseResponse {
-                    success: true,
-                    data: Some(data),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                return Ok(GkpParseResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("解析失败: {}", e)),
-                });
-            }
+            Ok(data) => Ok(GkpParseResponse {
+                success: true,
+                data: Some(data),
+                error: None,
+            }),
+            Err(e) => Ok(GkpParseResponse {
+                success: false,
+                data: None,
+                error: Some(format!("解析失败: {}", e)),
+            }),
         }
     } else {
         // 尝试解析为文本
@@ -68,36 +60,30 @@ pub fn parse_binary_gkp(request: GkpParseRequest) -> Result<GkpParseResponse, St
                 // 简单检查是否是Lua表
                 if text.trim().starts_with('{') && text.trim().ends_with('}') {
                     match serde_json::from_str(&text) {
-                        Ok(data) => {
-                            return Ok(GkpParseResponse {
-                                success: true,
-                                data: Some(data),
-                                error: None,
-                            });
-                        }
-                        Err(_) => {
-                            return Ok(GkpParseResponse {
-                                success: false,
-                                data: None,
-                                error: Some("无法解析JSON".to_string()),
-                            });
-                        }
+                        Ok(data) => Ok(GkpParseResponse {
+                            success: true,
+                            data: Some(data),
+                            error: None,
+                        }),
+                        Err(_) => Ok(GkpParseResponse {
+                            success: false,
+                            data: None,
+                            error: Some("无法解析JSON".to_string()),
+                        }),
                     }
                 } else {
-                    return Ok(GkpParseResponse {
+                    Ok(GkpParseResponse {
                         success: false,
                         data: None,
                         error: Some("不是Lua表格式".to_string()),
-                    });
+                    })
                 }
             }
-            Err(_) => {
-                return Ok(GkpParseResponse {
-                    success: false,
-                    data: None,
-                    error: Some("UTF-8解码失败".to_string()),
-                });
-            }
+            Err(_) => Ok(GkpParseResponse {
+                success: false,
+                data: None,
+                error: Some("UTF-8解码失败".to_string()),
+            }),
         }
     }
 }

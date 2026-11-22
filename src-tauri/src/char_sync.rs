@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 /// 跨角色设置同步模块
 ///
 /// 基于 `docs/plans/2026-08-30-cross-character-settings-sync-design.md` 设计。
@@ -9,10 +10,8 @@
 ///
 /// 不复制：userpreferencesasync.jx3dat（服务器同步标志位）、
 /// userpreferences/*.dump（历史崩溃恢复）、CoinShopOutfitData.jx3dat（商城外观）。
-
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 const BACKUP_SUBDIR: &str = "char-sync-backups";
 const MAX_BACKUPS: usize = 10;
@@ -98,8 +97,9 @@ struct BackupMeta {
 pub fn list_syncable_roles(game_directory: String) -> Result<Vec<RoleDirInfo>, String> {
     // 补全路径（如 E:\Game\SeasunGame → E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd），
     // 与 detect_accounts_active 等现有命令保持一致
-    let game_dir =
-        PathBuf::from(crate::game_directory::resolve_game_runtime_directory(&game_directory));
+    let game_dir = PathBuf::from(crate::game_directory::resolve_game_runtime_directory(
+        &game_directory,
+    ));
     let userdata_path = game_dir.join(USERDATA_BASE);
 
     if !userdata_path.exists() {
@@ -112,19 +112,31 @@ pub fn list_syncable_roles(game_directory: String) -> Result<Vec<RoleDirInfo>, S
     let mut roles = Vec::new();
 
     for account_entry in read_dir_entries(&userdata_path)? {
-        if !account_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        if !account_entry
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or(false)
+        {
             continue;
         }
         let account_name = account_entry.file_name().to_string_lossy().to_string();
 
         for region_entry in read_dir_entries(&account_entry.path()).unwrap_or_default() {
-            if !region_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if !region_entry
+                .file_type()
+                .map(|t| t.is_dir())
+                .unwrap_or(false)
+            {
                 continue;
             }
             let region_name = region_entry.file_name().to_string_lossy().to_string();
 
             for server_entry in read_dir_entries(&region_entry.path()).unwrap_or_default() {
-                if !server_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                if !server_entry
+                    .file_type()
+                    .map(|t| t.is_dir())
+                    .unwrap_or(false)
+                {
                     continue;
                 }
                 let server_name = server_entry.file_name().to_string_lossy().to_string();
@@ -165,19 +177,25 @@ pub fn sync_character_settings(
     options: SyncOptions,
 ) -> Result<SyncResult, String> {
     // 补全路径后做安全校验（与 list_syncable_roles 一致）
-    let game_dir =
-        PathBuf::from(crate::game_directory::resolve_game_runtime_directory(&game_directory));
+    let game_dir = PathBuf::from(crate::game_directory::resolve_game_runtime_directory(
+        &game_directory,
+    ));
     let source_dir = PathBuf::from(&source.role_dir);
     let target_dir = PathBuf::from(&target.role_dir);
 
     // 路径安全校验：源和目标都必须在 game_directory 下
-    if !source_dir.starts_with(&game_dir) {
-        return Err("源角色目录不在当前游戏目录下，拒绝执行".to_string());
-    }
-    if !target_dir.starts_with(&game_dir) {
-        return Err("目标角色目录不在当前游戏目录下，拒绝执行".to_string());
-    }
-    if source_dir == target_dir {
+    // 直接比较字面路径会被 `..` 或符号链接绕过，因此两侧都先 canonicalize
+    ensure_dir_within(
+        &source_dir,
+        &game_dir,
+        "源角色目录不在当前游戏目录下，拒绝执行",
+    )?;
+    ensure_dir_within(
+        &target_dir,
+        &game_dir,
+        "目标角色目录不在当前游戏目录下，拒绝执行",
+    )?;
+    if canonical_or_self(&source_dir) == canonical_or_self(&target_dir) {
         return Err("源角色和目标角色不能相同".to_string());
     }
     if !source_dir.exists() {
@@ -361,32 +379,32 @@ pub fn rollback_char_sync(
     let backup_path = PathBuf::from(&backup_dir);
     let target_path = PathBuf::from(&target_role_dir);
 
-    // 路径安全校验：目标角色目录必须在当前游戏目录下（补全路径后比较，与 sync 命令一致）
-    let game_dir =
-        PathBuf::from(crate::game_directory::resolve_game_runtime_directory(&game_directory));
-    if !target_path.starts_with(&game_dir) {
-        return Err("目标角色目录不在当前游戏目录下，拒绝执行".to_string());
-    }
-
-    // 路径安全校验：备份目录必须位于本模块管理的备份根目录下，
-    // 避免传入任意目录后被整体复制进角色目录
-    let backups_root = get_backups_root()?;
-    if !backup_path.starts_with(&backups_root) {
-        return Err(format!(
-            "备份目录不在受管的备份目录下，拒绝执行: {}",
-            backup_dir
-        ));
-    }
-
+    // 先确认目录存在，后面的 canonicalize 才有意义（不存在时给出更具体的提示）
     if !backup_path.exists() {
         return Err(format!("备份目录不存在: {}", backup_dir));
     }
     if !target_path.exists() {
-        return Err(format!(
-            "目标角色目录不存在: {}",
-            target_role_dir
-        ));
+        return Err(format!("目标角色目录不存在: {}", target_role_dir));
     }
+
+    // 路径安全校验：目标角色目录必须在当前游戏目录下（补全路径后比较，并 canonicalize 防绕过）
+    let game_dir = PathBuf::from(crate::game_directory::resolve_game_runtime_directory(
+        &game_directory,
+    ));
+    ensure_dir_within(
+        &target_path,
+        &game_dir,
+        "目标角色目录不在当前游戏目录下，拒绝执行",
+    )?;
+
+    // 路径安全校验：备份目录必须位于本模块管理的备份根目录下，
+    // 避免传入任意目录后被整体复制进角色目录
+    let backups_root = get_backups_root()?;
+    ensure_dir_within(
+        &backup_path,
+        &backups_root,
+        &format!("备份目录不在受管的备份目录下，拒绝执行: {}", backup_dir),
+    )?;
 
     // 从备份复制所有文件回目标角色目录（覆盖，跳过元数据文件）
     let mut restored = 0;
@@ -411,7 +429,12 @@ pub fn rollback_char_sync(
         }
     }
 
-    log::info!("回滚完成: 从 {} 恢复 {} 个文件到 {}", backup_dir, restored, target_role_dir);
+    log::info!(
+        "回滚完成: 从 {} 恢复 {} 个文件到 {}",
+        backup_dir,
+        restored,
+        target_role_dir
+    );
     Ok(())
 }
 
@@ -423,6 +446,30 @@ fn read_dir_entries(path: &Path) -> Result<Vec<fs::DirEntry>, String> {
         .map_err(|e| format!("读取目录失败: {} ({})", path.display(), e))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("遍历目录失败: {} ({})", path.display(), e))
+}
+
+/// 规范化路径；解析失败时退回原路径（仅用于比较，不改变实际读写路径）
+fn canonical_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// 校验 `target` 位于 `parent` 之下。
+///
+/// 直接对字面路径做 `starts_with` 会被 `..`、`.` 或符号链接绕过，
+/// 因此两侧都先 canonicalize 再比较（与 `db.rs` 的 `ensure_deletable_userdata_path` 一致）。
+fn ensure_dir_within(target: &Path, parent: &Path, message: &str) -> Result<(), String> {
+    let canonical_parent = canonical_or_self(parent);
+    let canonical_target = canonical_or_self(target);
+    if !canonical_target.starts_with(&canonical_parent) {
+        log::error!(
+            "{}（目标: {}，允许范围: {}）",
+            message,
+            canonical_target.display(),
+            canonical_parent.display()
+        );
+        return Err(message.to_string());
+    }
+    Ok(())
 }
 
 /// 检查角色目录是否含至少一个同步对象文件
@@ -480,8 +527,7 @@ fn backup_role_dir(target_dir: &Path, backup_dir: &Path) -> Result<usize, String
         let src = target_dir.join(file);
         if src.exists() {
             let dst = backup_dir.join(file);
-            fs::copy(&src, &dst)
-                .map_err(|e| format!("备份 {} 失败: {}", file, e))?;
+            fs::copy(&src, &dst).map_err(|e| format!("备份 {} 失败: {}", file, e))?;
             count += 1;
         }
     }
@@ -490,8 +536,7 @@ fn backup_role_dir(target_dir: &Path, backup_dir: &Path) -> Result<usize, String
     for name in collect_hotkey_txt_files(target_dir) {
         let src = target_dir.join(&name);
         let dst = backup_dir.join(&name);
-        fs::copy(&src, &dst)
-            .map_err(|e| format!("备份 {} 失败: {}", name, e))?;
+        fs::copy(&src, &dst).map_err(|e| format!("备份 {} 失败: {}", name, e))?;
         count += 1;
     }
 
@@ -500,8 +545,8 @@ fn backup_role_dir(target_dir: &Path, backup_dir: &Path) -> Result<usize, String
 
 /// 写入备份元数据
 fn write_backup_meta(backup_dir: &Path, meta: &BackupMeta) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(meta)
-        .map_err(|e| format!("序列化备份元数据失败: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(meta).map_err(|e| format!("序列化备份元数据失败: {}", e))?;
     fs::write(backup_dir.join(META_FILE), json)
         .map_err(|e| format!("写入 {} 失败: {}", META_FILE, e))
 }
@@ -598,9 +643,7 @@ fn parse_backup_dir_name(name: &str) -> Option<(String, String)> {
     }
     let prefix = timestamp.get(..8)?;
     let suffix = timestamp.get(9..)?;
-    if !prefix.chars().all(|c| c.is_ascii_digit())
-        || !suffix.chars().all(|c| c.is_ascii_digit())
-    {
+    if !prefix.chars().all(|c| c.is_ascii_digit()) || !suffix.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
     // 第 16 个字符是分隔符 '-'

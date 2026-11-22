@@ -89,6 +89,7 @@ fn create_app_config_table(conn: &Connection) -> Result<(), String> {
 /// 从旧 config 表迁移到 app_config：
 /// - game_directory：从 config.game.gameDirectory 提取到独立键
 /// - config_json：完整 JSON blob 迁移到 app_config.config_json 键
+///
 /// 迁移完成后删除旧 config 表
 fn migrate_config_from_old_config(conn: &Connection, now: &str) -> Result<(), String> {
     let config_table_exists: bool = conn
@@ -377,6 +378,7 @@ fn rebuild_raid_bosses_table(conn: &Connection) -> Result<(), String> {
 /// raid_versions (id, name) 与 game_versions (id, name, sort_order) 完全冗余：
 /// - 两表 name 列和 id 值完全一致
 /// - game_versions 有 sort_order 字段，功能等价且更完整
+///
 /// 迁移完成后删除 raid_versions 表，排序改用 game_versions.sort_order
 fn drop_raid_versions_table(conn: &Connection) -> Result<(), String> {
     let exists: bool = conn

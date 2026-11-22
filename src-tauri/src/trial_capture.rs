@@ -505,9 +505,8 @@ fn sample_from_observation(
     observation: &crate::db::TrialCaptureObservation,
     target: &Target,
 ) -> Option<Sample> {
-    let selected = (observation.pid >= 0
-        && (1..=5).contains(&observation.slot))
-    .then_some((observation.pid as u32, observation.slot as u8));
+    let selected = (observation.pid >= 0 && (1..=5).contains(&observation.slot))
+        .then_some((observation.pid as u32, observation.slot as u8));
     let equipment = ((1..=5).contains(&observation.equipment_slot)
         && !observation.equipment_name.trim().is_empty())
     .then(|| {
@@ -542,16 +541,14 @@ fn rehydrate_samples(
     conn: &rusqlite::Connection,
 ) -> usize {
     let run_key = capture_run_key(&finish.target, finish.terminal);
-    let observations = match crate::db::db_load_trial_capture_observations_with_connection(
-        conn,
-        &run_key,
-    ) {
-        Ok(observations) => observations,
-        Err(error) => {
-            log::warn!("[TrialCapture] 读取持久化截图观测失败 (run_key={run_key}): {error}");
-            return 0;
-        }
-    };
+    let observations =
+        match crate::db::db_load_trial_capture_observations_with_connection(conn, &run_key) {
+            Ok(observations) => observations,
+            Err(error) => {
+                log::warn!("[TrialCapture] 读取持久化截图观测失败 (run_key={run_key}): {error}");
+                return 0;
+            }
+        };
     if observations.is_empty() {
         return 0;
     }
@@ -934,9 +931,8 @@ impl Session {
         self.filled.retain(|(_, at)| *at >= floor);
         self.pending
             .retain(|finish| finish.receipt >= floor || finish.terminal >= floor);
-        self.equipment_reviews.retain(|review| {
-            review.finish.receipt >= floor || review.finish.terminal >= floor
-        });
+        self.equipment_reviews
+            .retain(|review| review.finish.receipt >= floor || review.finish.terminal >= floor);
     }
 }
 
@@ -1036,7 +1032,9 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                                     layer: target.layer.map_or(-1, i64::from),
                                 };
                                 if let Err(error) =
-                                    crate::db::db_upsert_trial_capture_run_with_connection(&conn, &run)
+                                    crate::db::db_upsert_trial_capture_run_with_connection(
+                                        &conn, &run,
+                                    )
                                 {
                                     log::warn!("[TrialCapture] 登记采集会话失败: {error}");
                                 }
@@ -1165,8 +1163,15 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
             let visual_uncertain = observation
                 .as_ref()
                 .is_some_and(|(_, _, _, _, _, selector, _)| selector.is_none());
-            let (selected, equipment, panel_visible, tooltip_needed, reset_visible, selector, numbers) =
-                observation.unwrap_or((None, None, false, false, false, None, (None, None)));
+            let (
+                selected,
+                equipment,
+                panel_visible,
+                tooltip_needed,
+                reset_visible,
+                selector,
+                numbers,
+            ) = observation.unwrap_or((None, None, false, false, false, None, (None, None)));
             let (weekly_flip_count, captured_layer) = (
                 numbers.0.map_or(-1, i64::from),
                 numbers.1.map_or(-1, i64::from),
@@ -1179,21 +1184,20 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                 || captured_layer >= 0;
             if persist_observation {
                 let run_key = capture_run_key(&watch_target, watch_at);
-                let (equipment_slot, equipment_name, equipment_level, equipment_bind) =
-                    equipment
-                        .as_ref()
-                        .map_or((0, String::new(), 0, String::new()), |(slot, evidence)| {
-                            (
-                                i64::from(*slot),
-                                evidence.name.clone(),
-                                evidence.level,
-                                match evidence.bind {
-                                    catalog::TooltipBind::Tradable => "tradable".to_owned(),
-                                    catalog::TooltipBind::Bound => "bound".to_owned(),
-                                    catalog::TooltipBind::Unknown => "unknown".to_owned(),
-                                },
-                            )
-                        });
+                let (equipment_slot, equipment_name, equipment_level, equipment_bind) = equipment
+                    .as_ref()
+                    .map_or((0, String::new(), 0, String::new()), |(slot, evidence)| {
+                        (
+                            i64::from(*slot),
+                            evidence.name.clone(),
+                            evidence.level,
+                            match evidence.bind {
+                                catalog::TooltipBind::Tradable => "tradable".to_owned(),
+                                catalog::TooltipBind::Bound => "bound".to_owned(),
+                                catalog::TooltipBind::Unknown => "unknown".to_owned(),
+                            },
+                        )
+                    });
                 let observation = crate::db::TrialCaptureObservation {
                     run_key: run_key.clone(),
                     at_ms: sample_at,
@@ -1209,7 +1213,12 @@ fn run(app: tauri::AppHandle, receiver: mpsc::Receiver<Message>, mut enabled: bo
                 };
                 match crate::db::init_db() {
                     Ok(conn) => {
-                        if let Err(error) = crate::db::db_insert_trial_capture_observation_with_connection(&conn, &observation) {
+                        if let Err(error) =
+                            crate::db::db_insert_trial_capture_observation_with_connection(
+                                &conn,
+                                &observation,
+                            )
+                        {
                             log::warn!("[TrialCapture] 持久化截图观测失败: {error}");
                         }
                         // 每次识别到次数（包括 0）都尝试补插值：后锚点出现时，
@@ -1705,7 +1714,10 @@ mod tests {
         // 挂起的终局必须把保留水位压到自己的终局时间，绝不能裁掉 pending。
         s.prune(1_800_000);
         assert!(!s.pending.is_empty(), "迟到回执不得被 prune 丢弃");
-        assert_eq!(s.selected_slot(&f, s.evidence_window(&f).unwrap()), Some((208, 2)));
+        assert_eq!(
+            s.selected_slot(&f, s.evidence_window(&f).unwrap()),
+            Some((208, 2))
+        );
         let mut saved = Vec::new();
         apply_completions(&mut s, 1_800_000, |key, slot, _| {
             saved.push((key.to_string(), slot));

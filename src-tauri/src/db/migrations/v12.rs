@@ -300,6 +300,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
 
+        #[allow(clippy::type_complexity)]
         let metadata: (Option<String>, Option<String>, Option<String>, Option<i64>, Option<String>) = conn
             .query_row(
                 "SELECT raid_name, account_id, role_id, record_date, record_type FROM records WHERE id = 'record-1'",

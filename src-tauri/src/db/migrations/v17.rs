@@ -95,6 +95,7 @@ fn rename_chiguo_raid(conn: &Connection) -> Result<(), String> {
         }
 
         // 读取旧 raids 记录的所有字段
+        #[allow(clippy::type_complexity)]
         let (name, difficulty, player_count, version, notes, is_active, is_static): (
             String, String, i64, Option<String>, Option<String>, Option<i64>, Option<i64>,
         ) = conn

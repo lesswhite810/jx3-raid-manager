@@ -74,9 +74,8 @@ pub fn find_all_jx3_processes() -> Vec<Jx3ProcessInfo> {
     };
 
     // 仅刷新进程列表，不刷新 CPU/内存/磁盘/网络
-    system_lock.refresh_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
-    );
+    system_lock
+        .refresh_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::everything()));
 
     let target_name = std::ffi::OsStr::new(JX3_PROCESS_NAME);
     let mut processes = Vec::new();

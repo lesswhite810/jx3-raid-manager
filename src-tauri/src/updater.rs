@@ -169,7 +169,9 @@ pub async fn updater_check(app: AppHandle) -> Result<UpdaterCheckResult, String>
 pub async fn updater_download_and_install(app: AppHandle, window: Window) -> Result<(), String> {
     let runtime_info = detect_runtime_info(&app)?;
     if runtime_info.is_portable {
-        return Err("便携版不支持应用内自动更新，请前往 Gitee 或 GitHub Release 下载新版本".to_string());
+        return Err(
+            "便携版不支持应用内自动更新，请前往 Gitee 或 GitHub Release 下载新版本".to_string(),
+        );
     }
 
     if !runtime_info.updater_configured {

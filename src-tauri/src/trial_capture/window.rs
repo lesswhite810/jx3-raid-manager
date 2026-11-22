@@ -479,6 +479,7 @@ mod platform {
         !hit.is_null() && unsafe { GetAncestor(hit, GA_ROOT) } == hwnd
     }
 
+    #[derive(Default)]
     pub(crate) struct CaptureSession {
         frame: Option<WindowFrame>,
         readback: Vec<u8>,
@@ -488,21 +489,6 @@ mod platform {
         capture_dimensions: Option<(usize, usize)>,
         bound_pid: Option<u32>,
         ended: bool,
-    }
-
-    impl Default for CaptureSession {
-        fn default() -> Self {
-            Self {
-                frame: None,
-                readback: Vec::new(),
-                cards_surface: None,
-                full_surface: None,
-                last_mode: None,
-                capture_dimensions: None,
-                bound_pid: None,
-                ended: false,
-            }
-        }
     }
 
     impl CaptureSession {

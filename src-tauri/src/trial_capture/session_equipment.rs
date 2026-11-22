@@ -119,8 +119,8 @@ mod tests {
 
     fn target() -> super::super::Target {
         super::super::Target {
-        layer: Some(6),
-        uid: "role-1".into(),
+            layer: Some(6),
+            uid: "role-1".into(),
             map: 144,
         }
     }

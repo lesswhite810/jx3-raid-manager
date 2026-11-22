@@ -198,9 +198,7 @@ fn init_static_versions_and_seasons(conn: &Connection) -> Result<(), String> {
     let inserted_new_version = !version_names.is_empty();
     if inserted_new_version {
         let count = version_names.len();
-        let placeholders: Vec<String> = (0..count)
-            .map(|_| "(?, ?, ?, ?)".to_string())
-            .collect();
+        let placeholders: Vec<String> = (0..count).map(|_| "(?, ?, ?, ?)".to_string()).collect();
         let sql = format!(
             "INSERT INTO game_versions (name, sort_order, level_cap, created_at) VALUES {}",
             placeholders.join(", ")

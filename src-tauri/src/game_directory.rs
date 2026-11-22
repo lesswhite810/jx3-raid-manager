@@ -92,7 +92,7 @@ fn parse_ownerscore(ownerscore: &str) -> Vec<i32> {
                         inner.parse::<usize>(),
                         pair[bracket_end + 2..].parse::<i32>(),
                     ) {
-                        if index >= 1 && index <= 4 {
+                        if (1..=4).contains(&index) {
                             scores[index - 1] = value;
                         }
                     }
@@ -108,7 +108,7 @@ fn parse_ownerscore(ownerscore: &str) -> Vec<i32> {
                     key_str.trim().parse::<usize>(),
                     value_str.trim().parse::<i32>(),
                 ) {
-                    if key >= 1 && key <= 4 {
+                    if (1..=4).contains(&key) {
                         scores[key - 1] = value;
                     }
                 }
@@ -160,7 +160,8 @@ fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i3
         if let Some((force_id, kungfu_name)) = parse_recommended_kungfu_from_desc(desc) {
             if force_id == role_force_id {
                 // 特殊处理藏剑：如果门派为藏剑且心法为"均可"，返回问水诀
-                let final_kungfu_name = if force_id == TANGJIAN_FORCE_ID && kungfu_name == "均可" {
+                let final_kungfu_name = if force_id == TANGJIAN_FORCE_ID && kungfu_name == "均可"
+                {
                     "问水诀".to_string()
                 } else {
                     kungfu_name
@@ -204,7 +205,10 @@ pub fn lookup_role_name_by_uid(game_directory: &Path, uid: &str) -> Option<Strin
 
     let db_path = game_directory.join(MING_YI_DB_PATH);
     if !db_path.exists() {
-        log::warn!("[GameDirectory] 茗伊装备数据库不存在: {}", db_path.display());
+        log::warn!(
+            "[GameDirectory] 茗伊装备数据库不存在: {}",
+            db_path.display()
+        );
         return None;
     }
 
@@ -237,10 +241,9 @@ pub fn read_mingyi_owner_levels(game_directory: &Path) -> std::collections::Hash
     if !db_path.exists() {
         return levels;
     }
-    let Ok(conn) = rusqlite::Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) else {
+    let Ok(conn) =
+        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
         log::warn!(
             "[GameDirectory] 打开茗伊装备数据库失败: {}",
             db_path.display()
@@ -432,7 +435,8 @@ fn parse_role_stat_blob(blob: &[u8]) -> Option<RoleStatData> {
     let force_id = extract_double_from_blob(blob, "force").unwrap_or(0.0) as i32;
     let level = extract_double_from_blob(blob, "level").unwrap_or(0.0) as i32;
     let equip_score = extract_double_from_blob(blob, "equip_score").unwrap_or(0.0) as i32;
-    let achievement_score = extract_double_from_blob(blob, "achievement_score").unwrap_or(0.0) as i32;
+    let achievement_score =
+        extract_double_from_blob(blob, "achievement_score").unwrap_or(0.0) as i32;
     let pet_score = extract_double_from_blob(blob, "pet_score").unwrap_or(0.0) as i32;
 
     // 货币（money 为嵌套 table { nGold, nSilver, nCopper }，通过父字段定位子字段避免误匹配）
@@ -531,11 +535,7 @@ fn read_role_stat_from_all_userdata(game_directory: &Path) -> Vec<RoleStatData> 
         let conn = match rusqlite::Connection::open(&db_path) {
             Ok(c) => c,
             Err(e) => {
-                log::warn!(
-                    "[AnalyzeRoles] 打开 {} 失败: {}",
-                    db_path.display(),
-                    e
-                );
+                log::warn!("[AnalyzeRoles] 打开 {} 失败: {}", db_path.display(), e);
                 continue;
             }
         };
@@ -573,10 +573,7 @@ fn read_role_stat_from_all_userdata(game_directory: &Path) -> Vec<RoleStatData> 
                 results.push(stat);
             }
             None => {
-                log::warn!(
-                    "[AnalyzeRoles] 目录 {} 的 BLOB 解析失败",
-                    dir_name
-                );
+                log::warn!("[AnalyzeRoles] 目录 {} 的 BLOB 解析失败", dir_name);
             }
         }
     }
@@ -651,7 +648,7 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
         // 确定使用哪套装备解析心法
         let effective_suit = suit_index
             .and_then(|idx| {
-                if idx >= 1 && idx <= 4 {
+                if (1..=4).contains(&idx) {
                     Some(idx)
                 } else {
                     None
@@ -663,7 +660,7 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
                     .enumerate()
                     .max_by_key(|(_, &score)| score)
                     .map(|(i, _)| (i + 1) as i32)
-                    .filter(|&idx| idx >= 1 && idx <= 4 && scores[(idx - 1) as usize] > 0)
+                    .filter(|&idx| (1..=4).contains(&idx) && scores[(idx - 1) as usize] > 0)
             });
 
         if let Some(suit) = effective_suit {
@@ -696,7 +693,9 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
             placeholders.join(" OR ")
         );
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| format!("准备装备查询失败: {}", e))?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("准备装备查询失败: {}", e))?;
 
         let mut params: Vec<String> = Vec::with_capacity(equip_query_params.len() * 2);
         for (owner_key, suit_index) in &equip_query_params {
@@ -707,21 +706,21 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
 
-        let rows = stmt.query_map(param_refs.as_slice(), |row| {
-            let ownerkey_str: String = row.get(0)?;
-            let suitindex: i32 = row.get(1)?;
-            let desc: String = row.get(2)?;
-            Ok((ownerkey_str, suitindex, desc))
-        }).map_err(|e| format!("查询装备描述失败: {}", e))?;
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                let ownerkey_str: String = row.get(0)?;
+                let suitindex: i32 = row.get(1)?;
+                let desc: String = row.get(2)?;
+                Ok((ownerkey_str, suitindex, desc))
+            })
+            .map_err(|e| format!("查询装备描述失败: {}", e))?;
 
-        for row in rows {
-            if let Ok((ownerkey_str, suitindex, desc)) = row {
-                if let Ok(ok) = ownerkey_str.parse::<i64>() {
-                    equip_descs_map
-                        .entry((ok, suitindex))
-                        .or_insert_with(Vec::new)
-                        .push(desc);
-                }
+        for (ownerkey_str, suitindex, desc) in rows.flatten() {
+            if let Ok(ok) = ownerkey_str.parse::<i64>() {
+                equip_descs_map
+                    .entry((ok, suitindex))
+                    .or_default()
+                    .push(desc);
             }
         }
     }
@@ -729,11 +728,15 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
     // 第三步：处理每个角色，解析心法
     let mut roles = Vec::new();
     for role_info in role_basic_infos {
-        let normalized_name = normalize_mingyi_role_name(&role_info.owner_name, &role_info.server_name);
+        let normalized_name =
+            normalize_mingyi_role_name(&role_info.owner_name, &role_info.server_name);
 
         // 从预加载的装备描述中解析心法
         let (kungfu_id, kungfu_name) = if let Some(suit) = role_info.effective_suit {
-            let descs = equip_descs_map.get(&(role_info.owner_key, suit)).cloned().unwrap_or_default();
+            let descs = equip_descs_map
+                .get(&(role_info.owner_key, suit))
+                .cloned()
+                .unwrap_or_default();
             resolve_kungfu_from_descs(&descs, role_info.force_id)
                 .map(|(k_id, k_name)| (Some(k_id), Some(k_name)))
                 .unwrap_or((None, None))
@@ -970,9 +973,9 @@ fn scan_userdata_directory(
                     // 同账号同服务器下按角色名（trim 归一化）去重
                     // 避免目录名含不可见字符或历史残留导致同一角色重复显示
                     let normalized_name = role_name.trim();
-                    let duplicate_idx = roles
-                        .iter()
-                        .position(|r: &ParsedRole| r.server == server_name && r.name.trim() == normalized_name);
+                    let duplicate_idx = roles.iter().position(|r: &ParsedRole| {
+                        r.server == server_name && r.name.trim() == normalized_name
+                    });
 
                     if let Some(idx) = duplicate_idx {
                         // 已存在同名角色，保留装分更高的
@@ -1267,7 +1270,7 @@ fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String>
         }
 
         // 使用账号 ID（如果账号已存在则是其现有 ID，如果是新插入则是新生成的 ID）
-        let account_id_to_use = old_account_id.unwrap_or_else(|| account_id);
+        let account_id_to_use = old_account_id.unwrap_or(account_id);
 
         // 处理角色
         for parsed_role in &parsed_account.roles {
@@ -1313,7 +1316,9 @@ fn auto_parse_and_save(game_directory: &Path) -> Result<AutoParseResult, String>
                         if let Some((old_martial, old_sect)) = old_role_data {
                             if !old_martial.is_empty() {
                                 // martial 不为空，检查 sect 是否需要修正
-                                if let Some(expected_sect) = kungfu_data::get_sect_by_martial(&old_martial) {
+                                if let Some(expected_sect) =
+                                    kungfu_data::get_sect_by_martial(&old_martial)
+                                {
                                     if old_sect != expected_sect {
                                         // sect 不正确，修正 sect
                                         conn.execute(
@@ -1434,8 +1439,8 @@ pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, 
     let timestamp = db::get_local_timestamp();
 
     // 扫描 userdata 目录，只获取基本信息
-    let parsed_accounts = scan_userdata_directory_basic(&runtime_path)
-        .map_err(|e| format!("扫描目录失败: {}", e))?;
+    let parsed_accounts =
+        scan_userdata_directory_basic(&runtime_path).map_err(|e| format!("扫描目录失败: {}", e))?;
 
     if parsed_accounts.is_empty() {
         return Ok(AutoParseResult {
@@ -1454,7 +1459,8 @@ pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, 
     let updated_roles = 0;
 
     for parsed_account in &parsed_accounts {
-        let account_id = generate_uuid_from_key(&format!("account:{}", parsed_account.account_name));
+        let account_id =
+            generate_uuid_from_key(&format!("account:{}", parsed_account.account_name));
 
         // 检查账号是否存在
         let old_account_id: Option<String> = conn
@@ -1482,7 +1488,7 @@ pub fn import_local_accounts(game_directory: String) -> Result<AutoParseResult, 
         }
 
         // 使用账号 ID（如果账号已存在则是其现有 ID，如果是新插入则是新生成的 ID）
-        let account_id_to_use = old_account_id.unwrap_or_else(|| account_id);
+        let account_id_to_use = old_account_id.unwrap_or(account_id);
 
         // 处理角色 - 只插入基本信息，不包含门派/心法/装分
         for parsed_role in &parsed_account.roles {
@@ -1570,7 +1576,10 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
     // 数据源1：茗伊全局库（!all-users），含心法解析与角色等级
     let mingyi_roles = match read_mingyi_role_info(&runtime_path) {
         Ok(roles) => {
-            log::info!("[AnalyzeRoles] 从茗伊全局库读取到 {} 个角色信息", roles.len());
+            log::info!(
+                "[AnalyzeRoles] 从茗伊全局库读取到 {} 个角色信息",
+                roles.len()
+            );
             roles
         }
         Err(e) => {
@@ -1640,11 +1649,7 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
             } else {
                 conn.execute(
                     "UPDATE roles SET level = ?, updated_at = ? WHERE id = ?",
-                    params![
-                        stat.level as i64,
-                        timestamp,
-                        existing_role_id,
-                    ],
+                    params![stat.level as i64, timestamp, existing_role_id,],
                 )
                 .map_err(|e| format!("更新角色等级失败: {}", e))?;
                 log::warn!(
@@ -1762,10 +1767,10 @@ pub struct PreviewableRole {
     pub name: String,
     pub region: String,
     pub server: String,
-    pub force_name: Option<String>,    // 门派名称
-    pub kungfu_name: Option<String>,   // 心法名称
-    pub equipment_score: i32,          // 装分（当前有效套装）
-    pub already_imported: bool,        // 是否已在应用中导入
+    pub force_name: Option<String>,  // 门派名称
+    pub kungfu_name: Option<String>, // 心法名称
+    pub equipment_score: i32,        // 装分（当前有效套装）
+    pub already_imported: bool,      // 是否已在应用中导入
 }
 
 /// 可导入的账号预览项（按账号分组）
@@ -1828,8 +1833,11 @@ pub fn preview_importable_roles(
     // 查询数据库，构建已导入角色信息映射（按 name@server 唯一）
     // 含 sect/martial/equipment_score，用于已导入角色在实时扫描缺失时回退显示
     let conn = db::init_db().map_err(|e| format!("数据库初始化失败: {}", e))?;
-    let mut imported_info: std::collections::HashMap<String, (Option<String>, Option<String>, Option<i32>)> =
-        std::collections::HashMap::new();
+    #[allow(clippy::type_complexity)]
+    let mut imported_info: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>, Option<i32>),
+    > = std::collections::HashMap::new();
     {
         let mut stmt = conn
             .prepare("SELECT name, server, sect, martial, equipment_score FROM roles")
@@ -1841,13 +1849,16 @@ pub fn preview_importable_roles(
                 let sect: Option<String> = row.get(2)?;
                 let martial: Option<String> = row.get(3)?;
                 let equipment_score: Option<i32> = row.get(4)?;
-                Ok((format!("{}@{}", name, server), sect, martial, equipment_score))
+                Ok((
+                    format!("{}@{}", name, server),
+                    sect,
+                    martial,
+                    equipment_score,
+                ))
             })
             .map_err(|e| format!("查询角色失败: {}", e))?;
-        for row in rows {
-            if let Ok((key, sect, martial, equipment_score)) = row {
-                imported_info.insert(key, (sect, martial, equipment_score));
-            }
+        for (key, sect, martial, equipment_score) in rows.flatten() {
+            imported_info.insert(key, (sect, martial, equipment_score));
         }
     }
 
@@ -1969,7 +1980,10 @@ pub fn import_selected_roles(
     use std::collections::HashMap;
     let mut grouped: HashMap<String, Vec<&ImportRoleItem>> = HashMap::new();
     for item in &roles {
-        grouped.entry(item.account_name.clone()).or_default().push(item);
+        grouped
+            .entry(item.account_name.clone())
+            .or_default()
+            .push(item);
     }
 
     for (account_name, role_items) in grouped {
@@ -2007,7 +2021,8 @@ pub fn import_selected_roles(
             // 从茗伊信息中查找门派/心法/装分
             let mingyi_info =
                 find_mingyi_role(&mingyi_roles, &role_item.role_name, &role_item.server);
-            let force_name = mingyi_info.and_then(|info| kungfu_data::get_force_name(info.force_id));
+            let force_name =
+                mingyi_info.and_then(|info| kungfu_data::get_force_name(info.force_id));
             let kungfu_name = mingyi_info.and_then(|info| info.kungfu_name.clone());
             let equipment_score = mingyi_info
                 .and_then(|info| info.scores.get((info.effective_suit - 1) as usize).copied())
@@ -2070,7 +2085,9 @@ pub fn import_selected_roles(
 
     log::info!(
         "选择性导入完成：新增 {} 个账号，新增 {} 个角色，更新 {} 个角色",
-        new_accounts, new_roles, updated_roles
+        new_accounts,
+        new_roles,
+        updated_roles
     );
 
     Ok(AutoParseResult {
@@ -2326,12 +2343,11 @@ fn read_registry_string(hkey: &RegKey, subkey: &str, value_name: &str) -> Option
         .enum_values()
         .filter_map(|v| v.ok())
         .find(|(name, _)| name.eq_ignore_ascii_case(value_name))
-        .and_then(|(_, value)| match value {
-            winreg::RegValue { bytes, .. } => {
-                // 移除末尾的空字节并转换为字符串
-                let s = String::from_utf8_lossy(&bytes);
-                Some(s.trim_end_matches('\0').to_string())
-            }
+        .map(|(_, value)| {
+            let winreg::RegValue { bytes, .. } = value;
+            // 移除末尾的空字节并转换为字符串
+            let s = String::from_utf8_lossy(&bytes);
+            s.trim_end_matches('\0').to_string()
         })
         .filter(|s| !s.is_empty())
 }

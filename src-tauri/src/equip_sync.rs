@@ -55,10 +55,10 @@ impl TrialEquipmentSource {
             .and_then(|value| value.as_str())
             .is_some_and(|name| name.contains(&self.keyword));
         has_keyword
-            && slot.sub_type.map_or(true, |expected| {
+            && slot.sub_type.is_none_or(|expected| {
                 item.get("SubType").and_then(|value| value.as_i64()) == Some(expected)
             })
-            && slot.detail_type.map_or(true, |expected| {
+            && slot.detail_type.is_none_or(|expected| {
                 item.get("DetailType").and_then(|value| value.as_i64()) == Some(expected)
             })
     }
@@ -126,8 +126,8 @@ impl EquipRange {
 
     fn includes(self, level: i64) -> bool {
         level > 0
-            && self.min.map_or(true, |min| level >= i64::from(min))
-            && self.max.map_or(true, |max| level <= i64::from(max))
+            && self.min.is_none_or(|min| level >= i64::from(min))
+            && self.max.is_none_or(|max| level <= i64::from(max))
     }
 }
 
@@ -151,10 +151,7 @@ impl EquipSync {
         ) {
             Ok(range) => range,
             Err(reason) => {
-                warn!(
-                    "[EquipSync] 赛季「{}」{}，跳过同步",
-                    season.name, reason
-                );
+                warn!("[EquipSync] 赛季「{}」{}，跳过同步", season.name, reason);
                 return Ok(0);
             }
         };
@@ -163,7 +160,10 @@ impl EquipSync {
         // 静态配置补入最低品级或更换装备来源后阻止重新同步。
         let cache_key = Self::cache_key(&season, range, &source);
         if Self::is_season_synced_with_conn(&conn, &cache_key)? {
-            info!("[EquipSync] 赛季「{}」当前品级边界已同步，跳过", season.name);
+            info!(
+                "[EquipSync] 赛季「{}」当前品级边界已同步，跳过",
+                season.name
+            );
             return Ok(0);
         }
 
@@ -184,12 +184,17 @@ impl EquipSync {
         }
 
         let duration = start_time.elapsed();
-        info!("[EquipSync] ✓ 赛季「{}」同步完成！共同步 {} 件装备，耗时 {:?}", season.name, total_items, duration);
+        info!(
+            "[EquipSync] ✓ 赛季「{}」同步完成！共同步 {} 件装备，耗时 {:?}",
+            season.name, total_items, duration
+        );
 
         Ok(total_items)
     }
 
-    fn get_current_season_with_conn(conn: &rusqlite::Connection) -> Result<Option<Season>, SyncError> {
+    fn get_current_season_with_conn(
+        conn: &rusqlite::Connection,
+    ) -> Result<Option<Season>, SyncError> {
         // 使用 Unix 时间戳进行比较
         let now_ts = chrono::Utc::now().timestamp();
 
@@ -213,14 +218,16 @@ impl EquipSync {
 
         match result {
             Ok(season) => {
-                info!("[EquipSync] 找到当前赛季: {} (min={:?}, max={:?})",
-                    season.name, season.trial_equip_level_min, season.trial_equip_level_max);
+                info!(
+                    "[EquipSync] 找到当前赛季: {} (min={:?}, max={:?})",
+                    season.name, season.trial_equip_level_min, season.trial_equip_level_max
+                );
                 Ok(Some(season))
-            },
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 info!("[EquipSync] 未找到当前赛季，now_ts={}", now_ts);
                 Ok(None)
-            },
+            }
             Err(e) => Err(SyncError::Database(e.to_string())),
         }
     }
@@ -360,14 +367,28 @@ impl EquipSync {
         Ok((armor_items, trinket_items, weapon_items))
     }
 
+    #[allow(clippy::type_complexity)]
     fn persist_fetch_result_with_conn(
         conn: &rusqlite::Connection,
         cache_key: &str,
-        fetched: Result<(Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>), SyncError>,
+        fetched: Result<
+            (
+                Vec<serde_json::Value>,
+                Vec<serde_json::Value>,
+                Vec<serde_json::Value>,
+            ),
+            SyncError,
+        >,
     ) -> Result<usize, SyncError> {
         let (armor_items, trinket_items, weapon_items) = fetched?;
         let total_items = armor_items.len() + trinket_items.len() + weapon_items.len();
-        info!("[EquipSync] 获取到 {} 件装备（防具: {}, 饰品: {}, 武器: {}）", total_items, armor_items.len(), trinket_items.len(), weapon_items.len());
+        info!(
+            "[EquipSync] 获取到 {} 件装备（防具: {}, 饰品: {}, 武器: {}）",
+            total_items,
+            armor_items.len(),
+            trinket_items.len(),
+            weapon_items.len()
+        );
         if total_items == 0 {
             warn!("[EquipSync] 未获取到任何装备，保留现有装备数据并跳过写入");
             return Ok(0);
@@ -413,11 +434,9 @@ impl EquipSync {
         let season = Self::get_current_season_with_conn(conn)
             .map_err(|e| format!("读取当前赛季失败: {}", e))?
             .ok_or_else(|| "未找到当前赛季，无法同步装备".to_string())?;
-        let range = Self::resolve_equip_range(
-            season.trial_equip_level_min,
-            season.trial_equip_level_max,
-        )
-        .map_err(|reason| format!("当前赛季「{}」{}", season.name, reason))?;
+        let range =
+            Self::resolve_equip_range(season.trial_equip_level_min, season.trial_equip_level_max)
+                .map_err(|reason| format!("当前赛季「{}」{}", season.name, reason))?;
         Self::trial_equipment_source(&season.name)
             .map_err(|error| format!("当前赛季「{}」装备来源无效: {}", season.name, error))?;
 
@@ -434,7 +453,10 @@ impl EquipSync {
         Ok(())
     }
 
-    fn is_season_synced_with_conn(conn: &rusqlite::Connection, cache_key: &str) -> Result<bool, SyncError> {
+    fn is_season_synced_with_conn(
+        conn: &rusqlite::Connection,
+        cache_key: &str,
+    ) -> Result<bool, SyncError> {
         let result: Result<String, rusqlite::Error> = conn.query_row(
             "SELECT value FROM cache WHERE key = ?",
             [cache_key],
@@ -448,13 +470,17 @@ impl EquipSync {
         }
     }
 
-    fn mark_season_synced_with_conn(conn: &rusqlite::Connection, cache_key: &str) -> Result<(), SyncError> {
+    fn mark_season_synced_with_conn(
+        conn: &rusqlite::Connection,
+        cache_key: &str,
+    ) -> Result<(), SyncError> {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         conn.execute(
             "INSERT OR REPLACE INTO cache (key, value, updated_at) VALUES (?, ?, ?)",
             [cache_key, "1", &timestamp],
-        ).map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
+        )
+        .map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -680,8 +706,14 @@ impl EquipSync {
         Ok(())
     }
 
-    fn save_equipments_with_conn(conn: &rusqlite::Connection, armor_items: &[serde_json::Value], trinket_items: &[serde_json::Value], weapon_items: &[serde_json::Value]) -> Result<(), SyncError> {
-        let tx = conn.unchecked_transaction()
+    fn save_equipments_with_conn(
+        conn: &rusqlite::Connection,
+        armor_items: &[serde_json::Value],
+        trinket_items: &[serde_json::Value],
+        weapon_items: &[serde_json::Value],
+    ) -> Result<(), SyncError> {
+        let tx = conn
+            .unchecked_transaction()
             .map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
 
         tx.execute("DELETE FROM equipments", [])
@@ -695,26 +727,44 @@ impl EquipSync {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         ).map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
 
-        let all_items: Vec<&serde_json::Value> = armor_items.iter()
+        let all_items: Vec<&serde_json::Value> = armor_items
+            .iter()
             .chain(trinket_items.iter())
             .chain(weapon_items.iter())
             .collect();
 
         for item in all_items {
-            let id = item.get("ID").and_then(|v| v.as_i64()).map(|v| v.to_string()).unwrap_or_default();
-            
+            let id = item
+                .get("ID")
+                .and_then(|v| v.as_i64())
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+
             if id.contains('_') {
                 continue;
             }
-            
-            let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let ui_id = item.get("UiID").and_then(|v| v.as_i64()).map(|v| v.to_string()).unwrap_or_default();
-            let icon_id = item.get("_IconID")
+
+            let name = item
+                .get("Name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ui_id = item
+                .get("UiID")
+                .and_then(|v| v.as_i64())
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let icon_id = item
+                .get("_IconID")
                 .and_then(|v| v.as_i64())
                 .or_else(|| item.get("IconID").and_then(|v| v.as_i64()))
                 .unwrap_or(0) as i32;
             let level = item.get("Level").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-            let quality = item.get("Quality").and_then(|v| v.as_i64()).unwrap_or(0).to_string();
+            let quality = item
+                .get("Quality")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .to_string();
             let bind_type = item.get("BindType").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
             let sub_type = item.get("SubType").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
@@ -736,21 +786,27 @@ impl EquipSync {
                 },
             };
 
-            let attr_types = item.get("_AttrType").map(|v| v.to_string()).unwrap_or_default();
+            let attr_types = item
+                .get("_AttrType")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
             let mut all_magic: Vec<&serde_json::Value> = Vec::with_capacity(5);
             for i in 1..=5 {
-                if let Some(m) = item.get(&format!("_Magic{}Type", i)) {
+                if let Some(m) = item.get(format!("_Magic{}Type", i)) {
                     if !m.is_null() {
                         all_magic.push(m);
                     }
                 }
             }
             let attrs = serde_json::to_string(&all_magic).unwrap_or_default();
-            let recommend = item.get("_Attrs").map(|v| v.to_string()).unwrap_or_default();
+            let recommend = item
+                .get("_Attrs")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
 
             let mut all_diamonds: Vec<&serde_json::Value> = Vec::with_capacity(3);
             for i in 1..=3 {
-                if let Some(d) = item.get(&format!("_DiamondAttributeID{}", i)) {
+                if let Some(d) = item.get(format!("_DiamondAttributeID{}", i)) {
                     if !d.is_null() {
                         all_diamonds.push(d);
                     }
@@ -760,16 +816,28 @@ impl EquipSync {
             let data = item.to_string();
 
             stmt.execute(rusqlite::params![
-                &id, &name, &ui_id, icon_id, level,
-                &quality, bind_type, type_label,
-                &attr_types, &attrs, &recommend, &diamonds, &data, &timestamp,
+                &id,
+                &name,
+                &ui_id,
+                icon_id,
+                level,
+                &quality,
+                bind_type,
+                type_label,
+                &attr_types,
+                &attrs,
+                &recommend,
+                &diamonds,
+                &data,
+                &timestamp,
             ])
             .map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
         }
 
         let total = armor_items.len() + trinket_items.len() + weapon_items.len();
         drop(stmt);
-        tx.commit().map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
+        tx.commit()
+            .map_err(|e: rusqlite::Error| SyncError::Database(e.to_string()))?;
 
         info!("[EquipSync] 已保存 {} 件装备到数据库", total);
 
@@ -785,7 +853,7 @@ pub async fn equip_force_sync() -> Result<String, String> {
 
     // 验证失败时不会触及任何缓存或装备；验证通过后才会执行清理。
     EquipSync::prepare_force_sync_with_conn(&conn)?;
-    
+
     match EquipSync::sync_if_needed().await {
         Ok(count) => {
             if count > 0 {
@@ -834,8 +902,11 @@ mod tests {
             rusqlite::params![min_level, max_level],
         )
         .expect("应写入当前赛季");
-        conn.execute("INSERT INTO equipments (id, name) VALUES ('legacy', '旧装备')", [])
-            .expect("应写入历史装备");
+        conn.execute(
+            "INSERT INTO equipments (id, name) VALUES ('legacy', '旧装备')",
+            [],
+        )
+        .expect("应写入历史装备");
         conn.execute(
             "INSERT INTO cache (key, value, updated_at)
              VALUES ('equip_cache_旧赛季', '1', 'old')",
@@ -923,8 +994,7 @@ mod tests {
         // 新赛季可只确认最低品级；最高品级未确定时不得阻断同步。
         for (min_level, max_level) in [(Some(900), None), (None, Some(900))] {
             let conn = setup_force_sync_preflight_db(min_level, max_level);
-            EquipSync::prepare_force_sync_with_conn(&conn)
-                .expect("单边范围应允许强制同步");
+            EquipSync::prepare_force_sync_with_conn(&conn).expect("单边范围应允许强制同步");
 
             let equipment_count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM equipments", [], |row| row.get(0))
@@ -966,13 +1036,15 @@ mod tests {
     fn equip_range_accepts_low_level_future_season() {
         assert_eq!(
             EquipSync::resolve_equip_range(Some(50), Some(100)),
-            Ok(EquipRange { min: Some(50), max: Some(100) }),
+            Ok(EquipRange {
+                min: Some(50),
+                max: Some(100)
+            }),
             "等级压缩后的低品级范围应被接受"
         );
 
         let conn = setup_force_sync_preflight_db(Some(50), Some(100));
-        EquipSync::prepare_force_sync_with_conn(&conn)
-            .expect("低等级合法范围应允许强制同步");
+        EquipSync::prepare_force_sync_with_conn(&conn).expect("低等级合法范围应允许强制同步");
         let equipment_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM equipments", [], |row| row.get(0))
             .expect("应统计装备");
@@ -1012,7 +1084,9 @@ mod tests {
         let url = EquipSync::build_equipments_url(slot, &source, range, 1, 100)
             .expect("单边下限应能构造查询地址");
         let parsed = reqwest::Url::parse(&url).expect("应是有效 URL");
-        assert!(parsed.query_pairs().any(|(key, value)| key == "min_level" && value == "900"));
+        assert!(parsed
+            .query_pairs()
+            .any(|(key, value)| key == "min_level" && value == "900"));
         assert!(!parsed.query_pairs().any(|(key, _)| key == "max_level"));
         let filtered = EquipSync::filter_equipments_for_source(
             vec![
@@ -1038,14 +1112,22 @@ mod tests {
 
     #[test]
     fn max_only_range_is_supported_and_invalid_values_are_rejected() {
-        let max_only = EquipSync::resolve_equip_range(None, Some(900))
-            .expect("单独配置最高品级应合法");
-        assert_eq!(max_only, EquipRange { min: None, max: Some(900) });
+        let max_only =
+            EquipSync::resolve_equip_range(None, Some(900)).expect("单独配置最高品级应合法");
+        assert_eq!(
+            max_only,
+            EquipRange {
+                min: None,
+                max: Some(900)
+            }
+        );
         let source = EquipSync::trial_equipment_source("旧赛季").expect("应读取历史装备来源");
         let url = EquipSync::build_equipments_url(&source.slots[0], &source, max_only, 1, 100)
             .expect("单边上限应能构造查询地址");
         let parsed = reqwest::Url::parse(&url).expect("应是有效 URL");
-        assert!(parsed.query_pairs().any(|(key, value)| key == "max_level" && value == "900"));
+        assert!(parsed
+            .query_pairs()
+            .any(|(key, value)| key == "max_level" && value == "900"));
         assert!(!parsed.query_pairs().any(|(key, _)| key == "min_level"));
         assert!(EquipSync::resolve_equip_range(Some(-1), None).is_err());
         assert!(EquipSync::resolve_equip_range(None, Some(-1)).is_err());
@@ -1289,7 +1371,11 @@ mod tests {
             .expect("应查询装备")
             .collect::<Result<Vec<_>, _>>()
             .expect("应读取装备");
-        assert_eq!(persisted_ids, vec!["legacy".to_string()], "失败时应回滚删除操作");
+        assert_eq!(
+            persisted_ids,
+            vec!["legacy".to_string()],
+            "失败时应回滚删除操作"
+        );
         let cache_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM cache WHERE key = 'equip_cache_v2_1_min_900_max_none'",

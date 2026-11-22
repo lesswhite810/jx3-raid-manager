@@ -536,9 +536,11 @@ fn parse_file(path: &Path, mut meta: Meta, uid: &str) -> Result<Option<TrialFile
         events.retain(|event| event.kind != Kind::WeeklyCredit);
     }
     meta.has_terminal = stage_slots.contains(&3);
-    meta.battle_activity_ms = (!meta.has_terminal)
-        .then(|| battle_activity_ms.unwrap_or(0))
-        .unwrap_or(0);
+    meta.battle_activity_ms = if !meta.has_terminal {
+        battle_activity_ms.unwrap_or(0)
+    } else {
+        0
+    };
     for event in &mut events {
         event.saved_progress =
             matches!(event.kind, Kind::Stage { .. }) && save_times.contains(&event.timestamp_ms);
@@ -790,9 +792,11 @@ mod tests {
         TrialFile {
             meta: Meta {
                 map_id: map,
-                battle_activity_ms: (!has_terminal)
-                    .then(|| events.first().map(|event| event.timestamp_ms).unwrap_or(0))
-                    .unwrap_or(0),
+                battle_activity_ms: if !has_terminal {
+                    events.first().map(|event| event.timestamp_ms).unwrap_or(0)
+                } else {
+                    0
+                },
                 has_terminal,
                 boss_name: Some(boss.into()),
             },
@@ -924,8 +928,7 @@ mod tests {
             .expect("reparsed entry should be available again");
         assert_eq!(reparsed.events[0].timestamp_ms, 1_000);
 
-        cache
-            .prune_idle(Instant::now() + FILE_CACHE_IDLE + Duration::from_secs(1));
+        cache.prune_idle(Instant::now() + FILE_CACHE_IDLE + Duration::from_secs(1));
         assert!(
             !cache.entries.contains_key(&first),
             "idle entry must not remain resident forever"
@@ -1091,8 +1094,16 @@ mod tests {
         first.saved_progress = false;
         let files = vec![
             file(146, "寅", vec![first]),
-            file(146, "濯尘", vec![event(later, Kind::Stage { layer: 6, stage: 2 })]),
-            file(146, "叶冬辰", vec![event(later + 1000, Kind::Finish { layer: None })]),
+            file(
+                146,
+                "濯尘",
+                vec![event(later, Kind::Stage { layer: 6, stage: 2 })],
+            ),
+            file(
+                146,
+                "叶冬辰",
+                vec![event(later + 1000, Kind::Finish { layer: None })],
+            ),
         ];
         let candidates = group("123456", files, 0, 0);
         assert_eq!(candidates.len(), 1);
@@ -1412,12 +1423,18 @@ mod tests {
                 file(
                     143,
                     "濯尘",
-                    vec![event(next_reset + 3_600_000, Kind::Stage { layer: 6, stage: 2 })],
+                    vec![event(
+                        next_reset + 3_600_000,
+                        Kind::Stage { layer: 6, stage: 2 },
+                    )],
                 ),
                 file(
                     143,
                     "藤原樱奈",
-                    vec![event(next_reset + 3_900_000, Kind::Finish { layer: Some(6) })],
+                    vec![event(
+                        next_reset + 3_900_000,
+                        Kind::Finish { layer: Some(6) },
+                    )],
                 ),
             ],
             0,

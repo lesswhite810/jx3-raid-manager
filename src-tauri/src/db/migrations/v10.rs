@@ -14,9 +14,7 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 
     // 注意：事务由调用方管理，不需要手动 BEGIN TRANSACTION
 
-    if let Err(e) = do_migrate(conn) {
-        return Err(e);
-    }
+    do_migrate(conn)?;
 
     log::info!("========== V10 迁移完成 ==========");
     Ok(())

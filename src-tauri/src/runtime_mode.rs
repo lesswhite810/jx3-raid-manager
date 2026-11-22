@@ -46,7 +46,9 @@ pub fn detect_runtime_mode_for_executable(executable_path: &Path) -> RuntimeMode
 }
 
 pub fn detect_current_runtime_mode() -> Result<RuntimeMode, String> {
-    Ok(detect_runtime_mode_for_executable(&current_executable_path()?))
+    Ok(detect_runtime_mode_for_executable(
+        &current_executable_path()?,
+    ))
 }
 
 #[cfg(test)]
@@ -88,7 +90,8 @@ mod tests {
     fn treats_versioned_release_executable_as_portable_even_if_uninstall_exists() {
         let temp_dir = TestTempDir::new();
         let exe_path = temp_dir.path().join("JX3RaidManager_v2.1.18.exe");
-        fs::write(temp_dir.path().join("uninstall.exe"), "").expect("uninstall marker should exist");
+        fs::write(temp_dir.path().join("uninstall.exe"), "")
+            .expect("uninstall marker should exist");
 
         assert_eq!(
             detect_runtime_mode_for_executable(&exe_path),
@@ -100,7 +103,8 @@ mod tests {
     fn treats_unversioned_executable_with_uninstall_marker_as_installer() {
         let temp_dir = TestTempDir::new();
         let exe_path = temp_dir.path().join("JX3RaidManager.exe");
-        fs::write(temp_dir.path().join("uninstall.exe"), "").expect("uninstall marker should exist");
+        fs::write(temp_dir.path().join("uninstall.exe"), "")
+            .expect("uninstall marker should exist");
 
         assert_eq!(
             detect_runtime_mode_for_executable(&exe_path),

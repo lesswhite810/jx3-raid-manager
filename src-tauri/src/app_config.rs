@@ -11,7 +11,9 @@ use crate::db;
 /// - `Exit`：直接退出应用
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum CloseBehavior {
+    #[default]
     Ask,
     Minimize,
     Exit,
@@ -37,19 +39,15 @@ impl CloseBehavior {
     }
 }
 
-impl Default for CloseBehavior {
-    fn default() -> Self {
-        CloseBehavior::Ask
-    }
-}
-
 /// 副本管理的显示模式。
 ///
 /// - `Current`：当前模式，进入副本管理直接显示 CD 概览表（默认，新用户与升级用户一致）
 /// - `History`：历史模式，还原页签结构（团队副本 / 试炼之地 / 百战），团队副本默认落在收藏界面
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum RaidViewMode {
+    #[default]
     Current,
     History,
 }
@@ -69,12 +67,6 @@ impl RaidViewMode {
             "history" => RaidViewMode::History,
             _ => RaidViewMode::Current,
         }
-    }
-}
-
-impl Default for RaidViewMode {
-    fn default() -> Self {
-        RaidViewMode::Current
     }
 }
 
@@ -176,10 +168,9 @@ fn read_app_config(conn: &rusqlite::Connection) -> Result<AppConfig, String> {
     let show_weekly_raids =
         show_weekly_raids_str.is_empty() || show_weekly_raids_str.eq_ignore_ascii_case("true");
     // 自动隐藏非满级角色是新增配置项：缺少该 key 的历史配置必须保持关闭。
-    let hide_non_max_level_roles =
-        read_value(conn, KEY_HIDE_NON_MAX_LEVEL_ROLES)?
-            .unwrap_or_default()
-            .eq_ignore_ascii_case("true");
+    let hide_non_max_level_roles = read_value(conn, KEY_HIDE_NON_MAX_LEVEL_ROLES)?
+        .unwrap_or_default()
+        .eq_ignore_ascii_case("true");
 
     Ok(AppConfig {
         game_directory,
@@ -573,7 +564,8 @@ mod tests {
     }
 
     #[test]
-    fn trial_capture_requires_both_master_and_its_own_switch() {        let mut config = read_app_config(&setup_test_db()).unwrap();
+    fn trial_capture_requires_both_master_and_its_own_switch() {
+        let mut config = read_app_config(&setup_test_db()).unwrap();
         config.auto_scan_enabled = true;
         config.trial_screenshot_recognition_enabled = false;
         assert!(!is_trial_screenshot_capture_enabled(&config));
@@ -605,8 +597,10 @@ mod tests {
 
     #[test]
     fn close_behavior_is_persisted_across_reopen() {
-        let path =
-            std::env::temp_dir().join(format!("jx3-close-behavior-{}.sqlite", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!(
+            "jx3-close-behavior-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             create_app_config_table(&conn);

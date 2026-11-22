@@ -41,7 +41,7 @@ fn check_webview2() -> Result<String, String> {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // 解析版本号
-                let version = stdout.trim().split_whitespace().last().unwrap_or("unknown");
+                let version = stdout.split_whitespace().last().unwrap_or("unknown");
                 Ok(format!("WebView2 已安装，版本: {}", version))
             } else {
                 // 尝试查询用户级安装
@@ -58,7 +58,7 @@ fn check_webview2() -> Result<String, String> {
                 if let Ok(output2) = output2 {
                     if output2.status.success() {
                         let stdout = String::from_utf8_lossy(&output2.stdout);
-                        let version = stdout.trim().split_whitespace().last().unwrap_or("unknown");
+                        let version = stdout.split_whitespace().last().unwrap_or("unknown");
                         return Ok(format!("WebView2 已安装（用户级），版本: {}", version));
                     }
                 }
@@ -320,9 +320,9 @@ fn main() {
             app_config::set_trial_screenshot_recognition_enabled,
             app_config::set_auto_refresh_equip_score_enabled,
             app_config::set_close_behavior,
-    app_config::set_raid_view_mode,
-    app_config::set_show_weekly_raids_enabled,
-    app_config::set_hide_non_max_level_roles_enabled,
+            app_config::set_raid_view_mode,
+            app_config::set_show_weekly_raids_enabled,
+            app_config::set_hide_non_max_level_roles_enabled,
             app_config::get_theme,
             app_config::set_theme,
             // JX3 进程检测（C 阶段）

@@ -69,10 +69,24 @@ jobs:
       - name: 构建前端产物（generate_context 依赖 ../dist）
         run: npm run build
 
+      - name: Rust 工具链组件（clippy / rustfmt）
+        shell: bash
+        run: rustup component add clippy rustfmt
+
+      - name: Cargo 格式检查（rustfmt）
+        shell: bash
+        working-directory: src-tauri
+        run: cargo fmt --check 2>&1
+
       - name: Cargo 检查（编译告警与类型）
         shell: bash
         working-directory: src-tauri
         run: cargo check --release 2>&1
+
+      - name: Cargo Clippy（拒绝新增告警）
+        shell: bash
+        working-directory: src-tauri
+        run: cargo clippy --release --all-targets -- -D warnings 2>&1
 
       - name: Cargo 测试
         shell: bash

@@ -124,10 +124,13 @@ fn reward_and_unflipped_screenshots_to_isolated_record() {
         }
         Ok(())
     });
-    let rows: Vec<(u8, String, String)> = db.prepare(
-        "SELECT flipped_index,card_2,card_3 FROM trial_draws ORDER BY receipt_time"
-    ).unwrap().query_map([], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))
-        .unwrap().collect::<Result<_, _>>().unwrap();
+    let rows: Vec<(u8, String, String)> = db
+        .prepare("SELECT flipped_index,card_2,card_3 FROM trial_draws ORDER BY receipt_time")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
     assert_eq!(
         rows,
         [

@@ -68,6 +68,7 @@ impl SettlementRejectReason {
 ///
 /// 输入中的所有 JCL（包括未配置副本）仅用于消除相邻尝试、切图和未闭合战斗
 /// 的歧义；若不存在目标首领候选，本函数不会读取 chatlog 或重扫其它 JCL 内容。
+#[allow(clippy::too_many_arguments)]
 pub(super) fn select_settlement_promotions(
     chatlogs: &[ChatlogMeta],
     expected_uid: &str,
@@ -95,11 +96,7 @@ pub(super) fn select_settlement_promotions(
         if covered_raids.contains(&raid.raid_id) {
             continue;
         }
-        if !raid
-            .bosses
-            .iter()
-            .any(|(_, name)| name == &jcl.boss_name)
-        {
+        if !raid.bosses.iter().any(|(_, name)| name == &jcl.boss_name) {
             continue;
         }
         let Some(analysis) = jcl_analyses.get(&jcl.file_name) else {
@@ -238,14 +235,11 @@ fn has_ambiguous_attempt_boundary(
         }
         if let Some(analysis) = jcl_analyses.get(&jcl.file_name) {
             // 已配置 JCL 直接复用本轮分析出的战斗边界，避免重复读大文件。
-            if analysis.fight_start_ms > 0
-                && analysis.fight_end_ms >= analysis.fight_start_ms
-            {
+            if analysis.fight_start_ms > 0 && analysis.fight_end_ms >= analysis.fight_start_ms {
                 let tolerance_ms = NEIGHBOR_BOUNDARY_TOLERANCE_SECS * 1000;
                 if (analysis.fight_end_ms - candidate_end_ms).abs() <= tolerance_ms
                     || (analysis.fight_start_ms < settlement_end_ms
-                        && analysis.fight_end_ms
-                            > candidate_end_ms.saturating_sub(tolerance_ms))
+                        && analysis.fight_end_ms > candidate_end_ms.saturating_sub(tolerance_ms))
                 {
                     return true;
                 }
@@ -382,7 +376,8 @@ mod tests {
             .unwrap();
             drop(conn);
             assert_eq!(
-                settlement_check(&metas_of(&[path.clone()]), "123456", 105, 200).is_ok(),
+                settlement_check(&metas_of(std::slice::from_ref(&path)), "123456", 105, 200)
+                    .is_ok(),
                 expected,
                 "奖励时间 {reward_time}"
             );
@@ -410,7 +405,7 @@ mod tests {
         let (dir, jcl_path) = write_target_jcl("promotion");
         let file_name = jcl_path.file_name().unwrap().to_string_lossy().into_owned();
         let promotions = select_settlement_promotions(
-            &metas_of(&[path.clone()]),
+            &metas_of(std::slice::from_ref(&path)),
             "123456",
             &[target_jcl(&file_name)],
             &target_analyses(&file_name),
@@ -474,7 +469,7 @@ mod tests {
         let file_name = jcl_path.file_name().unwrap().to_string_lossy().into_owned();
         assert!(
             select_settlement_promotions(
-                &metas_of(&[path.clone()]),
+                &metas_of(std::slice::from_ref(&path)),
                 "123456",
                 &[target_jcl(&file_name)],
                 &target_analyses(&file_name),
@@ -606,7 +601,7 @@ mod tests {
         let stale_neighbor = write_neighbor("interrupted-old.jcl", 60);
         assert_eq!(
             select_settlement_promotions(
-                &metas_of(&[path.clone()]),
+                &metas_of(std::slice::from_ref(&path)),
                 "123456",
                 &[target_jcl(&file_name), stale_neighbor],
                 &target_analyses(&file_name),
@@ -624,7 +619,7 @@ mod tests {
         let live_neighbor = write_neighbor("interrupted-live.jcl", 104);
         assert!(
             select_settlement_promotions(
-                &metas_of(&[path.clone()]),
+                &metas_of(std::slice::from_ref(&path)),
                 "123456",
                 &[target_jcl(&file_name), live_neighbor],
                 &target_analyses(&file_name),
@@ -660,7 +655,7 @@ mod tests {
         .unwrap();
         drop(conn);
         assert_eq!(
-            settlement_check(&metas_of(&[path.clone()]), "123456", 105, 200),
+            settlement_check(&metas_of(std::slice::from_ref(&path)), "123456", 105, 200),
             Err(SettlementRejectReason::NoRoleChatlog)
         );
         fs::remove_file(path).unwrap();
@@ -758,15 +753,60 @@ mod tests {
         uid: &str,
     ) -> (Vec<JclFileInfo>, HashMap<String, JclAnalysis>) {
         let files = [
-            ("2026-11-09-20-03-25-25人普通洛阳之战(835)-突利和顺(139306).jcl", 1794225205000i64, 1794226201000, true),
-            ("2026-11-09-20-11-41-25人普通洛阳之战(835)-田承嗣(139329).jcl", 1794225501000, 0, false),
-            ("2026-11-09-20-15-00-25人普通洛阳之战(835)-田承嗣(139329).jcl", 1794226100000, 1794226850000, true),
-            ("2026-11-09-20-21-20-25人普通洛阳之战(835)-拜火燎原团士兵(140666).jcl", 1794226880000, 1794226960000, false),
-            ("2026-11-09-20-29-30-25人普通洛阳之战(835)-伊曼·寂夜(139319).jcl", 1794227370000, 1794227453000, true),
-            ("2026-11-09-20-32-49-25人普通洛阳之战(835)-阿史那承庆(139323).jcl", 1794227569000, 1794228035000, true),
-            ("2026-11-09-20-45-49-25人普通洛阳之战(835)-煞将(139308).jcl", 1794227949000, 1794228397000, false),
-            ("2026-11-09-20-47-33-25人普通洛阳之战(835)-李复(139332).jcl", 1794228253000, 1794228608000, false),
-            ("2026-11-09-20-51-00-25人普通洛阳之战(835)-史朝义(139312).jcl", 1794228660000, 1794229061000, false),
+            (
+                "2026-11-09-20-03-25-25人普通洛阳之战(835)-突利和顺(139306).jcl",
+                1794225205000i64,
+                1794226201000,
+                true,
+            ),
+            (
+                "2026-11-09-20-11-41-25人普通洛阳之战(835)-田承嗣(139329).jcl",
+                1794225501000,
+                0,
+                false,
+            ),
+            (
+                "2026-11-09-20-15-00-25人普通洛阳之战(835)-田承嗣(139329).jcl",
+                1794226100000,
+                1794226850000,
+                true,
+            ),
+            (
+                "2026-11-09-20-21-20-25人普通洛阳之战(835)-拜火燎原团士兵(140666).jcl",
+                1794226880000,
+                1794226960000,
+                false,
+            ),
+            (
+                "2026-11-09-20-29-30-25人普通洛阳之战(835)-伊曼·寂夜(139319).jcl",
+                1794227370000,
+                1794227453000,
+                true,
+            ),
+            (
+                "2026-11-09-20-32-49-25人普通洛阳之战(835)-阿史那承庆(139323).jcl",
+                1794227569000,
+                1794228035000,
+                true,
+            ),
+            (
+                "2026-11-09-20-45-49-25人普通洛阳之战(835)-煞将(139308).jcl",
+                1794227949000,
+                1794228397000,
+                false,
+            ),
+            (
+                "2026-11-09-20-47-33-25人普通洛阳之战(835)-李复(139332).jcl",
+                1794228253000,
+                1794228608000,
+                false,
+            ),
+            (
+                "2026-11-09-20-51-00-25人普通洛阳之战(835)-史朝义(139312).jcl",
+                1794228660000,
+                1794229061000,
+                false,
+            ),
         ];
         let mut infos = Vec::new();
         let mut analyses = HashMap::new();
@@ -775,10 +815,7 @@ mod tests {
             let stem = name.trim_end_matches(".jcl");
             // 结构：<date-time>-<副本名>(<map_id>)-<首领名>(<模板ID>)
             let boss_open = stem.rfind('(').unwrap();
-            let boss_id: i64 = stem[boss_open + 1..]
-                .trim_end_matches(')')
-                .parse()
-                .unwrap();
+            let boss_id: i64 = stem[boss_open + 1..].trim_end_matches(')').parse().unwrap();
             let before = &stem[..boss_open];
             // before 以 "-史朝义" 结尾；boss_name 是最后一个 '-' 之后、boss_open 之前的段
             let dash = before.rfind('-').unwrap();
@@ -835,6 +872,7 @@ mod tests {
         .collect();
 
         // （角色 uid，JCL 副本显示名，map_id，raids.id，应补强文件，不应补强文件）
+        #[allow(clippy::type_complexity)]
         let cases: [(&str, &str, i64, &str, &str, &[&str]); 2] = [
             (
                 "432345564243886337",
@@ -858,11 +896,10 @@ mod tests {
         ];
 
         for (uid, display, map_id, raid_id, expected, rejected) in cases {
-            let base = std::path::Path::new(
-                r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data",
-            )
-            .join(format!("{uid}@zhcn_hd"))
-            .join("userdata");
+            let base =
+                std::path::Path::new(r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data")
+                    .join(format!("{uid}@zhcn_hd"))
+                    .join("userdata");
             let logs_dir = base.join("combat_logs");
             let chatlogs_dir = base.join("chat_log");
 
@@ -879,10 +916,7 @@ mod tests {
                 }
                 let stem = name.trim_end_matches(".jcl");
                 let boss_open = stem.rfind('(').unwrap();
-                let boss_id: i64 = stem[boss_open + 1..]
-                    .trim_end_matches(')')
-                    .parse()
-                    .unwrap();
+                let boss_id: i64 = stem[boss_open + 1..].trim_end_matches(')').parse().unwrap();
                 let before = &stem[..boss_open];
                 let dash = before.rfind('-').unwrap();
                 let boss_name = before[dash + 1..].to_owned();
@@ -917,13 +951,9 @@ mod tests {
                     .map(|p| p.parse().unwrap())
                     .collect();
                 let timestamp = hms(time_parts[0], time_parts[1], time_parts[2]);
-                let analysis = crate::mingyi::drop_scanner::analyze_jcl(
-                    &path,
-                    &boss_name,
-                    boss_id,
-                    &bosses,
-                )
-                .unwrap_or_else(|| panic!("analyze_jcl failed: {name}"));
+                let analysis =
+                    crate::mingyi::drop_scanner::analyze_jcl(&path, &boss_name, boss_id, &bosses)
+                        .unwrap_or_else(|| panic!("analyze_jcl failed: {name}"));
                 infos.push(JclFileInfo {
                     file_name: name.to_owned(),
                     timestamp,
@@ -989,9 +1019,8 @@ mod tests {
     #[ignore]
     fn real_world_full_history_audit() {
         use crate::mingyi::drop_scanner::analyze_jcl;
-        let data_root = std::path::Path::new(
-            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data",
-        );
+        let data_root =
+            std::path::Path::new(r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data");
         // 各角色共用同一组洛阳之战副本配置（含 10/25 两种显示名）。
         let luoyang_bosses: Vec<(String, String)> = [
             ("luoyangzhizhan_1", "突利和顺"),
@@ -1071,8 +1100,7 @@ mod tests {
                 let Some(map_open) = stem[..boss_open].rfind('(') else {
                     continue;
                 };
-                let Ok(boss_id) = stem[boss_open + 1..].trim_end_matches(')').parse::<i64>()
-                else {
+                let Ok(boss_id) = stem[boss_open + 1..].trim_end_matches(')').parse::<i64>() else {
                     continue;
                 };
                 let before_boss = &stem[..boss_open];
@@ -1081,7 +1109,9 @@ mod tests {
                 };
                 let boss_name = before_boss[dash + 1..].to_owned();
                 let raid_before = &before_boss[..dash];
-                let Ok(map_id) = raid_before[map_open + 1..].trim_end_matches(')').parse::<i64>()
+                let Ok(map_id) = raid_before[map_open + 1..]
+                    .trim_end_matches(')')
+                    .parse::<i64>()
                 else {
                     continue;
                 };
@@ -1164,9 +1194,8 @@ mod tests {
     #[ignore]
     fn real_world_luoyang_completeness_audit() {
         use crate::mingyi::drop_scanner::{analyze_jcl, cluster_raid_instances};
-        let data_root = std::path::Path::new(
-            r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data",
-        );
+        let data_root =
+            std::path::Path::new(r"E:\Game\SeasunGame\Game\JX3\bin\zhcn_hd\interface\my#data");
         let luoyang_bosses: Vec<(String, String)> = [
             ("luoyangzhizhan_1", "突利和顺"),
             ("luoyangzhizhan_2", "田承嗣"),
@@ -1177,10 +1206,7 @@ mod tests {
         .iter()
         .map(|(id, name)| ((*id).to_owned(), (*name).to_owned()))
         .collect();
-        let expected_names: Vec<&str> = luoyang_bosses
-            .iter()
-            .map(|(_, n)| n.as_str())
-            .collect();
+        let expected_names: Vec<&str> = luoyang_bosses.iter().map(|(_, n)| n.as_str()).collect();
         let raids = vec![
             RaidEntry {
                 name: "洛阳之战".to_owned(),
@@ -1248,8 +1274,7 @@ mod tests {
                 let Some(map_open) = stem[..boss_open].rfind('(') else {
                     continue;
                 };
-                let Ok(boss_id) = stem[boss_open + 1..].trim_end_matches(')').parse::<i64>()
-                else {
+                let Ok(boss_id) = stem[boss_open + 1..].trim_end_matches(')').parse::<i64>() else {
                     continue;
                 };
                 let before_boss = &stem[..boss_open];
@@ -1258,7 +1283,9 @@ mod tests {
                 };
                 let boss_name = before_boss[dash + 1..].to_owned();
                 let raid_before = &before_boss[..dash];
-                let Ok(map_id) = raid_before[map_open + 1..].trim_end_matches(')').parse::<i64>()
+                let Ok(map_id) = raid_before[map_open + 1..]
+                    .trim_end_matches(')')
+                    .parse::<i64>()
                 else {
                     continue;
                 };
@@ -1346,9 +1373,7 @@ mod tests {
                 }
             }
         }
-        println!(
-            "=== 洛阳实例总数 {instance_total}，非 5/5 的 {incomplete} 个 ==="
-        );
+        println!("=== 洛阳实例总数 {instance_total}，非 5/5 的 {incomplete} 个 ===");
     }
 
     /// 毫秒时间戳 → "yyyy-MM-dd HH:mm" 本地(+8)字符串，仅审计打印用。

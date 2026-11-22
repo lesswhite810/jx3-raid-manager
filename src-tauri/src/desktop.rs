@@ -137,11 +137,12 @@ fn native_restore_and_focus(
                 let mut foreground_pid = 0u32;
                 let foreground_thread = GetWindowThreadProcessId(foreground, &mut foreground_pid);
                 let current_thread = GetCurrentThreadId();
-                if foreground_thread != 0 && foreground_thread != current_thread {
-                    if AttachThreadInput(current_thread, foreground_thread, 1) != 0 {
-                        SetForegroundWindow(hwnd);
-                        AttachThreadInput(current_thread, foreground_thread, 0);
-                    }
+                if foreground_thread != 0
+                    && foreground_thread != current_thread
+                    && AttachThreadInput(current_thread, foreground_thread, 1) != 0
+                {
+                    SetForegroundWindow(hwnd);
+                    AttachThreadInput(current_thread, foreground_thread, 0);
                 }
             }
         }
@@ -280,8 +281,8 @@ pub fn restore_main_window(app: &tauri::AppHandle) {
     // 必须在 show() 之前读取：窗口一旦被还原成普通尺寸，就无法判断用户原本是否最大化。
     // 两个来源要取「或」而不是「先真后假」：窗口被隐藏、或被 hide 前的 unminimize 清掉
     // WS_MAXIMIZE 之后，IsZoomed 会返回 false，此时只有 tao 内部标志还留着最大化意图。
-    let restore_maximized = native_is_maximized(&window).unwrap_or(false)
-        || window.is_maximized().unwrap_or(false);
+    let restore_maximized =
+        native_is_maximized(&window).unwrap_or(false) || window.is_maximized().unwrap_or(false);
     log::info!(
         "[恢复窗口] 开始，恢复前状态: {} maximized={}",
         state(),

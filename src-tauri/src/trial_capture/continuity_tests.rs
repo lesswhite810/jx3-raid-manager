@@ -45,6 +45,7 @@ fn equipment(name: &str) -> catalog::TooltipEvidence {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn samples(session: &mut Session, values: &[(i64, Option<(u32, u8)>, bool)]) {
     session.samples = values
         .iter()
@@ -321,17 +322,19 @@ fn single_frame_after_backs_is_not_enough_to_fill_later_draw() {
 fn second_same_slot_equipment_starts_after_the_card_back_reset() {
     let first = completion(27_000, "a");
     let later = completion(29_000, "b");
-    let mut session = Session::default();
-    session.samples = VecDeque::from([
-        sample(27_200, Some((42, 2)), true, None),
-        sample(27_450, Some((42, 2)), true, None),
-        // Old tooltip must not be permitted to win the later equipment review.
-        sample(28_000, Some((42, 2)), true, Some((3, equipment("旧装备")))),
-        sample(28_250, Some((42, 2)), true, Some((3, equipment("旧装备")))),
-        sample(28_750, None, true, None),
-        sample(29_200, Some((42, 2)), true, Some((3, equipment("新装备")))),
-        sample(29_450, Some((42, 2)), true, Some((3, equipment("新装备")))),
-    ]);
+    let mut session = Session {
+        samples: VecDeque::from([
+            sample(27_200, Some((42, 2)), true, None),
+            sample(27_450, Some((42, 2)), true, None),
+            // Old tooltip must not be permitted to win the later equipment review.
+            sample(28_000, Some((42, 2)), true, Some((3, equipment("旧装备")))),
+            sample(28_250, Some((42, 2)), true, Some((3, equipment("旧装备")))),
+            sample(28_750, None, true, None),
+            sample(29_200, Some((42, 2)), true, Some((3, equipment("新装备")))),
+            sample(29_450, Some((42, 2)), true, Some((3, equipment("新装备")))),
+        ]),
+        ..Session::default()
+    };
     session.finished(first);
     session.finished(later.clone());
     let selected = evidence(&session, &later).expect("牌背后的同牌位应是第二次翻牌");

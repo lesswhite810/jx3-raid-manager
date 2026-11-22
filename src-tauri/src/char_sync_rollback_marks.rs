@@ -106,7 +106,9 @@ mod tests {
             .prepare("SELECT backup_dir, rolled_back_at FROM char_sync_rollback_marks")
             .unwrap();
         let rows: Vec<(String, String)> = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .unwrap()
             .filter_map(Result::ok)
             .collect();
@@ -132,7 +134,9 @@ mod tests {
         .unwrap();
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM char_sync_rollback_marks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM char_sync_rollback_marks", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1, "INSERT OR REPLACE 应覆盖而非新增");
 
@@ -160,11 +164,14 @@ mod tests {
         }
 
         let tx = conn.transaction().unwrap();
-        tx.execute("DELETE FROM char_sync_rollback_marks", []).unwrap();
+        tx.execute("DELETE FROM char_sync_rollback_marks", [])
+            .unwrap();
         tx.commit().unwrap();
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM char_sync_rollback_marks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM char_sync_rollback_marks", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }

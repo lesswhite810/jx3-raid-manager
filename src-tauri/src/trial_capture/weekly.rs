@@ -32,10 +32,7 @@ fn is_label_gray(bgra: &[u8]) -> bool {
     let g = bgra[1] as u16;
     let r = bgra[2] as u16;
     let sum = r + g + b;
-    sum >= 400
-        && r.abs_diff(g) <= 25
-        && g.abs_diff(b) <= 25
-        && r.abs_diff(b) <= 30
+    sum >= 400 && r.abs_diff(g) <= 25 && g.abs_diff(b) <= 25 && r.abs_diff(b) <= 30
 }
 
 /// 阶段一：灰白标签行定位。
@@ -45,11 +42,7 @@ fn is_label_gray(bgra: &[u8]) -> bool {
 /// y 下限取 59%：结算页上半部的奖励数量「x 36」等灰白大字（y 55%~58%）
 /// 行命中数远超标签行（实测 total 2265..3434 vs 标签 530），必须排除；
 /// x 上限取 39%：右侧图标边缘（x≥1010 @2560）也会命中灰白判定。
-fn label_band(
-    pixels: &[u8],
-    width: usize,
-    _height: usize,
-) -> Option<(usize, usize)> {
+fn label_band(pixels: &[u8], width: usize, _height: usize) -> Option<(usize, usize)> {
     let rows = height_px(pixels, width);
     if width < 640 || rows < 360 {
         return None;
@@ -92,7 +85,7 @@ fn label_band(
             gap += 1;
             if gap > 2 {
                 let s = start.take().unwrap_or_default();
-                if last_hit - s + 1 >= MIN_ROWS && last_hit - s + 1 <= MAX_BAND_ROWS {
+                if last_hit - s + 1 >= MIN_ROWS && last_hit - s < MAX_BAND_ROWS {
                     let total: usize = counts[s..=last_hit].iter().sum();
                     if best.is_none_or(|(_, _, best_total)| total > best_total) {
                         best = Some((s, last_hit, total));
@@ -103,7 +96,7 @@ fn label_band(
         }
     }
     if let Some(s) = start {
-        if last_hit - s + 1 >= MIN_ROWS && last_hit - s + 1 <= MAX_BAND_ROWS {
+        if last_hit - s + 1 >= MIN_ROWS && last_hit - s < MAX_BAND_ROWS {
             let total: usize = counts[s..=last_hit].iter().sum();
             if best.is_none_or(|(_, _, best_total)| total > best_total) {
                 best = Some((s, last_hit, total));
@@ -431,8 +424,12 @@ fn read_digit_with(
     // 开口; 而「8」「9」的 row1 中部是环体/竖笔（模板 0.7）。
     // best ∈ {8,9} 且 row1 中部近空时改判 3。
     let digit = if digit == 8 || digit == 9 {
-        let mid_top_empty = grid[1 * GRID_W + 1] < 0.1 && grid[1 * GRID_W + 2] < 0.1;
-        if mid_top_empty { 3 } else { digit }
+        let mid_top_empty = grid[GRID_W + 1] < 0.1 && grid[GRID_W + 2] < 0.1;
+        if mid_top_empty {
+            3
+        } else {
+            digit
+        }
     } else {
         digit
     };
@@ -630,8 +627,15 @@ mod tests {
             }
             checked += 1;
         }
-        println!("探针完成: 校验 {checked} 个样本, 跳过 {skipped} 个, 失败 {}", failures.len());
+        println!(
+            "探针完成: 校验 {checked} 个样本, 跳过 {skipped} 个, 失败 {}",
+            failures.len()
+        );
         assert!(checked > 0, "探针目录中没有任何可校验的 .bgra 样本");
-        assert!(failures.is_empty(), "识别失败样本:\n{}", failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "识别失败样本:\n{}",
+            failures.join("\n")
+        );
     }
 }

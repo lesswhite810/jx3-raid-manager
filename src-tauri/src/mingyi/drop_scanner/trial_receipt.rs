@@ -127,7 +127,7 @@ fn collect_trial_receipt_times_ms(
 ///
 /// 生产路径已改用 [`collect_trial_draws_late_with_index`]；此无索引版本仅由
 /// 测试与回放使用，保留用于行为对照。
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub(super) fn collect_trial_draws_late(
     account_dir: &Path,
     expected_uid: &str,
@@ -383,8 +383,8 @@ fn build_draw_evidence(expected_uid: &str, rows: Vec<ChatReceiptRow>) -> Vec<Tri
         }
 
         let ambiguous = leaves.len() != 1;
-        let companion_rewards = (!ambiguous)
-            .then(|| {
+        let companion_rewards = if !ambiguous {
+            {
                 rows.iter()
                     .filter(|row| row.kind == "MSG_ITEM")
                     .filter_map(|row| {
@@ -396,10 +396,12 @@ fn build_draw_evidence(expected_uid: &str, rows: Vec<ChatReceiptRow>) -> Vec<Tri
                         })
                     })
                     .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let stamina_parts = (!ambiguous)
-            .then(|| {
+            }
+        } else {
+            Default::default()
+        };
+        let stamina_parts = if !ambiguous {
+            {
                 rows.iter()
                     .filter(|row| row.kind == "MSG_THEW_STAMINA")
                     .filter_map(|row| {
@@ -409,8 +411,10 @@ fn build_draw_evidence(expected_uid: &str, rows: Vec<ChatReceiptRow>) -> Vec<Tri
                         })
                     })
                     .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            }
+        } else {
+            Default::default()
+        };
         let stamina_cost =
             (!stamina_parts.is_empty()).then(|| stamina_parts.iter().map(|part| part.cost).sum());
 

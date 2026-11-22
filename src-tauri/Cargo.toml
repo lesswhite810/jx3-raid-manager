@@ -2,9 +2,9 @@
 name = "jx3-raid-manager"
 version = "2.2.12"
 description = "剑网三副本管家"
-authors = ["you"]
-license = ""
-repository = ""
+authors = ["lesswhite810"]
+license = "MIT"
+repository = "https://github.com/lesswhite810/jx3-raid-manager"
 edition = "2021"
 
 [build-dependencies]

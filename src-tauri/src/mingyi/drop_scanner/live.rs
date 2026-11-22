@@ -507,11 +507,11 @@ impl Engine {
     }
 
     fn rescan_delay(&self) -> Duration {
-        self.watch
-            .as_ref()
-            .is_some_and(ChangeWatch::is_valid)
-            .then_some(HEALTHY_RESCAN)
-            .unwrap_or(FALLBACK_RESCAN)
+        if self.watch.as_ref().is_some_and(ChangeWatch::is_valid) {
+            HEALTHY_RESCAN
+        } else {
+            FALLBACK_RESCAN
+        }
     }
 
     fn refresh(&mut self, directory: &Path, activity: &Activity, now_ms: i64, watch_dirty: bool) {
@@ -1033,7 +1033,7 @@ mod tests {
         let path = fixture_path();
         let at = 1_700_000_000_000;
         let mut bytes = identity(at, "123456");
-        bytes.extend(std::iter::repeat(b'x').take(MAX_LINE_BYTES + 100));
+        bytes.extend(std::iter::repeat_n(b'x', MAX_LINE_BYTES + 100));
         bytes.push(b'\n');
         bytes.extend(terminal(at + 1_000));
         fs::write(&path, bytes).expect("write fixture");

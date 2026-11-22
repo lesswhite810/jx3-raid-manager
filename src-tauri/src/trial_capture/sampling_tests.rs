@@ -179,8 +179,8 @@ fn adaptive_sampling_recognizes_four_draws_with_dense_frames_at_different_poll_p
         for phase in [0, 137, 499, 997] {
             let mut session = Session::default();
             let target = Target {
-        layer: Some(6),
-        uid: "sampling".into(),
+                layer: Some(6),
+                uid: "sampling".into(),
                 map: 144,
             };
             let mut schedule = CaptureSchedule::default();

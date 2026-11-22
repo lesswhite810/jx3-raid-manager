@@ -308,8 +308,11 @@ fn replays_one_clearance_with_four_independent_draws_twice() {
     db::install_fresh_db_for_test(&conn).expect("初始化隔离内存数据库失败");
 
     assert_eq!(
-        db::db_upsert_auto_trial_records_with_connection(&mut conn, &[auto_record.clone()])
-            .expect("首次保存通关失败"),
+        db::db_upsert_auto_trial_records_with_connection(
+            &mut conn,
+            std::slice::from_ref(&auto_record)
+        )
+        .expect("首次保存通关失败"),
         1
     );
     assert_eq!(

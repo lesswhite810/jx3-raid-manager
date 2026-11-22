@@ -189,10 +189,11 @@ pub(super) fn card_observation(
 ) -> Option<CardObservation> {
     let selected_slot = flipped_slot(pixels, width, height)?;
     let hovered_slot = hovered_slot_in_complete_row(pixels, width, height, cursor);
-    let tooltip_rects = hovered_slot
-        .is_some()
-        .then(|| tooltip_rects_near_cursor(pixels, width, height, cursor))
-        .unwrap_or_default();
+    let tooltip_rects = if hovered_slot.is_some() {
+        tooltip_rects_near_cursor(pixels, width, height, cursor)
+    } else {
+        Default::default()
+    };
     Some(CardObservation {
         selected_slot,
         hovered_slot,
@@ -1008,6 +1009,7 @@ fn is_card_edge(bgra: &[u8]) -> bool {
     r >= 100 && g >= 85 && b <= 150 && r >= g - 15 && g >= b - 30 && r + g + b >= 280
 }
 
+#[allow(clippy::too_many_arguments)]
 fn slot_from_complete_card_row(
     pixels: &[u8],
     window_width: usize,

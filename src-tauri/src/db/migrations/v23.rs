@@ -7,10 +7,7 @@ use rusqlite::Connection;
 /// 历史迁移（V20 添加、V21/V22 沿用）的语义保持不变，由本版本统一删除
 /// 两张表上的 `equipment_unreviewed` 列。幂等：列不存在时跳过。
 pub fn migrate(conn: &Connection) -> Result<(), String> {
-    for (table, context) in [
-        ("trial_records", "试炼记录"),
-        ("trial_draws", "翻牌明细"),
-    ] {
+    for (table, context) in [("trial_records", "试炼记录"), ("trial_draws", "翻牌明细")] {
         let column_exists: bool = conn
             .query_row(
                 &format!(
