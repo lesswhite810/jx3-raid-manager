@@ -1,0 +1,6 @@
+[toolchain]
+# 固定工具链版本，保证本地与 CI 使用同一套 clippy / rustfmt 规则。
+# 升级时先本地跑过 `cargo fmt --check` 与 `cargo clippy --release --all-targets -- -D warnings` 再改这里。
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-pc-windows-msvc"]

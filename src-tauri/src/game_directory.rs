@@ -647,13 +647,7 @@ fn read_mingyi_role_info(game_directory: &Path) -> Result<Vec<MingYiRoleInfo>, S
 
         // 确定使用哪套装备解析心法
         let effective_suit = suit_index
-            .and_then(|idx| {
-                if (1..=4).contains(&idx) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
+            .filter(|&idx| (1..=4).contains(&idx))
             .or_else(|| {
                 scores
                     .iter()

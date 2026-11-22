@@ -1409,8 +1409,8 @@ mod tests {
         let height = 1080;
         let cursor = Some((width / 2 - width * 4 / 1000, height * 50 / 100));
         let mut image = settlement(width, height, &[2]);
-        for pixel in image.chunks_exact_mut(4) {
-            if pixel == [0, 0, 0, 0] {
+        for pixel in image.as_chunks_mut::<4>().0 {
+            if *pixel == [0, 0, 0, 0] {
                 pixel.copy_from_slice(&[104, 80, 65, 255]);
             }
         }

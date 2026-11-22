@@ -316,7 +316,7 @@ fn is_title_purple(bgra: &[u8]) -> bool {
 /// 将紫色标题带转换为白底黑字，最大程度消除 Tooltip 渐变、金色星级与绿字精炼。
 /// 采样阈值经实际结算图验证，四周白边由 `purple_title_rect` 的 padding 提供。
 fn mask_purple_title(pixels: &mut [u8]) {
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         let value = if is_title_purple(pixel) { 0 } else { 255 };
         pixel[0] = value;
         pixel[1] = value;

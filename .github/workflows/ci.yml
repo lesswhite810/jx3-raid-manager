@@ -55,7 +55,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          target: x86_64-pc-windows-msvc
+          # 与 src-tauri/rust-toolchain.toml 保持一致，避免新版本 clippy 突然新增告警
+          toolchain: 1.100.0
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-msvc
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
