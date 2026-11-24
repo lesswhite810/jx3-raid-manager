@@ -121,8 +121,11 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
     try {
       const scanResults = await dropScannerService.scanAllActiveRaidDrops();
       const totalScanned = scanResults.reduce((sum, r) => sum + (r.instanceCount ?? 0), 0);
+      // 未登记 / 区服不一致的账号单独计数：它们不是扫描出错，但也没扫到任何东西，
+      // 混进「失败」会让人以为程序崩了，混进「成功」则问题永远发现不了。
+      const unregisteredCount = scanResults.filter(r => r.unregisteredRole).length;
       const successCount = scanResults.filter(r => r.success).length;
-      const failedCount = scanResults.length - successCount;
+      const failedCount = scanResults.length - successCount - unregisteredCount;
       const elapsedMs = Date.now() - startedAt;
 
       setLastScanAt(Date.now());
@@ -133,8 +136,14 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
         onRecordsUpdatedRef.current?.(totalScanned);
       }
 
+      for (const result of scanResults) {
+        if (result.unregisteredRole) {
+          console.warn(`${LOG_TAG} [polling] 角色身份未匹配：${result.error ?? result.accountId}`);
+        }
+      }
+
       console.log(
-        `${LOG_TAG} [polling] 完成：账号 ${successCount}/${scanResults.length}（失败 ${failedCount}），副本实例 ${totalScanned} 个，耗时 ${elapsedMs}ms`,
+        `${LOG_TAG} [polling] 完成：账号 ${successCount}/${scanResults.length}（失败 ${failedCount}，角色未匹配 ${unregisteredCount}），副本实例 ${totalScanned} 个，耗时 ${elapsedMs}ms`,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -209,8 +218,10 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
     try {
       const scanResults = await dropScannerService.scanRaidsInRange(startMs, endMs, processStartMs);
       const totalScanned = scanResults.reduce((sum, r) => sum + (r.instanceCount ?? 0), 0);
+      // 同轮询路径：角色身份未匹配的账号单独计数，既不冒充成功也不算扫描失败。
+      const unregisteredCount = scanResults.filter(r => r.unregisteredRole).length;
       const successCount = scanResults.filter(r => r.success).length;
-      const failedCount = scanResults.length - successCount;
+      const failedCount = scanResults.length - successCount - unregisteredCount;
       const elapsedMs = Date.now() - startedAt;
 
       setLastScanAt(Date.now());
@@ -221,8 +232,14 @@ export const useDropScanner = (options: UseDropScannerOptions = {}): UseDropScan
         onRecordsUpdatedRef.current?.(totalScanned);
       }
 
+      for (const result of scanResults) {
+        if (result.unregisteredRole) {
+          console.warn(`${LOG_TAG} [manual] 角色身份未匹配：${result.error ?? result.accountId}`);
+        }
+      }
+
       console.log(
-        `${LOG_TAG} [manual] 完成：账号 ${successCount}/${scanResults.length}（失败 ${failedCount}），副本实例 ${totalScanned} 个，耗时 ${elapsedMs}ms`,
+        `${LOG_TAG} [manual] 完成：账号 ${successCount}/${scanResults.length}（失败 ${failedCount}，角色未匹配 ${unregisteredCount}），副本实例 ${totalScanned} 个，耗时 ${elapsedMs}ms`,
       );
 
       return totalScanned;

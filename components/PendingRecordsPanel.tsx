@@ -431,7 +431,10 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
     try {
       const results = await dropScannerService.scanRaidsInRange(startMs, endMs);
       const totalScanned = results.reduce((sum, r) => sum + (r.instanceCount ?? 0), 0);
-      const failedCount = results.filter(r => !r.success).length;
+      // 角色身份未匹配（未登记 / 区服不一致）既不是扫描出错，也没有扫到任何东西，
+      // 必须单独提示，否则用户只会看到「没有需要更新的记录」而查不出原因。
+      const unregistered = results.filter(result => result.unregisteredRole);
+      const failedCount = results.filter(r => !r.success && !r.unregisteredRole).length;
       const trialDrawsChanged = results.some(result => result.trialDrawsChanged);
       // 提取进行中试炼，供扫描按钮旁的提示展示（无则清空，避免过期提示）
       setManualTrialInProgress(
@@ -453,8 +456,25 @@ export const PendingRecordsPanel: React.FC<PendingRecordsPanelProps> = ({
       }
       if (failedCount > 0) {
         toast.warning(`扫描完成但有 ${failedCount} 个账号失败`);
-      } else if (totalScanned === 0 && !trialDrawsChanged) {
+      } else if (totalScanned === 0 && !trialDrawsChanged && unregistered.length === 0) {
         toast.info(`${rangeLabel}没有需要更新的副本或试炼记录`);
+      }
+      if (unregistered.length > 0) {
+        // 逐条列出角色与当前登录区服，并把「该新增」还是「该修正区服」说清楚，
+        // 用户照着做即可，不必再翻日志。
+        const details = unregistered
+          .map(result => {
+            const info = result.unregisteredRole;
+            if (!info) return '';
+            return info.storedServers.length === 0
+              ? `「${info.roleName}」未登记（当前登录区服 ${info.server}），请到角色管理中新增`
+              : `「${info.roleName}」区服不一致（当前登录 ${info.server}，库里登记 ${info.storedServers.join(' / ')}），请修正该角色的区服`;
+          })
+          .filter(line => line.length > 0)
+          .join('；');
+        toast.warning(
+          `${unregistered.length} 个账号未能识别副本记录：${details}`,
+        );
       }
     } catch (error) {
       console.error(`扫描${rangeLabel}失败:`, error);

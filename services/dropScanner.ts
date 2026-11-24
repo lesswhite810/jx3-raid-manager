@@ -27,6 +27,25 @@ export interface RaidScanOutcome {
   insertedCount: number;
   /** 正在打但尚未出终局的试炼（无则为空） */
   trialInProgress?: TrialInProgress;
+  /** 角色身份未匹配（未登记 / 区服不一致）而整轮跳过的诊断信息 */
+  unregisteredRole?: UnregisteredRoleInfo;
+}
+
+/**
+ * 角色未登记 / 区服不一致的诊断信息（与后端 UnregisteredRoleInfo 对齐）
+ *
+ * 严格按「角色名 + 区服」匹配失败时才会出现，用于告诉用户该去哪里修：
+ * 库中无同名角色 → 去角色管理新增；库中有同名角色 → 把区服改对。
+ */
+export interface UnregisteredRoleInfo {
+  /** 茗伊账号 UID */
+  uid: string;
+  /** info.jx3dat 读到的角色名 */
+  roleName: string;
+  /** info.jx3dat 读到的区服 */
+  server: string;
+  /** 库中同名角色实际登记的区服（NULL / 空值显示为「(空)」） */
+  storedServers: string[];
 }
 
 /**
@@ -47,6 +66,8 @@ export interface AccountScanResult {
   roleName?: string;
   /** 扫描到的角色所在服务器（与 roleName 配套） */
   server?: string;
+  /** 角色身份未匹配（未登记 / 区服不一致）而整轮跳过的诊断信息 */
+  unregisteredRole?: UnregisteredRoleInfo;
   /** 失败原因（失败时） */
   error?: string;
 }

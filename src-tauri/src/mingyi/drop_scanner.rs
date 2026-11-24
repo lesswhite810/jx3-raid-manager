@@ -674,43 +674,99 @@ struct DbRoleIdentity {
     region: String,
 }
 
-/// 从茗伊账号目录解析 info.jx3dat 获取角色身份，
-/// 然后查询 roles 表映射到数据库 UUID。
-///
-/// 「角色名·服务器」格式的名字回退匹配。
+/// 把「角色名·区服」规范化为角色名（区别于按空格清洗的 `normalize_role_name`）。
 ///
 /// 茗伊装备库 OwnerInfo.ownername 可能是「发白少·梦江南」格式，而 roles 表
-/// 只存角色名（如"发白少"）。仅当「·」后缀与 server 完全一致时剥掉后缀再匹配
-/// 一次；后缀不一致（如名字本身含「·」）不回退，防止误伤同名角色。
-fn match_role_name_with_server_suffix(
-    conn: &Connection,
-    role_name: &str,
-    server: &str,
-) -> Option<(String, String)> {
-    let (name_part, suffix) = role_name.split_once('·')?;
-    if suffix.is_empty() || suffix != server {
-        return None;
+/// 只存角色名（如"发白少"）。这里只做**名字清洗**：仅当「·」后缀与本次解析出的
+/// 区服完全一致时才剥掉后缀；后缀不一致说明「·」属于角色名本身，原样返回，
+/// 不猜测、不剥离。
+///
+/// 清洗后仍然按「角色名 + 区服」严格匹配 —— 这只是把同一个身份用统一写法
+/// 表达出来，并没有放宽区服条件，也不会产生任何回退分支。
+fn strip_matching_server_suffix<'a>(role_name: &'a str, server: &str) -> &'a str {
+    match role_name.split_once('·') {
+        Some((name_part, suffix)) if !name_part.is_empty() && suffix == server => name_part,
+        _ => role_name,
     }
-    conn.query_row(
-        "SELECT r.id, r.account_id FROM roles r \
+}
+
+/// 查询库中与 `role_name` 同名、但区服不匹配的角色，返回它们实际登记的区服。
+///
+/// 只用于**诊断提示**，绝不参与匹配决策：不同区服可能存在同名角色，
+/// 任何「只按角色名」的兜底都会把副本记录写到别的区服的角色身上。
+///
+/// 返回去重后的区服列表；NULL / 空值统一显示为「(空)」，让「区服没填」
+/// 这种肉眼看不出来的情况也能被用户认出来。
+fn stored_servers_for_role_name(conn: &Connection, role_name: &str) -> Vec<String> {
+    let mut statement = match conn.prepare(
+        "SELECT DISTINCT COALESCE(NULLIF(TRIM(r.server), ''), '(空)') AS stored_server \
+         FROM roles r \
          WHERE REPLACE(REPLACE(r.name, ' ', ''), '\u{3000}', '') = REPLACE(REPLACE(?1, ' ', ''), '\u{3000}', '') \
-         AND r.server = ?2 LIMIT 1",
-        params![name_part, server],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )
-    .ok()
+         ORDER BY stored_server",
+    ) {
+        Ok(statement) => statement,
+        Err(error) => {
+            log::warn!(
+                "[DropScanner] 查询同名角色区服失败 name={}: {}",
+                role_name,
+                error
+            );
+            return Vec::new();
+        }
+    };
+
+    let rows = match statement.query_map(params![role_name], |row| row.get::<_, String>(0)) {
+        Ok(rows) => rows,
+        Err(error) => {
+            log::warn!(
+                "[DropScanner] 查询同名角色区服失败 name={}: {}",
+                role_name,
+                error
+            );
+            return Vec::new();
+        }
+    };
+
+    rows.filter_map(|row| match row {
+        Ok(server) => Some(server),
+        Err(error) => {
+            log::warn!(
+                "[DropScanner] 读取同名角色区服失败 name={}: {}",
+                role_name,
+                error
+            );
+            None
+        }
+    })
+    .collect()
+}
+
+/// `resolve_db_role_identity` 的结果。
+///
+/// 三种情况必须分开：解析失败是文件问题，未登记是数据问题，
+/// 混成一个 None 会让用户完全看不出该去哪里修。
+enum RoleIdentityLookup {
+    /// 严格按「角色名 + 区服」命中 roles 表。
+    Matched(DbRoleIdentity),
+    /// `info.jx3dat` 无法解析（文件缺失 / 无 uid 字段）。
+    Unparsed,
+    /// 解析成功，但 roles 表中没有「该角色名 + 该区服」的行。
+    Unregistered(UnregisteredRoleInfo),
 }
 
 /// info.jx3dat 提供数字 uid + role_name + server，
 /// 但 records 表的 account_id/role_id 是 UUID 格式。
 /// 必须通过 role_name + server 查询 roles 表得到 UUID。
 ///
-/// 返回 None 表示角色未在数据库中登记，调用方应跳过此账号。
+/// **严格匹配，永不回退**：角色名（去空格、清掉「·区服」后缀后）+ 区服
+/// 必须同时相等。不做「只按角色名」匹配，也不对 NULL 区服做兜底 ——
+/// 不同区服存在同名角色，任何放宽都会把副本记录写到别的角色身上。
+/// 匹配失败只产出诊断信息，由用户修正登记的区服。
 fn resolve_db_role_identity(
     conn: &Connection,
     account_dir: &Path,
     game_path: &Path,
-) -> Result<Option<DbRoleIdentity>, String> {
+) -> Result<RoleIdentityLookup, String> {
     let info_path = account_dir.join("info.jx3dat");
     let identity = match parse_info_jx3dat(&info_path, Some(game_path)) {
         Some(id) => id,
@@ -719,31 +775,22 @@ fn resolve_db_role_identity(
                 "[DropScanner] 无法解析 info.jx3dat: {}",
                 info_path.display()
             );
-            return Ok(None);
+            return Ok(RoleIdentityLookup::Unparsed);
         }
     };
 
-    // 通过 role_name + server 查询 roles 表
-    // 游戏角色名不允许包含空格，但茗伊 info.jx3dat 解析时可能引入空格
-    // （如"少年 白了发" vs 数据库"少年白了发"），因此查询时去除空格后再比较
-    let result: Result<(String, String), rusqlite::Error> = conn.query_row(
-        "SELECT r.id, r.account_id FROM roles r \
-         WHERE REPLACE(REPLACE(r.name, ' ', ''), '\u{3000}', '') = REPLACE(REPLACE(?1, ' ', ''), '\u{3000}', '') \
-         AND r.server = ?2 LIMIT 1",
-        params![identity.role_name, identity.server],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    );
-
-    // 回退：茗伊装备库 OwnerInfo.ownername 可能是「角色名·服务器」格式
-    // （如"发白少·梦江南"），而 roles 表只存角色名（如"发白少"）。
-    // 仅当「·」后缀与 server 一致时剥掉再匹配一次，防止同名角色的误伤。
-    let resolved = match result {
-        Ok(found) => Some(found),
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            match_role_name_with_server_suffix(conn, &identity.role_name, &identity.server)
-        }
-        Err(_) => None,
-    };
+    // 唯一一次查询：角色名（先清掉「·区服」后缀与空格）+ 区服必须同时相等。
+    // 这里没有任何回退分支 —— 名字清洗只改变写法，区服条件始终参与比对。
+    let normalized_name = strip_matching_server_suffix(&identity.role_name, &identity.server);
+    let resolved: Option<(String, String)> = conn
+        .query_row(
+            "SELECT r.id, r.account_id FROM roles r \
+             WHERE REPLACE(REPLACE(r.name, ' ', ''), '\u{3000}', '') = REPLACE(REPLACE(?1, ' ', ''), '\u{3000}', '') \
+             AND r.server = ?2 LIMIT 1",
+            params![normalized_name, identity.server],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
 
     match resolved {
         Some((role_id, account_id)) => {
@@ -789,7 +836,7 @@ fn resolve_db_role_identity(
                 );
             }
 
-            Ok(Some(DbRoleIdentity {
+            Ok(RoleIdentityLookup::Matched(DbRoleIdentity {
                 role_id,
                 account_id,
                 role_name: identity.role_name.clone(),
@@ -798,13 +845,32 @@ fn resolve_db_role_identity(
             }))
         }
         None => {
-            log::warn!(
-                "[DropScanner] 角色未在数据库中登记，跳过: uid={}, name={}, server={}",
-                identity.uid,
-                identity.role_name,
-                identity.server
-            );
-            Ok(None)
+            // 严格按「角色名 + 区服」匹配失败。区分两种原因并给出可执行提示：
+            // 库中无同名角色 → 需要添加；库中有同名角色 → 区服登记值不一致。
+            // 诊断查询同样用清洗后的名字，否则「发白少·梦江南」会误报成「无同名角色」。
+            let stored_servers = stored_servers_for_role_name(conn, normalized_name);
+            if stored_servers.is_empty() {
+                log::warn!(
+                    "[DropScanner] 角色未在数据库中登记，跳过: uid={}, name={}, server={}（库中无同名角色，请在角色管理中新增该角色）",
+                    identity.uid,
+                    identity.role_name,
+                    identity.server
+                );
+            } else {
+                log::warn!(
+                    "[DropScanner] 角色区服与数据库登记值不一致，跳过: uid={}, name={}, server={}（库中同名角色登记的区服: {}，请核对后修正该角色的区服）",
+                    identity.uid,
+                    identity.role_name,
+                    identity.server,
+                    stored_servers.join(" / ")
+                );
+            }
+            Ok(RoleIdentityLookup::Unregistered(UnregisteredRoleInfo {
+                uid: identity.uid,
+                role_name: identity.role_name,
+                server: identity.server,
+                stored_servers,
+            }))
         }
     }
 }
@@ -3573,7 +3639,7 @@ fn normalize_role_name(name: &str) -> String {
 #[allow(dead_code)]
 #[allow(clippy::type_complexity)]
 fn extract_drops_from_chatlog(
-    chatlog_path: &Path,
+    chatlog_path: &PathBuf,
     start_time_ms: i64,
     end_time_ms: i64,
     role_name: &str,
@@ -5035,6 +5101,28 @@ fn trial_scan_window(
     (trial_scan_start_ms, trial_context_start_ms)
 }
 
+/// 角色未在数据库登记的诊断信息。
+///
+/// 严格匹配（角色名 + 区服）失败时，必须让用户知道「为什么」：
+/// - `stored_servers` 为空：库里根本没有这个角色名，需要去角色管理里添加；
+/// - `stored_servers` 非空：库里有同名角色，但登记的区服与 `info.jx3dat`
+///   读到的区服不一致，需要把那一行的区服改对。
+///
+/// 这里不做「只按角色名匹配」的兜底：不同区服可能存在同名角色，
+/// 放宽匹配会把副本记录写到别的区服的角色上。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnregisteredRoleInfo {
+    /// 茗伊账号 UID（`{uid}@zhcn_hd` 目录名的数字部分）。
+    pub uid: String,
+    /// `info.jx3dat` 读到的角色名。
+    pub role_name: String,
+    /// `info.jx3dat` 读到的区服。
+    pub server: String,
+    /// 库中同名角色实际登记的区服（已去重；NULL / 空值显示为「(空)」）。
+    pub stored_servers: Vec<String>,
+}
+
 /// 单个账号一次扫描的总结果：常规副本与试炼通关的写入数量，以及解析出的
 /// 「进行中试炼」提示（仅实时轮询/范围扫描时可能有值，供 UI 展示）。
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -5043,6 +5131,9 @@ pub struct RaidScanOutcome {
     pub inserted_count: usize,
     /// 正在打但尚未出终局的试炼（None 表示没有进行中的试炼）。
     pub trial_in_progress: Option<trial::TrialInProgress>,
+    /// 角色身份未匹配成功而跳过整轮扫描时的诊断信息。
+    /// 有值时本轮没有写入任何记录，调用方不应把它统计成「扫描成功」。
+    pub unregistered_role: Option<UnregisteredRoleInfo>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5310,6 +5401,7 @@ pub fn scan_raid_drops_with_raids(
         return Ok(RaidScanOutcome {
             inserted_count: 0,
             trial_in_progress,
+            unregistered_role: None,
         });
     }
 
@@ -5318,15 +5410,30 @@ pub fn scan_raid_drops_with_raids(
     let mut conn =
         db::init_db().map_err(|error| format!("初始化数据库失败，无法处理自动扫描: {}", error))?;
     let db_identity = match resolve_db_role_identity(&conn, &account_dir, &game_path) {
-        Ok(Some(identity)) => identity,
-        Ok(None) => {
+        Ok(RoleIdentityLookup::Matched(identity)) => identity,
+        Ok(RoleIdentityLookup::Unparsed) => {
+            // 与「未登记」区分开：这是 info.jx3dat 读不出来（文件缺失 / 无 uid），
+            // 属于环境问题，不是用户漏登记角色，提示不能混为一谈。
             log::warn!(
-                "[DropScanner] 账号 {} 角色未在数据库登记，跳过自动扫描",
+                "[DropScanner] 账号 {} 的 info.jx3dat 无法解析，跳过自动扫描",
                 account_id
             );
             return Ok(RaidScanOutcome {
                 inserted_count: 0,
                 trial_in_progress,
+                unregistered_role: None,
+            });
+        }
+        Ok(RoleIdentityLookup::Unregistered(info)) => {
+            log::warn!(
+                "[DropScanner] 账号 {} 角色未在数据库登记，跳过自动扫描：{}",
+                account_id,
+                describe_unregistered_role(&info)
+            );
+            return Ok(RaidScanOutcome {
+                inserted_count: 0,
+                trial_in_progress,
+                unregistered_role: Some(info),
             });
         }
         Err(error) => {
@@ -5521,6 +5628,7 @@ pub fn scan_raid_drops_with_raids(
         return Ok(RaidScanOutcome {
             inserted_count: trial_inserted_count,
             trial_in_progress,
+            unregistered_role: None,
         });
     }
 
@@ -6064,6 +6172,7 @@ pub fn scan_raid_drops_with_raids(
     Ok(RaidScanOutcome {
         inserted_count: inserted_count + trial_inserted_count,
         trial_in_progress,
+        unregistered_role: None,
     })
 }
 
@@ -6134,6 +6243,12 @@ pub struct AccountScanResult {
     /// 扫描到的角色所在服务器（与 role_name 配套，用于前端匹配）。
     #[serde(default)]
     pub server: Option<String>,
+    /// 角色身份未匹配成功（未登记 / 区服不一致）而整轮跳过的诊断信息。
+    ///
+    /// 有值时本账号**没有扫描任何文件**，`success` 为 false，
+    /// 前端应把「未登记」和「扫描出错」分开提示。
+    #[serde(default)]
+    pub unregistered_role: Option<UnregisteredRoleInfo>,
     /// 失败原因（失败时）
     pub error: Option<String>,
 }
@@ -6396,8 +6511,22 @@ fn scan_all_active_raid_drops_internal_impl(
         }
     }
 
-    let success_count = results.iter().filter(|entry| entry.result.is_ok()).count();
-    let failed_count = results.len() - success_count;
+    // 角色身份未匹配的账号既没扫到东西、也不是程序出错，单独统计；
+    // 否则它会被计进「成功」，用户在「成功 72，失败 0」里永远看不到问题。
+    let unregistered_count = results
+        .iter()
+        .filter(|entry| {
+            entry
+                .result
+                .as_ref()
+                .ok()
+                .map(|outcome| outcome.unregistered_role.is_some())
+                .unwrap_or(false)
+        })
+        .count();
+    let success_count =
+        results.iter().filter(|entry| entry.result.is_ok()).count() - unregistered_count;
+    let failed_count = results.len() - success_count - unregistered_count;
     let total_instances: usize = results
         .iter()
         .filter_map(|entry| {
@@ -6411,10 +6540,11 @@ fn scan_all_active_raid_drops_internal_impl(
     let elapsed_ms = scan_started_at.elapsed().as_millis();
 
     log::info!(
-        "[DropScanner] 批量扫描完成：活跃角色 {} 个（成功 {}，失败 {}），副本实例 {} 个，耗时 {}ms",
+        "[DropScanner] 批量扫描完成：活跃角色 {} 个（成功 {}，失败 {}，角色未匹配 {}），副本实例 {} 个，耗时 {}ms",
         results.len(),
         success_count,
         failed_count,
+        unregistered_count,
         total_instances,
         elapsed_ms
     );
@@ -6993,6 +7123,26 @@ fn has_drops_or_salary(data: &str, drops: &str) -> bool {
     drops_nonempty || gold_income > 0 || gold_expense > 0
 }
 
+/// 把「角色未匹配」的诊断信息翻译成用户能直接照做的提示文案。
+///
+/// - 库中无同名角色 → 让用户去角色管理里新增；
+/// - 库中有同名角色但区服不一致 → 把库里的区服原样摆出来，让用户改哪一行一目了然。
+fn describe_unregistered_role(info: &UnregisteredRoleInfo) -> String {
+    if info.stored_servers.is_empty() {
+        format!(
+            "角色「{}」未在数据库登记，已跳过扫描；请在角色管理中新增该角色（区服填「{}」）",
+            info.role_name, info.server
+        )
+    } else {
+        format!(
+            "角色「{}」登记的区服与当前登录区服不一致（当前登录「{}」，数据库登记「{}」），已跳过扫描；请修正该角色的区服",
+            info.role_name,
+            info.server,
+            info.stored_servers.join(" / ")
+        )
+    }
+}
+
 /// Tauri 命令：批量扫描所有活跃账号的掉落记录
 #[tauri::command]
 pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, String> {
@@ -7010,16 +7160,22 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
                     result,
                 } = entry;
                 match result {
-                    Ok(outcome) => AccountScanResult {
-                        account_id,
-                        success: true,
-                        instance_count: Some(outcome.inserted_count),
-                        trial_draws_changed,
-                        trial_in_progress: outcome.trial_in_progress,
-                        role_name,
-                        server,
-                        error: None,
-                    },
+                    Ok(outcome) => {
+                        // 角色未匹配成功时整轮没有扫过任何文件，不能算「成功」，
+                        // 否则用户在「成功 72，失败 0」的假象里永远发现不了问题。
+                        let unregistered = outcome.unregistered_role;
+                        AccountScanResult {
+                            account_id,
+                            success: unregistered.is_none(),
+                            instance_count: Some(outcome.inserted_count),
+                            trial_draws_changed,
+                            trial_in_progress: outcome.trial_in_progress,
+                            role_name,
+                            server,
+                            error: unregistered.as_ref().map(describe_unregistered_role),
+                            unregistered_role: unregistered,
+                        }
+                    }
                     Err(e) => AccountScanResult {
                         account_id,
                         success: false,
@@ -7031,6 +7187,7 @@ pub async fn scan_all_active_raid_drops() -> Result<Vec<AccountScanResult>, Stri
                         role_name,
                         server,
                         error: Some(e),
+                        unregistered_role: None,
                     },
                 }
             })
@@ -7265,16 +7422,26 @@ pub async fn scan_raids_in_range(
                                         "[DropScanner] 账号 {} 时间范围扫描完成: {} 个副本实例",
                                         account_id, outcome.inserted_count
                                     );
+                                    // 角色未匹配成功时整轮没有扫过任何文件，与批处理路径
+                                    // 保持一致：不能算「成功」，并把原因交给前端展示。
+                                    let unregistered = outcome.unregistered_role;
+                                    if unregistered.is_some() {
+                                        log::warn!(
+                                            "[DropScanner] 账号 {} 时间范围扫描跳过：角色身份未匹配",
+                                            account_id
+                                        );
+                                    }
                                     local_results.push(AccountScanResult {
                                         account_id: account_id.clone(),
-                                        success: true,
+                                        success: unregistered.is_none(),
                                         instance_count: Some(outcome.inserted_count),
                                         trial_draws_changed: trial_draw_revision()
                                             != draw_revision_before,
                                         trial_in_progress: outcome.trial_in_progress,
                                         role_name: None,
                                         server: None,
-                                        error: None,
+                                        error: unregistered.as_ref().map(describe_unregistered_role),
+                                        unregistered_role: unregistered,
                                     });
                                 }
                                 Err(e) => {
@@ -7292,6 +7459,7 @@ pub async fn scan_raids_in_range(
                                         role_name: None,
                                         server: None,
                                         error: Some(e),
+                                        unregistered_role: None,
                                     });
                                 }
                             }
@@ -7312,15 +7480,18 @@ pub async fn scan_raids_in_range(
         results.sort_by(|a, b| a.account_id.cmp(&b.account_id));
 
         let total_instances: usize = results.iter().filter_map(|r| r.instance_count).sum();
+        // 同批量扫描路径：未匹配的账号单独计数，不混进「成功」也不混进「失败」。
+        let unregistered_count = results.iter().filter(|r| r.unregistered_role.is_some()).count();
         let success_count = results.iter().filter(|r| r.success).count();
-        let failed_count = results.len() - success_count;
+        let failed_count = results.len() - success_count - unregistered_count;
         let elapsed_ms = scan_started_at.elapsed().as_millis();
 
         log::info!(
-            "[DropScanner] 时间范围扫描完成：账号 {} 个（成功 {}，失败 {}），副本实例 {} 个，耗时 {}ms",
+            "[DropScanner] 时间范围扫描完成：账号 {} 个（成功 {}，失败 {}，角色未匹配 {}），副本实例 {} 个，耗时 {}ms",
             results.len(),
             success_count,
             failed_count,
+            unregistered_count,
             total_instances,
             elapsed_ms
         );
@@ -7593,12 +7764,39 @@ mod tests {
         conn
     }
 
-    /// 「角色名·服务器」名字回退匹配的回归测试。
+    /// 「角色名·区服」名字清洗的回归测试。
     ///
     /// 茗伊装备库 ownername 实测出现「发白少·梦江南」格式，而 roles 表只存
-    /// 「发白少」；修复前 resolve_db_role_identity 匹配失败导致整个账号被跳过。
+    /// 「发白少」；不清洗会匹配失败导致整个账号被跳过。
+    ///
+    /// 关键约束：清洗**只剥名字后缀**，区服条件始终参与匹配，且清洗后依然
+    /// 走唯一一次严格查询 —— 不存在任何「匹配不上再换条件」的回退。
     #[test]
-    fn match_role_name_with_server_suffix_strips_server_suffix() {
+    fn normalize_role_name_strips_only_matching_server_suffix() {
+        // 后缀与区服一致 → 剥掉后缀
+        assert_eq!(
+            strip_matching_server_suffix("发白少·梦江南", "梦江南"),
+            "发白少"
+        );
+
+        // 后缀与区服不一致（「·」属于名字本身）→ 原样保留，不猜
+        assert_eq!(strip_matching_server_suffix("风·闪", "梦江南"), "风·闪");
+        assert_eq!(
+            strip_matching_server_suffix("墨斓斓·唯我独尊", "梦江南"),
+            "墨斓斓·唯我独尊"
+        );
+
+        // 无后缀 → 原样返回
+        assert_eq!(strip_matching_server_suffix("发白少", "梦江南"), "发白少");
+
+        // 后缀为空 → 不产生空名字
+        assert_eq!(strip_matching_server_suffix("发白少·", "梦江南"), "发白少·");
+        assert_eq!(strip_matching_server_suffix("·梦江南", "梦江南"), "·梦江南");
+    }
+
+    /// 清洗后仍必须按角色名 + 区服严格匹配：同名不同区服不得串记录。
+    #[test]
+    fn strict_match_never_crosses_servers_for_same_role_name() {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         conn.execute_batch(
             "CREATE TABLE roles (
@@ -7607,30 +7805,126 @@ mod tests {
                 name TEXT NOT NULL,
                 server TEXT
             );
-            INSERT INTO roles (id, account_id, name, server)
-            VALUES ('role-1', 'account-1', '发白少', '梦江南');",
+            INSERT INTO roles (id, account_id, name, server) VALUES
+                ('role-mj', 'account-mj', '涣昭昭', '梦江南'),
+                ('role-ww', 'account-ww', '涣昭昭', '唯我独尊');",
         )
         .expect("roles fixture should be created");
 
-        // 「角色名·服务器」且后缀与 server 一致 → 剥后缀命中
-        let hit = match_role_name_with_server_suffix(&conn, "发白少·梦江南", "梦江南");
+        let query = |role_name: &str, server: &str| -> Option<String> {
+            let normalized = strip_matching_server_suffix(role_name, server);
+            conn.query_row(
+                "SELECT r.id FROM roles r \
+                 WHERE REPLACE(REPLACE(r.name, ' ', ''), '\u{3000}', '') = REPLACE(REPLACE(?1, ' ', ''), '\u{3000}', '') \
+                 AND r.server = ?2 LIMIT 1",
+                params![normalized, server],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        };
+
+        assert_eq!(query("涣昭昭", "唯我独尊"), Some("role-ww".to_string()));
+        assert_eq!(query("涣昭昭", "梦江南"), Some("role-mj".to_string()));
+        // 带后缀的写法清洗后仍然只命中本区服那一行
         assert_eq!(
-            hit,
-            Some(("role-1".to_string(), "account-1".to_string())),
-            "剥后缀后应命中 roles 表"
+            query("涣昭昭·唯我独尊", "唯我独尊"),
+            Some("role-ww".to_string())
+        );
+        // 区服对不上就什么都不返回，绝不落到另一个区服的同名行
+        assert_eq!(query("涣昭昭", "眉间雪"), None);
+        // NULL 区服不参与匹配
+        conn.execute(
+            "INSERT INTO roles (id, account_id, name, server) VALUES ('role-null', 'account-null', '无区服', NULL)",
+            [],
+        )
+        .expect("null-server row should be inserted");
+        assert_eq!(query("无区服", "(空)"), None, "NULL 区服不应被任何输入命中");
+    }
+
+    /// 同名多区服时必须同时看到全部登记值，用户才能判断该改哪一行。
+    #[test]
+    fn stored_servers_for_role_name_reports_every_registered_server() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        conn.execute_batch(
+            "CREATE TABLE roles (
+                id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                server TEXT
+            );
+            INSERT INTO roles (id, account_id, name, server) VALUES
+                ('role-1', 'account-1', '涣昭昭', '梦江南'),
+                ('role-2', 'account-2', '涣昭昭', '唯我独尊 电信区'),
+                ('role-3', 'account-3', '涣昭昭', NULL),
+                ('role-4', 'account-4', '涣昭昭', '   '),
+                ('role-5', 'account-5', '涣昭昭', '梦江南'),
+                ('role-6', 'account-6', '涣 昭昭', '眉间雪');",
+        )
+        .expect("roles fixture should be created");
+
+        let servers = stored_servers_for_role_name(&conn, "涣昭昭");
+        // SQLite 默认 BINARY 排序即 UTF-8 码点序，这里只要求「稳定且去重」，
+        // 顺序本身不影响提示文案的可读性。
+        assert_eq!(
+            servers,
+            vec![
+                "(空)".to_string(),
+                "唯我独尊 电信区".to_string(),
+                "梦江南".to_string(),
+                "眉间雪".to_string(),
+            ],
+            "应去重并合并 NULL / 空白区服为「(空)」；名字里的空格不影响匹配"
         );
 
-        // 无该角色时返回 None
-        let miss = match_role_name_with_server_suffix(&conn, "不存在·梦江南", "梦江南");
-        assert_eq!(miss, None, "未登记角色应返回 None");
+        // 库中完全没有该角色名时返回空，区分「未登记」与「区服不一致」
+        assert!(
+            stored_servers_for_role_name(&conn, "查无此名").is_empty(),
+            "库中无同名角色时应返回空列表"
+        );
+    }
 
-        // 后缀与 server 不一致（名字本身含「·」）→ 不回退，防止误伤
-        let mismatch = match_role_name_with_server_suffix(&conn, "风·闪", "梦江南");
-        assert_eq!(mismatch, None, "后缀与 server 不一致时不应回退");
+    /// 两种跳过错因必须给出不同的、可照做的文案。
+    #[test]
+    fn describe_unregistered_role_distinguishes_missing_and_mismatched_server() {
+        let missing = UnregisteredRoleInfo {
+            uid: "342273571692005313".to_string(),
+            role_name: "涣昭昭".to_string(),
+            server: "唯我独尊".to_string(),
+            stored_servers: Vec::new(),
+        };
+        let missing_text = describe_unregistered_role(&missing);
+        assert!(
+            missing_text.contains("未在数据库登记") && missing_text.contains("新增"),
+            "库中无同名角色时应提示新增，实际: {}",
+            missing_text
+        );
+        assert!(
+            missing_text.contains("涣昭昭") && missing_text.contains("唯我独尊"),
+            "文案应带出角色名与当前登录区服，实际: {}",
+            missing_text
+        );
 
-        // 无后缀的名字不进入回退
-        let no_suffix = match_role_name_with_server_suffix(&conn, "发白少", "梦江南");
-        assert_eq!(no_suffix, None, "不含「·」的名字不应进入回退");
+        let mismatched = UnregisteredRoleInfo {
+            uid: "342273571692005313".to_string(),
+            role_name: "涣昭昭".to_string(),
+            server: "唯我独尊".to_string(),
+            stored_servers: vec!["唯我独尊 电信区".to_string()],
+        };
+        let mismatched_text = describe_unregistered_role(&mismatched);
+        assert!(
+            mismatched_text.contains("不一致") && mismatched_text.contains("修正"),
+            "区服不一致时应提示修正，实际: {}",
+            mismatched_text
+        );
+        assert!(
+            mismatched_text.contains("唯我独尊 电信区"),
+            "文案应原样带出库中登记的区服，实际: {}",
+            mismatched_text
+        );
+        assert_ne!(
+            missing_text, mismatched_text,
+            "两种跳过错因不能共用一句提示"
+        );
     }
 
     fn to_auto_trial_record(candidate: trial::TrialScanCandidate) -> db::AutoTrialRecord {
@@ -12166,9 +12460,18 @@ mod tests {
 
         // 1. 验证 resolve_db_role_identity 能识别糯闪（修复前返回 None）
         let conn = db::init_db().expect("初始化数据库失败");
-        let identity = resolve_db_role_identity(&conn, &account_dir, &game_dir)
+        let identity = match resolve_db_role_identity(&conn, &account_dir, &game_dir)
             .expect("resolve_db_role_identity 失败")
-            .expect("糯闪账号应能被识别（修复前会被跳过）");
+        {
+            RoleIdentityLookup::Matched(identity) => identity,
+            RoleIdentityLookup::Unparsed => {
+                panic!("糯闪账号 info.jx3dat 应可解析（修复前会被跳过）")
+            }
+            RoleIdentityLookup::Unregistered(info) => panic!(
+                "糯闪账号应能被识别（修复前会被跳过），实际未登记: name={}, server={}, 库中登记区服={:?}",
+                info.role_name, info.server, info.stored_servers
+            ),
+        };
 
         assert_eq!(identity.role_name, "糯闪", "role_name 应为 '糯闪'");
         assert_eq!(identity.server, "梦江南", "server 应为 '梦江南'");
