@@ -7217,14 +7217,10 @@ pub fn db_save_role_visibility(
 
 // ========== 团队副本角色可见性配置 (V6+) ==========
 
-/// 一次获取全部团队副本的角色可见性配置
+/// 读取全部团队副本角色可见性配置的 SQL 实现。
 ///
-/// CD 概览表需要按「每一列副本 × 每一行角色」判断是否不适用，逐个副本查询会产生
-/// 大量 IPC 往返，因此这里提供一次取全量的入口，口径与 `db_get_raid_role_visibility` 一致。
-#[tauri::command]
-pub fn db_get_all_raid_role_visibility() -> Result<String, String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-
+/// 单独抽出来是为了能在受控的测试连接上验证同一份 SQL（命令本身依赖 `init_db` 单例）。
+fn read_all_raid_role_visibility(conn: &Connection) -> Result<Vec<serde_json::Value>, String> {
     let visibility: Vec<serde_json::Value> = conn
         .prepare("SELECT role_id, raid_key, visible FROM raid_role_visibility")
         .map_err(|e| e.to_string())?
@@ -7239,6 +7235,17 @@ pub fn db_get_all_raid_role_visibility() -> Result<String, String> {
         .filter_map(|r| r.ok())
         .collect();
 
+    Ok(visibility)
+}
+
+/// 一次获取全部团队副本的角色可见性配置
+///
+/// CD 概览表需要按「每一列副本 × 每一行角色」判断是否不适用，逐个副本查询会产生
+/// 大量 IPC 往返，因此这里提供一次取全量的入口，口径与 `db_get_raid_role_visibility` 一致。
+#[tauri::command]
+pub fn db_get_all_raid_role_visibility() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let visibility = read_all_raid_role_visibility(&conn)?;
     serde_json::to_string(&visibility).map_err(|e| format!("序列化失败: {}", e))
 }
 
@@ -9096,6 +9103,65 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM instance_types", [], |row| row.get(0))
             .expect("should count");
         assert_eq!(instance_count, 3, "应有 3 个副本类型初始数据");
+    }
+
+    #[test]
+    fn reads_all_raid_role_visibility_including_disabled_entries() {
+        let (conn, _path) = create_test_conn();
+        install_fresh_db_for_test(&conn).expect("测试库应初始化成功");
+
+        let timestamp = get_local_timestamp();
+
+        // 角色外键指向 accounts，先建账号与角色
+        conn.execute(
+            "INSERT INTO accounts (id, account_name, created_at, updated_at) VALUES ('acc-1', '测试账号', ?1, ?1)",
+            params![timestamp],
+        )
+        .expect("插入测试账号应成功");
+        conn.execute(
+            "INSERT INTO roles (id, account_id, name, server, region, created_at, updated_at)
+             VALUES ('role-1', 'acc-1', '张三', '梦江南', '电信一区', ?1, ?1)",
+            params![timestamp],
+        )
+        .expect("插入测试角色应成功");
+
+        // raid_role_visibility 里存的是「单副本级」的启用/禁用开关，
+        // 概览表要靠这份全量数据判定某一格是否「不适用」。
+        conn.execute(
+            "INSERT INTO raid_role_visibility (id, role_id, raid_key, visible, created_at, updated_at)
+             VALUES ('rrv-1', 'role-1', '25人普通洛阳之战', 0, ?1, ?1),
+                    ('rrv-2', 'role-1', '25人英雄洛阳之战', 1, ?1, ?1)",
+            params![timestamp],
+        )
+        .expect("插入可见性配置应成功");
+
+        let entries = read_all_raid_role_visibility(&conn).expect("查询全部可见性配置应成功");
+        assert_eq!(entries.len(), 2, "应返回两条配置，实际: {:?}", entries);
+
+        let disabled = entries
+            .iter()
+            .find(|entry| entry["raidKey"] == "25人普通洛阳之战")
+            .expect("应包含普通难度的配置");
+        assert_eq!(disabled["roleId"], "role-1");
+        assert_eq!(disabled["visible"], false, "普通难度应为禁用");
+
+        let enabled = entries
+            .iter()
+            .find(|entry| entry["raidKey"] == "25人英雄洛阳之战")
+            .expect("应包含英雄难度的配置");
+        assert_eq!(enabled["visible"], true, "英雄难度应为启用");
+    }
+
+    #[test]
+    fn reads_no_raid_role_visibility_when_table_is_empty() {
+        let (conn, _path) = create_test_conn();
+        install_fresh_db_for_test(&conn).expect("测试库应初始化成功");
+
+        let entries = read_all_raid_role_visibility(&conn).expect("空表查询应成功");
+
+        // 空表代表「没有任何禁用配置」，前端据此认为所有角色在所有副本都可见，
+        // 不能因为查不到数据就报错或返回脏值。
+        assert!(entries.is_empty(), "空表应返回空集合，实际: {:?}", entries);
     }
 
     #[test]

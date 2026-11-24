@@ -79,6 +79,17 @@ describe('DatabaseService 失败路径', () => {
 
       await expect(db.getFavoriteRaids()).resolves.toEqual([]);
     });
+
+    it('getAllRaidRoleVisibility 在 IPC 失败时返回空数组，避免概览表误判角色被禁用', async () => {
+      const { db } = await loadDb();
+      invokeCommandMock.mockImplementation((cmd: string) => {
+        if (cmd === 'db_init') return Promise.resolve(undefined);
+        if (cmd === 'db_get_all_raid_role_visibility') return Promise.reject(makeError('IPC 断开'));
+        return Promise.resolve(undefined);
+      });
+
+      await expect(db.getAllRaidRoleVisibility()).resolves.toEqual([]);
+    });
   });
 
   describe('写操作：失败必须向上抛出', () => {
