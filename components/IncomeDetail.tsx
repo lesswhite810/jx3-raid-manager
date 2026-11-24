@@ -6,6 +6,7 @@ import { toast } from '../utils/toastManager';
 import { getLastMonday, getSeasonStartTimeMs } from '../utils/cooldownManager';
 import { buildClientAccountIdSet, buildRoleInfoLookup, getRoleInfoKey } from '../utils/recordLookupUtils';
 import { getRecordScrapsExpense, getRecordScrapsValue, summarizeScrapsByName } from '../utils/scrapsUtils';
+import { RecordBossTags } from './RecordBossTags';
 import { formatGold } from '../utils/goldFormat';
 import { db } from '../services/db';
 
@@ -49,6 +50,11 @@ interface EnhancedRecord {
   isTrial?: boolean;
   source?: 'auto' | 'manual';
   status?: 'pending' | 'confirmed' | 'rejected' | 'scanning';
+  // 击败 BOSS（多选记录用 bossIds/bossNames，旧记录用 bossId/bossName）
+  bossId?: string;
+  bossName?: string;
+  bossIds?: string[];
+  bossNames?: string[];
   // 散件老板字段
   scrapsItems?: RaidRecord['scrapsItems'];
   scrapsValue?: number;
@@ -788,6 +794,7 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                             )}
                           </>
                         )}
+                        <RecordBossTags record={record} />
                       </div>
 
                       {/* Right: Net Income, Time, Actions */}
