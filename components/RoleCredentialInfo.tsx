@@ -18,7 +18,8 @@ const maskPassword = (password: string): string => '•'.repeat(Math.min(Math.ma
  *
  * 这是旧版（v2.2.8 及以前）团队副本、试炼之地、百战角色卡片上的凭证展示区，
  * 账号与密码都只提供「复制」入口，不在界面上明文展示密码。
- * 新版把这些入口收敛到了 CD 概览表的操作列，因此本组件只在旧版模式渲染。
+ * 副本详情页沿用旧版的展示方式（无论当前是 CD 概览还是旧版 UI 模式）；
+ * 试炼之地与百战的角色卡片仍只在旧版模式下渲染。
  */
 export const RoleCredentialInfo: React.FC<RoleCredentialInfoProps> = ({
   accountName,
