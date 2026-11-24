@@ -175,6 +175,20 @@ fn resolve_kungfu_from_descs(descs: &[String], role_force_id: i32) -> Option<(i3
     None
 }
 
+// 装分取值优先级：茗伊装备库（当前穿戴套装） > 角色目录 userdata.db
+//
+// 原因：装备库的 ownerscore 是「当前穿戴套装」逐件装备分数（基础 + 精炼 + 镶嵌附魔）求和，
+// 可以按装备逐件复算核对；userdata.db 的 equip_score 口径额外叠加马具等加成，
+// 且写入时机更滞后（只在角色下线/切号时落盘），因此仅作为兜底。
+//
+// 返回 (最终装分, 数据来源描述)
+fn pick_equipment_score(mingyi_score: Option<i32>, userdata_score: i32) -> (i32, &'static str) {
+    match mingyi_score {
+        Some(score) if score > 0 => (score, "装备库"),
+        _ => (userdata_score, "角色目录"),
+    }
+}
+
 // 读取茗伊数据库中的角色信息
 // 从茗伊数据库的 owner_name 中提取真实角色名
 // 兼容 "角色名·区服" 格式，例如 "秦算卦·唯我独尊" -> "秦算卦"
@@ -1596,7 +1610,10 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
     // 已通过角色目录处理过的角色名集合（避免重复处理）
     let mut processed_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // 第一阶段：用角色目录 userdata.db 的装分更新所有匹配的已有角色
+    // 第一阶段：更新所有匹配的已有角色的装分与等级
+    // 装分取值优先级：茗伊装备库（当前穿戴套装） > 角色目录 userdata.db
+    // 原因：装备库是逐件装备分数（基础+精炼+镶嵌附魔）求和，可直接复算核对；
+    // userdata.db 的口径含马具等额外加成且更新时机更滞后，仅作兜底。
     for stat in &role_stats {
         // 按角色名和服务器查找已有角色
         let role_id: Option<String> = conn
@@ -1620,19 +1637,38 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
             processed_names.insert(stat.name.clone());
 
             let force_name = kungfu_data::get_force_name(stat.force_id);
+
+            // 优先取茗伊装备库中「当前穿戴套装」（ownersuitindex）的装分
+            // 先按 角色名+服务器 精确匹配，失败时回退仅按角色名匹配（区服名可能写法不一致）
+            let mingyi_role = find_mingyi_role(&mingyi_roles, &stat.name, &stat.server)
+                .or_else(|| mingyi_roles.iter().find(|r| r.owner_name == stat.name));
+            let mingyi_score = mingyi_role
+                .and_then(|mingyi_role| {
+                    mingyi_role
+                        .scores
+                        .get((mingyi_role.effective_suit - 1) as usize)
+                        .copied()
+                })
+                .filter(|&score| score > 0);
+
+            let (final_score, score_source) =
+                pick_equipment_score(mingyi_score, stat.equip_score);
+
             // level 无论装分是否有效都应更新（等级读取失败不会影响装分逻辑）
-            if stat.equip_score > 0 {
+            if final_score > 0 {
                 log::info!(
-                    "[AnalyzeRoles] 第一阶段更新: {} ({}) score={}",
+                    "[AnalyzeRoles] 第一阶段更新: {} ({}) score={} (来源={}, 角色目录值={})",
                     stat.name,
                     stat.server,
+                    final_score,
+                    score_source,
                     stat.equip_score
                 );
                 conn.execute(
                     "UPDATE roles SET sect = ?, equipment_score = ?, level = ?, updated_at = ? WHERE id = ?",
                     params![
                         force_name.unwrap_or_default(),
-                        stat.equip_score as i64,
+                        final_score as i64,
                         stat.level as i64,
                         timestamp,
                         existing_role_id,
@@ -2437,5 +2473,49 @@ pub fn scan_jx3_clients() -> ScanClientsResult {
         } else {
             Some(errors.join("; "))
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 装备库有分时优先使用装备库装分() {
+        let (score, source) = pick_equipment_score(Some(20914), 20633);
+        assert_eq!(score, 20914);
+        assert_eq!(source, "装备库");
+    }
+
+    #[test]
+    fn 装备库装分为零或缺失时回退角色目录装分() {
+        let (score, source) = pick_equipment_score(Some(0), 20633);
+        assert_eq!(score, 20633);
+        assert_eq!(source, "角色目录");
+
+        let (score, source) = pick_equipment_score(None, 20633);
+        assert_eq!(score, 20633);
+        assert_eq!(source, "角色目录");
+    }
+
+    #[test]
+    fn 装备库分低于角色目录分时仍以装备库为准() {
+        // 装备库是可直接复算的穿戴套装分，即使数值更低也应采信
+        let (score, _) = pick_equipment_score(Some(10191), 20633);
+        assert_eq!(score, 10191);
+    }
+
+    #[test]
+    fn 解析稀疏格式套装分() {
+        assert_eq!(parse_ownerscore("{[2]=20914}"), vec![0, 20914, 0, 0]);
+        assert_eq!(parse_ownerscore("{733990}"), vec![733990, 0, 0, 0]);
+        assert_eq!(
+            parse_ownerscore("{0,0,0,20903,[7]=4608}"),
+            vec![0, 0, 0, 20903]
+        );
+        assert_eq!(
+            parse_ownerscore("{520999,[3]=9336}"),
+            vec![520999, 0, 9336, 0]
+        );
     }
 }
