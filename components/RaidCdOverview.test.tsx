@@ -11,6 +11,7 @@ import { Account, AccountType, BaizhanRecord, Raid, RaidRecord, TrialPlaceRecord
 import { injectDefaultBosses } from '../data/raidBosses';
 import { RaidCdOverview } from './RaidCdOverview';
 import { TrialProgressPeriod } from '../utils/trialProgress';
+import { buildRaidRoleVisibilityMap, RaidRoleVisibilityMap } from '../utils/raidRoleUtils';
 
 const BOSS_IDS = [
   'luoyangzhizhan_1',
@@ -95,6 +96,8 @@ interface RenderOptions {
   account?: Account | null;
   /** 'loading' 用来模拟「周期尚未就绪」，对应组件收到 undefined 的场景 */
   trialProgressPeriod?: TrialProgressPeriod | null | 'loading';
+  /** 单副本级别的角色禁用配置 */
+  raidRoleVisibility?: RaidRoleVisibilityMap;
 }
 
 const renderOverview = ({
@@ -103,6 +106,7 @@ const renderOverview = ({
   baizhanRecords = [],
   account = ACCOUNT,
   trialProgressPeriod = TRIAL_PERIOD,
+  raidRoleVisibility,
 }: RenderOptions = {}): string => {
   // 注意：解构默认值会把显式传入的 undefined 也替换掉，所以「加载中」用哨兵值区分
   const resolvedPeriod = trialProgressPeriod === 'loading' ? undefined : trialProgressPeriod;
@@ -114,6 +118,7 @@ const renderOverview = ({
       trialRecords={trialRecords}
       baizhanRecords={baizhanRecords}
       trialProgressPeriod={resolvedPeriod}
+      raidRoleVisibility={raidRoleVisibility}
       weeklyRaidNames={['洛阳之战']}
       favoriteRaids={new Set<string>()}
       seasonContext={SEASON_CONTEXT}
@@ -252,6 +257,26 @@ describe('RaidCdOverview', () => {
     });
 
     expect(markup).toBe('');
+  });
+
+  it('在某个副本里被禁用的角色，该副本列显示为不适用且不可点击', () => {
+    const markup = renderOverview({
+      raidRoleVisibility: buildRaidRoleVisibilityMap([
+        { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: false },
+      ]),
+    });
+
+    // 角色行仍在（试炼 / 百战还在参与），但副本这一格变成「不适用」
+    expect(markup).toContain('张三');
+    expect(markup).toContain('（不适用）');
+    expect(markup).toContain('未清 0');
+  });
+
+  it('没有单副本禁用配置时副本列照常显示未清', () => {
+    const markup = renderOverview();
+
+    expect(markup).not.toContain('（不适用）');
+    expect(markup).toContain('未清 1');
   });
 
   it('没有账号时整块不渲染，避免占位', () => {

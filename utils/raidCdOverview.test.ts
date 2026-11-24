@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { Account, AccountType, Raid, RaidRecord } from '../types';
 import { injectDefaultBosses } from '../data/raidBosses';
 import { buildRaidCdOverview, matchesPendingRecordScope, PendingRecordScope, resolveActivityCellMode, resolveCdCellClickTarget } from './raidCdOverview';
+import { buildRaidRoleVisibilityMap } from './raidRoleUtils';
 
 /** 2026-11-09 是周一，21:00 仍在当周窗口内（周界为周一 07:00） */
 const NOW = new Date(2026, 10, 9, 21, 0);
@@ -298,8 +299,101 @@ describe('buildRaidCdOverview - 角色与列过滤', () => {
     expect(result.rows[0].baizhan.status).not.toBe('na');
   });
 
-  it('被禁用的副本难度不进入列，并统计跳过数量', () => {
-    const activeRaid = makeRaid(25);
+  it('在某个副本里被禁用的角色，该副本列显示为不适用而不是未清', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({ roles: [makeRole('role-1', '张三')] });
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      // 详情页把该角色在这个副本里禁用后的配置
+      raidRoleVisibility: buildRaidRoleVisibilityMap([
+        { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: false },
+      ]),
+      now: NOW,
+    });
+
+    expect(result.rows[0].cells['25人普通洛阳之战'].status).toBe('na');
+    // 不适用不计入该列的已清/总数统计
+    expect(result.columns[0].totalCount).toBe(0);
+    expect(result.rows[0].noneClearedCount).toBe(0);
+  });
+
+  it('单副本禁用只影响被禁用的那个副本，其他副本列照常统计', () => {
+    const normal = makeRaid(25);
+    const heroic = makeRaid(25, RAID_NAME, '英雄');
+    const account = makeAccount({ roles: [makeRole('role-1', '张三')] });
+
+    const result = buildRaidCdOverview({
+      raids: [normal, heroic],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      raidRoleVisibility: buildRaidRoleVisibilityMap([
+        { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: false },
+      ]),
+      now: NOW,
+    });
+
+    expect(result.rows[0].cells['25人普通洛阳之战'].status).toBe('na');
+    expect(result.rows[0].cells['25人英雄洛阳之战'].status).toBe('none');
+    expect(result.rows[0].noneClearedCount).toBe(1);
+  });
+
+  it('单副本禁用只影响被禁用的角色，同账号其他角色照常未清', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({
+      roles: [makeRole('role-1', '张三'), makeRole('role-2', '李四')],
+    });
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      raidRoleVisibility: buildRaidRoleVisibilityMap([
+        { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: false },
+      ]),
+      now: NOW,
+    });
+
+    // 有未清的角色排在前面，因此按 roleId 取对应行，不依赖下标
+    const disabledRow = result.rows.find(row => row.roleId === 'role-1');
+    const normalRow = result.rows.find(row => row.roleId === 'role-2');
+    expect(disabledRow?.cells['25人普通洛阳之战'].status).toBe('na');
+    expect(normalRow?.cells['25人普通洛阳之战'].status).toBe('none');
+    expect(result.columns[0].totalCount).toBe(1);
+  });
+
+  it('被重新启用的角色（visible 为 true）不受禁用配置影响', () => {
+    const raid = makeRaid(25);
+    const account = makeAccount({ roles: [makeRole('role-1', '张三')] });
+
+    const result = buildRaidCdOverview({
+      raids: [raid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      raidRoleVisibility: buildRaidRoleVisibilityMap([
+        { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: true },
+      ]),
+      now: NOW,
+    });
+
+    expect(result.rows[0].cells['25人普通洛阳之战'].status).toBe('none');
+  });
+
+  it('被禁用的副本难度不进入列，并统计跳过数量', () => {    const activeRaid = makeRaid(25);
     const disabledRaid = { ...makeRaid(25, RAID_NAME, '英雄'), isActive: false };
     const account = makeAccount({ roles: [makeRole('role-1')] });
 

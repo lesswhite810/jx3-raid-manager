@@ -43,6 +43,18 @@ export interface RoleInstanceVisibility {
   visible: boolean;
 }
 
+/**
+ * 单副本级别的角色可见性配置（`raid_role_visibility` 表）。
+ *
+ * 与 `Role.visibility` 的模块级开关不同，这里按具体副本难度（raidKey，
+ * 形如 `25人普通洛阳之战`）记录某个角色是否参与该副本。
+ */
+export interface RaidRoleVisibility {
+  roleId: string;
+  raidKey: string;
+  visible: boolean;
+}
+
 // 副本类型常量
 export const INSTANCE_TYPES = {
   RAID: 'raid',

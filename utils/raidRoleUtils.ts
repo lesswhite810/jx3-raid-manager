@@ -1,5 +1,34 @@
 import { AccountType } from '../types';
 
+/**
+ * 单副本级别的角色禁用配置：raidKey（形如 `25人普通洛阳之战`）→ 该副本里被禁用的角色 ID。
+ *
+ * 只保存被禁用（visible === false）的条目：没有条目即表示默认可见，
+ * 与详情页 `roleVisibilityMap[roleId] !== false` 的判定口径一致。
+ */
+export type RaidRoleVisibilityMap = ReadonlyMap<string, ReadonlySet<string>>;
+
+/** 把 `raid_role_visibility` 的查询结果转成按副本分组的禁用角色集合 */
+export const buildRaidRoleVisibilityMap = (
+  entries: ReadonlyArray<{ roleId: string; raidKey: string; visible: boolean }>,
+): Map<string, Set<string>> => {
+  const map = new Map<string, Set<string>>();
+  entries.forEach(entry => {
+    if (entry.visible) return;
+    const roleIds = map.get(entry.raidKey) ?? new Set<string>();
+    roleIds.add(entry.roleId);
+    map.set(entry.raidKey, roleIds);
+  });
+  return map;
+};
+
+/** 判断某角色是否在指定副本里被禁用（未配置时视为可见） */
+export const isRaidRoleDisabled = (
+  map: RaidRoleVisibilityMap | undefined,
+  raidKey: string,
+  roleId: string,
+): boolean => map?.get(raidKey)?.has(roleId) ?? false;
+
 export interface SearchableRaidRole {
   id: string;
   name: string;

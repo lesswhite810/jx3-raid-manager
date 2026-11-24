@@ -287,6 +287,10 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           // 返回空数组表示所有角色默认可见
           result = JSON.stringify([]);
           break;
+        case 'db_get_all_raid_role_visibility':
+          // 浏览器预览没有真实数据库，返回空数组表示所有角色默认可见
+          result = JSON.stringify([]);
+          break;
         case 'db_save_role_visibility':
         case 'db_save_raid_role_visibility':
           result = null;

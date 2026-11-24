@@ -21,6 +21,7 @@ import { AddBaizhanRecordModal } from './AddBaizhanRecordModal';
 import { BaizhanRoleRecordsModal } from './BaizhanRoleRecordsModal';
 import { useTrialSeasonProgress } from '../hooks/useTrialSeasonProgress';
 import { CdCellStatus, CdOverviewRow, PendingRecordScope, resolveActivityCellMode } from '../utils/raidCdOverview';
+import { buildRaidRoleVisibilityMap, RaidRoleVisibilityMap } from '../utils/raidRoleUtils';
 import { buildWeeklyRaidGroups, SeasonContext, WeeklyRaidGroup } from '../utils/weeklyRaids';
 import { getCurrentVersionLevelCap, shouldShowRoleByLevel } from '../utils/roleLevelFilter';
 import { DIFFICULTY_COLORS, DIFFICULTY_LABELS, MergedRaid, isStaticRaid } from '../utils/raidDisplay';
@@ -285,6 +286,24 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     };
     loadLevelCap();
   }, []);
+
+  // 单副本级别的角色禁用配置（详情页的启用/禁用开关）。
+  // 概览表按列判定「不适用」需要它，口径与详情页一致，因此在概览可见时加载。
+  // 依赖 selectedRaid：从详情页返回（selectedRaid 变回 null）时重新拉取，保证刚刚的启用/禁用立刻生效。
+  const [raidRoleVisibility, setRaidRoleVisibility] = useState<RaidRoleVisibilityMap>(new Map());
+  useCancellableEffect((signal) => {
+    const loadRaidRoleVisibility = async () => {
+      try {
+        const entries = await db.getAllRaidRoleVisibility();
+        if (signal.cancelled) return;
+        setRaidRoleVisibility(buildRaidRoleVisibilityMap(entries));
+      } catch (err) {
+        console.error('Failed to load raid role visibility:', err);
+        if (!signal.cancelled) setRaidRoleVisibility(new Map());
+      }
+    };
+    loadRaidRoleVisibility();
+  }, [selectedRaid]);
 
   const versions = useMemo(() => {
     const versionSet = new Set<string>();
@@ -795,6 +814,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 baizhanRecords={baizhanRecords}
                 trialProgressPeriod={trialProgressPeriod}
                 trialInProgressList={trialInProgressList}
+                raidRoleVisibility={raidRoleVisibility}
                 weeklyRaidNames={weeklyRaidNames}
                 favoriteRaids={favoriteRaids}
                 seasonContext={seasonContext}

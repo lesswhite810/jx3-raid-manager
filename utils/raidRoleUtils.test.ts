@@ -1,6 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import { AccountType } from '../types';
-import { filterRaidRoles, getClientAccountNote, getRaidClearStats } from './raidRoleUtils';
+import {
+  buildRaidRoleVisibilityMap,
+  filterRaidRoles,
+  getClientAccountNote,
+  getRaidClearStats,
+  isRaidRoleDisabled,
+} from './raidRoleUtils';
+
+describe('buildRaidRoleVisibilityMap', () => {
+  it('只把 visible 为 false 的条目计入禁用集合', () => {
+    const map = buildRaidRoleVisibilityMap([
+      { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: false },
+      { roleId: 'role-2', raidKey: '25人普通洛阳之战', visible: true },
+      { roleId: 'role-3', raidKey: '25人英雄洛阳之战', visible: false },
+    ]);
+
+    expect(Array.from(map.get('25人普通洛阳之战') ?? [])).toEqual(['role-1']);
+    expect(Array.from(map.get('25人英雄洛阳之战') ?? [])).toEqual(['role-3']);
+  });
+
+  it('没有任何禁用配置时返回空映射', () => {
+    expect(buildRaidRoleVisibilityMap([]).size).toBe(0);
+  });
+});
+
+describe('isRaidRoleDisabled', () => {
+  const map = buildRaidRoleVisibilityMap([
+    { roleId: 'role-1', raidKey: '25人普通洛阳之战', visible: false },
+  ]);
+
+  it('命中禁用配置时返回 true', () => {
+    expect(isRaidRoleDisabled(map, '25人普通洛阳之战', 'role-1')).toBe(true);
+  });
+
+  it('未配置的角色和副本都视为可见', () => {
+    expect(isRaidRoleDisabled(map, '25人普通洛阳之战', 'role-2')).toBe(false);
+    expect(isRaidRoleDisabled(map, '25人英雄洛阳之战', 'role-1')).toBe(false);
+    // 可见性数据尚未加载完成时不能把所有角色误判成禁用
+    expect(isRaidRoleDisabled(undefined, '25人普通洛阳之战', 'role-1')).toBe(false);
+  });
+});
 
 describe('getClientAccountNote', () => {
   it('returns trimmed note for client accounts', () => {

@@ -7217,6 +7217,31 @@ pub fn db_save_role_visibility(
 
 // ========== 团队副本角色可见性配置 (V6+) ==========
 
+/// 一次获取全部团队副本的角色可见性配置
+///
+/// CD 概览表需要按「每一列副本 × 每一行角色」判断是否不适用，逐个副本查询会产生
+/// 大量 IPC 往返，因此这里提供一次取全量的入口，口径与 `db_get_raid_role_visibility` 一致。
+#[tauri::command]
+pub fn db_get_all_raid_role_visibility() -> Result<String, String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+
+    let visibility: Vec<serde_json::Value> = conn
+        .prepare("SELECT role_id, raid_key, visible FROM raid_role_visibility")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "roleId": row.get::<_, String>(0)?,
+                "raidKey": row.get::<_, String>(1)?,
+                "visible": row.get::<_, i32>(2)? == 1
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    serde_json::to_string(&visibility).map_err(|e| format!("序列化失败: {}", e))
+}
+
 /// 获取指定副本的所有角色可见性配置
 #[allow(non_snake_case)]
 #[tauri::command]

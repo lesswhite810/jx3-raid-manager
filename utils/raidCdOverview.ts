@@ -7,6 +7,7 @@ import { buildWeeklyRaidGroups, isCurrentSeasonRaid, SeasonContext } from './wee
 import { getTrialWeeklyDrawProgress } from './trialWeeklyDrawProgress';
 import { TrialProgressPeriod } from './trialProgress';
 import { shouldShowRoleByLevel } from './roleLevelFilter';
+import { isRaidRoleDisabled, RaidRoleVisibilityMap } from './raidRoleUtils';
 import { TrialInProgressWithAccount } from '../services/dropScanner';
 
 /**
@@ -144,6 +145,11 @@ export interface BuildRaidCdOverviewOptions {
    * 标出「正在打但尚未出终局」的角色；缺省或为空时不显示进行中状态。
    */
   trialInProgressList?: TrialInProgressWithAccount[];
+  /**
+   * 单副本级别的角色禁用配置：raidKey → 该副本里被禁用的角色 ID。
+   * 与详情页的启用/禁用开关同一份数据，被禁用的角色在该副本列显示为「不适用」。
+   */
+  raidRoleVisibility?: RaidRoleVisibilityMap;
   now?: Date;
 }
 
@@ -401,7 +407,9 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
       );
 
       let cell: CdCell;
-      if (!inRaid || (isClientAccount && !shouldShowClientRoles)) {
+      // 单副本级别的禁用（详情页的启用/禁用开关）优先于模块级可见性：
+      // 被禁用的角色在该副本列里压根不参与，显示为「不适用」而不是「未清」
+      if (isRaidRoleDisabled(options.raidRoleVisibility, key, roleId) || !inRaid || (isClientAccount && !shouldShowClientRoles)) {
         cell = { status: 'na', clearedCount: 0, totalCount: 0 };
       } else {
         const cooldownInfo = calculateCooldown(raid, roleRecords.map(record => ({

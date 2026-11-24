@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Copy, KeyRound, Loader2, Star, X } from 'lucide-react';
 import { Account, BaizhanRecord, Raid, RaidRecord, TrialPlaceRecord } from '../types';
 import { CdActivityCell, CdCell, CdCellStatus, CdOverviewRow, buildRaidCdOverview, resolveCdCellClickTarget } from '../utils/raidCdOverview';
+import { RaidRoleVisibilityMap } from '../utils/raidRoleUtils';
 import { TrialInProgressWithAccount } from '../services/dropScanner';
 import { SeasonContext } from '../utils/weeklyRaids';
 import { getBaseServerName } from '../utils/serverUtils';
@@ -20,6 +21,8 @@ interface RaidCdOverviewProps {
   trialProgressPeriod?: TrialProgressPeriod | null;
   /** 各账号正在进行的试炼（自动扫描得到），用于试炼列标出「进行中」状态 */
   trialInProgressList?: TrialInProgressWithAccount[];
+  /** 单副本级别的角色禁用配置：被禁用的角色在该副本列显示为「不适用」 */
+  raidRoleVisibility?: RaidRoleVisibilityMap;
   weeklyRaidNames: string[];
   favoriteRaids: ReadonlySet<string>;
   seasonContext: SeasonContext;
@@ -129,6 +132,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
   baizhanRecords,
   trialProgressPeriod,
   trialInProgressList,
+  raidRoleVisibility,
   weeklyRaidNames,
   favoriteRaids,
   seasonContext,
@@ -158,6 +162,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       baizhanRecords,
       trialProgressPeriod,
       trialInProgressList,
+      raidRoleVisibility,
       weeklyRaidNames,
       favoriteRaids,
       seasonContext,
@@ -174,6 +179,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       baizhanRecords,
       trialProgressPeriod,
       trialInProgressList,
+      raidRoleVisibility,
       weeklyRaidNames,
       favoriteRaids,
       seasonContext,

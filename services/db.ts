@@ -1,5 +1,5 @@
 import { invokeCommand } from './invoke';
-import type { GameVersion, Season, RaidRecord, Account, Role, Raid, Config, TrialPlaceRecord, BaizhanRecord, InstanceType, RoleInstanceVisibility } from '../types';
+import type { GameVersion, Season, RaidRecord, Account, Role, Raid, Config, TrialPlaceRecord, BaizhanRecord, InstanceType, RoleInstanceVisibility, RaidRoleVisibility } from '../types';
 
 // IPC 出口统一收敛到 services/invoke.ts，本文件不再直接依赖 Tauri API。
 // 环境检测与 mock 回落逻辑见 services/invoke.ts。
@@ -707,6 +707,18 @@ class DatabaseService {
       return JSON.parse(data);
     } catch (error) {
       console.error('Failed to get raid role visibility:', error);
+      return [];
+    }
+  }
+
+  /// 一次获取全部副本的角色可见性配置（CD 概览表按列判定「不适用」时使用）
+  async getAllRaidRoleVisibility(): Promise<RaidRoleVisibility[]> {
+    await this.init();
+    try {
+      const data = await invoke<string>('db_get_all_raid_role_visibility');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Failed to get all raid role visibility:', error);
       return [];
     }
   }
