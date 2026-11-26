@@ -1651,8 +1651,7 @@ pub fn analyze_roles(game_directory: String) -> Result<AutoParseResult, String> 
                 })
                 .filter(|&score| score > 0);
 
-            let (final_score, score_source) =
-                pick_equipment_score(mingyi_score, stat.equip_score);
+            let (final_score, score_source) = pick_equipment_score(mingyi_score, stat.equip_score);
 
             // level 无论装分是否有效都应更新（等级读取失败不会影响装分逻辑）
             if final_score > 0 {
