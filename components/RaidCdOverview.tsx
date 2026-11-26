@@ -34,6 +34,20 @@ interface RaidCdOverviewProps {
   levelCap?: number | null;
   /** 是否隐藏非满级角色（默认 false）。开启时等级已知且未达上限的角色不进入概览 */
   hideNonMaxLevelRoles?: boolean;
+  /**
+   * 只看某个大版本：只统计该版本下的副本列，并隐藏试炼之地 / 百战列，
+   * 用于在具体赛季视图里也展示表格形式的 CD 概览。
+   */
+  versionFilter?: string;
+  /** 面板标题，默认「CD 概览」；按版本展示时可传入带版本名的标题 */
+  title?: string;
+  /**
+   * 没有任何副本列或角色行时的占位文案。
+   * 不传时整块不渲染（概览页保持原有行为，不占页面空间）。
+   */
+  emptyLabel?: string;
+  /** 数据是否仍在加载：加载中且暂无行时显示轻骨架，避免空态一闪而过 */
+  loading?: boolean;
   /** 点击副本列头时进入对应副本详情 */
   onOpenRaid: (raid: Raid) => void;
   /** 点击「试炼之地」列头时切换到试炼之地页面 */
@@ -140,6 +154,10 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
   showWeeklyRaids,
   levelCap,
   hideNonMaxLevelRoles,
+  versionFilter,
+  title,
+  emptyLabel,
+  loading = false,
   onOpenRaid,
   onOpenTrial,
   onOpenBaizhan,
@@ -170,6 +188,7 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       showWeeklyRaids,
       levelCap,
       hideNonMaxLevelRoles,
+      versionFilter,
     }),
     [
       raids,
@@ -187,10 +206,15 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
       showWeeklyRaids,
       levelCap,
       hideNonMaxLevelRoles,
+      versionFilter,
     ],
   );
 
-  const { columns, hasTrialParticipants, hasBaizhanParticipants } = overview;
+  const { columns } = overview;
+  // 版本视图只关心团队副本 CD，试炼之地 / 百战放在「概览」里看，这里不再占列
+  const showActivityColumns = versionFilter === undefined;
+  const hasTrialParticipants = showActivityColumns && overview.hasTrialParticipants;
+  const hasBaizhanParticipants = showActivityColumns && overview.hasBaizhanParticipants;
 
   // 整行都是「不适用」（例如 10 人本里的代清号角色）时不占位置
   const rows = useMemo(
@@ -297,8 +321,42 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
     }
   };
 
+  // 加载中且暂时没有可展示的行时给出轻骨架，避免空态一闪而过造成内容跳动。
+  // 放在 emptyLabel 判断之前，让概览视图（不传 emptyLabel）也能看到加载反馈。
+  if (loading && rows.length === 0) {
+    return (
+      <section className="rounded-card border border-base bg-surface" aria-busy="true" aria-live="polite">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <span className="text-sm font-bold text-main shrink-0">{title ?? 'CD 概览'}</span>
+          <span className="text-ds-xs text-muted shrink-0">数据加载中…</span>
+        </div>
+        <div className="px-4 pb-4 space-y-2" aria-hidden="true">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="h-8 rounded bg-base/60 animate-pulse" />
+          ))}
+        </div>
+        <span className="sr-only">CD 概览数据正在加载</span>
+      </section>
+    );
+  }
+
   // 没有任何可展示的副本难度时不占用页面空间；行数为 0 仍需渲染（可能是筛选结果为空，需要给出提示）
-  if (columns.length === 0 || rows.length === 0) return null;
+  if (columns.length === 0 || rows.length === 0) {
+    if (emptyLabel === undefined) return null;
+    // 列也有、只是没有可展示角色时，方向不同：别把「没角色」说成「没副本」
+    const fallbackText = columns.length === 0
+      ? emptyLabel
+      : '没有可展示的角色，请检查账号与角色可见性设置。';
+    return (
+      <section className="rounded-card border border-base bg-surface">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <span className="text-sm font-bold text-main shrink-0">{title ?? 'CD 概览'}</span>
+          <span className="text-ds-xs text-muted shrink-0">{columns.length} 个副本</span>
+        </div>
+        <p className="px-4 pb-4 text-ds-xs text-muted">{fallbackText}</p>
+      </section>
+    );
+  }
 
   const buildFilterOptions = (values: string[], allLabel: string, withIcon: boolean): FilterSelectOption[] => [
     { value: '', label: allLabel },
@@ -312,23 +370,23 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
   return (
     <section className="rounded-card border border-base bg-surface">
       <div className="flex items-center gap-3 px-4 py-3">
-        <span className="text-sm font-bold text-main shrink-0">CD 概览</span>
+        <span className="text-sm font-bold text-main shrink-0">{title ?? 'CD 概览'}</span>
         <span className="text-ds-xs text-muted shrink-0">
           {rows.length} 个角色 · {columns.length} 个副本
         </span>
         <span className="ml-auto flex items-center gap-3 text-ds-xs font-mono shrink-0">
           <span className="text-ds-success-strong">未清 {totals.none}</span>
           <span className="text-ds-info-strong">部分 {totals.partial}</span>
-          {totals.pending > 0 && <span className="text-ds-warning-strong">待确认 {totals.pending}</span>}
+          {/* 固定占位：为 0 时也渲染（降低透明度），避免数字出现/消失导致整行抖动 */}
+          <span className={`text-ds-warning-strong ${totals.pending > 0 ? '' : 'opacity-50'}`}>
+            待确认 {totals.pending}
+          </span>
           <span className="text-ds-neutral">已清 {totals.complete}</span>
         </span>
       </div>
 
       <div className="px-4 pb-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-ds-xs text-muted">
-            绿=本周未清，雾蓝=部分清，棕=待确认，灰=已清，褐=试炼进行中（尚无翻牌）；列头 0/7 为该副本本周已清角色数。点击列头进入详情，点击「待确认」按所在模块分别处理对应记录。
-          </p>
           <div className="flex items-center gap-2 shrink-0">
             {martialOptions.length > 0 && (
               <FilterSelect
@@ -376,7 +434,12 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
           </div>
         )}
 
-        <div className="overflow-x-auto border border-base rounded-card">
+        {columns.length > 3 && (
+          <p className="text-ds-xs text-muted text-right" title="副本较多时可在表格内左右滚动查看">
+            副本较多，可在表格内左右滚动查看 →
+          </p>
+        )}
+        <div className="overflow-x-auto border border-base rounded-card" aria-busy={loading}>
           <table className="w-full border-collapse text-ds-sm">
             <thead>
               <tr className="bg-base">

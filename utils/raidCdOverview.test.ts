@@ -991,3 +991,121 @@ describe('buildRaidCdOverview - 隐藏非满级角色过滤', () => {
     expect(result.rows).toHaveLength(1);
   });
 });
+
+describe('buildRaidCdOverview - 按版本过滤', () => {
+  /** 造一个指定大版本的副本难度 */
+  function makeVersionRaid(
+    name: string,
+    version: string,
+    playerCount: 10 | 25,
+    difficulty: Raid['difficulty'] = '普通',
+    isActive = true,
+  ): Raid {
+    return { ...makeRaid(playerCount, name, difficulty), version, seasonId: undefined, isActive };
+  }
+
+  it('只保留指定版本的副本列，且来源统一为 version', () => {
+    const current = makeVersionRaid(RAID_NAME, '苍生铸世', 25);
+    const history = makeVersionRaid('会战弓月城', '一之窟', 25);
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids: [current, history],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME, '会战弓月城'],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      versionFilter: '苍生铸世',
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.raid.name)).toEqual([RAID_NAME]);
+    expect(result.columns[0].source).toBe('version');
+    // 该版本下的副本身份不受「本周团队秘境 / 收藏」限制
+    expect(result.columns[0].key).toBe('25人普通洛阳之战');
+  });
+
+  it('该版本下被禁用的难度不进入列，并计入 disabledColumnCount', () => {
+    const active = makeVersionRaid(RAID_NAME, '苍生铸世', 25, '普通');
+    const disabled = makeVersionRaid(RAID_NAME, '苍生铸世', 25, '英雄', false);
+    const otherVersion = makeVersionRaid('会战弓月城', '一之窟', 25, '普通', false);
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids: [active, disabled, otherVersion],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      versionFilter: '苍生铸世',
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.key)).toEqual(['25人普通洛阳之战']);
+    // 只统计当前版本里被禁用的难度，其他版本的禁用不计入
+    expect(result.disabledColumnCount).toBe(1);
+  });
+
+  it('列的排序与卡片视图一致：人数在前、难度递增', () => {
+    const raid25Hero = makeVersionRaid(RAID_NAME, '苍生铸世', 25, '英雄');
+    const raid10 = makeVersionRaid(RAID_NAME, '苍生铸世', 10, '普通');
+    const raid25Normal = makeVersionRaid(RAID_NAME, '苍生铸世', 25, '普通');
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids: [raid25Hero, raid10, raid25Normal],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      versionFilter: '苍生铸世',
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.key)).toEqual([
+      '10人普通洛阳之战',
+      '25人普通洛阳之战',
+      '25人英雄洛阳之战',
+    ]);
+  });
+
+  it('没有已启用副本时列与行都为空，交由界面给出占位提示', () => {
+    const disabled = makeVersionRaid(RAID_NAME, '苍生铸世', 25, '普通', false);
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids: [disabled],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(),
+      seasonContext: SEASON_CONTEXT,
+      versionFilter: '苍生铸世',
+      now: NOW,
+    });
+
+    expect(result.columns).toHaveLength(0);
+    expect(result.disabledColumnCount).toBe(1);
+  });
+
+  it('不传 versionFilter 时保持原有周常 + 收藏列逻辑', () => {
+    const weeklyRaid = makeRaid(25, RAID_NAME);
+    const favoriteRaid = makeRaid(25, '会战弓月城');
+    const account = makeAccount({ roles: [makeRole('role-1')] });
+
+    const result = buildRaidCdOverview({
+      raids: [weeklyRaid, favoriteRaid],
+      accounts: [account],
+      records: [],
+      weeklyRaidNames: [RAID_NAME],
+      favoriteRaids: new Set<string>(['会战弓月城']),
+      seasonContext: SEASON_CONTEXT,
+      now: NOW,
+    });
+
+    expect(result.columns.map(column => column.source)).toEqual(['weekly', 'favorite']);
+  });
+});

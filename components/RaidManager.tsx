@@ -99,6 +99,14 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
   // 打开待确认弹窗时附带的目标范围（某角色某副本）：弹窗只显示范围内的记录
   const [pendingPanelOpenScope, setPendingPanelOpenScope] = useState<PendingRecordScope | null>(null);
 
+  // 具体赛季视图下的面板形态：CD 概览表 / 副本卡片。
+  // 默认表格，便于先看进度；需要启用/禁用、收藏或删除副本时切到「副本卡片」。
+  const [raidPanelView, setRaidPanelView] = useState<'cd' | 'raids'>('cd');
+
+  // 待删除的副本（副本卡片里的删除按钮触发）：用内联确认弹窗代替原生 confirm。
+  // 存的是一组同难度副本（同名同赛季），删除时逐个落库。
+  const [pendingDeleteRaid, setPendingDeleteRaid] = useState<Raid[] | null>(null);
+
   // CD 概览单元格点击目标：未清/部分清 → 添加记录，已清 → 查看该角色在该副本的记录
   const [raidCellAction, setRaidCellAction] = useState<RaidCellAction | null>(null);
   const [trialCellAction, setTrialCellAction] = useState<ActivityCellAction | null>(null);
@@ -424,6 +432,16 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
     });
   }, [versions, isOrderLoaded, favoriteMergedRaids, hasCollectionEntries]);
 
+  // 删除确认弹窗支持 Esc 取消（与项目内其他对话框一致）
+  useEffect(() => {
+    if (!pendingDeleteRaid) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPendingDeleteRaid(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingDeleteRaid]);
+
   const filteredRaids = useMemo(() => {
     return raids.filter(raid => raid.version === selectedVersion);
   }, [raids, selectedVersion]);
@@ -553,6 +571,24 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
       const isNowActive = !raid.isActive;
       toast.success(`${raid.name} - ${DIFFICULTY_LABELS[raid.difficulty]} 已${isNowActive ? '启用' : '禁用'}`);
     }
+  };
+
+  // 确认删除副本：先落库再改 UI（自动保存默认不删行，必须显式调用删除命令）
+  const confirmDeleteRaid = () => {
+    if (!pendingDeleteRaid) return;
+    const deleting = pendingDeleteRaid;
+    setPendingDeleteRaid(null);
+    deleting.forEach(raid => {
+      const key = getRaidKey(raid);
+      db.deleteRaidStructured(key)
+        .then(() => {
+          setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
+        })
+        .catch(error => {
+          console.error('删除副本失败:', error);
+          toast.error(`删除「${raid.name}」失败，请重试`);
+        });
+    });
   };
 
   // ==== CD 概览单元格点击：未清/部分清去补记录，已清去看记录 ====
@@ -704,7 +740,14 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
           )}
         </div>
       )}
-      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-6">
+      <div
+        id="raid-panel-content"
+        role={!isHistoryMode && selectedVersion !== OVERVIEW_VIEW ? 'tabpanel' : undefined}
+        aria-labelledby={!isHistoryMode && selectedVersion !== OVERVIEW_VIEW
+          ? (raidPanelView === 'cd' ? 'raid-panel-tab-cd' : 'raid-panel-tab-raids')
+          : undefined}
+        className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-6"
+      >
       {activeTab === 'baizhan' ? (
         <div className="space-y-4">
           {!isHistoryMode && (
@@ -755,7 +798,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         <>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <h2 className="text-xl font-bold text-main">副本管理</h2>
-            <div className="flex gap-2 items-center">
+            <div className="flex gap-2 items-center flex-wrap justify-end">
               <PendingRecordsPanel
                 records={pendingRecords ?? []}
                 raids={raids}
@@ -780,6 +823,41 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
               )}
             </div>
           </div>
+
+          {/* 当前模式下选定具体赛季：视图切换单独成一行页签，与右上角的操作按钮
+              （扫描本周 / 待确认 / 版本下拉）分开，避免把「看什么」和「做什么」混在一起。
+              只在切到具体赛季时渲染；概览视图没有视图切换，不再用空占位撑高，
+              否则标题与表格之间会多出一段明显空白。 */}
+          {!isHistoryMode && selectedVersion !== OVERVIEW_VIEW && (
+            <div className="flex-shrink-0">
+              <div className="flex gap-2 border-b border-base pb-1" role="tablist" aria-label="切换当前版本的展示方式">
+                <button
+                  id="raid-panel-tab-cd"
+                  type="button"
+                  role="tab"
+                  aria-selected={raidPanelView === 'cd'}
+                  aria-controls="raid-panel-content"
+                  tabIndex={raidPanelView === 'cd' ? 0 : -1}
+                  onClick={() => setRaidPanelView('cd')}
+                  className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${raidPanelView === 'cd' ? 'bg-base text-primary border border-base border-b-transparent' : 'text-muted hover:text-main hover:bg-base/50'}`}
+                >
+                  CD 概览
+                </button>
+                <button
+                  id="raid-panel-tab-raids"
+                  type="button"
+                  role="tab"
+                  aria-selected={raidPanelView === 'raids'}
+                  aria-controls="raid-panel-content"
+                  tabIndex={raidPanelView === 'raids' ? 0 : -1}
+                  onClick={() => setRaidPanelView('raids')}
+                  className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-px ${raidPanelView === 'raids' ? 'bg-base text-primary border border-base border-b-transparent' : 'text-muted hover:text-main hover:bg-base/50'}`}
+                >
+                  副本卡片
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 历史模式沿用旧版的右键提示条；当前模式用概览表内的说明文字代替 */}
           {isHistoryMode && (
@@ -822,6 +900,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                 showWeeklyRaids={appConfig?.showWeeklyRaids ?? true}
                 levelCap={currentLevelCap}
                 hideNonMaxLevelRoles={hideNonMaxLevelRoles}
+                loading={weeklyRaidStatus === 'loading'}
                 onOpenRaid={setSelectedRaid}
                 onOpenTrial={() => setActiveTab('trial')}
                 onOpenBaizhan={() => setActiveTab('baizhan')}
@@ -846,7 +925,42 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
             </div>
           )}
 
-          {selectedVersion !== OVERVIEW_VIEW && (Object.keys(mergedGroupedRaids).length > 0 ? (
+          {/* 当前模式下选定具体赛季：默认铺一张只含该赛季副本的 CD 概览表，
+              切到「副本卡片」再显示可启用/禁用、收藏、删除的副本卡片。 */}
+          {!isHistoryMode && selectedVersion !== OVERVIEW_VIEW && raidPanelView === 'cd' && (
+            <RaidCdOverview
+              raids={raids}
+              accounts={accounts}
+              records={records}
+              trialRecords={trialRecords}
+              baizhanRecords={baizhanRecords}
+              trialProgressPeriod={trialProgressPeriod}
+              trialInProgressList={trialInProgressList}
+              raidRoleVisibility={raidRoleVisibility}
+              weeklyRaidNames={weeklyRaidNames}
+              favoriteRaids={favoriteRaids}
+              seasonContext={seasonContext}
+              versionOrder={versionOrderMap}
+              showWeeklyRaids={appConfig?.showWeeklyRaids ?? true}
+              levelCap={currentLevelCap}
+              hideNonMaxLevelRoles={hideNonMaxLevelRoles}
+              versionFilter={selectedVersion}
+              title={`${selectedVersion} CD 概览`}
+              emptyLabel="该版本下没有已启用的副本，切换到「副本卡片」可启用副本难度。"
+              onOpenRaid={setSelectedRaid}
+              onOpenTrial={() => setActiveTab('trial')}
+              onOpenBaizhan={() => setActiveTab('baizhan')}
+              onRequestConfirmRaid={scope => {
+                setPendingPanelOpenScope(scope);
+                setPendingPanelOpenSignal(prev => prev + 1);
+              }}
+              onOpenRaidCell={handleRaidCellClick}
+              onOpenTrialCell={handleTrialCellClick}
+              onOpenBaizhanCell={handleBaizhanCellClick}
+            />
+          )}
+
+          {selectedVersion !== OVERVIEW_VIEW && (isHistoryMode || raidPanelView === 'raids') && (Object.keys(mergedGroupedRaids).length > 0 ? (
             versions.map(version => {
               const versionRaids = mergedGroupedRaids[version];
               if (!versionRaids) return null;
@@ -899,6 +1013,7 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                 <Star size={16} fill={favoriteRaids.has(mergedRaid.name) ? 'currentColor' : 'none'} />
                               </button>
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   toggleRaidStatus(mergedRaid.name);
@@ -910,36 +1025,25 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                                     : 'text-muted hover:text-main hover:bg-base'
                                   }`}
                                 title={isDisabled ? '启用此副本' : '禁用此副本（所有难度）'}
+                                aria-label={`${mergedRaid.name}：${isDisabled ? '已禁用，点击启用' : isRaidActive ? '启用中，点击禁用所有难度' : '部分禁用，点击禁用所有难度'}`}
+                                aria-pressed={!isDisabled && isRaidActive}
                               >
                                 <Power size={16} />
                               </button>
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (isStatic) {
-                                    alert('预制副本不能删除，只能禁用');
-                                    return;
-                                  }
-                                  if (confirm('确认删除此副本？')) {
-                                    // 先落库再改 UI：自动保存默认不删行，必须显式调用删除命令
-                                    mergedRaid.raids.forEach(raid => {
-                                      const key = getRaidKey(raid);
-                                      db.deleteRaidStructured(key)
-                                        .then(() => {
-                                          setRaids(prev => prev.filter(r => getRaidKey(r) !== key));
-                                        })
-                                        .catch(error => {
-                                          console.error('删除副本失败:', error);
-                                          alert('删除副本失败，请重试');
-                                        });
-                                    });
-                                  }
+                                  if (isStatic) return; // 预制副本不可删除，按钮已 disabled
+                                  setPendingDeleteRaid(mergedRaid.raids);
                                 }}
+                                disabled={isStatic}
                                 className={`transition-colors p-1 rounded-md ${isStatic
                                   ? 'text-muted cursor-not-allowed opacity-50'
                                   : 'text-muted hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
                                   }`}
-                                title={isStatic ? '预制副本不能删除' : '删除'}
+                                title={isStatic ? '预制副本不能删除，只能禁用' : `删除「${mergedRaid.name}」`}
+                                aria-label={isStatic ? '预制副本不能删除，只能禁用' : `删除「${mergedRaid.name}」`}
                               >
                                 <Trash2 size={16} />
                               </button>
@@ -950,22 +1054,44 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
                             {mergedRaid.raids.map(raid => {
                               const label = mergedRaid.difficultyLabels[getRaidKey(raid)] || DIFFICULTY_LABELS[raid.difficulty];
                               const isSpecialRaid = raid.name === '会战弓月城' || raid.name === '缚罪之渊';
+                              const difficultyTitle = raid.isActive
+                                ? `${label} - 点击进入详情，可用右侧开关或右键切换状态`
+                                : `已禁用 - ${label} - 可用右侧开关或右键启用${!isSpecialRaid ? '（默认禁用）' : ''}`;
                               return (
                                 <div
                                   key={getRaidKey(raid)}
-                                  onClick={() => setSelectedRaid(raid)}
-                                  onContextMenu={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    toggleRaidDifficultyStatus(getRaidKey(raid));
-                                  }}
-                                  className={`relative px-2 py-1 text-xs font-medium rounded border cursor-pointer transition-all hover:scale-105 min-w-[60px] text-center ${raid.isActive
+                                  className={`inline-flex items-center justify-center rounded border transition-all min-w-[60px] ${raid.isActive
                                     ? DIFFICULTY_COLORS[raid.difficulty]
-                                    : 'bg-base text-muted border-base hover:bg-base/80 opacity-60'
+                                    : 'bg-base text-muted border-base opacity-60'
                                     }`}
-                                  title={raid.isActive ? `${label} - 点击进入详情，右键切换状态` : `已禁用 - ${label} - 右键启用${!raid.isActive && !isSpecialRaid ? '（默认禁用）' : ''}`}
                                 >
-                                  {label}
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedRaid(raid)}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      toggleRaidDifficultyStatus(getRaidKey(raid));
+                                    }}
+                                    className="px-2 py-1 text-xs font-medium text-center cursor-pointer"
+                                    title={difficultyTitle}
+                                    aria-label={`${label}${raid.isActive ? '（已启用）' : '（已禁用）'}，点击进入详情`}
+                                  >
+                                    {label}
+                                  </button>
+                                  {/* 显式启停开关常驻显示，避免图标隐藏导致文字看起来偏左，也不靠右键这一隐藏交互 */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleRaidDifficultyStatus(getRaidKey(raid));
+                                    }}
+                                    className="p-1 mr-0.5 rounded text-current hover:bg-ds-surface-2 transition-colors shrink-0"
+                                    title={raid.isActive ? `禁用${label}` : `启用${label}`}
+                                    aria-label={raid.isActive ? `禁用${label}` : `启用${label}`}
+                                  >
+                                    <Power size={12} />
+                                  </button>
                                 </div>
                               );
                             })}
@@ -986,6 +1112,45 @@ export const RaidManager: React.FC<RaidManagerProps> = ({
         </>
       )}
       </div>
+
+      {/* 删除副本确认弹窗：统一用项目内的对话框样式，替换原生 confirm */}
+      {pendingDeleteRaid && (
+        <div
+          className="fixed inset-0 bg-ds-scrim flex items-center justify-center z-[110]"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setPendingDeleteRaid(null); }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-raid-dialog-title"
+            className="bg-surface p-6 border border-base rounded-2xl shadow-ds-modal max-w-sm w-full mx-4"
+          >
+            <h3 id="delete-raid-dialog-title" className="text-lg font-bold text-main mb-2">
+              删除副本
+            </h3>
+            <p className="text-sm text-muted leading-relaxed">
+              确认删除「{pendingDeleteRaid[0]?.name}」及其全部难度吗？此操作不可撤销。
+            </p>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteRaid(null)}
+                className="px-4 py-2 rounded-lg border border-base text-sm text-main hover:bg-base transition-colors"
+                autoFocus
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteRaid}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CD 概览单元格点击后弹出的记录弹窗：未清/部分清 → 添加记录，已清 → 该角色在该副本的记录明细 */}
       {raidCellAction && raidCellAction.mode === 'add' && (

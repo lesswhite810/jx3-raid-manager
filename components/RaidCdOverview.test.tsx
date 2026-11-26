@@ -98,6 +98,14 @@ interface RenderOptions {
   trialProgressPeriod?: TrialProgressPeriod | null | 'loading';
   /** 单副本级别的角色禁用配置 */
   raidRoleVisibility?: RaidRoleVisibilityMap;
+  /** 只看某个大版本时的列过滤 */
+  versionFilter?: string;
+  title?: string;
+  emptyLabel?: string;
+  /** 数据加载中：无行时显示骨架占位 */
+  loading?: boolean;
+  /** 覆盖默认的副本列表，用于需要多个版本的场景 */
+  raids?: Raid[];
 }
 
 const renderOverview = ({
@@ -107,18 +115,27 @@ const renderOverview = ({
   account = ACCOUNT,
   trialProgressPeriod = TRIAL_PERIOD,
   raidRoleVisibility,
+  versionFilter,
+  title,
+  emptyLabel,
+  loading,
+  raids = [RAID],
 }: RenderOptions = {}): string => {
   // 注意：解构默认值会把显式传入的 undefined 也替换掉，所以「加载中」用哨兵值区分
   const resolvedPeriod = trialProgressPeriod === 'loading' ? undefined : trialProgressPeriod;
   return renderToStaticMarkup(
     <RaidCdOverview
-      raids={[RAID]}
+      raids={raids}
       accounts={account ? [account] : []}
       records={records}
       trialRecords={trialRecords}
       baizhanRecords={baizhanRecords}
       trialProgressPeriod={resolvedPeriod}
       raidRoleVisibility={raidRoleVisibility}
+      versionFilter={versionFilter}
+      title={title}
+      emptyLabel={emptyLabel}
+      loading={loading}
       weeklyRaidNames={['洛阳之战']}
       favoriteRaids={new Set<string>()}
       seasonContext={SEASON_CONTEXT}
@@ -339,5 +356,93 @@ describe('RaidCdOverview', () => {
 
     // 用户要求：点某角色某副本的「待确认」，弹窗只显示对应角色对应副本的记录
     expect(markup).toContain('（点击处理该角色该副本的待确认记录）');
+  });
+
+  describe('按版本展示（具体赛季视图）', () => {
+    const HISTORY_RAID: Raid = injectDefaultBosses({
+      name: '会战弓月城',
+      version: '一之窟',
+      playerCount: 25,
+      difficulty: '普通',
+      isActive: true,
+    });
+
+    it('只渲染该版本的副本列，并隐藏试炼之地 / 百战列', () => {
+      const markup = renderOverview({
+        versionFilter: '苍生铸世',
+        title: '苍生铸世 CD 概览',
+        raids: [RAID, HISTORY_RAID],
+      });
+
+      expect(markup).toContain('苍生铸世 CD 概览');
+      expect(markup).toContain('洛阳之战');
+      // 其他版本的副本不应出现在当前版本的表格里
+      expect(markup).not.toContain('会战弓月城');
+      // 版本视图只关心副本 CD，试炼/百战放回概览看
+      expect(markup).not.toContain('试炼之地');
+      expect(markup).not.toContain('本周翻牌');
+    });
+
+    it('版本视图不出现试炼相关列或文案', () => {
+      const markup = renderOverview({ versionFilter: '苍生铸世' });
+
+      expect(markup).not.toContain('试炼进行中');
+      expect(markup).not.toContain('试炼之地');
+    });
+
+    it('该版本没有已启用副本时展示占位文案，而不是整块消失', () => {
+      const markup = renderOverview({
+        versionFilter: '苍生铸世',
+        title: '苍生铸世 CD 概览',
+        emptyLabel: '该版本下没有已启用的副本，切换到「副本卡片」可启用副本难度。',
+        raids: [{ ...RAID, isActive: false }],
+      });
+
+      expect(markup).toContain('苍生铸世 CD 概览');
+      expect(markup).toContain('该版本下没有已启用的副本');
+    });
+
+    it('不传 emptyLabel 时保持原行为：没有可展示内容就整块不渲染', () => {
+      const markup = renderOverview({ raids: [{ ...RAID, isActive: false }] });
+
+      expect(markup).toBe('');
+    });
+  });
+
+  describe('加载态与紧凑布局（UI/UX 优化）', () => {
+    it('单元格用 ds-* 语义 token 着色，自动适配主题且不重复堆图例', () => {
+      const markup = renderOverview();
+
+      // 单元格文字直接标明状态，无需额外的色块图例/说明块
+      expect(markup).not.toContain('各色含义与操作说明');
+      expect(markup).not.toContain('副本较多，可在表格内左右滚动查看');
+      expect(markup).toContain('未清');
+      // 单元格与汇总配色用语义 token，随主题切换，不硬编码 hex
+      expect(markup).toContain('bg-ds-success-soft');
+      expect(markup).toContain('text-ds-warning-strong');
+    });
+
+    it('待确认汇总恒为占位，为 0 时也渲染（降低透明度避免数字跳动）', () => {
+      const markup = renderOverview();
+
+      expect(markup).toContain('待确认 0');
+      expect(markup).toContain('text-ds-warning-strong opacity-50');
+    });
+
+    it('加载中且无角色行时显示骨架占位，即使未传 emptyLabel', () => {
+      const markup = renderOverview({ loading: true, account: null });
+
+      expect(markup).toContain('数据加载中');
+      expect(markup).toContain('aria-busy="true"');
+      expect(markup).toContain('animate-pulse');
+      // 骨架态不渲染表格本体
+      expect(markup).not.toContain('<table');
+    });
+
+    it('加载完成（非 loading）时表格带 aria-busy=false', () => {
+      const markup = renderOverview();
+
+      expect(markup).toContain('aria-busy="false"');
+    });
   });
 });

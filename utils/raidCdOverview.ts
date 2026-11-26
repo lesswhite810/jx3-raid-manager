@@ -39,7 +39,13 @@ export interface CdOverviewColumn {
   raid: Raid;
   /** 副本名（同名不同难度共用） */
   raidName: string;
-  source: 'weekly' | 'favorite';
+  /**
+   * 列的来源：
+   * - weekly：本周团队秘境
+   * - favorite：收藏副本
+   * - version：按版本过滤时的该版本副本（此时只统计这一个版本的副本）
+   */
+  source: 'weekly' | 'favorite' | 'version';
   /** 该列已清的角色数 */
   clearedCount: number;
   /** 参与统计的角色数（不含不适用） */
@@ -130,6 +136,11 @@ export interface BuildRaidCdOverviewOptions {
    * 无法判定赛季归属的副本也会隐藏；收藏列不受影响。
    */
   showWeeklyRaids?: boolean;
+  /**
+   * 只看某个大版本：传入版本名时，列改为该版本下所有已启用的副本难度
+   * （不再区分本周团队秘境 / 收藏），用于在具体赛季视图里也展示 CD 概览表。
+   */
+  versionFilter?: string;
   /**
    * 当前版本的等级上限（null/undefined 表示未配置，不做等级过滤）。
    * 与 hideNonMaxLevelRoles 配合，用于在概览行中隐藏未满级的角色。
@@ -260,7 +271,8 @@ const expandBossRecords = (records: RaidRecord[]): BossRecord[] =>
 /**
  * 组装团队副本 CD 概览表。
  *
- * 列 = 本周团队秘境的每个难度 + 收藏副本的每个难度（跳过已禁用的副本）。
+ * 列 = 本周团队秘境的每个难度 + 收藏副本的每个难度（跳过已禁用的副本）；
+ * 传入 `versionFilter` 时改为该版本下所有已启用的副本难度。
  * 行 = 未禁用账号下、未被 `visibility.raid` 排除的角色。
  * 单元格判定完全复用详情页的口径：待确认优先，其次按 BOSS 完成度区分未清 / 部分清 / 已清。
  */
@@ -277,20 +289,9 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
   const safeRecords = Array.isArray(records) ? records : [];
   const activeRaids = safeRaids.filter(raid => raid.isActive);
 
-  // 1. 列：本周团队秘境 → 收藏副本。
-  //    周常副本按赛季新旧排序（离现在最近的赛季在前），同赛季内按人数、难度排序；
-  //    收藏副本排在周常之后，同样按人数、难度排序。
-  const weeklyGroups = buildWeeklyRaidGroups(safeRaids, weeklyRaidNames, favoriteRaids, seasonContext);
-  // 关闭「展示周常」时只保留当前赛季副本：判定为非本赛季或无法判定的都隐藏。
-  // 赛季上下文缺失（currentSeasonId 与 currentVersionName 均为空）时不过滤，
-  // 避免上下文加载异常导致整表清空。
-  const showWeeklyRaids = options.showWeeklyRaids ?? true;
-  const hasSeasonContext =
-    Number.isInteger(seasonContext.currentSeasonId) || Boolean(seasonContext.currentVersionName);
-  const weeklyRaidList: Raid[] = weeklyGroups.flatMap(group => group.raids).filter(raid => {
-    if (showWeeklyRaids || !hasSeasonContext) return true;
-    return isCurrentSeasonRaid(raid, seasonContext) === true;
-  });
+  // 版本过滤模式：只看指定大版本的副本，列不再区分「本周团队秘境 / 收藏」，
+  // 直接铺开该版本下所有已启用的副本难度，行与单元格口径保持完全一致。
+  const versionFilter = options.versionFilter;
 
   /** 版本越新排名越小；未知版本排最后 */
   const getVersionRank = (raid: Raid): number => {
@@ -305,30 +306,58 @@ export function buildRaidCdOverview(options: BuildRaidCdOverviewOptions): CdOver
     return compareRaidInstance(a, b);
   };
 
-  // 收藏列排除项：以过滤后的周常名单为准。关闭展示周常时，被过滤掉的历史赛季
-  // 副本若同时被收藏，会自然落到收藏列继续展示（收藏列不受开关影响）。
-  const weeklyNames = new Set(weeklyRaidList.map(raid => raid.name));
-  const favoriteRaidList = activeRaids
-    .filter(raid => favoriteRaids.has(raid.name) && !weeklyNames.has(raid.name))
-    .sort(compareRaidInstance);
+  let uniqueColumnRaids: { raid: Raid; source: 'weekly' | 'favorite' | 'version' }[];
+  let disabledColumnCount: number;
 
-  const columnRaids: { raid: Raid; source: 'weekly' | 'favorite' }[] = [
-    ...weeklyRaidList.filter(raid => raid.isActive).sort(compareWeeklyRaid).map(raid => ({ raid, source: 'weekly' as const })),
-    ...favoriteRaidList.map(raid => ({ raid, source: 'favorite' as const })),
-  ];
+  if (versionFilter) {
+    // 该版本下所有副本（含禁用），用于统计被跳过的禁用难度数量
+    const versionRaids = safeRaids.filter(raid => raid.version === versionFilter);
+    uniqueColumnRaids = versionRaids
+      .filter(raid => raid.isActive)
+      .sort(compareRaidInstance)
+      .map(raid => ({ raid, source: 'version' as const }));
+    disabledColumnCount = versionRaids.filter(raid => !raid.isActive).length;
+  } else {
+    // 1. 列：本周团队秘境 → 收藏副本。
+    //    周常副本按赛季新旧排序（离现在最近的赛季在前），同赛季内按人数、难度排序；
+    //    收藏副本排在周常之后，同样按人数、难度排序。
+    const weeklyGroups = buildWeeklyRaidGroups(safeRaids, weeklyRaidNames, favoriteRaids, seasonContext);
+    // 关闭「展示周常」时只保留当前赛季副本：判定为非本赛季或无法判定的都隐藏。
+    // 赛季上下文缺失（currentSeasonId 与 currentVersionName 均为空）时不过滤，
+    // 避免上下文加载异常导致整表清空。
+    const showWeeklyRaids = options.showWeeklyRaids ?? true;
+    const hasSeasonContext =
+      Number.isInteger(seasonContext.currentSeasonId) || Boolean(seasonContext.currentVersionName);
+    const weeklyRaidList: Raid[] = weeklyGroups.flatMap(group => group.raids).filter(raid => {
+      if (showWeeklyRaids || !hasSeasonContext) return true;
+      return isCurrentSeasonRaid(raid, seasonContext) === true;
+    });
 
-  // 去重：同一副本难度只出现一次（本周区优先）
-  const seenKeys = new Set<string>();
-  const uniqueColumnRaids = columnRaids.filter(item => {
-    const key = getRaidKey(item.raid);
-    if (seenKeys.has(key)) return false;
-    seenKeys.add(key);
-    return true;
-  });
+    // 收藏列排除项：以过滤后的周常名单为准。关闭展示周常时，被过滤掉的历史赛季
+    // 副本若同时被收藏，会自然落到收藏列继续展示（收藏列不受开关影响）。
+    const weeklyNames = new Set(weeklyRaidList.map(raid => raid.name));
+    const favoriteRaidList = activeRaids
+      .filter(raid => favoriteRaids.has(raid.name) && !weeklyNames.has(raid.name))
+      .sort(compareRaidInstance);
 
-  const disabledColumnCount = safeRaids.filter(
-    raid => !raid.isActive && (favoriteRaids.has(raid.name) || weeklyRaidNames.includes(raid.name)),
-  ).length;
+    const columnRaids: { raid: Raid; source: 'weekly' | 'favorite' }[] = [
+      ...weeklyRaidList.filter(raid => raid.isActive).sort(compareWeeklyRaid).map(raid => ({ raid, source: 'weekly' as const })),
+      ...favoriteRaidList.map(raid => ({ raid, source: 'favorite' as const })),
+    ];
+
+    // 去重：同一副本难度只出现一次（本周区优先）
+    const seenKeys = new Set<string>();
+    uniqueColumnRaids = columnRaids.filter(item => {
+      const key = getRaidKey(item.raid);
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
+
+    disabledColumnCount = safeRaids.filter(
+      raid => !raid.isActive && (favoriteRaids.has(raid.name) || weeklyRaidNames.includes(raid.name)),
+    ).length;
+  }
 
   // 2. 时间窗：与详情页保持一致，先按周窗口收集本周记录
   const periodStart = getLastMonday(now).getTime();
