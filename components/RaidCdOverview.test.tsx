@@ -415,7 +415,6 @@ describe('RaidCdOverview', () => {
 
       // 单元格文字直接标明状态，无需额外的色块图例/说明块
       expect(markup).not.toContain('各色含义与操作说明');
-      expect(markup).not.toContain('副本较多，可在表格内左右滚动查看');
       expect(markup).toContain('未清');
       // 单元格与汇总配色用语义 token，随主题切换，不硬编码 hex
       expect(markup).toContain('bg-ds-success-soft');

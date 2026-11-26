@@ -434,11 +434,6 @@ export const RaidCdOverview: React.FC<RaidCdOverviewProps> = ({
           </div>
         )}
 
-        {columns.length > 3 && (
-          <p className="text-ds-xs text-muted text-right" title="副本较多时可在表格内左右滚动查看">
-            副本较多，可在表格内左右滚动查看 →
-          </p>
-        )}
         <div className="overflow-x-auto border border-base rounded-card" aria-busy={loading}>
           <table className="w-full border-collapse text-ds-sm">
             <thead>
