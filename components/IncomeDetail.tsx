@@ -708,6 +708,9 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                   : '';
                 const isExpanded = expandedRecordId === record.id;
                 const isRejected = record.source === 'auto' && record.status === 'rejected';
+                // 是否存在 BOSS 信息与特殊掉落，用于决定中间区上下两行的渲染
+                const hasBossRecord = (record.bossNames?.length ?? 0) > 0 || (record.bossIds?.length ?? 0) > 0 || !!record.bossName || !!record.bossId;
+                const hasSpecialDrops = !!(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook);
 
                 return (
                   <div
@@ -748,10 +751,15 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                         </div>
                       </div>
 
-                      {/* Center: Special Badges */}
-                      <div className="flex-1 flex flex-wrap gap-1.5 items-center justify-start content-center min-h-[24px]">
-                        {(record.hasXuanjing || record.hasMaJu || record.hasPet || record.hasPendant || record.hasMount || record.hasAppearance || record.hasTitle || record.hasSecretBook) && (
-                          <>
+                      {/* Center: Special Badges & Boss Tags（上下两行：上行 BOSS，下行特殊掉落） */}
+                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 min-h-[24px]">
+                        {hasBossRecord && (
+                          <div className="flex flex-wrap gap-1.5 items-center justify-start">
+                            <RecordBossTags record={record} />
+                          </div>
+                        )}
+                        {hasSpecialDrops && (
+                          <div className="flex flex-wrap gap-1.5 items-center justify-start">
                             {record.hasXuanjing && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-ds-warning-soft dark:bg-ds-warning-soft/20 text-ds-warning-strong dark:text-ds-warning-strong text-xs font-medium rounded border border-ds-warning-soft dark:border-ds-warning-soft flex-shrink-0">
                                 <Sparkles className="w-3 h-3" /> 玄晶
@@ -792,9 +800,8 @@ export const IncomeDetail: React.FC<IncomeDetailProps> = ({ records, baizhanReco
                                 <BookOpen className="w-3 h-3" /> 秘籍
                               </span>
                             )}
-                          </>
+                          </div>
                         )}
-                        <RecordBossTags record={record} />
                       </div>
 
                       {/* Right: Net Income, Time, Actions */}
