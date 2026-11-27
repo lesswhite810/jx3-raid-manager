@@ -7,9 +7,22 @@ import {
   normalizeScrapsItem,
   normalizeScrapsItems,
   RawScrapsItem,
+  SCRAPS_MATERIAL_WHITELIST,
   summarizeScrapsByName,
 } from './scrapsUtils';
 import { RaidRecord, ScrapsItem } from '../types';
+
+describe('SCRAPS_MATERIAL_WHITELIST', () => {
+  it('覆盖全部等级的五彩石（壹～陆级）', () => {
+    for (const level of ['壹', '贰', '叁', '肆', '伍', '陆']) {
+      expect(SCRAPS_MATERIAL_WHITELIST).toContain(`${level}级五彩石`);
+    }
+  });
+
+  it('与前端白名单条目数为 11（含五行石（六级））', () => {
+    expect(SCRAPS_MATERIAL_WHITELIST).toHaveLength(11);
+  });
+});
 
 describe('normalizeScrapsItem', () => {
   it('新版 camelCase 数据原样保留（不做单位换算）', () => {

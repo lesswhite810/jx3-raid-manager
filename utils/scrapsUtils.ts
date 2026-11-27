@@ -3,7 +3,8 @@ import { RaidRecord, ScrapsItem } from '../types';
 /** 散件材料白名单（与后端 SCRAPS_MATERIAL_WHITELIST 保持一致） */
 export const SCRAPS_MATERIAL_WHITELIST = [
   '上品茶饼·兑', '维峰丹', '玛瑙', '猫眼石',
-  '叁级五彩石', '五行石（六级）', '肆级五彩石',
+  '壹级五彩石', '贰级五彩石', '叁级五彩石', '肆级五彩石',
+  '伍级五彩石', '陆级五彩石', '五行石（六级）',
 ];
 
 /** 根据当前散件清单计算估价合计（unitPrice=null 按 0 计入） */

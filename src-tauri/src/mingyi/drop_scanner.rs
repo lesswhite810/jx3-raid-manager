@@ -281,16 +281,21 @@ static ALLOCATE_TO_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 static GAIN_QTY_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^你获得：\[([^\]]+)\](?:\s*×\s*(\d+))?").unwrap());
 
-/// 散件材料白名单（硬编码 7 种副本材料）
+/// 散件材料白名单（硬编码 11 种副本材料）
 /// 这些材料无人竞拍时通常由散件老板统一接收
-const SCRAPS_MATERIAL_WHITELIST: [&str; 7] = [
+/// 五彩石系列覆盖全部等级（壹/贰/叁/肆/伍/陆级）
+const SCRAPS_MATERIAL_WHITELIST: [&str; 11] = [
     "上品茶饼·兑",
     "维峰丹",
     "玛瑙",
     "猫眼石",
+    "壹级五彩石",
+    "贰级五彩石",
     "叁级五彩石",
     "五行石（六级）",
     "肆级五彩石",
+    "伍级五彩石",
+    "陆级五彩石",
 ];
 
 /// 当前角色购买物品的信息（同物品多次购买累加）

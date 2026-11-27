@@ -934,7 +934,7 @@ struct PriceRecord {
     unit_price: i64,
 }
 
-/// 查询物品的交易行价格（前一天成交均价，铜 → 金）
+/// 查询物品的交易行价格（当日实时成交加权均价，铜 → 金）
 ///
 /// 接口：POST https://next2.jx3box.com/api/auction/
 /// body: { "item_id": "{ItemType}_{ItemID}", "server": ..., "aggregate_type": "hourly" }
@@ -944,9 +944,11 @@ struct PriceRecord {
 /// 推进持续变化，全历史中位数会严重虚高（实测 555 金 vs 近期真实成交约 297 金），
 /// 因此采用分层取价，对齐"近期真实市场价"口径：
 ///
-/// 1. 前一天（北京时间自然日）成交量加权均价；
-/// 2. 无前一天成交时，回退近 7 天（含今日）成交量加权均价；
-/// 3. 仍无数据时，回退全量成交中位数（对离群值稳健的兜底）。
+/// 1. 当日（北京时间自然日零点至今）成交量加权均价 —— 实时口径，
+///    与魔盒物品页"最新报价"更接近；
+/// 2. 当日尚无成交（或今日刚开始）时，回退前一天成交加权均价；
+/// 3. 仍无数据时，回退近 7 天（含今日）成交量加权均价；
+/// 4. 最后回退全量成交中位数（对离群值稳健的兜底）。
 ///
 /// 无有效成交数据时返回 None（调用方降级为用户手填）。
 async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, DropTableError> {
@@ -979,11 +981,11 @@ async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, D
     let now_secs = chrono::Utc::now().timestamp();
     let today_start = beijing_day_start(now_secs);
 
-    // 层级 1：前一天（北京时间自然日）成交量加权均价
-    if let Some(avg) = window_weighted_avg_copper(&prices, today_start - DAY_SECS, today_start) {
+    // 层级 1：当日（北京时间自然日零点至今）成交量加权均价（实时口径）
+    if let Some(avg) = window_weighted_avg_copper(&prices, today_start, now_secs + 1) {
         let gold = copper_to_gold(avg);
         info!(
-            "[DropTable] 物品 {} 前一天成交均价: {} 金 (server={}, {} 个聚合点)",
+            "[DropTable] 物品 {} 当日成交加权均价: {} 金 (server={}, {} 个聚合点)",
             item_key,
             gold,
             server,
@@ -992,21 +994,35 @@ async fn fetch_item_price(item_key: &str, server: &str) -> Result<Option<i64>, D
         return Ok(Some(gold));
     }
 
-    // 层级 2：近 7 天（含今日）成交量加权均价。
-    // hourly 聚合覆盖近约 30 天，但低频物品前一天可能整日无成交，此时以近一周
+    // 层级 2：前一天（北京时间自然日）成交量加权均价。
+    // 当日刚开始或低频物品今日尚无成交时，以前一天均价作为次优口径。
+    if let Some(avg) = window_weighted_avg_copper(&prices, today_start - DAY_SECS, today_start) {
+        let gold = copper_to_gold(avg);
+        info!(
+            "[DropTable] 物品 {} 当日无成交，取前一天成交均价: {} 金 (server={}, {} 个聚合点)",
+            item_key,
+            gold,
+            server,
+            prices.len()
+        );
+        return Ok(Some(gold));
+    }
+
+    // 层级 3：近 7 天（含今日）成交量加权均价。
+    // hourly 聚合覆盖近约 30 天，但低频物品近两日可能均无成交，此时以近一周
     // 成交量加权的均价更接近真实市场价；仍无成交则落入中位数兜底。
     if let Some(avg) =
         window_weighted_avg_copper(&prices, today_start - 6 * DAY_SECS, today_start + DAY_SECS)
     {
         let gold = copper_to_gold(avg);
         info!(
-            "[DropTable] 物品 {} 前一天无成交，取近 7 天(含今日)成交均价: {} 金 (server={}, {} 个聚合点)",
+            "[DropTable] 物品 {} 近两日无成交，取近 7 天(含今日)成交均价: {} 金 (server={}, {} 个聚合点)",
             item_key, gold, server, prices.len()
         );
         return Ok(Some(gold));
     }
 
-    // 层级 3：全量中位数兜底（长周期无成交的物品，中位数对离群值稳健）
+    // 层级 4：全量中位数兜底（长周期无成交的物品，中位数对离群值稳健）
     match median_price_gold(&prices) {
         Some(gold) => {
             info!(
@@ -1506,6 +1522,24 @@ mod tests {
         assert_eq!(
             window_weighted_avg_copper(&prices, today_start - 6 * DAY_SECS, today_start + DAY_SECS,),
             Some(233_333)
+        );
+    }
+
+    #[test]
+    fn test_window_weighted_avg_copper_today_realtime() {
+        // 层级 1 窗口为"当日实时"：[today_start, now]，
+        // 今日成交必须参与统计；昨日成交不参与（由层级 2 兜底）
+        let now = 1_787_580_180;
+        let today_start = beijing_day_start(now);
+        let prices = [
+            price_record_at(today_start + 100, 300_000, 2), // 今日成交
+            price_record_at(today_start + 200, 500_000, 1), // 今日成交（晚于 now 的不存在，此处恰在窗口内）
+            price_record_at(today_start - 100, 100_000, 5), // 昨日成交，不参与
+        ];
+        // (300000×2 + 500000×1) / 3 = 366666.67，四舍五入为 366667 铜
+        assert_eq!(
+            window_weighted_avg_copper(&prices, today_start, now + 1),
+            Some(366_667)
         );
     }
 
