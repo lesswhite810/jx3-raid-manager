@@ -7,11 +7,10 @@ import { getLastMonday } from '../utils/cooldownManager';
 import { db } from '../services/db';
 import { toast } from '../utils/toastManager';
 import { SectIcon } from './SectIcon';
-import { filterRaidRoles } from '../utils/raidRoleUtils';
+import { filterRaidRoles, getClientAccountNote } from '../utils/raidRoleUtils';
 import { formatGold } from '../utils/goldFormat';
 import { getCardClass, getAddButtonClass, getViewButtonClass } from '../utils/cardStatusStyles';
 import { RoleCredentialInfo } from './RoleCredentialInfo';
-import { useAppConfig } from '../contexts/AppConfigContext';
 
 interface BaizhanManagerProps {
     records: BaizhanRecord[];
@@ -26,9 +25,6 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
     onEditRecord,
     onRefreshRecords
 }) => {
-    // 旧版模式保留角色卡片上的账号与密码展示 / 复制；新版把入口收敛到 CD 概览表的操作列
-    const { appConfig } = useAppConfig();
-    const isHistoryMode = (appConfig?.raidViewMode ?? 'current') === 'history';
 
     const [isAdding, setIsAdding] = useState(false);
     const [viewRecordsRole, setViewRecordsRole] = useState<any>(null);
@@ -44,6 +40,7 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                     accountId: acc.id,
                     accountName: acc.accountName,
                     password: acc.password,
+                    accountNote: getClientAccountNote(acc.type, acc.notes),
                     equipmentScore: role.equipmentScore
                 }))
             );
@@ -258,13 +255,12 @@ export const BaizhanManager: React.FC<BaizhanManagerProps> = ({
                                         </div>
                                     </div>
 
-                                    {/* 旧版模式下保留账号与密码复制入口 */}
-                                    {isHistoryMode && (
-                                        <RoleCredentialInfo
-                                            accountName={role.accountName}
-                                            password={role.password}
-                                        />
-                                    )}
+                                    {/* 与团队副本一致：角色卡片始终保留账号与密码复制入口 */}
+                                    <RoleCredentialInfo
+                                        accountName={role.accountName}
+                                        password={role.password}
+                                        accountNote={role.accountNote}
+                                    />
 
                                     {/* Action Buttons */}
                                     <div className="mt-3 grid grid-cols-2 gap-2">
